@@ -1,0 +1,40 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# .NET build outputs
+**/bin/
+**/obj/
+**/TestResults/
+*.user
+*.suo
+*.rsuser
+
+# Local configuration and secrets
+*.local.json
+appsettings.Development.json
+appsettings.Local.json
+.env
+.env.*
+!.env.example
+
+# Coverage and generated reports
+coverage/
+coverage*.json
+*.coverage
+*.trx
+
+# Local databases and vector-store data
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# BMAD generated render/cache artifacts; keep source skills, docs, and planning artifacts
+_bmad/render/
+_bmad-output/implementation-artifacts/
+_bmad-output/test-artifacts/
