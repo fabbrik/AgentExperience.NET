@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Adapter-independent domain contracts for AgentExperience.NET: Experience Runs, Attempts, Outcomes, Evidence, Reflections, Scope, Environment, lifecycle events, and the sanitization port. No dependency on MAF, EF Core, PostgreSQL, model providers, or OpenTelemetry.</Description>
+  </PropertyGroup>
+
+</Project>
