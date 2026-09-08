@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Proof-only harness: never referenced by any shipping package (see reuse-boundaries.md). -->
+    <!-- Not packed/consumed, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <!-- Story 1.7 proof-track dependencies. Exact versions per story-1-7-research-digest.md (2026-09-07). -->
+  <ItemGroup>
+    <!-- Track 1: MAF invocation hooks -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.20.0" />
+    <!-- Track 3: PostgreSQL / pgvector -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Pgvector" Version="0.3.2" />
+    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.9.0" />
+    <PackageReference Include="CommunityToolkit.VectorData.PgVector" Version="1.0.1" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
+    <!-- Track 4: evaluation & redaction -->
+    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>
