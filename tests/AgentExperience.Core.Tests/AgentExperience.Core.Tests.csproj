@@ -18,6 +18,7 @@
     <Using Include="Xunit" />
     <Using Include="AgentExperience.Abstractions" />
     <Using Include="AgentExperience.Core.Sanitization" />
+    <Using Include="AgentExperience.Core.Capture" />
   </ItemGroup>
 
   <ItemGroup>
