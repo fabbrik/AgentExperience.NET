@@ -38,3 +38,5 @@ data/
 _bmad/render/
 _bmad-output/implementation-artifacts/
 _bmad-output/test-artifacts/
+**/.agents/
+**/.claude/
