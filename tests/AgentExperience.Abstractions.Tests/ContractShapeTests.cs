@@ -144,7 +144,9 @@ public class ContractShapeTests
             EvidenceId: Guid.NewGuid(),
             VerificationRoundId: Guid.NewGuid(),
             ArtifactRevision: "rev-7",
+            CheckId: "unit-tests-pass",
             Kind: "TestResult",
+            Result: CheckResult.Pass,
             Producer: "ci-test-runner",
             Detail: "42 of 42 tests passed",
             CapturedAt: DateTimeOffset.UtcNow);

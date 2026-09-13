@@ -19,6 +19,7 @@
     <Using Include="AgentExperience.Abstractions" />
     <Using Include="AgentExperience.Core.Sanitization" />
     <Using Include="AgentExperience.Core.Capture" />
+    <Using Include="AgentExperience.Core.Verification" />
   </ItemGroup>
 
   <ItemGroup>

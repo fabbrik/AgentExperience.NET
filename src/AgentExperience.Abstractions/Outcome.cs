@@ -20,6 +20,24 @@ public enum TaskVerificationStatus
 }
 
 /// <summary>
+/// The deterministic Pass/Fail/Unknown verdict a single piece of <see cref="Evidence"/> carries
+/// for the specific <see cref="Evidence.CheckId"/> it backs. This is distinct from
+/// <see cref="TaskVerificationStatus"/>, which is the aggregated verdict across a whole task's
+/// declared required checks, not the verdict of one piece of evidence.
+/// </summary>
+public enum CheckResult
+{
+    /// <summary>The evidence confirms the check it backs was satisfied.</summary>
+    Pass,
+
+    /// <summary>The evidence confirms the check it backs was not satisfied.</summary>
+    Fail,
+
+    /// <summary>No conclusive evidence exists for the check it backs, or the producer could not reach a conclusion.</summary>
+    Unknown,
+}
+
+/// <summary>
 /// A single piece of evidence backing an <see cref="Outcome"/>, produced by a deterministic
 /// evaluator (tool exit code, test result, workflow completion, human approval, human
 /// correction, etc.) or another producer. Evidence content must never carry private
@@ -28,7 +46,13 @@ public enum TaskVerificationStatus
 /// <param name="EvidenceId">Unique identifier for this piece of evidence.</param>
 /// <param name="VerificationRoundId">The verification round this evidence was produced in.</param>
 /// <param name="ArtifactRevision">The revision of the artifact under verification this evidence applies to.</param>
+/// <param name="CheckId">
+/// The task-declared required check ID this evidence backs. Aggregation resolves each required
+/// check independently, against only the evidence carrying its <see cref="CheckId"/> -- an
+/// unrelated passing check can never satisfy a different required <see cref="CheckId"/>.
+/// </param>
 /// <param name="Kind">The kind of evidence, e.g. "ToolExitCode", "TestResult", "WorkflowCompletion", "HumanApproval", "HumanCorrection".</param>
+/// <param name="Result">The deterministic Pass/Fail/Unknown verdict this evidence carries for <see cref="CheckId"/>.</param>
 /// <param name="Producer">Identity of whatever produced this evidence (an evaluator name, a tool, or a human principal identifier). Not tied to any identity-provider shape.</param>
 /// <param name="Detail">Optional sanitized, human-readable detail supporting the evidence (e.g. a truncated log excerpt). Never private reasoning.</param>
 /// <param name="CapturedAt">When this evidence was captured.</param>
@@ -36,7 +60,9 @@ public sealed record Evidence(
     Guid EvidenceId,
     Guid VerificationRoundId,
     string ArtifactRevision,
+    string CheckId,
     string Kind,
+    CheckResult Result,
     string Producer,
     string? Detail,
     DateTimeOffset CapturedAt);
