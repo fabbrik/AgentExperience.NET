@@ -2,6 +2,8 @@
 
 ## Package boundaries
 
+All adapter responsibilities below are constrained by [reuse-boundaries.md](reuse-boundaries.md). Domain packages retain experience semantics; generic ecosystem capabilities are consumed through existing APIs. Separate redaction/evaluation adapter package names are decided by the compatibility proof, not multiplied speculatively.
+
 ```text
 AgentExperience.Abstractions
   Domain records, scopes, events, queries, policies, and public interfaces.
@@ -53,12 +55,17 @@ The minimum persisted record contains:
 ## Delivery sequence
 
 1. Create solution, package projects, repository metadata, Apache-2.0 license, and CI.
+   Run Story 1.7's small compatibility harness before implementing dependent adapters; record exact pins and demonstrated limitations.
 2. Implement abstractions and in-memory core tests.
 3. Implement capture/evaluation/reflection vertical slice.
-4. Implement PostgreSQL schema, migrations, and store adapter.
-5. Implement hybrid retrieval and environment-aware ranking.
-6. Implement MAF provider/middleware integration, including failed runs.
-7. Add end-to-end sample, OpenTelemetry, security tests, and documentation.
+4. Prove MAF capture, including failed and cancelled runs, against a pinned adapter version.
+5. Implement scoped PostgreSQL storage, atomic events/projections, and Core finalization.
+6. Implement text retrieval, then embedding ingestion/hybrid retrieval and MAF context injection.
+7. Add lifecycle/sharing management, integrated telemetry, demonstration, comparative measurement, scoped deletion, and release verification. Each story delivers its own tests and diagnostics.
+
+## Contract reconciliation
+
+The adopted architecture spine and epics.md contain the accepted behavioral rules and execution order. The original production architecture is background design material; its example interfaces, confidence formula, and lifecycle proposals are not authoritative where they conflict with these accepted rules.
 
 ## Deliberately deferred architecture
 

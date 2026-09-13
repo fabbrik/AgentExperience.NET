@@ -1,12 +1,15 @@
 ---
 title: "AgentExperience.NET MVP Specification"
 status: draft
+updated: 2026-09-07
 slug: agentexperience-net
 companions:
+  - reuse-boundaries.md
   - mvp-design.md
-  - /Users/fabriz/dev/agenticexperience.net/docs/AgentExperience_NET_MAF_Production_Architecture.md
+  - ../../planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/ARCHITECTURE-SPINE.md
+  - ../../planning-artifacts/epics.md
 sources:
-  - /Users/fabriz/dev/agenticexperience.net/_bmad-output/planning-artifacts/briefs/brief-agenticexperience.net-2026-09-06/brief.md
+  - ../../planning-artifacts/briefs/brief-agenticexperience.net-2026-09-06/brief.md
 ---
 
 # Why
@@ -26,6 +29,8 @@ Microsoft Agent Framework supplies agent execution, tools, workflows, sessions, 
 **Intent:** Convert observable run results into an outcome and evidence assessment using composable deterministic evaluators.
 
 **Success:** The MVP can evaluate at least tool exit codes, test results, workflow completion, and explicit human approval/correction, producing a stable score and verification status.
+
+Verification uses the host-closed final round for the current artifact revision; earlier failures remain history. Completion score and confidence in reuse are distinct.
 
 ## CAP-3 — Produce structured reflections
 
@@ -51,6 +56,8 @@ Microsoft Agent Framework supplies agent execution, tools, workflows, sessions, 
 
 **Success:** Tests demonstrate tenant/project/agent scope enforcement, confidence updates from confirmation or contradiction, revocation from retrieval, and recording whether reuse helped.
 
+Host-authorized deletion and explicit retention remove live-store payloads with a documented minimal tombstone exception; external artifacts and backup cleanup belong to the host.
+
 ## CAP-7 — Observe the learning loop
 
 **Intent:** Emit OpenTelemetry traces, metrics, and correlated identifiers for capture, evaluation, reflection, retrieval, policy decisions, persistence, and reuse feedback.
@@ -67,6 +74,11 @@ Microsoft Agent Framework supplies agent execution, tools, workflows, sessions, 
 - Strict scope isolation is required for tenant, application, project, team, agent, and user boundaries.
 - The initial release targets .NET 10 while keeping core abstractions compatible with .NET 8+ where feasible.
 - Apache-2.0 is the working license assumption.
+- Host-established authorization bounds all request scopes; agent-supplied scope cannot grant access. Sharing grants permit read/retrieval/injection only.
+- Core owns finalization through policy-approved atomic persistence; separate revision-checked indexing generates embeddings and preserves text retrieval during provider failure.
+- Reuse confidence is the versioned heuristic (1+S)/(2+S+F), with independent accepted supporting validations S and contradictions F; initial validation counts once and status gates remain separate.
+- Correlation IDs belong in traces; metric dimensions are bounded by operation/outcome.
+- Reuse existing MAF lifecycle/context infrastructure and ecosystem embedding, evaluation, redaction, database, and telemetry capabilities through adapters; reuse-boundaries.md defines ownership and Story 1.7's executable compatibility gate.
 
 # Non-goals
 
@@ -83,6 +95,5 @@ The MVP is demonstrated by a runnable MAF sample in which an agent’s failed an
 # Open questions
 
 - Which exact MAF package/version should the first compatibility matrix guarantee?
-- Should the first demo use test-failure remediation, deployment troubleshooting, or another repeatable task?
-- Which reuse metric is the release gate: elapsed time, tool calls, failed attempts, evaluator score, or a composite?
+- The reference demo uses test-failure remediation; comparative benefit means fewer mean failed attempts without reducing verified success or increasing unauthorized executions. Actual improvement remains unproven until measured.
 - Which .NET 8+ APIs are mandatory for the abstractions package?
