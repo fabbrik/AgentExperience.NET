@@ -20,6 +20,7 @@
     <Using Include="AgentExperience.Core.Sanitization" />
     <Using Include="AgentExperience.Core.Capture" />
     <Using Include="AgentExperience.Core.Verification" />
+    <Using Include="AgentExperience.Core.Reflections" />
   </ItemGroup>
 
   <ItemGroup>

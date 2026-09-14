@@ -16,6 +16,16 @@ namespace AgentExperience.Abstractions;
 /// <param name="Warnings">Explicit uncertainty or caveats, including unverified preconditions or unverified outcomes that must not be presented as validated procedure.</param>
 /// <param name="ReuseGuidance">Optional guidance on when/how this reflection may be safely reused.</param>
 /// <param name="EvidenceIds">Identifiers of the <see cref="AgentExperience.Abstractions.Evidence"/> this reflection is traceable to.</param>
+/// <param name="VerificationStatus">The task verification status of the evaluation this reflection was derived from, copied exactly -- never re-judged by the reflector.</param>
+/// <param name="CompletionScore">
+/// The completion score (fraction of required checks that conclusively passed) of the evaluation
+/// this reflection was derived from, copied exactly. It is <em>not</em> reuse confidence: reuse
+/// confidence belongs to the durable Experience Record and is assigned and updated there, never on a
+/// <see cref="Reflection"/>. A high completion score next to a non-<see cref="TaskVerificationStatus.Verified"/>
+/// <paramref name="VerificationStatus"/> is not verification.
+/// </param>
+/// <param name="VerificationRuleVersion">The version of the verification rule the evaluation was computed under, so this reflection's basis stays auditable across rule changes.</param>
+/// <param name="Producer">Identity (name and template/implementation version) of the reflector implementation that produced this reflection.</param>
 /// <param name="CreatedAt">When this reflection was generated.</param>
 public sealed record Reflection(
     Guid ReflectionId,
@@ -27,4 +37,8 @@ public sealed record Reflection(
     IReadOnlyList<string> Warnings,
     string? ReuseGuidance,
     IReadOnlyList<Guid> EvidenceIds,
+    TaskVerificationStatus VerificationStatus,
+    double CompletionScore,
+    string VerificationRuleVersion,
+    string Producer,
     DateTimeOffset CreatedAt);
