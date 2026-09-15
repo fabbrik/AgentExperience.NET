@@ -9,7 +9,7 @@ updated: 2026-09-07
 
 ## 0. Document Purpose
 
-This PRD defines the first open-source release of AgentExperience.NET for downstream architecture, epics, stories, and implementation work. It builds on the [product brief](/Users/fabriz/dev/agenticexperience.net/_bmad-output/planning-artifacts/briefs/brief-agenticexperience.net-2026-09-06/brief.md), [MVP specification](/Users/fabriz/dev/agenticexperience.net/_bmad-output/specs/spec-agentexperience-net/SPEC.md), and [production architecture](/Users/fabriz/dev/agenticexperience.net/docs/AgentExperience_NET_MAF_Production_Architecture.md). Technical alternatives and deferred integrations remain in `addendum.md`.
+This PRD defines the first open-source release of AgentExperience.NET for downstream architecture, epics, stories, and implementation work. It builds on the [product brief](../../../../_bmad-output/planning-artifacts/briefs/brief-agenticexperience.net-2026-09-06/brief.md), [MVP specification](../../../../_bmad-output/specs/spec-agentexperience-net/SPEC.md), and [production architecture](../../../../docs/AgentExperience_NET_MAF_Production_Architecture.md). Technical alternatives and deferred integrations remain in `addendum.md`.
 
 ## 1. Vision
 
