@@ -34,8 +34,8 @@ coverage*.json
 *.db-wal
 data/
 
-# BMAD generated render/cache artifacts; keep source skills, docs, and planning artifacts
-_bmad/render/
+# BMAD tooling is installed locally (installer-managed, per-user config); keep planning artifacts in _sdlc/
+_bmad/
 _sdlc/implementation-artifacts/
 _sdlc/test-artifacts/
 **/.agents/
