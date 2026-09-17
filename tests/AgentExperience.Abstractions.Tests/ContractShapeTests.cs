@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace AgentExperience.Abstractions.Tests;
 
 /// <summary>
@@ -226,13 +228,16 @@ public class ContractShapeTests
         var authorizationProperties = typeof(AuthorizationContext).GetProperties().Select(p => p.Name).ToHashSet();
         var scopeProperties = typeof(Scope).GetProperties().Select(p => p.Name).ToHashSet();
 
-        // Distinct shapes: Scope's required project identity has no counterpart on
-        // AuthorizationContext, and AuthorizationContext's host-established grant has no
-        // counterpart on Scope.
+        // Distinct shapes: AuthorizationContext's host-established grant has no counterpart on
+        // Scope. AuthorizationContext may carry optional bounds with Scope's field names (Story 2.1),
+        // but they are nullable restrictions defaulting to null, never a required request identity.
         Assert.Contains("ApplicationId", scopeProperties);
         Assert.Contains("ProjectId", scopeProperties);
-        Assert.DoesNotContain("ApplicationId", authorizationProperties);
-        Assert.DoesNotContain("ProjectId", authorizationProperties);
+        foreach (var bound in new[] { "ApplicationId", "ProjectId", "TeamId", "AgentId", "UserId" })
+        {
+            Assert.Contains(bound, authorizationProperties);
+            Assert.Equal(typeof(string), typeof(AuthorizationContext).GetProperty(bound)!.PropertyType);
+        }
 
         Assert.Contains("PrincipalId", authorizationProperties);
         Assert.Contains("Roles", authorizationProperties);
@@ -243,5 +248,176 @@ public class ContractShapeTests
         var authorization = new AuthorizationContext("tenant-1", "svc-principal", ["capture:write"], DateTimeOffset.UtcNow);
         var scope = new Scope("tenant-1", "app-1", "project-1");
         Assert.NotEqual<object>(authorization, scope);
+    }
+
+    // Story 2.1: ExperienceRecord, the IExperienceRecordStore port, and AuthorizationContext.Permits.
+    private static readonly DateTimeOffset Now = new(2026, 9, 17, 10, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void ExperienceRecord_carries_every_canonical_part_and_no_version_field()
+    {
+        var parameters = typeof(ExperienceRecord).GetConstructors().Single().GetParameters()
+            .Select(p => (p.Name, p.ParameterType))
+            .ToList();
+
+        Assert.Equal(
+            new (string?, Type)[]
+            {
+                ("ExperienceId", typeof(Guid)),
+                ("SourceRunId", typeof(Guid)),
+                ("Scope", typeof(Scope)),
+                ("TaskId", typeof(string)),
+                ("TaskSummary", typeof(string)),
+                ("Attempts", typeof(IReadOnlyList<Attempt>)),
+                ("Outcome", typeof(Outcome)),
+                ("CompletionScore", typeof(double)),
+                ("Reflection", typeof(Reflection)),
+                ("Environment", typeof(EnvironmentFingerprint)),
+                ("Provenance", typeof(Provenance)),
+                ("Status", typeof(ExperienceStatus)),
+                ("ReuseConfidence", typeof(double)),
+                ("SupportingValidations", typeof(int)),
+                ("Contradictions", typeof(int)),
+                ("Revision", typeof(long)),
+                ("CreatedAt", typeof(DateTimeOffset)),
+                ("UpdatedAt", typeof(DateTimeOffset)),
+            },
+            parameters);
+
+        Assert.DoesNotContain(typeof(ExperienceRecord).GetProperties(), p => p.Name.Contains("Version", StringComparison.OrdinalIgnoreCase));
+        Assert.All(typeof(ExperienceRecord).GetProperties(), p => Assert.True(p.SetMethod is null || p.SetMethod.ReturnParameter.GetRequiredCustomModifiers().Any(m => m.Name == "IsExternalInit")));
+
+        var nullability = new NullabilityInfoContext();
+        var ctorParameters = typeof(ExperienceRecord).GetConstructors().Single().GetParameters().ToDictionary(p => p.Name!);
+        Assert.Equal(NullabilityState.Nullable, nullability.Create(ctorParameters["TaskSummary"]).WriteState);
+        Assert.Equal(NullabilityState.Nullable, nullability.Create(ctorParameters["Reflection"]).WriteState);
+        Assert.Equal(NullabilityState.NotNull, nullability.Create(ctorParameters["Outcome"]).WriteState);
+    }
+
+    [Fact]
+    public void Store_port_operations_take_authorization_and_a_required_cancellation_token()
+    {
+        var methods = typeof(IExperienceRecordStore).GetMethods().OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
+
+        Assert.Equal(["CreateAsync", "GetAsync", "QueryAsync"], methods.Select(m => m.Name));
+        Assert.All(methods, method =>
+        {
+            var parameters = method.GetParameters();
+            Assert.Equal(typeof(AuthorizationContext), parameters[0].ParameterType);
+            Assert.Equal(typeof(CancellationToken), parameters[^1].ParameterType);
+            Assert.False(parameters[^1].HasDefaultValue);
+        });
+
+        Assert.Equal(typeof(Task<ExperienceRecordCreateResult>), methods[0].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecord), typeof(CancellationToken)], methods[0].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordGetResult>), methods[1].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(Guid), typeof(CancellationToken)], methods[1].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[2].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[2].GetParameters().Select(p => p.ParameterType));
+    }
+
+    [Fact]
+    public void Query_defaults_to_all_statuses_and_a_limit_of_50_within_1_to_500()
+    {
+        var query = new ExperienceRecordQuery(new Scope("t", "a", "p"));
+
+        Assert.Null(query.Statuses);
+        Assert.Equal(50, query.Limit);
+        Assert.Equal(50, ExperienceRecordQuery.DefaultLimit);
+        Assert.Equal(1, ExperienceRecordQuery.MinLimit);
+        Assert.Equal(500, ExperienceRecordQuery.MaxLimit);
+    }
+
+    [Fact]
+    public void Store_outcomes_results_and_exception_have_the_expected_shape()
+    {
+        Assert.Equal(
+            ["Created", "Found", "NotFound", "Denied", "Invalid", "Conflict"],
+            Enum.GetNames<ExperienceStoreOutcome>());
+
+        var error = new StoreValidationError("Scope.TenantId", "must not be empty or whitespace.");
+        Assert.Equal("Scope.TenantId", error.Path);
+
+        var get = new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, []);
+        Assert.Null(get.Record);
+        var query = new ExperienceRecordQueryResult(ExperienceStoreOutcome.Invalid, [], [error]);
+        Assert.Single(query.Errors);
+        var create = new ExperienceRecordCreateResult(ExperienceStoreOutcome.Conflict, []);
+        Assert.DoesNotContain(create.GetType().GetProperties(), p => p.PropertyType == typeof(ExperienceRecord));
+
+        var inner = new InvalidOperationException("driver");
+        var exception = new ExperienceStoreException("storage failed", inner);
+        Assert.Same(inner, exception.InnerException);
+        Assert.IsAssignableFrom<Exception>(new ExperienceStoreException("unsupported payload version"));
+    }
+
+    [Fact]
+    public void AuthorizationContext_bounds_default_to_null_so_existing_call_sites_compile()
+    {
+        var authorization = new AuthorizationContext("tenant-1", "principal", [], Now);
+
+        Assert.Null(authorization.ApplicationId);
+        Assert.Null(authorization.ProjectId);
+        Assert.Null(authorization.TeamId);
+        Assert.Null(authorization.AgentId);
+        Assert.Null(authorization.UserId);
+    }
+
+    [Fact]
+    public void Unbounded_context_permits_any_scope_in_its_tenant()
+    {
+        var authorization = new AuthorizationContext("tenant-1", "principal", [], Now);
+
+        Assert.True(authorization.Permits(new Scope("tenant-1", "app", "project")));
+        Assert.True(authorization.Permits(new Scope("tenant-1", "other-app", "other-project", "team", "agent", "user")));
+    }
+
+    [Theory]
+    [InlineData("tenant-2")]
+    [InlineData("Tenant-1")]
+    [InlineData("tenant-1 ")]
+    public void Tenant_must_match_exactly(string requestTenant)
+    {
+        var authorization = new AuthorizationContext("tenant-1", "principal", [], Now);
+
+        Assert.False(authorization.Permits(new Scope(requestTenant, "app", "project")));
+    }
+
+    [Fact]
+    public void Blank_authorized_tenant_permits_nothing()
+    {
+        Assert.False(new AuthorizationContext("", "principal", [], Now).Permits(new Scope("", "app", "project")));
+        Assert.False(new AuthorizationContext(" ", "principal", [], Now).Permits(new Scope(" ", "app", "project")));
+    }
+
+    [Fact]
+    public void Each_non_null_bound_must_equal_the_scope_field_exactly()
+    {
+        var scope = new Scope("tenant-1", "app", "project", "team", "agent", "user");
+        var baseline = new AuthorizationContext("tenant-1", "principal", [], Now);
+
+        Assert.True((baseline with { ApplicationId = "app", ProjectId = "project", TeamId = "team", AgentId = "agent", UserId = "user" }).Permits(scope));
+
+        Assert.False((baseline with { ApplicationId = "other" }).Permits(scope));
+        Assert.False((baseline with { ProjectId = "Project" }).Permits(scope));
+        Assert.False((baseline with { TeamId = "other" }).Permits(scope));
+        Assert.False((baseline with { AgentId = "other" }).Permits(scope));
+        Assert.False((baseline with { UserId = "other" }).Permits(scope));
+    }
+
+    [Fact]
+    public void Non_null_bound_does_not_permit_a_null_scope_field()
+    {
+        var authorization = new AuthorizationContext("tenant-1", "principal", [], Now, TeamId: "team");
+
+        Assert.False(authorization.Permits(new Scope("tenant-1", "app", "project", TeamId: null)));
+    }
+
+    [Fact]
+    public void Permits_rejects_a_null_scope()
+    {
+        var authorization = new AuthorizationContext("tenant-1", "principal", [], Now);
+
+        Assert.Throws<ArgumentNullException>(() => authorization.Permits(null!));
     }
 }

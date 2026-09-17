@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>PostgreSQL adapter for AgentExperience.NET: persists canonical, scoped Experience Records through the IExperienceRecordStore port with plain Npgsql, host-authorization checks before any database access, exact scope predicates applied in SQL, and an embedded, versioned schema script. Pinned to Npgsql 10.0.3.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exact pin: verified against this version only (Story 1.7 Track 3, Story 2.1). -->
+    <PackageReference Include="Npgsql" Version="[10.0.3]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentExperience.Abstractions\AgentExperience.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations\0001_create_experience_records.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0001_create_experience_records.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -7,7 +7,7 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Persistence, retrieval, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
+> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: Experience Records can be stored in PostgreSQL. Retrieval, injection, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
 
 ## Why
 
@@ -30,6 +30,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Deterministic task verification: exit codes, tests, workflow and human checks; host-closed rounds; no LLM | `AgentExperience.Core` |
 | Auditable, template-based reflections traceable to evidence IDs | `AgentExperience.Core` |
 | MAF adapter: captures ordinary, streaming, failed, and cancelled runs plus tool calls, without altering results | `AgentExperience.MicrosoftAgentFramework` |
+| PostgreSQL Experience Record store: create, get, and scoped query; host authorization checked before database access; exact scope matching in SQL | `AgentExperience.Storage.Postgres` |
 
 ## Quick look
 
@@ -49,7 +50,7 @@ await agent.RunAsync("Triage ticket #4812", session);
 // The run, its tool calls, and its sanitized outcome are now available from captureService.
 ```
 
-See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md) for options, supported agent types, and caveats.
+See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md) for options, supported agent types, and caveats. See the [PostgreSQL store README](src/AgentExperience.Storage.Postgres/README.md) for the trust boundary, schema script, and data semantics.
 
 ## Design principles
 
@@ -66,10 +67,12 @@ src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
   AgentExperience.Core/                     sanitization, capture, verification, reflection
   AgentExperience.MicrosoftAgentFramework/  MAF adapter (pinned Microsoft.Agents.AI 1.20.0)
+  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store (pinned Npgsql 10.0.3)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
   AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection tests
   AgentExperience.MicrosoftAgentFramework.Tests/  real ChatClientAgent runs against a scripted fake model
+  AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
 docs/                                       original production architecture research
 _bmad-output/                               product brief, PRD, architecture, epics, and specs
@@ -85,16 +88,16 @@ dotnet build
 dotnet test
 ```
 
-Unit and adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` starts a PostgreSQL/pgvector container through Testcontainers, so it needs Docker. To skip it:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` and the `PostgresExperienceRecordStoreTests` in `AgentExperience.Storage.Postgres.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
-2. **Reuse relevant experience:** PostgreSQL persistence, hybrid text and vector retrieval, historical-reference injection into MAF
+2. **Reuse relevant experience:** PostgreSQL persistence (Experience Record store in place), hybrid text and vector retrieval, historical-reference injection into MAF
 3. **Govern experience safely:** sharing grants, audited lifecycle transitions, evidence-based confidence updates
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
