@@ -5,3 +5,18 @@
 #
 # [agents.bmad-agent-pm]
 # description = "Prefers short, bulleted PRDs over narrative drafts."
+
+# Artifacts live in _sdlc/ instead of the installer default _bmad-output/.
+# Kept here so an installer re-run cannot revert the location.
+[core]
+output_folder = "{project-root}/_sdlc"
+
+[modules.bmm]
+planning_artifacts = "{project-root}/_sdlc/planning-artifacts"
+implementation_artifacts = "{project-root}/_sdlc/implementation-artifacts"
+
+[modules.tea]
+test_artifacts = "{project-root}/_sdlc/test-artifacts"
+test_design_output = "_sdlc/test-artifacts/test-design"
+test_review_output = "_sdlc/test-artifacts/test-reviews"
+trace_output = "_sdlc/test-artifacts/traceability"

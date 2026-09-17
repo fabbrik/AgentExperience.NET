@@ -5,9 +5,9 @@ validationResult: pass
 validationReport: epics-validation.md
 updated: 2026-09-07
 inputDocuments:
-  - _bmad-output/planning-artifacts/prds/prd-agenticexperience.net-2026-09-06/prd.md
-  - _bmad-output/planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/ARCHITECTURE-SPINE.md
-  - _bmad-output/planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/solution-design.md
+  - _sdlc/planning-artifacts/prds/prd-agenticexperience.net-2026-09-06/prd.md
+  - _sdlc/planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/ARCHITECTURE-SPINE.md
+  - _sdlc/planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/solution-design.md
   - docs/AgentExperience_NET_MAF_Production_Architecture.md
 ---
 
