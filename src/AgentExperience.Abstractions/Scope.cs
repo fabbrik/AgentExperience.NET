@@ -28,15 +28,60 @@ public sealed record Scope(
 /// before a request is evaluated; <see cref="Scope"/> only selects within it. Request-supplied
 /// scope can narrow an <see cref="AuthorizationContext"/> but can never widen it.
 /// </summary>
+/// <remarks>
+/// The optional bounds (<see cref="ApplicationId"/>, <see cref="ProjectId"/>, <see cref="TeamId"/>,
+/// <see cref="AgentId"/>, <see cref="UserId"/>) restrict which request scopes this context permits.
+/// A non-null bound must equal the corresponding <see cref="Scope"/> field exactly (ordinal,
+/// case-sensitive); a <see langword="null"/> bound leaves that field unrestricted.
+/// <see cref="TenantId"/> must always match. See <see cref="Permits(Scope)"/>.
+/// </remarks>
 /// <param name="TenantId">The tenant the host has authorized this caller to act within.</param>
 /// <param name="PrincipalId">An opaque, host-assigned identifier for the authorized caller. Not tied to any specific identity-provider shape (no claims, tokens, or provider-specific types).</param>
 /// <param name="Roles">The roles or capabilities the host has granted this caller, as opaque strings.</param>
 /// <param name="IssuedAt">When the host established this authorization context.</param>
+/// <param name="ApplicationId">Optional bound. When non-null, only request scopes with exactly this <see cref="Scope.ApplicationId"/> are permitted.</param>
+/// <param name="ProjectId">Optional bound. When non-null, only request scopes with exactly this <see cref="Scope.ProjectId"/> are permitted.</param>
+/// <param name="TeamId">Optional bound. When non-null, only request scopes with exactly this <see cref="Scope.TeamId"/> are permitted.</param>
+/// <param name="AgentId">Optional bound. When non-null, only request scopes with exactly this <see cref="Scope.AgentId"/> are permitted.</param>
+/// <param name="UserId">Optional bound. When non-null, only request scopes with exactly this <see cref="Scope.UserId"/> are permitted.</param>
 public sealed record AuthorizationContext(
     string TenantId,
     string PrincipalId,
     IReadOnlyList<string> Roles,
-    DateTimeOffset IssuedAt);
+    DateTimeOffset IssuedAt,
+    string? ApplicationId = null,
+    string? ProjectId = null,
+    string? TeamId = null,
+    string? AgentId = null,
+    string? UserId = null)
+{
+    /// <summary>
+    /// Determines whether this host-established authorization permits a request in
+    /// <paramref name="scope"/>. <see cref="TenantId"/> must equal <see cref="Scope.TenantId"/>, and
+    /// every non-null bound must equal the corresponding scope field; all comparisons are ordinal and
+    /// case-sensitive. A <see langword="null"/> bound leaves its field unrestricted, and a
+    /// <see langword="null"/>, empty, or whitespace <see cref="TenantId"/> permits nothing. This never widens
+    /// authority: the request scope is only ever checked against the context, never trusted on its own.
+    /// </summary>
+    /// <param name="scope">The request scope to check.</param>
+    /// <returns><see langword="true"/> when the scope lies within this authorization; otherwise <see langword="false"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="scope"/> is <see langword="null"/>.</exception>
+    public bool Permits(Scope scope)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+
+        return !string.IsNullOrWhiteSpace(TenantId)
+            && string.Equals(TenantId, scope.TenantId, StringComparison.Ordinal)
+            && BoundMatches(ApplicationId, scope.ApplicationId)
+            && BoundMatches(ProjectId, scope.ProjectId)
+            && BoundMatches(TeamId, scope.TeamId)
+            && BoundMatches(AgentId, scope.AgentId)
+            && BoundMatches(UserId, scope.UserId);
+    }
+
+    private static bool BoundMatches(string? bound, string? value) =>
+        bound is null || string.Equals(bound, value, StringComparison.Ordinal);
+}
 
 /// <summary>
 /// A fingerprint of the runtime environment an <see cref="ExperienceRun"/> executed in, captured
