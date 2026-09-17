@@ -10,8 +10,8 @@ created: '2026-09-06'
 updated: '2026-09-07'
 binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7]
 sources:
-  - '_bmad-output/planning-artifacts/prds/prd-agenticexperience.net-2026-09-06/prd.md'
-  - '_bmad-output/specs/spec-agentexperience-net/SPEC.md'
+  - '_sdlc/planning-artifacts/prds/prd-agenticexperience.net-2026-09-06/prd.md'
+  - '_sdlc/specs/spec-agentexperience-net/SPEC.md'
   - 'docs/AgentExperience_NET_MAF_Production_Architecture.md'
 companions:
   - solution-design.md

@@ -5,7 +5,7 @@ Thanks for your interest. This project is in early development, so the most help
 ## Before you start
 
 - For anything beyond a small fix, **open an issue first** so we can agree on the approach.
-- Read the [architecture spine](_bmad-output/planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/ARCHITECTURE-SPINE.md) and [reuse boundaries](_bmad-output/specs/spec-agentexperience-net/reuse-boundaries.md). They define rules the code must keep.
+- Read the [architecture spine](_sdlc/planning-artifacts/architecture/architecture-agenticexperience.net-2026-09-06/ARCHITECTURE-SPINE.md) and [reuse boundaries](_sdlc/specs/spec-agentexperience-net/reuse-boundaries.md). They define rules the code must keep.
 
 ## Ground rules
 

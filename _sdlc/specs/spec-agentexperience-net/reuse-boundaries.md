@@ -32,7 +32,7 @@ No new agent runtime, tool runner, session store, workflow engine, general vecto
 
 ## Story 1.7 compatibility proof evidence
 
-Full narrative findings: `_bmad-output/implementation-artifacts/story-1-7-research-digest.md`. Runnable harness:
+Full narrative findings: `_sdlc/implementation-artifacts/story-1-7-research-digest.md`. Runnable harness:
 `tests/AgentExperience.CompatibilityProof/` (`IsPackable=false`; proof-only, never referenced by any shipping
 package). Every citation below is an exact package version plus either a NuGet package-version URL or a
 commit/tag-pinned source URL -- no bare `main`-branch reference.

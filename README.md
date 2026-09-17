@@ -75,7 +75,7 @@ tests/
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
 docs/                                       original production architecture research
-_bmad-output/                               product brief, PRD, architecture, epics, and specs
+_sdlc/                                      product brief, PRD, architecture, epics, and specs
 ```
 
 ## Build and test
@@ -101,14 +101,14 @@ dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!
 3. **Govern experience safely:** sharing grants, audited lifecycle transitions, evidence-based confidence updates
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
-Full requirements and acceptance criteria are in [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md).
+Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).
 
 ## How this project is built
 
 Development is spec-driven with the [BMAD Method](https://github.com/bmad-code-org/BMAD-METHOD) and AI-assisted implementation. The planning trail is versioned alongside the code:
 
-- **Product brief, PRD, architecture, and epics:** [`_bmad-output/planning-artifacts/`](_bmad-output/planning-artifacts/)
-- **MVP spec and reuse-boundary decisions:** [`_bmad-output/specs/`](_bmad-output/specs/)
+- **Product brief, PRD, architecture, and epics:** [`_sdlc/planning-artifacts/`](_sdlc/planning-artifacts/)
+- **MVP spec and reuse-boundary decisions:** [`_sdlc/specs/`](_sdlc/specs/)
 
 Each story is planned against the architecture, implemented against explicit acceptance criteria, and then reviewed by independent adversarial, edge-case, and verification-gap passes before it is committed.
 
