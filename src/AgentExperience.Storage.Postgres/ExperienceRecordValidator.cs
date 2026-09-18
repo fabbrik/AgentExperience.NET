@@ -72,6 +72,58 @@ internal static class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>
+    /// Validates a lifecycle commit: the event's own fields plus the request scope the record must lie
+    /// in. Field paths name the <see cref="LifecycleEvent"/> member, so a caller can map an error back
+    /// to what it supplied.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateLifecycleEvent(Scope scope, LifecycleEvent lifecycleEvent)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (lifecycleEvent.EventId == Guid.Empty)
+        {
+            errors.Add(new("EventId", "must not be an empty GUID."));
+        }
+
+        if (lifecycleEvent.ExperienceRecordId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceRecordId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+
+        if (lifecycleEvent.PriorStatus is { } priorStatus)
+        {
+            RequireDefined(priorStatus, "PriorStatus", errors);
+        }
+
+        RequireDefined(lifecycleEvent.CurrentStatus, "CurrentStatus", errors);
+        RequireNotBlank(lifecycleEvent.Reason, "Reason", errors);
+        RequireNotBlank(lifecycleEvent.Producer, "Producer", errors);
+
+        if (lifecycleEvent.OccurredAt == default)
+        {
+            // OccurredAt is part of the event's stored identity, so an unset value would silently become
+            // part of the idempotency key. No upper bound: clock skew makes a future check unsafe.
+            errors.Add(new("OccurredAt", "must be set to when the transition occurred."));
+        }
+
+        if (lifecycleEvent.ExpectedRevision < 0)
+        {
+            errors.Add(new("ExpectedRevision", "must not be negative."));
+        }
+        else if (lifecycleEvent.ExpectedRevision >= long.MaxValue - 1)
+        {
+            // A successful commit stores ExpectedRevision + 1, which would wrap silently at long.MaxValue.
+            // One below it is rejected too: committing there would leave the record permanently stuck,
+            // because every later commit would expect an unrepresentable revision.
+            errors.Add(new("ExpectedRevision", "must leave room for the next revision, so a later commit stays possible."));
+        }
+
+        return errors;
+    }
+
     public static IReadOnlyList<StoreValidationError> ValidateQuery(ExperienceRecordQuery query)
     {
         var errors = new List<StoreValidationError>();

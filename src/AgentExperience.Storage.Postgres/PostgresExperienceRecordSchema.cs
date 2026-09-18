@@ -19,10 +19,13 @@ public static class PostgresExperienceRecordSchema
     /// <summary>The initial script that creates the <c>experience_records</c> table.</summary>
     public const string InitialScriptName = "0001_create_experience_records.sql";
 
+    /// <summary>The script that creates the append-only <c>lifecycle_events</c> table.</summary>
+    public const string LifecycleEventsScriptName = "0002_create_lifecycle_events.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>Every embedded script name, in the order they must be applied.</summary>
-    public static IReadOnlyList<string> ScriptNames { get; } = [InitialScriptName];
+    public static IReadOnlyList<string> ScriptNames { get; } = [InitialScriptName, LifecycleEventsScriptName];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>

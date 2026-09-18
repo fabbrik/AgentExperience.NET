@@ -57,6 +57,73 @@ public interface IExperienceRecordStore
         AuthorizationContext authorization,
         ExperienceRecordQuery query,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Appends <paramref name="lifecycleEvent"/> and updates the record's projection
+    /// (<see cref="ExperienceRecord.Status"/>, <see cref="ExperienceRecord.Revision"/>,
+    /// <see cref="ExperienceRecord.UpdatedAt"/>) in one transaction: both writes commit together or
+    /// neither does. The store persists the decision exactly as given and never derives a status, a
+    /// score, or a counter of its own -- deciding which transition is legal belongs to Core.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Idempotency.</b> <see cref="LifecycleEvent.EventId"/> is the idempotency key. Replaying an
+    /// event whose stored fields (including its scope) are identical returns the original outcome --
+    /// <see cref="ExperienceStoreOutcome.Committed"/> with the revision that commit produced -- and
+    /// writes nothing. A stored <see cref="LifecycleEvent.EventId"/> with any differing field is
+    /// <see cref="ExperienceStoreOutcome.Conflict"/>, whichever scope owns it, and writes nothing.
+    /// </para>
+    /// <para>
+    /// <b>Concurrency.</b> <see cref="LifecycleEvent.ExpectedRevision"/> must equal the record's
+    /// current <see cref="ExperienceRecord.Revision"/>. A successful commit sets the revision to
+    /// <see cref="LifecycleEvent.ExpectedRevision"/> + 1. Any other value is
+    /// <see cref="ExperienceStoreOutcome.StaleRevision"/> and writes nothing, so two commits racing
+    /// from the same revision never both apply.
+    /// </para>
+    /// <para>
+    /// <b>Prior-status guard.</b> When <see cref="LifecycleEvent.PriorStatus"/> is non-null it must
+    /// also equal the record's stored <see cref="ExperienceRecord.Status"/>, matched in the same
+    /// statement as the revision. That is what keeps Core's transition table enforced against real
+    /// state rather than against what the caller asserted, and keeps a stored event from recording a
+    /// prior status the record never had. A mismatch is
+    /// <see cref="ExperienceStoreOutcome.StatusMismatch"/>, carries the stored status, and writes
+    /// nothing. A <see langword="null"/> <see cref="LifecycleEvent.PriorStatus"/> (a record's first
+    /// event) skips the status match.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact request scope the record must lie in. Never treated as authority.</param>
+    /// <param name="lifecycleEvent">The transition Core decided, already stamped.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Committed"/>, <see cref="ExperienceStoreOutcome.StaleRevision"/>,
+    /// <see cref="ExperienceStoreOutcome.StatusMismatch"/>,
+    /// <see cref="ExperienceStoreOutcome.NotFound"/> (missing, or in another scope),
+    /// <see cref="ExperienceStoreOutcome.Conflict"/>, <see cref="ExperienceStoreOutcome.Invalid"/>, or
+    /// <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
+    Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        LifecycleEvent lifecycleEvent,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one record's lifecycle history within exactly <paramref name="scope"/>: its current
+    /// <see cref="ExperienceRecord.Revision"/> plus every appended event, oldest first. A record that
+    /// exists in a different scope is indistinguishable from a missing one
+    /// (<see cref="ExperienceStoreOutcome.NotFound"/>). Events are never deleted or rewritten.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact request scope to read within.</param>
+    /// <param name="experienceId">The record whose history to read. Must not be <see cref="Guid.Empty"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns><see cref="ExperienceStoreOutcome.Found"/> (possibly with no events), <see cref="ExperienceStoreOutcome.NotFound"/>, <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.</returns>
+    Task<ExperienceRecordHistoryResult> GetHistoryAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -100,8 +167,33 @@ public enum ExperienceStoreOutcome
     /// <summary>The request was malformed. See the result's validation errors. No storage was accessed.</summary>
     Invalid,
 
-    /// <summary>A record with the same ID already exists in some scope. The stored record is unchanged and not revealed.</summary>
+    /// <summary>
+    /// A record with the same ID already exists in some scope, or a lifecycle event with the same
+    /// <see cref="LifecycleEvent.EventId"/> is already stored with differing fields. Nothing was
+    /// written and the stored state is unchanged and not revealed.
+    /// </summary>
     Conflict,
+
+    /// <summary>
+    /// A lifecycle event and its projection update were committed together. The record's
+    /// <see cref="ExperienceRecord.Revision"/> is now <see cref="LifecycleEvent.ExpectedRevision"/> + 1.
+    /// An identical replay reports this same outcome without writing again.
+    /// </summary>
+    Committed,
+
+    /// <summary>
+    /// The lifecycle event's <see cref="LifecycleEvent.ExpectedRevision"/> did not equal the record's
+    /// current <see cref="ExperienceRecord.Revision"/>, so newer state was not overwritten. Nothing
+    /// was written.
+    /// </summary>
+    StaleRevision,
+
+    /// <summary>
+    /// The lifecycle event's <see cref="LifecycleEvent.PriorStatus"/> did not equal the record's stored
+    /// <see cref="ExperienceRecord.Status"/>, so the transition was decided against state the record was
+    /// not in. Nothing was written, and the result carries the stored status to re-decide against.
+    /// </summary>
+    StatusMismatch,
 }
 
 /// <summary>
@@ -140,6 +232,41 @@ public sealed record ExperienceRecordGetResult(
 public sealed record ExperienceRecordQueryResult(
     ExperienceStoreOutcome Outcome,
     IReadOnlyList<ExperienceRecord> Records,
+    IReadOnlyList<StoreValidationError> Errors);
+
+/// <summary>
+/// The result of <see cref="IExperienceRecordStore.CommitLifecycleEventAsync"/>.
+/// </summary>
+/// <param name="Outcome">What happened.</param>
+/// <param name="Revision">
+/// The record's <see cref="ExperienceRecord.Revision"/> after a
+/// <see cref="ExperienceStoreOutcome.Committed"/> commit (or after the original commit, when this call
+/// was an identical replay); the record's current revision on
+/// <see cref="ExperienceStoreOutcome.StaleRevision"/>, so the caller can retry against it; otherwise 0.
+/// </param>
+/// <param name="CurrentStatus">
+/// The record's stored <see cref="ExperienceRecord.Status"/> when <see cref="Outcome"/> is
+/// <see cref="ExperienceStoreOutcome.StatusMismatch"/>, so the caller can re-decide the transition
+/// against the state the record is actually in; otherwise <see langword="null"/>.
+/// </param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceLifecycleCommitResult(
+    ExperienceStoreOutcome Outcome,
+    long Revision,
+    ExperienceStatus? CurrentStatus,
+    IReadOnlyList<StoreValidationError> Errors);
+
+/// <summary>
+/// The result of <see cref="IExperienceRecordStore.GetHistoryAsync"/>.
+/// </summary>
+/// <param name="Outcome">What happened.</param>
+/// <param name="Revision">The record's current <see cref="ExperienceRecord.Revision"/> when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Found"/>; otherwise 0.</param>
+/// <param name="Events">The record's lifecycle events, oldest first, when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Found"/>; otherwise empty.</param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceRecordHistoryResult(
+    ExperienceStoreOutcome Outcome,
+    long Revision,
+    IReadOnlyList<LifecycleEvent> Events,
     IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>

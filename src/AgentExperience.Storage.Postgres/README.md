@@ -35,6 +35,25 @@ var page = await store.QueryAsync(
     authorization,
     new ExperienceRecordQuery(record.Scope, Statuses: [ExperienceStatus.Validated], Limit: 20),
     cancellationToken);
+
+// A lifecycle change: the event and the record's projection commit together, or neither does.
+var commit = await store.CommitLifecycleEventAsync(
+    authorization,
+    record.Scope,
+    new LifecycleEvent(
+        EventId: eventId,                             // this call's idempotency key -- stable across retries
+        ExperienceRecordId: record.ExperienceId,
+        PriorStatus: ExperienceStatus.Candidate,
+        CurrentStatus: ExperienceStatus.Validated,    // decided by Core, never by this adapter
+        Reason: "required checks passed",
+        Producer: "finalization",
+        OccurredAt: decidedAt,
+        ExpectedRevision: record.Revision),           // must equal the stored revision
+    cancellationToken);
+// commit.Revision is record.Revision + 1 when commit.Outcome is Committed.
+
+var history = await store.GetHistoryAsync(authorization, record.Scope, record.ExperienceId, cancellationToken);
+// history.Events is every transition, oldest first; history.Revision is the record's current revision.
 ```
 
 The store never disposes the data source. The host owns it.
@@ -62,6 +81,9 @@ The store never disposes the data source. The host owns it.
 | Scope outside the authorization context | `Denied` (no connection opened) |
 | Malformed request | `Invalid` with every `StoreValidationError(Path, Message)` (no connection opened) |
 | ID already exists in any scope | `Conflict` (stored row unchanged) |
+| Lifecycle event and projection committed together | `Committed` |
+| Lifecycle `ExpectedRevision` ≠ the record's current `Revision` | `StaleRevision` (nothing written) |
+| Lifecycle `PriorStatus` ≠ the record's stored `Status` | `StatusMismatch` with the stored status (nothing written) |
 | Database or driver failure (`NpgsqlException`, `SocketException`, `TimeoutException`) | throws `ExperienceStoreException` with the original as `InnerException` |
 | Stored row with an unsupported `payload_version` or an unreadable payload | throws `ExperienceStoreException` |
 | Caller cancellation | throws `OperationCanceledException`, unwrapped |
@@ -71,16 +93,69 @@ Validation messages never contain record payload content, and the store does not
 A create whose acknowledgement was lost (cancelled or timed out after PostgreSQL committed it) returns `Conflict`
 when retried. After a `Conflict`, call `GetAsync` in your own scope to check whether the stored record is yours.
 
+## Lifecycle commits
+
+`CommitLifecycleEventAsync` is the only way a stored record's status changes. It appends the `LifecycleEvent` to
+`lifecycle_events` and updates the record's `status`, `revision`, and `updated_at` **in one transaction on one
+connection**: both writes commit together, or neither does. A failure between them leaves no event and no
+projection change.
+
+The adapter persists the decision exactly as given. It never derives a status, a reuse confidence, or a counter, and
+it never invents a transition the command did not carry — deciding which transitions are legal belongs to Core's
+`ExperienceLifecycleService` (ARCHITECTURE-SPINE AD-6). Authorization is checked against the request scope before
+the transaction opens, exactly as for the store's other operations, and the scope predicate is applied in SQL.
+
+- **The revision rule.** `ExpectedRevision` must equal the record's current `Revision`. A successful commit sets
+  the revision to `ExpectedRevision + 1` and reports it as `result.Revision`. Any other value is `StaleRevision`,
+  writes nothing, and reports the record's *current* revision so you can re-decide against it. Two commits racing
+  from the same revision therefore end with exactly one applied event and one revision increment.
+- **Idempotency by `EventId`.** Replaying an event whose stored fields are identical — including its scope and its
+  microsecond-truncated `OccurredAt` — returns the original outcome (`Committed`, with the revision that commit
+  produced) and writes nothing. A stored `EventId` with *any* differing field is `Conflict`, whichever scope owns
+  it, and writes nothing. So `EventId` and `OccurredAt` must be stable across retries; regenerating either turns a
+  retry into a second transition.
+- **The prior-status guard.** When the event's `PriorStatus` is non-null it must also equal the record's stored
+  `Status`, matched in the same statement as the revision. That is what keeps Core's transition table enforced
+  against real state rather than against what the caller asserted, and keeps a stored event from recording a prior
+  status the record never had. A mismatch is `StatusMismatch`, writes nothing, and reports the record's stored
+  status as `result.CurrentStatus` so you can re-decide against it. A null `PriorStatus` — a record's first event —
+  skips the status match.
+- **Missing or foreign records.** A record that does not exist in the request scope is `NotFound`, indistinguishable
+  from a missing one, and nothing is written.
+- **A lost acknowledgement.** A commit that was cancelled or timed out after PostgreSQL committed it is recovered by
+  retrying the *identical* event: the replay path reports the original `Committed` and the revision that commit
+  produced, without applying it twice. This is why `EventId` and `OccurredAt` must be stable across retries — unlike
+  a create, where a lost acknowledgement surfaces as `Conflict` and has to be resolved with `GetAsync`.
+- **History.** `GetHistoryAsync` returns the record's current `Revision` plus every event, oldest first, in a single
+  statement, so the revision can never contradict the events even if a commit lands mid-read. Events are
+  append-only: nothing deletes or rewrites them. `GetAsync` and its result are unchanged by this operation.
+
 ## Schema
 
-The schema lives in the embedded script `Migrations/0001_create_experience_records.sql`. It creates the
-`agent_experience` schema and the `experience_records` table:
+The schema lives in the embedded scripts under `Migrations/`.
+
+`0001_create_experience_records.sql` creates the `agent_experience` schema and the `experience_records` table:
 
 - Scope, task, status, confidence, counter, revision, and timestamp columns, with `CHECK` constraints for non-blank
   scope and value ranges.
 - A JSONB `payload` column for attempts, outcome, evidence, reflection, environment, and provenance.
 - A `payload_version` column. This adapter owns versioning, so the domain types carry no version field.
 - An index on `(tenant_id, application_id, project_id)`.
+
+`0002_create_lifecycle_events.sql` adds the append-only `lifecycle_events` table:
+
+- `event_id` as the primary key (the commit's idempotency key), the record ID, the same scope columns as
+  `experience_records`, prior/current status, reason, producer, `occurred_at`/`recorded_at`, and
+  `expected_revision`/`applied_revision`.
+- `CHECK` constraints mirroring `0001` (non-empty IDs, non-blank scope, reason and producer, non-negative revision)
+  plus `applied_revision = expected_revision + 1`, so a row written outside this store cannot desynchronize the log
+  from the projection.
+- A **unique** index on `(experience_id, applied_revision)`, so exactly one event can ever claim a given revision of
+  a record and the log cannot desynchronize from the projection. Two commits racing from the same revision collide
+  here; the loser is reported as `StaleRevision`.
+- Deliberately no foreign key to `experience_records`: a commit for a record outside the request scope is rolled
+  back by the revision-checked projection update, and a foreign-key violation would report that expected condition
+  as an infrastructure failure instead.
 
 ### Applying it
 
@@ -102,8 +177,8 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
 - **Serialized across processes.** The whole run holds a PostgreSQL session advisory lock on its own connection, so
   two hosts starting at once cannot apply the same script twice. The lock is always released.
 - **Permissions.** The migrating role needs `CREATE` on the database (for the `agent_experience` schema) and on that
-  schema (for its tables). The store itself only needs `INSERT` and `SELECT` on
-  `agent_experience.experience_records`.
+  schema (for its tables). The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
+  `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`.
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one
   for the scripts. A multiplexing data source (`NpgsqlDataSourceBuilder.EnableMultiplexing`) cannot hold a session
   advisory lock, because its commands do not stay on one physical connection, so it is not supported for migration.
@@ -136,10 +211,11 @@ definition, and a rename would reapply it. Change the schema by adding the next-
 
 ## Data semantics
 
-- **Create-only.** Each create is a single `INSERT`. Updates, deletes, and lifecycle events belong to later stories.
-- **UTC timestamps.** Every timestamp is stored and returned in UTC. `CreatedAt` and `UpdatedAt` are columns, and
-  PostgreSQL keeps microsecond precision, so sub-microsecond ticks are truncated on write. Nested timestamps are
-  stored in the payload at full precision.
+- **One write path per change.** Each create is a single `INSERT`. The only update is a lifecycle commit, which is
+  always paired with its event in one transaction (see above). Nothing deletes a record or an event.
+- **UTC timestamps.** Every timestamp is stored and returned in UTC. `CreatedAt`, `UpdatedAt`, and a lifecycle
+  event's `OccurredAt` are columns, and PostgreSQL keeps microsecond precision, so sub-microsecond ticks are
+  truncated on write. Nested timestamps are stored in the payload at full precision.
 - **Tool-call arguments** are stored as JSON and read back normalized to `string`, `bool`, `long` (integers that
   fit), `double`, `null`, `Dictionary<string, object?>`, or `List<object?>`. Dictionary key order is not preserved.
   Whole-number doubles (for example `1.0`) are written as JSON integers, so they read back as `long`. Values that cannot be serialized to JSON (for

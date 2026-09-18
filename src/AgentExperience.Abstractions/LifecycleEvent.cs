@@ -1,9 +1,9 @@
 namespace AgentExperience.Abstractions;
 
 /// <summary>
-/// The canonical lifecycle states an Experience Record can occupy. Ownership of the state
-/// machine and valid transitions belongs to a later story; this package fixes only the shape of
-/// the enum and the event that carries transitions between its values.
+/// The canonical lifecycle states an Experience Record can occupy. This package fixes only the shape
+/// of the enum and the event that carries transitions between its values; ownership of the state
+/// machine and which transitions are valid belongs to Core's lifecycle service.
 /// </summary>
 public enum ExperienceStatus
 {
@@ -35,8 +35,9 @@ public enum ExperienceStatus
 /// <summary>
 /// An append-only record of a single lifecycle state transition for an Experience Record.
 /// Lifecycle changes are events first; current state is a projection derived from them. This
-/// package defines only the event's data shape — transition validity rules belong to a later
-/// story.
+/// package defines only the event's data shape. Which transitions are valid is owned by Core's
+/// lifecycle service, and the store enforces that decision against real state by matching
+/// <see cref="PriorStatus"/> and <see cref="ExpectedRevision"/> when it applies the event.
 /// </summary>
 /// <param name="EventId">Unique identifier for this lifecycle event.</param>
 /// <param name="ExperienceRecordId">The Experience Record this event applies to.</param>
