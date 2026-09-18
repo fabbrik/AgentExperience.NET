@@ -1,14 +1,19 @@
+using Npgsql;
+
 namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
-/// Access to the schema scripts embedded in this package. Until a migration runner ships, the host
-/// applies these scripts itself, in <see cref="ScriptNames"/> order, before using
-/// <see cref="PostgresExperienceRecordStore"/>. Scripts are plain SQL with no journal table, so a
-/// DbUp-style migrator can run them unchanged later.
+/// Access to the schema scripts embedded in this package, for reading a script's SQL before it runs.
+/// To apply them, call <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/>,
+/// which runs them in <see cref="ScriptNames"/> order and journals what it applied; hosts do not need
+/// their own apply loop.
 /// </summary>
 public static class PostgresExperienceRecordSchema
 {
-    /// <summary>The PostgreSQL schema that holds every AgentExperience.NET table.</summary>
+    /// <summary>
+    /// The PostgreSQL schema that holds every AgentExperience.NET table, including the migration
+    /// journal <c>schema_versions</c>.
+    /// </summary>
     public const string SchemaName = "agent_experience";
 
     /// <summary>The initial script that creates the <c>experience_records</c> table.</summary>

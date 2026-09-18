@@ -277,6 +277,38 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Unavailable_database_makes_the_migrator_throw_ExperienceStoreException_with_the_original_failure()
+    {
+        var ex = await Assert.ThrowsAsync<ExperienceStoreException>(
+            () => ExperienceSchemaMigrator.MigrateAsync(_dataSource, CancellationToken.None));
+
+        Assert.NotNull(ex.InnerException);
+    }
+
+    [Fact]
+    public void Advisory_lock_key_is_pinned()
+    {
+        // Changing this silently stops serializing against hosts still running the previous package
+        // version, so two of them could apply the same script at once. Treat a change as breaking.
+        Assert.Equal(0x4147455850455201L, ExperienceSchemaMigrator.AdvisoryLockKey);
+    }
+
+    [Fact]
+    public void Embedded_migration_resources_match_the_declared_script_names()
+    {
+        // The migrator scans by resource prefix while callers read ScriptNames, so the two must agree:
+        // an embedded script missing from ScriptNames (or the reverse) would go unnoticed otherwise.
+        const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
+
+        var embedded = typeof(PostgresExperienceRecordSchema).Assembly.GetManifestResourceNames()
+            .Where(name => name.StartsWith(ResourcePrefix, StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal))
+            .Select(name => name[ResourcePrefix.Length..])
+            .Order(StringComparer.Ordinal);
+
+        Assert.Equal(PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal), embedded);
+    }
+
+    [Fact]
     public void Embedded_schema_script_is_available_and_creates_the_versioned_table()
     {
         var sql = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.InitialScriptName);
