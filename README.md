@@ -7,7 +7,7 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: Experience Records can be stored in PostgreSQL. Retrieval, injection, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
+> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: Experience Records can be stored in PostgreSQL and moved through their lifecycle with atomic, audited commits. Retrieval, injection, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
 
 ## Why
 
@@ -31,6 +31,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Auditable, template-based reflections traceable to evidence IDs | `AgentExperience.Core` |
 | MAF adapter: captures ordinary, streaming, failed, and cancelled runs plus tool calls, without altering results | `AgentExperience.MicrosoftAgentFramework` |
 | PostgreSQL Experience Record store: create, get, and scoped query; host authorization checked before database access; exact scope matching in SQL | `AgentExperience.Storage.Postgres` |
+| Atomic audited lifecycle commits: the event and the record's projection in one transaction, idempotent by event ID, revision-checked, with append-only history | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | Journaled schema migrations: embedded scripts applied once, one transaction per script, serialized across processes by an advisory lock | `AgentExperience.Storage.Postgres` |
 
 ## Quick look
@@ -66,12 +67,12 @@ See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md) 
 ```
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
-  AgentExperience.Core/                     sanitization, capture, verification, reflection
+  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions
   AgentExperience.MicrosoftAgentFramework/  MAF adapter (pinned Microsoft.Agents.AI 1.20.0)
   AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
-  AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection tests
+  AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle tests
   AgentExperience.MicrosoftAgentFramework.Tests/  real ChatClientAgent runs against a scripted fake model
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
@@ -89,17 +90,17 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` and the `PostgresExperienceRecordStoreTests` and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` and the `PostgresExperienceRecordStoreTests`, `PostgresLifecycleCommitTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~ExperienceSchemaMigratorTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~ExperienceSchemaMigratorTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
-2. **Reuse relevant experience:** PostgreSQL persistence (Experience Record store in place), hybrid text and vector retrieval, historical-reference injection into MAF
-3. **Govern experience safely:** sharing grants, audited lifecycle transitions, evidence-based confidence updates
+2. **Reuse relevant experience:** PostgreSQL persistence and atomic audited lifecycle commits (in place), hybrid text and vector retrieval, historical-reference injection into MAF
+3. **Govern experience safely:** sharing grants, the remaining lifecycle transitions, evidence-based confidence updates
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
 Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).

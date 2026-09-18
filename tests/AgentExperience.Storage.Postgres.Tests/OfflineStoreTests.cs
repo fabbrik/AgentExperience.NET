@@ -313,11 +313,147 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     {
         var sql = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.InitialScriptName);
 
-        Assert.Equal([PostgresExperienceRecordSchema.InitialScriptName], PostgresExperienceRecordSchema.ScriptNames);
+        Assert.Equal(
+            [PostgresExperienceRecordSchema.InitialScriptName, PostgresExperienceRecordSchema.LifecycleEventsScriptName],
+            PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
         Assert.Contains("payload_version", sql, StringComparison.Ordinal);
         Assert.Contains("jsonb", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("vector", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Throws<ArgumentException>(() => PostgresExperienceRecordSchema.GetScript("9999_missing.sql"));
+    }
+
+    [Fact]
+    public void Lifecycle_script_is_embedded_separately_and_never_edits_the_initial_one()
+    {
+        var lifecycle = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.LifecycleEventsScriptName);
+
+        // Scripts are append-only: 0002 adds its own table and touches nothing 0001 created.
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.lifecycle_events", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("applied_revision = expected_revision + 1", lifecycle, StringComparison.Ordinal);
+        // Unique, so two events can never claim one revision of a record and desynchronize the log.
+        Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS ix_lifecycle_events_record_revision", lifecycle, StringComparison.Ordinal);
+        Assert.DoesNotContain("ALTER TABLE", lifecycle, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DROP", lifecycle, StringComparison.OrdinalIgnoreCase);
+
+        // 0002 is applied after 0001, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public async Task Malformed_lifecycle_commit_returns_Invalid_with_every_field_path_and_no_database_call()
+    {
+        var tenant = NewTenant();
+        var malformed = Event(Guid.Empty, (ExperienceStatus)999, (ExperienceStatus)998, -1, eventId: Guid.Empty, reason: "  ", producer: "")
+            with { OccurredAt = default };
+
+        var result = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant),
+            new Scope(tenant, "app-1", " "),
+            malformed,
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(0, result.Revision);
+        Assert.Equal(
+            new[] { "CurrentStatus", "EventId", "ExperienceRecordId", "ExpectedRevision", "OccurredAt", "PriorStatus", "Producer", "Reason", "Scope.ProjectId" }
+                .Order(StringComparer.Ordinal),
+            result.Errors.Select(e => e.Path).Order(StringComparer.Ordinal));
+        Assert.All(result.Errors, e => Assert.False(string.IsNullOrWhiteSpace(e.Message)));
+    }
+
+    [Theory]
+    [InlineData(long.MaxValue)]       // ExpectedRevision + 1 would wrap
+    [InlineData(long.MaxValue - 1)]   // commits, but then no later commit could ever be expressed
+    public async Task A_revision_that_leaves_no_room_for_the_next_one_is_Invalid(long expectedRevision)
+    {
+        var tenant = NewTenant();
+
+        var result = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant),
+            Scope(tenant),
+            Event(Guid.NewGuid(), ExperienceStatus.Candidate, ExperienceStatus.Revoked, expectedRevision),
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(["ExpectedRevision"], result.Errors.Select(e => e.Path));
+    }
+
+    [Fact]
+    public async Task An_unset_OccurredAt_is_Invalid_because_it_is_part_of_the_replay_identity()
+    {
+        var tenant = NewTenant();
+        var unset = Event(Guid.NewGuid(), ExperienceStatus.Candidate, ExperienceStatus.Revoked, 0) with { OccurredAt = default };
+
+        var result = await Store.CommitLifecycleEventAsync(Authorize(tenant), Scope(tenant), unset, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(["OccurredAt"], result.Errors.Select(e => e.Path));
+    }
+
+    [Fact]
+    public async Task Malformed_history_request_returns_Invalid()
+    {
+        var tenant = NewTenant();
+
+        var result = await Store.GetHistoryAsync(Authorize(tenant), new Scope(tenant, "", "project-1"), Guid.Empty, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(["ExperienceId", "Scope.ApplicationId"], result.Errors.Select(e => e.Path).Order(StringComparer.Ordinal));
+        Assert.Empty(result.Events);
+        Assert.Equal(0, result.Revision);
+    }
+
+    [Fact]
+    public async Task A_scope_beyond_the_authorization_is_Denied_before_any_connection_opens()
+    {
+        var scope = Scope("tenant-b");
+        var auth = Authorize("tenant-a");
+
+        var commit = await Store.CommitLifecycleEventAsync(
+            auth, scope, Event(Guid.NewGuid(), ExperienceStatus.Candidate, ExperienceStatus.Validated, 0), CancellationToken.None);
+        var history = await Store.GetHistoryAsync(auth, scope, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Denied, commit.Outcome);
+        Assert.Empty(commit.Errors);
+        Assert.Equal(ExperienceStoreOutcome.Denied, history.Outcome);
+        Assert.Empty(history.Events);
+    }
+
+    [Fact]
+    public async Task An_unavailable_database_throws_for_commit_and_history_and_a_pre_cancelled_token_does_not()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lifecycleEvent = Event(Guid.NewGuid(), ExperienceStatus.Candidate, ExperienceStatus.Validated, 0);
+
+        var commit = await Assert.ThrowsAsync<ExperienceStoreException>(
+            () => Store.CommitLifecycleEventAsync(auth, scope, lifecycleEvent, CancellationToken.None));
+        var history = await Assert.ThrowsAsync<ExperienceStoreException>(
+            () => Store.GetHistoryAsync(auth, scope, lifecycleEvent.ExperienceRecordId, CancellationToken.None));
+        Assert.All([commit, history], ex => Assert.IsAssignableFrom<Npgsql.NpgsqlException>(ex.InnerException));
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => Store.CommitLifecycleEventAsync(auth, scope, lifecycleEvent, cts.Token));
+        Assert.IsNotType<ExperienceStoreException>(cancelled);
+    }
+
+    [Fact]
+    public async Task Null_lifecycle_arguments_throw_ArgumentNullException()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var lifecycleEvent = Event(Guid.NewGuid(), ExperienceStatus.Candidate, ExperienceStatus.Validated, 0);
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.CommitLifecycleEventAsync(null!, scope, lifecycleEvent, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.CommitLifecycleEventAsync(Authorize(tenant), null!, lifecycleEvent, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.CommitLifecycleEventAsync(Authorize(tenant), scope, null!, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.GetHistoryAsync(null!, scope, Guid.NewGuid(), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.GetHistoryAsync(Authorize(tenant), null!, Guid.NewGuid(), CancellationToken.None));
     }
 }

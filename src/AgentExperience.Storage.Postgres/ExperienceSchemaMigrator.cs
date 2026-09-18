@@ -25,8 +25,9 @@ namespace AgentExperience.Storage.Postgres;
 /// and one for the scripts, and must not be multiplexing, because a multiplexed command does not stay
 /// on one physical connection and so cannot hold a session advisory lock. The migrating role needs
 /// <c>CREATE</c> on the database (to create the <c>agent_experience</c> schema) and on that schema (to
-/// create its tables). The store itself only needs <c>INSERT</c> and <c>SELECT</c> on
-/// <c>agent_experience.experience_records</c>.
+/// create its tables). The store itself only needs <c>SELECT</c>, <c>INSERT</c>, and <c>UPDATE</c> on
+/// <c>agent_experience.experience_records</c> and <c>SELECT</c> and <c>INSERT</c> on
+/// <c>agent_experience.lifecycle_events</c>.
 /// </para>
 /// <para>
 /// The wait for the advisory lock is deliberately unbounded and ends only with the caller's token. Each

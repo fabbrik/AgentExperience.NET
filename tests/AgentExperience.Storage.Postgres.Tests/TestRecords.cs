@@ -44,6 +44,24 @@ internal static class TestRecords
         CreatedAt: createdAt ?? ColumnTime,
         UpdatedAt: createdAt ?? ColumnTime);
 
+    /// <summary>A lifecycle event for <paramref name="recordId"/>, with a fresh event ID unless one is given.</summary>
+    public static LifecycleEvent Event(
+        Guid recordId,
+        ExperienceStatus? prior,
+        ExperienceStatus current,
+        long expectedRevision,
+        Guid? eventId = null,
+        string reason = "verified evidence",
+        string producer = "finalization") => new(
+            EventId: eventId ?? Guid.NewGuid(),
+            ExperienceRecordId: recordId,
+            PriorStatus: prior,
+            CurrentStatus: current,
+            Reason: reason,
+            Producer: producer,
+            OccurredAt: PayloadTime,
+            ExpectedRevision: expectedRevision);
+
     /// <summary>A record with every optional part populated, including nested tool-call argument shapes.</summary>
     public static ExperienceRecord Full(Scope scope)
     {
