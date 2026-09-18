@@ -10,7 +10,9 @@ namespace AgentExperience.Storage.Postgres;
 /// <see cref="IExperienceRecordStore"/> over PostgreSQL with plain Npgsql. Each operation validates
 /// the request, checks it against the host-established <see cref="AuthorizationContext"/>, and only
 /// then opens a connection and runs parameterized SQL whose predicates apply the exact scope. The
-/// schema must already exist; see <see cref="PostgresExperienceRecordSchema"/>.
+/// schema must already exist: the host applies it once by calling
+/// <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/>. The store
+/// never migrates, on construction or otherwise.
 /// </summary>
 /// <remarks>
 /// PostgreSQL <c>timestamptz</c> stores microseconds, so <see cref="ExperienceRecord.CreatedAt"/> and

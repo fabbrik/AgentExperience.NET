@@ -4,8 +4,9 @@ using System.Xml.Linq;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Proves <c>AgentExperience.Storage.Postgres</c> uses plain Npgsql only: no MAF, EF Core, Dapper,
-/// Pgvector, or model-provider dependency, in either its compiled references or its csproj.
+/// Proves <c>AgentExperience.Storage.Postgres</c> uses plain Npgsql plus DbUp for schema migrations and
+/// nothing else: no MAF, EF Core, Dapper, Pgvector, or model-provider dependency, in either its compiled
+/// references or its csproj.
 /// </summary>
 public class DependencyBoundaryTests
 {
@@ -41,19 +42,20 @@ public class DependencyBoundaryTests
     }
 
     [Fact]
-    public void Storage_Postgres_csproj_declares_only_an_exact_Npgsql_pin()
+    public void Storage_Postgres_csproj_declares_only_the_exact_Npgsql_and_DbUp_pins()
     {
         var csprojPath = GetCsprojPath();
         Assert.True(File.Exists(csprojPath), $"Could not locate AgentExperience.Storage.Postgres.csproj at '{csprojPath}'.");
 
         var packages = XDocument.Load(csprojPath)
             .Descendants("PackageReference")
-            .Select(e => (Include: e.Attribute("Include")?.Value ?? string.Empty, Version: e.Attribute("Version")?.Value))
+            .Select(e => $"{e.Attribute("Include")?.Value} {e.Attribute("Version")?.Value}")
+            .Order(StringComparer.Ordinal)
             .ToList();
 
-        var npgsql = Assert.Single(packages);
-        Assert.Equal("Npgsql", npgsql.Include);
-        Assert.Equal("[10.0.3]", npgsql.Version);
+        Assert.Equal(
+            ["Npgsql [10.0.3]", "dbup-core [6.1.1]", "dbup-postgresql [7.0.1]"],
+            packages);
     }
 
     private static string GetCsprojPath([CallerFilePath] string testSourceFilePath = "") =>

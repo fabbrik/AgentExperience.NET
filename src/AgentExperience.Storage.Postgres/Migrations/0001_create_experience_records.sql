@@ -1,5 +1,8 @@
 -- AgentExperience.NET: initial Experience Record schema (payload_version 1).
--- Plain SQL with no journal table, so a DbUp-style migrator can run it unchanged.
+-- Applied by ExperienceSchemaMigrator and recorded in agent_experience.schema_versions.
+-- Every statement is IF NOT EXISTS on purpose: that idempotence is what lets the migrator journal a
+-- database whose schema was applied by hand before the runner existed. Do not edit this script; it is
+-- already journaled elsewhere. Add the next-numbered script instead.
 
 CREATE SCHEMA IF NOT EXISTS agent_experience;
 

@@ -21,6 +21,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Test-only migration scripts for the failing-script case, reached through the migrator's internal
+         script-selection seam. A failing script must never ship in the package. -->
+    <EmbeddedResource Include="FailingMigrations\0001_marker.sql" LogicalName="AgentExperience.Storage.Postgres.Tests.FailingMigrations.0001_marker.sql" />
+    <EmbeddedResource Include="FailingMigrations\0002_broken.sql" LogicalName="AgentExperience.Storage.Postgres.Tests.FailingMigrations.0002_broken.sql" />
+    <!-- Test-only scripts for the second-script case: a later script applies on top of an already-journaled
+         one, and its $body$-quoted DO block only survives while DbUp variable substitution stays disabled. -->
+    <EmbeddedResource Include="ExtraMigrations\0001_marker.sql" LogicalName="AgentExperience.Storage.Postgres.Tests.ExtraMigrations.0001_marker.sql" />
+    <EmbeddedResource Include="ExtraMigrations\0002_dollar_quoted.sql" LogicalName="AgentExperience.Storage.Postgres.Tests.ExtraMigrations.0002_dollar_quoted.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
   </ItemGroup>
 

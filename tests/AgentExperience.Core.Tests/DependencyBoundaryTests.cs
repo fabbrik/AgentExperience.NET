@@ -5,8 +5,8 @@ using System.Xml.Linq;
 namespace AgentExperience.Core.Tests;
 
 /// <summary>
-/// Proves <c>AgentExperience.Core</c> has no dependency on MAF, EF Core, Npgsql, OpenTelemetry, or
-/// a model-provider package (AD-1) -- its only allowed dependencies are
+/// Proves <c>AgentExperience.Core</c> has no dependency on MAF, EF Core, Npgsql, DbUp, OpenTelemetry,
+/// or a model-provider package (AD-1) -- its only allowed dependencies are
 /// <c>AgentExperience.Abstractions</c> and <c>Microsoft.Extensions.Compliance.Redaction</c> (plus
 /// that package's own transitive <c>Microsoft.Extensions.*</c> configuration/DI/options graph).
 /// Mirrors <c>AgentExperience.Abstractions.Tests/DependencyBoundaryTests.cs</c>. This runs in CI on
@@ -24,6 +24,7 @@ public class DependencyBoundaryTests
         "Microsoft.Agents", // Microsoft Agent Framework (MAF)
         "Microsoft.EntityFrameworkCore", // EF Core
         "Npgsql", // PostgreSQL driver
+        "dbup", // DbUp schema migrations (adapter-only, see AgentExperience.Storage.Postgres)
         "OpenTelemetry",
         "Microsoft.Extensions.AI", // model-provider / AI abstractions
         "Microsoft.SemanticKernel",

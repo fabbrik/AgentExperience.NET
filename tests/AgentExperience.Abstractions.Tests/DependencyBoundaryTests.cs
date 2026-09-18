@@ -5,7 +5,7 @@ using System.Xml.Linq;
 namespace AgentExperience.Abstractions.Tests;
 
 /// <summary>
-/// Proves <c>AgentExperience.Abstractions</c> has no dependency on MAF, EF Core, Npgsql,
+/// Proves <c>AgentExperience.Abstractions</c> has no dependency on MAF, EF Core, Npgsql, DbUp,
 /// OpenTelemetry, or a model-provider package (AC5). This runs in CI on every push/PR so the
 /// boundary cannot silently regress as later stories/adapters are added to the solution.
 /// </summary>
@@ -20,6 +20,7 @@ public class DependencyBoundaryTests
         "Microsoft.Agents", // Microsoft Agent Framework (MAF)
         "Microsoft.EntityFrameworkCore", // EF Core
         "Npgsql", // PostgreSQL driver
+        "dbup", // DbUp schema migrations (adapter-only, see AgentExperience.Storage.Postgres)
         "OpenTelemetry",
         "Microsoft.Extensions.AI", // model-provider / AI abstractions
         "Microsoft.SemanticKernel",
