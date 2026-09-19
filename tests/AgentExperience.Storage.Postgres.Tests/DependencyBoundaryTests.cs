@@ -4,9 +4,11 @@ using System.Xml.Linq;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Proves <c>AgentExperience.Storage.Postgres</c> uses plain Npgsql plus DbUp for schema migrations and
-/// nothing else: no MAF, EF Core, Dapper, Pgvector, or model-provider dependency, in either its compiled
-/// references or its csproj.
+/// Proves <c>AgentExperience.Storage.Postgres</c> uses plain Npgsql, DbUp for schema migrations, and
+/// the dependency-injection <em>abstractions</em> its own <c>AddAgentExperiencePostgresStore</c>
+/// extension needs -- and nothing else: no MAF, EF Core, Dapper, Pgvector, or model-provider
+/// dependency, in either its compiled references or its csproj. The DI package is abstractions only
+/// (no container, no hosting), so the adapter still imposes no composition root on a host.
 /// </summary>
 public class DependencyBoundaryTests
 {
@@ -42,7 +44,7 @@ public class DependencyBoundaryTests
     }
 
     [Fact]
-    public void Storage_Postgres_csproj_declares_only_the_exact_Npgsql_and_DbUp_pins()
+    public void Storage_Postgres_csproj_declares_only_the_exact_Npgsql_DbUp_and_DI_abstractions_pins()
     {
         var csprojPath = GetCsprojPath();
         Assert.True(File.Exists(csprojPath), $"Could not locate AgentExperience.Storage.Postgres.csproj at '{csprojPath}'.");
@@ -54,7 +56,12 @@ public class DependencyBoundaryTests
             .ToList();
 
         Assert.Equal(
-            ["Npgsql [10.0.3]", "dbup-core [6.1.1]", "dbup-postgresql [7.0.1]"],
+            [
+                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+                "Npgsql [10.0.3]",
+                "dbup-core [6.1.1]",
+                "dbup-postgresql [7.0.1]",
+            ],
             packages);
     }
 

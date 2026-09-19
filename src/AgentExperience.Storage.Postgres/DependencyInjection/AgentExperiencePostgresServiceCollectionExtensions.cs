@@ -1,0 +1,57 @@
+using AgentExperience.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Npgsql;
+
+namespace AgentExperience.Storage.Postgres.DependencyInjection;
+
+/// <summary>
+/// Registers the PostgreSQL Experience Record store in a <see cref="IServiceCollection"/>. The
+/// adapter owns its own registration, exactly as Core owns <c>AddAgentExperienceCore</c>, so a host
+/// wires the two together without either package knowing the other's concrete types.
+/// </summary>
+public static class AgentExperiencePostgresServiceCollectionExtensions
+{
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceRecordStore"/> as the singleton
+    /// <see cref="IExperienceRecordStore"/>, over an <see cref="NpgsqlDataSource"/> resolved from the
+    /// container.
+    /// </summary>
+    /// <remarks>
+    /// The host owns the data source's lifetime and the store never disposes it. The schema is not
+    /// applied here: call
+    /// <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/> once
+    /// at startup.
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresStore(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<IExperienceRecordStore>(provider =>
+            new PostgresExperienceRecordStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceRecordStore"/> as the singleton
+    /// <see cref="IExperienceRecordStore"/> over <paramref name="dataSource"/>, for a host that keeps
+    /// its data source outside the container.
+    /// </summary>
+    /// <param name="services">The service collection to add to.</param>
+    /// <param name="dataSource">The host-owned data source the store opens connections from. Never disposed by the store.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresStore(this IServiceCollection services, NpgsqlDataSource dataSource)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        services.TryAddSingleton<IExperienceRecordStore>(new PostgresExperienceRecordStore(dataSource));
+
+        return services;
+    }
+}

@@ -15,6 +15,9 @@
          in lockstep, to the dbup-core version the new dbup-postgresql depends on; DependencyBoundaryTests
          asserts this exact set of three PackageReferences. -->
     <PackageReference Include="dbup-core" Version="[6.1.1]" />
+    <!-- DI abstractions only (no container, no hosting): lets this adapter ship its own
+         AddAgentExperiencePostgresStore registration extension. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.11]" />
   </ItemGroup>
 
   <ItemGroup>

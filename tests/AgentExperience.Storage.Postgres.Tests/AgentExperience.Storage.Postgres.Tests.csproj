@@ -11,6 +11,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- Test-only: a real container, so the package's own AddAgentExperience... registrations are
+         resolved rather than merely declared. The shipping package takes only the DI abstractions. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <!-- Ephemeral pgvector/pgvector:pg16 container (Docker required). Pin verified 2026-09-15. -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
   </ItemGroup>
@@ -18,6 +21,12 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="AgentExperience.Abstractions" />
+    <Using Include="AgentExperience.Core.Capture" />
+    <Using Include="AgentExperience.Core.Finalization" />
+    <Using Include="AgentExperience.Core.Lifecycle" />
+    <Using Include="AgentExperience.Core.Reflections" />
+    <Using Include="AgentExperience.Core.Sanitization" />
+    <Using Include="AgentExperience.Core.Verification" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,6 +41,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The end-to-end finalization test drives Core's capture and finalization services through the
+         real store. The src-side dependency boundary is unaffected and still asserted by
+         DependencyBoundaryTests. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
   </ItemGroup>
 

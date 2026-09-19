@@ -12,6 +12,15 @@
           "Microsoft.Extensions.Options.ConfigurationExtensions": "10.0.11"
         }
       },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "Direct",
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "PSmotV19c7E3lKed++uYo1kSiXFI+uTl37CBSrhq+CfLC3FCHjG7R91+xPnNehQfHS1b0Tzo/CCLPWH3qaEheg==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.11"
+        }
+      },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
         "requested": "[17.14.1, )",
@@ -181,7 +190,8 @@
         "type": "Project",
         "dependencies": {
           "AgentExperience.Abstractions": "[1.0.0, )",
-          "Microsoft.Extensions.Compliance.Redaction": "[10.9.0, )"
+          "Microsoft.Extensions.Compliance.Redaction": "[10.9.0, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.11, 10.0.11]"
         }
       }
     }

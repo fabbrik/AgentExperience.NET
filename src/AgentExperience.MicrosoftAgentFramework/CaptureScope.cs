@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
+using AgentExperience.Core.Finalization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -210,7 +211,8 @@ internal sealed class CaptureScope
 
     /// <summary>
     /// Finalizes the run exactly once: appends the invocation's single attempt (every buffered tool
-    /// call, ordered by start) and then completes the run. Bounded by
+    /// call, ordered by start), completes the run, and -- when the host configured one -- hands the
+    /// completed run to Core's finalization service to become a durable Experience Record. Bounded by
     /// <see cref="ExperienceCaptureOptions.FinalizationTimeout"/> with its own token, never the
     /// caller's. A second call is a no-op. Never throws.
     /// </summary>
@@ -311,6 +313,104 @@ internal sealed class CaptureScope
         if (problems.Count > 0)
         {
             ReportFailure(ExperienceCaptureFailureStage.Finalize, string.Join(" ", problems), firstException);
+            return;
+        }
+
+        // Only a run whose attempt and completion both landed is worth turning into a durable record:
+        // finalizing a half-captured run would persist an incomplete history as if it were whole.
+        if (_options.FinalizationService is { } finalization && _options.ResolveFinalization is { } resolve)
+        {
+            await FinalizeExperienceAsync(finalization, resolve, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Hands the completed run to Core's finalization service, through the host's own request
+    /// resolver. Like everything else on this type, nothing here throws into MAF or the caller: every
+    /// problem is reported to <see cref="ExperienceCaptureOptions.OnCaptureFailure"/> and swallowed,
+    /// and the captured run is left untouched so the host can retry finalization itself.
+    /// </summary>
+    private async Task FinalizeExperienceAsync(
+        ExperienceFinalizationService finalization,
+        Func<ExperienceFinalizationContext, FinalizeExperienceRequest?> resolve,
+        CancellationToken cancellationToken)
+    {
+        FinalizeExperienceRequest? request;
+        try
+        {
+            if (!_service.TryGetRun(RunId, out var run))
+            {
+                ReportFailure(ExperienceCaptureFailureStage.Finalization, "The completed run could not be read back for finalization; it is not finalized.", null);
+                return;
+            }
+
+            request = resolve(new ExperienceFinalizationContext(run));
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(ExperienceCaptureFailureStage.Finalization, $"ResolveFinalization threw {ex.GetType().FullName}; the run is not finalized.", ex);
+            return;
+        }
+
+        // A null request is the host declining to finalize this particular run -- not a failure.
+        if (request is null)
+        {
+            return;
+        }
+
+        // The resolver is host code and could hand back a request for some other captured run, which
+        // would finalize an unrelated run on this invocation's behalf.
+        if (request.RunId != RunId)
+        {
+            ReportFailure(
+                ExperienceCaptureFailureStage.Finalization,
+                "ResolveFinalization returned a request for a different run; the run is not finalized.",
+                null);
+            return;
+        }
+
+        FinalizeExperienceResult result;
+        try
+        {
+            result = await finalization.FinalizeAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(ExperienceCaptureFailureStage.Finalization, $"Finalizing the run threw {ex.GetType().FullName}.", ex);
+            return;
+        }
+
+        if (result is null)
+        {
+            ReportFailure(ExperienceCaptureFailureStage.Finalization, "FinalizeAsync returned null.", null);
+            return;
+        }
+
+        // Only a genuine defect goes to the failure channel. A host whose policy denies storage, or
+        // whose authorization refuses a scope, made that decision on purpose and should not get a
+        // failure callback per invocation -- OnRunFinalized already carries the whole result.
+        if (result.Outcome is FinalizationOutcome.Failed)
+        {
+            ReportFailure(
+                ExperienceCaptureFailureStage.Finalization,
+                $"Finalization ended at stage {result.Stage} with outcome {result.Outcome}; no Experience Record is durable for this run.",
+                result.Failure?.Exception);
+        }
+
+        // Finalization may have overrun the timeout and already been reported as such; telling the
+        // host it finished after that would contradict the failure it already saw.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        try
+        {
+            _options.OnRunFinalized?.Invoke(result);
+        }
+        catch
+        {
+            // The host's finalization callback must never affect the agent invocation.
         }
     }
 

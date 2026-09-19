@@ -62,6 +62,9 @@ internal static class ReflectionFixtures
             StartedAt: BaseTime,
             EndedAt: executionStatus is null ? null : BaseTime.AddMinutes(1));
 
+    /// <summary>A required check that accepts evidence of any kind unless a kind is named.</summary>
+    public static RequiredCheck Check(string checkId, string? expectedKind = null) => new(checkId, expectedKind);
+
     public static Evidence Evidence(int index, string checkId, CheckResult result) =>
         new(
             EvidenceId: Guid.Parse($"aaaaaaaa-0000-0000-0000-{index:D12}"),
@@ -77,18 +80,18 @@ internal static class ReflectionFixtures
     public static VerificationResult Verified() =>
         VerificationAggregator.Aggregate(
             [Evidence(1, "build", CheckResult.Pass), Evidence(2, "tests", CheckResult.Pass)],
-            ["build", "tests"], Round, Round.ArtifactRevision, BaseTime);
+            [Check("build"), Check("tests")], Round, Round.ArtifactRevision, BaseTime);
 
     public static VerificationResult Failed() =>
         VerificationAggregator.Aggregate(
             [Evidence(1, "build", CheckResult.Fail), Evidence(2, "tests", CheckResult.Pass)],
-            ["build", "tests"], Round, Round.ArtifactRevision, BaseTime);
+            [Check("build"), Check("tests")], Round, Round.ArtifactRevision, BaseTime);
 
     /// <summary>"build" passes, "tests" has no evidence: Unknown with completion score 0.5.</summary>
     public static VerificationResult Unknown() =>
         VerificationAggregator.Aggregate(
             [Evidence(1, "build", CheckResult.Pass)],
-            ["build", "tests"], Round, Round.ArtifactRevision, BaseTime);
+            [Check("build"), Check("tests")], Round, Round.ArtifactRevision, BaseTime);
 
     /// <summary>Attempt 0 errors, attempt 1 completes.</summary>
     public static IReadOnlyList<Attempt> RepairAttempts() =>
@@ -447,7 +450,7 @@ public class DefaultExperienceReflectorTests
     [Fact]
     public async Task Unknown_with_a_zero_completion_score_has_no_partial_score_warning()
     {
-        var evaluation = VerificationAggregator.Aggregate([], ["build"], null, "rev-1", ReflectionFixtures.BaseTime);
+        var evaluation = VerificationAggregator.Aggregate([], [ReflectionFixtures.Check("build")], null, "rev-1", ReflectionFixtures.BaseTime);
         Assert.Equal(TaskVerificationStatus.Unknown, evaluation.Outcome.Status);
         Assert.Equal(0.0, evaluation.CompletionScore);
 
