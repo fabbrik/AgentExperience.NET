@@ -7,7 +7,7 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, and moved through its lifecycle with atomic, audited commits. Retrieval, injection, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
+> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, moved through its lifecycle with atomic, audited commits, and retrieved by task text with bounded, explainable ranking. Vector retrieval, injection, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
 
 ## Why
 
@@ -34,7 +34,8 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Atomic audited lifecycle commits: the event and the record's projection in one transaction, idempotent by event ID, revision-checked, with append-only history | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | Journaled schema migrations: embedded scripts applied once, one transaction per script, serialized across processes by an advisory lock | `AgentExperience.Storage.Postgres` |
 | One finalization call: evaluate, gate on authorization and the host's storage decision, reflect, create the record as a `Candidate`, commit the initial event that promotes it — replay-safe and structured at every stage | `AgentExperience.Core` |
-| Dependency-injection registration for each package, so a host wires capture, finalization, and storage without knowing concrete types | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| Text retrieval of applicable experience: eligibility decided before ranking, every ranking component and effective weight exposed, bounded by a timeout that is never an exception | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| Dependency-injection registration for each package, so a host wires capture, finalization, storage, and retrieval without knowing concrete types | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 
 ## Quick look
 
@@ -112,7 +113,104 @@ a retry re-derives exactly the event the store already deduplicates on.
 Finalization never sanitizes — capture already rejected anything unsafe — and never decides storage or risk policy on
 the host's behalf: `StorageDecision` travels in the request and Core simply obeys it.
 
-### Wiring it
+## Retrieving applicable experience
+
+Finding experience that applies to a task is one Core call: `ExperienceRetrievalService.RetrieveAsync`. It asks the
+storage adapter for scope-, status- and confidence-filtered text matches, decides the remaining eligibility itself,
+and ranks what survives — always returning a structured result rather than throwing.
+
+```csharp
+using AgentExperience.Core.Retrieval;
+
+var result = await retrieval.RetrieveAsync(
+    new RetrieveExperienceRequest(
+        Authorization: authorization,            // host-established; the request scope must lie inside it
+        Scope: scope,                            // the exact scope to retrieve within, never widened
+        TaskText: "refund ticket stuck on a lock",
+        RequiredEnvironmentAttributes: new Dictionary<string, string> { ["region"] = "us-east" },
+        CorrelationId: traceId),
+    cancellationToken);
+
+if (result.TimedOut)
+{
+    logger.LogInformation("Retrieval timed out for {CorrelationId}; the agent runs without memory", result.CorrelationId);
+}
+
+foreach (var ranked in result.Records)          // highest score first, ties by ExperienceId ascending
+{
+    logger.LogDebug("{Id} scored {Score} from {Components}",
+        ranked.Record.ExperienceId,
+        ranked.Score,
+        string.Join(", ", ranked.Components.Select(c => $"{c.Kind}={c.Value}*{c.Weight}")));
+}
+```
+
+**Eligibility is decided before ranking, and nothing is scored before it is known to be reusable.**
+
+| Check | Where it runs | Effect |
+| --- | --- | --- |
+| Scope | SQL | Only records in the request's *exact* scope; a foreign scope reveals nothing |
+| Status | SQL | Only `Validated` and `Reinforced`. `Candidate`, `Quarantined`, `Contested`, `Stale`, `Superseded`, and `Revoked` are never returned, whatever their text match |
+| Reuse confidence | SQL | Below `RetrievalPolicy.MinimumConfidence` (default 0.5) is excluded |
+| Text match | SQL | PostgreSQL full-text search over task ID, task summary, and reflection lesson |
+| Expiry | Core | Last lifecycle activity older than `RetrievalPolicy.MaxAge` is excluded. `null` (the default) means no expiry |
+| Environment | Core | Every required attribute must equal the record's `EnvironmentFingerprint.Metadata` entry; a missing key excludes the record. A request with no required attributes sets `EnvironmentUnrestricted` on the result |
+
+`result.Excluded` itemizes what the **Core** checks removed — expiry and environment — so "nothing matched" is
+distinguishable from "something matched but was not reusable here". It is deliberately not a complete account of
+everything filtered: scope, status, and the confidence floor are applied in SQL, so records they exclude never reach
+Core and are never listed. That split is the point — a foreign-scope or revoked record must not be observable, even
+as a count.
+
+**There is a recall ceiling, and it is visible.** The search returns at most `RetrievalPolicy.CandidateLimit`
+candidates (default 50), ordered by *text* relevance, and ranking only ever sees those. So a record with a weaker
+text match but strong confidence, recency, or status is not ranked at all once that many stronger text matches exist:
+the weighting can only reorder what the ceiling let through. When the ceiling is reached, `result.Truncated` is
+`true` — the records beyond it are in no exclusion list either, because no eligibility check ever looked at them.
+Raise `CandidateLimit` or narrow the task text when that matters. `request.Limit` may not exceed `CandidateLimit`; a
+larger value is rejected rather than quietly capped.
+
+**Ranking is explainable.** Every returned record carries all five normalized components (each in 0–1) and the
+effective weight applied to it, so the score is always reproducible from what the result holds.
+
+| Component | Default weight | Normalized as |
+| --- | --- | --- |
+| Relevance | 0.35 | `ts_rank_cd` of the text match, normalized to 0–1 |
+| Confidence | 0.25 | The record's `ReuseConfidence` |
+| Recency | 0.15 | `2^(-age / RecencyHalfLife)`, half-life 30 days by default. *Age* is measured from `UpdatedAt` |
+| Status | 0.15 | `Reinforced` 1.0, `Validated` 0.5 |
+| Environment compatibility | 0.10 | 1.0 for a record that satisfied the request's required attributes — which every ranked record did, since a mismatch excludes it before ranking |
+
+Weights must be finite, non-negative, and sum to 1 (within `RankingWeights.SumTolerance`); anything else throws
+`ArgumentOutOfRangeException` at construction, so an invalid weighting can never reach a retrieval call. Ties sort by
+`ExperienceId` ascending and ordinal, so the ordering is total and stable, and a golden fixture pins the default
+ordering together with every component value.
+
+**"Recency" and "expiry" mean last lifecycle activity, not when the lesson was learned.** Both read
+`ExperienceRecord.UpdatedAt`, which every lifecycle commit bumps. A years-old lesson reinforced yesterday is one day
+old by this measure: it scores as fully recent and never expires. That is deliberate — recent revalidation is
+evidence the lesson still holds — but it is not a measure of how old the underlying knowledge is, and a policy that
+needs one should not use `MaxAge` for it.
+
+**Bounded, and fail-closed.** The whole call is bounded by `RetrievalPolicy.Timeout` (default 500 ms, maximum one
+day), measured with an injected `TimeProvider`.
+
+| Situation | Outcome | Records |
+| --- | --- | --- |
+| Ran inside the timeout | `Completed` | Every eligible record among the candidates considered, ranked and cut to the request's limit. Check `result.Truncated`: `true` means more matched than were considered |
+| Exceeded the timeout | `TimedOut` (`result.TimedOut`), with the request's `CorrelationId` — never an exception | Empty |
+| Request scope outside the authorization | `Denied` | Empty; **no search is issued** |
+| Search failed, or a candidate could not be read, came back out of scope, or was returned twice | `Failed`, with `result.Failure` | Empty, never unfiltered |
+| Caller cancelled | `OperationCanceledException`, unwrapped and distinct from the timeout | — |
+
+`result.Failure.Reason` is content-free and safe to log. `result.Failure.Exception`, when present, is whatever the
+port threw — a driver message can quote SQL text or connection detail, so treat it as local diagnostics rather than
+something to pass on.
+
+Retrieval returns ranked records and the evidence for their ranking. Building a labeled Historical Reference payload
+and injecting it into an agent is a separate, later step, and retrieved content never becomes authority.
+
+## Wiring it all together
 
 Each package registers its own services, so a host never names a concrete type:
 
@@ -122,9 +220,12 @@ using AgentExperience.Storage.Postgres.DependencyInjection;
 
 services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 services.AddAgentExperiencePostgresStore();                     // IExperienceRecordStore
+services.AddAgentExperiencePostgresCandidateSource();           // IExperienceCandidateSource
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
 // -> ISanitizer, IExperienceCaptureService, IExperienceReflector,
 //    ExperienceLifecycleService, ExperienceFinalizationService
+services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService
+// -> defaults to RetrievalPolicy.Default and RankingWeights.Default; pass your own to override
 ```
 
 `AgentExperience.Abstractions` stays BCL-only; only `Core` and the storage adapter take
@@ -148,12 +249,12 @@ the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#final
 ```
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
-  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization
+  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, retrieval
   AgentExperience.MicrosoftAgentFramework/  MAF adapter (pinned Microsoft.Agents.AI 1.20.0)
-  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
+  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
-  AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle tests
+  AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle, retrieval tests
   AgentExperience.MicrosoftAgentFramework.Tests/  real ChatClientAgent runs against a scripted fake model
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
@@ -171,16 +272,16 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` and the `PostgresExperienceRecordStoreTests`, `PostgresLifecycleCommitTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` and the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
-2. **Reuse relevant experience:** PostgreSQL persistence, atomic audited lifecycle commits, and one-call finalization of captured runs (in place), hybrid text and vector retrieval, historical-reference injection into MAF
+2. **Reuse relevant experience:** PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, and bounded text retrieval with explainable ranking (in place), vector and hybrid retrieval, historical-reference injection into MAF
 3. **Govern experience safely:** sharing grants, the remaining lifecycle transitions, evidence-based confidence updates
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 

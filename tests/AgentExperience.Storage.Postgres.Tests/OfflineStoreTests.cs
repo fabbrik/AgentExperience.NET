@@ -314,7 +314,11 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         var sql = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.InitialScriptName);
 
         Assert.Equal(
-            [PostgresExperienceRecordSchema.InitialScriptName, PostgresExperienceRecordSchema.LifecycleEventsScriptName],
+            [
+                PostgresExperienceRecordSchema.InitialScriptName,
+                PostgresExperienceRecordSchema.LifecycleEventsScriptName,
+                PostgresExperienceRecordSchema.SearchScriptName,
+            ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
         Assert.Contains("payload_version", sql, StringComparison.Ordinal);
@@ -340,6 +344,148 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Search_script_is_embedded_separately_and_only_adds_derived_read_artifacts()
+    {
+        var search = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.SearchScriptName);
+
+        // A generated column, so no write path has to maintain it and it can never disagree with the
+        // record it indexes; the store's INSERT and its lifecycle UPDATE are untouched by this script.
+        Assert.Contains("ADD COLUMN IF NOT EXISTS search_vector tsvector", search, StringComparison.Ordinal);
+        Assert.Contains("GENERATED ALWAYS AS", search, StringComparison.Ordinal);
+        Assert.Contains("STORED", search, StringComparison.Ordinal);
+        Assert.Contains("CREATE INDEX IF NOT EXISTS ix_experience_records_search", search, StringComparison.Ordinal);
+        Assert.Contains("USING GIN", search, StringComparison.Ordinal);
+
+        // The query and the generated column must be analyzed with the same configuration: querying with
+        // a different one silently changes which rows match, so the constant is pinned to the script.
+        Assert.Contains($"'{PostgresExperienceCandidateSource.SearchConfiguration}'", search, StringComparison.Ordinal);
+        Assert.Equal("english", PostgresExperienceCandidateSource.SearchConfiguration);
+
+        // A tsvector may not exceed 1 MB, and a generated column that raises fails the INSERT, not the
+        // search -- so the concatenated text is bounded before it is analyzed.
+        Assert.Contains("left(", search, StringComparison.Ordinal);
+
+        // The indexed text is exactly the three fields that say what a record is about.
+        Assert.Contains("task_id", search, StringComparison.Ordinal);
+        Assert.Contains("payload ->> 'taskSummary'", search, StringComparison.Ordinal);
+        Assert.Contains("payload -> 'reflection' ->> 'lesson'", search, StringComparison.Ordinal);
+
+        // The "never" assertions below are about what the script *executes*, so the leading comment block
+        // -- which explains, in prose, why 0001's now-redundant index is not dropped -- is stripped first.
+        var statements = string.Join(
+            '\n',
+            search.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Append-only: 0003 adds to the table and rewrites nothing 0001 or 0002 created.
+        Assert.DoesNotContain("DROP", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ALTER COLUMN", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("lifecycle_events", statements, StringComparison.Ordinal);
+
+        // Story 2.6 owns embeddings; this script must not anticipate them.
+        Assert.DoesNotContain("embedding", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("hnsw", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ivfflat", statements, StringComparison.OrdinalIgnoreCase);
+
+        // 0003 is applied after 0002, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public async Task Malformed_candidate_search_returns_Invalid_with_every_field_path_and_no_database_call()
+    {
+        var tenant = NewTenant();
+        var source = new PostgresExperienceCandidateSource(_dataSource); // unreachable: reaching it would hang or throw
+
+        var result = await source.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(new Scope(tenant, "app-1", " "), "  ", [], 1.5, 0),
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Empty(result.Candidates);
+        Assert.Equal(
+            ["Scope.ProjectId", "TaskText", "EligibleStatuses", "MinimumConfidence", "Limit"],
+            result.Errors.Select(error => error.Path));
+    }
+
+    [Fact]
+    public async Task Task_text_past_the_maximum_length_is_Invalid_rather_than_reaching_the_parser()
+    {
+        var tenant = NewTenant();
+        var source = new PostgresExperienceCandidateSource(_dataSource);
+
+        var result = await source.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(
+                Scope(tenant),
+                new string('a', ExperienceCandidateQuery.MaxTaskTextLength + 1),
+                [ExperienceStatus.Validated],
+                0.5),
+            CancellationToken.None);
+
+        // A typed Invalid, decided before any connection opens -- not a multi-megabyte round trip that
+        // comes back as an opaque infrastructure failure.
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("TaskText", error.Path);
+        Assert.DoesNotContain("aaaa", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_candidate_search_outside_the_authorization_is_Denied_before_any_connection_opens()
+    {
+        var tenant = NewTenant();
+        var source = new PostgresExperienceCandidateSource(_dataSource);
+
+        var result = await source.SearchAsync(
+            new AuthorizationContext(tenant, "host-principal", [], ColumnTime, ProjectId: "other-project"),
+            new ExperienceCandidateQuery(Scope(tenant), "refund", [ExperienceStatus.Validated], 0.5),
+            CancellationToken.None);
+
+        // The data source points at a closed port: any connection attempt would have failed instead.
+        Assert.Equal(ExperienceStoreOutcome.Denied, result.Outcome);
+        Assert.Empty(result.Candidates);
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public async Task An_unreachable_database_makes_a_candidate_search_throw_ExperienceStoreException()
+    {
+        var tenant = NewTenant();
+        var source = new PostgresExperienceCandidateSource(_dataSource);
+
+        var ex = await Assert.ThrowsAsync<ExperienceStoreException>(() => source.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(Scope(tenant), "refund", [ExperienceStatus.Validated], 0.5),
+            CancellationToken.None));
+
+        Assert.NotNull(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task A_cancelled_candidate_search_surfaces_cancellation_unwrapped()
+    {
+        var tenant = NewTenant();
+        var source = new PostgresExperienceCandidateSource(_dataSource);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(Scope(tenant), "refund", [ExperienceStatus.Validated], 0.5),
+            cancellation.Token));
+    }
+
+    [Fact]
+    public void A_candidate_source_needs_a_data_source()
+    {
+        Assert.Throws<ArgumentNullException>(() => new PostgresExperienceCandidateSource(null!));
     }
 
     [Fact]

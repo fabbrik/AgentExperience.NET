@@ -54,4 +54,48 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
+    /// <see cref="IExperienceCandidateSource"/>, over an <see cref="NpgsqlDataSource"/> resolved from
+    /// the container, so Core's retrieval service has something to search.
+    /// </summary>
+    /// <remarks>
+    /// Registered separately from the store: the two are independent ports, and a host that only
+    /// writes experience does not need the search index. The schema is not applied here -- the search
+    /// column and its index live in <c>0003_add_experience_search.sql</c>, applied by
+    /// <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/> at
+    /// startup like the rest of the schema.
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresCandidateSource(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<IExperienceCandidateSource>(provider =>
+            new PostgresExperienceCandidateSource(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
+    /// <see cref="IExperienceCandidateSource"/> over <paramref name="dataSource"/>, for a host that
+    /// keeps its data source outside the container.
+    /// </summary>
+    /// <param name="services">The service collection to add to.</param>
+    /// <param name="dataSource">The host-owned data source the search opens connections from. Never disposed by the source.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresCandidateSource(this IServiceCollection services, NpgsqlDataSource dataSource)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        services.TryAddSingleton<IExperienceCandidateSource>(new PostgresExperienceCandidateSource(dataSource));
+
+        return services;
+    }
 }

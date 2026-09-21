@@ -27,6 +27,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Migrations\0001_create_experience_records.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0001_create_experience_records.sql" />
     <EmbeddedResource Include="Migrations\0002_create_lifecycle_events.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0002_create_lifecycle_events.sql" />
+    <EmbeddedResource Include="Migrations\0003_add_experience_search.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0003_add_experience_search.sql" />
   </ItemGroup>
 
   <ItemGroup>

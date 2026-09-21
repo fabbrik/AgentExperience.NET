@@ -1,7 +1,7 @@
 # AgentExperience.Storage.Postgres
 
-Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port, using plain
-Npgsql.
+Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port and searches
+them by task text through the `IExperienceCandidateSource` port, using plain Npgsql.
 
 Pinned to `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
 `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.11** (all exact; the DI package is abstractions only —
@@ -56,9 +56,23 @@ var commit = await store.CommitLifecycleEventAsync(
 
 var history = await store.GetHistoryAsync(authorization, record.Scope, record.ExperienceId, cancellationToken);
 // history.Events is every transition, oldest first; history.Revision is the record's current revision.
+
+// Finding records that could apply to a task. A separate, read-only port (see "Text search" below).
+IExperienceCandidateSource search = new PostgresExperienceCandidateSource(dataSource);
+
+var candidates = await search.SearchAsync(
+    authorization,
+    new ExperienceCandidateQuery(
+        Scope: record.Scope,                                          // exact scope, applied in SQL
+        TaskText: "refund ticket stuck on a lock",                    // arbitrary text; no escaping needed
+        EligibleStatuses: [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
+        MinimumConfidence: 0.5,
+        Limit: 50),
+    cancellationToken);
+// candidates.Candidates is strongest match first, each with a Relevance in [0, 1].
 ```
 
-The store never disposes the data source. The host owns it.
+Neither the store nor the search disposes the data source. The host owns it.
 
 ### Registering it
 
@@ -67,13 +81,17 @@ using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Storage.Postgres.DependencyInjection;
 
 services.AddSingleton(NpgsqlDataSource.Create(connectionString));
-services.AddAgentExperiencePostgresStore();   // or AddAgentExperiencePostgresStore(dataSource)
+services.AddAgentExperiencePostgresStore();             // or AddAgentExperiencePostgresStore(dataSource)
+services.AddAgentExperiencePostgresCandidateSource();   // or ...CandidateSource(dataSource)
 
-// Core's own extension then supplies capture, reflection, lifecycle, and finalization over this store.
+// Core's own extensions then supply capture, reflection, lifecycle, finalization, and retrieval over them.
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
+services.AddAgentExperienceRetrieval();
 ```
 
-The registration is `TryAdd`-based, so a host that has already registered its own `IExperienceRecordStore` keeps it.
+The two ports are registered independently: a host that only writes experience never has to register the search, and
+one that only reads never has to register the store. Both registrations are `TryAdd`-based, so a host that has
+already registered its own `IExperienceRecordStore` or `IExperienceCandidateSource` keeps it.
 It does **not** apply the schema: call `ExperienceSchemaMigrator.MigrateAsync` once at startup (see
 [Schema](#schema)).
 
@@ -107,6 +125,7 @@ themselves.
 | Lifecycle event and projection committed together | `Committed` |
 | Lifecycle `ExpectedRevision` ≠ the record's current `Revision` | `StaleRevision` (nothing written) |
 | Lifecycle `PriorStatus` ≠ the record's stored `Status` | `StatusMismatch` with the stored status (nothing written) |
+| Candidate search ran (no text match is still `Found`) | `Found` with the matching candidates, strongest match first |
 | Database or driver failure (`NpgsqlException`, `SocketException`, `TimeoutException`) | throws `ExperienceStoreException` with the original as `InnerException` |
 | Stored row with an unsupported `payload_version` or an unreadable payload | throws `ExperienceStoreException` |
 | Caller cancellation | throws `OperationCanceledException`, unwrapped |
@@ -153,6 +172,44 @@ the transaction opens, exactly as for the store's other operations, and the scop
   statement, so the revision can never contradict the events even if a commit lands mid-read. Events are
   append-only: nothing deletes or rewrites them. `GetAsync` and its result are unchanged by this operation.
 
+## Text search
+
+`PostgresExperienceCandidateSource` answers one question — *which stored records look relevant to this task text?* —
+and nothing else. It is a separate port from the store on purpose: it only reads, it needs only `SELECT`, and a host
+that never retrieves does not have to register it.
+
+It runs in the same order as every store operation: validate the query, check the request scope against the
+host-established `AuthorizationContext`, and only then open a connection. A scope outside the context is `Denied`
+before any connection opens, and the scope predicate is applied in SQL exactly as it is for reads.
+
+**What runs in the database:** the exact scope predicate, the caller's eligible status set, the reuse-confidence
+floor (inclusive), the text match, and the limit (1–200, default 50). Nothing else. Because those filters run in SQL,
+records they exclude never reach the caller and are never itemized anywhere — which is the point for scope, and worth
+remembering for status and confidence. Expiry and environment
+compatibility are Core's decisions, made over the candidates that come back, because they depend on the clock and on
+the request rather than on stored state alone.
+
+**What is indexed:** the task ID, the sanitized task summary, and the reflection's lesson — the fields that say what
+a record is *about*. Attempts, tool calls, evidence, and environment metadata are deliberately not indexed: matching
+on them would make retrieval recall incidental identifiers and error strings rather than applicable experience.
+
+**The query text** goes through `websearch_to_tsquery`, which accepts arbitrary user input — quotes, `or`, `-`,
+stray punctuation — and never raises a syntax error, so callers do not escape or sanitize around it. Multiple words
+are combined with AND, and it is capped at `ExperienceCandidateQuery.MaxTaskTextLength` (4096) characters; longer is
+`Invalid` before a connection opens. The text-search configuration is `english`, fixed by the generated column;
+changing it means a new migration that rebuilds the column, because already-indexed rows would otherwise keep the
+old analysis.
+
+Because the `english` configuration drops stopwords, **text made only of stopwords matches nothing at all** — `"the
+of and"` produces an empty query, and an empty query matches no row by construction. The result is an ordinary
+`Found` with no candidates, indistinguishable from "nothing relevant is stored". A caller that wants to tell those
+apart has to decide it before calling.
+
+**Relevance** is `ts_rank_cd` with normalization flag 32 (`rank / (rank + 1)`), so it is already in [0, 1). It is a
+within-search measure: two candidates' relevances are comparable to each other, never to a relevance from a different
+query. Candidates come back in descending relevance, ties broken by `experience_id`; Core re-sorts with its own
+total, ordinal tie-break when it ranks.
+
 ## Schema
 
 The schema lives in the embedded scripts under `Migrations/`.
@@ -180,6 +237,31 @@ The schema lives in the embedded scripts under `Migrations/`.
   back by the revision-checked projection update, and a foreign-key violation would report that expected condition
   as an infrastructure failure instead.
 
+`0003_add_experience_search.sql` makes those records searchable by text:
+
+- A `search_vector` column, `GENERATED ALWAYS AS ... STORED` over `task_id`, the payload's `taskSummary`, and the
+  payload's `reflection.lesson`, analyzed with the `english` configuration. Generated, not a trigger and not a column
+  the store writes: it is derived from state that already exists, so it can never disagree with the record it indexes
+  and no write path has to maintain it. The store's `INSERT` and its lifecycle `UPDATE` are unchanged.
+- A **GIN** index on `search_vector`. The vector is read far more often than written — a record's text never changes
+  after it is created, only its status, revision, and `updated_at` do — so GIN's faster `@@` lookups are the right
+  trade.
+- A composite index on `(tenant_id, application_id, project_id, status, reuse_confidence)`, so a search decides scope,
+  status, and the confidence floor from an index rather than scanning foreign scopes. It covers only the three
+  *required* scope columns: `team_id`, `agent_id`, and `user_id` are matched with `IS NOT DISTINCT FROM`, which is
+  not an indexable btree operator, so including them would not help. A deployment that scopes records by team, agent,
+  or user still scans its whole project and filters those three in memory; if that matters at your row counts, add
+  your own partial or expression index.
+- `0001`'s index on `(tenant_id, application_id, project_id)` is now a prefix of that composite and therefore
+  redundant, but it is deliberately left in place: scripts are append-only, and dropping an index `0001` created
+  would rewrite history for every database that already applied it. The cost is one extra index maintained on write.
+- The concatenated text is bounded with `left(..., 100000)` before it is analyzed. A `tsvector` may not exceed 1 MB,
+  and in a *generated* column exceeding it is not a search failure but a failed `INSERT` — and a failed migration on
+  a table that already holds such a row. The bound only ever truncates text that would have broken the write.
+
+Adding the generated column rewrites the table, so on a large existing deployment apply this script in a maintenance
+window like any other rewriting migration.
+
 ### Applying it
 
 Call `ExperienceSchemaMigrator.MigrateAsync` explicitly at startup, before using the store. The store never migrates
@@ -201,7 +283,8 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
   two hosts starting at once cannot apply the same script twice. The lock is always released.
 - **Permissions.** The migrating role needs `CREATE` on the database (for the `agent_experience` schema) and on that
   schema (for its tables). The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
-  `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`.
+  `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`; the
+  candidate source needs only `SELECT` on `agent_experience.experience_records`.
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one
   for the scripts. A multiplexing data source (`NpgsqlDataSourceBuilder.EnableMultiplexing`) cannot hold a session
   advisory lock, because its commands do not stay on one physical connection, so it is not supported for migration.
@@ -246,5 +329,8 @@ definition, and a rename would reapply it. Change the schema by adding the next-
 - **Query order** is newest `CreatedAt` first, then `ExperienceId` in PostgreSQL `uuid` byte order, which differs
   from .NET `Guid` comparison. `Limit` must be from 1 to 500 (default 50).
   `Statuses` is either null (all statuses) or a non-empty list.
+- **Search order** is descending `ts_rank_cd` relevance, then `ExperienceId` in PostgreSQL `uuid` byte order. `Limit`
+  must be from 1 to 200 (default 50), and `EligibleStatuses` must be non-empty — an empty set is `Invalid` rather
+  than widened to "every status", so a caller can never accidentally ask for records it considers ineligible.
 - PostgreSQL cannot store the NUL character (U+0000) in `text` or `jsonb`, so a record or scope containing it is
   `Invalid` and never reaches the database.
