@@ -7,7 +7,7 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, moved through its lifecycle with atomic, audited commits, and retrieved by task text with bounded, explainable ranking. Vector retrieval, injection, and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
+> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, moved through its lifecycle with atomic, audited commits, indexed as an embedding after the fact, and retrieved by task text *and* by meaning with bounded, explainable ranking. Injection and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
 
 ## Why
 
@@ -35,7 +35,9 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Journaled schema migrations: embedded scripts applied once, one transaction per script, serialized across processes by an advisory lock | `AgentExperience.Storage.Postgres` |
 | One finalization call: evaluate, gate on authorization and the host's storage decision, reflect, create the record as a `Candidate`, commit the initial event that promotes it — replay-safe and structured at every stage | `AgentExperience.Core` |
 | Text retrieval of applicable experience: eligibility decided before ranking, every ranking component and effective weight exposed, bounded by a timeout that is never an exception | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
-| Dependency-injection registration for each package, so a host wires capture, finalization, storage, and retrieval without knowing concrete types | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| Embedding ingestion after the canonical commit: only the sanitized retrieval summary is embedded, writes are conditional on the live revision, and every provider failure leaves the record committed and retryable | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
+| Hybrid retrieval: a bounded vector channel merged with the text one under the same eligibility, timeout, and ceiling, with an explicit, flagged text-only fallback whenever the vector channel cannot be trusted | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
+| Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 
 ## Quick look
 
@@ -113,11 +115,99 @@ a retry re-derives exactly the event the store already deduplicates on.
 Finalization never sanitizes — capture already rejected anything unsafe — and never decides storage or risk policy on
 the host's behalf: `StorageDecision` travels in the request and Core simply obeys it.
 
+If an indexing hook is registered, one more thing happens *after* those six stages: the committed record is embedded
+and its vector stored. That step is outside the canonical write and can never change the outcome above — see
+[Indexing experience for semantic reuse](#indexing-experience-for-semantic-reuse).
+
+## Indexing experience for semantic reuse
+
+A record that is committed is already reusable: it is text-searchable the moment it lands. Indexing gives it a
+second way to be found — by meaning — and it is **derived data** throughout. Nothing about the canonical write
+depends on an embedding provider being up.
+
+If an `ExperienceIndexingService` is registered, finalization embeds each record it commits, right after the commit:
+
+```csharp
+var result = await finalization.FinalizeAsync(request, cancellationToken);
+
+if (result.Indexing is { IsIndexed: false } indexing)
+{
+    // Never a reason to treat the record as anything less than durable.
+    logger.LogWarning("Experience {Id} is {Status} but not indexed ({Outcome}, retryable: {Retryable}): {Reason}",
+        result.ExperienceId, result.Status, indexing.Outcome, indexing.IsRetryable, indexing.Failure?.Reason);
+}
+```
+
+**Only the sanitized retrieval summary is embedded** — the task ID, the sanitized task summary, and the reflection's
+lesson, the same three fields the text index analyzes. Attempts, tool calls, evidence, provenance, and environment
+metadata are never sent to a provider. The summary is read from the database at index time, not from a record the
+caller happens to be holding, so what is embedded is what is really stored, at the revision it is really stored at.
+
+The two channels read the same *fields* but not necessarily the same *length*: the embedded summary is capped at
+8,192 characters (`ExperienceRetrievalSummary.MaxLength`, so the hashed text and the text sent to a provider are
+always identical), while `0003` analyzes the concatenation up to 100,000. A record whose summary and lesson together
+run past 8 KB is therefore matched on more of its text by words than by meaning. Both caps are far past any
+realistic summary.
+
+**Only records a search could actually return are embedded.** The indexing scan applies the same status filter and
+confidence floor the vector search applies, and the post-commit hook checks the record before calling anything, so
+a `Quarantined`, `Revoked`, `Superseded`, or `Candidate` record's summary and lesson never leave the database for a
+third party — its vector could never be returned anyway.
+
+Each stored vector carries **model ID, dimension, content hash, and source revision**, kept entirely separate from
+lifecycle state. None of them ever influences eligibility, status, or reuse confidence; they exist so a write can be
+conditional, a re-index can be free, and a query vector is never compared with something it is not comparable with.
+
+| Outcome | When | What was written |
+| --- | --- | --- |
+| `Indexed` | The summary was embedded and stored | The vector and its descriptor |
+| `Skipped` | This model already embedded exactly this text | Nothing — and **no provider call was made** |
+| `Stale` | The record moved to a newer revision before the write landed | Nothing; the stored vector is unchanged. Retryable |
+| `Missing` | The record no longer exists in this scope | Nothing, and **no row is created** — an in-flight write cannot resurrect a deleted record |
+| `Ineligible` | The record's status or confidence means a search could never return it | Nothing, and **nothing was sent to a provider** |
+| `ProviderFailed` | The provider threw, timed out, or returned a vector of the wrong width or with a non-finite component | Nothing. The record stays committed, durable, and text-searchable. Retryable |
+| `IndexFailed` | The index itself failed or refused the write | Nothing. Retryable |
+| `Denied` | The scope lies outside the authorization | Nothing was read, embedded, or written |
+
+**Re-indexing is explicit, scoped, and idempotent.** It never runs on its own:
+
+```csharp
+var pass = await indexing.ReindexAsync(
+    authorization,
+    new ReindexExperienceRequest(scope, ExperienceIds: null, Limit: 100),   // bounded; pass again to page
+    cancellationToken);
+
+logger.LogInformation("{Examined} examined, {Indexed} re-embedded, {Skipped} unchanged, {Failed} failed",
+    pass.Examined, pass.Indexed, pass.Skipped, pass.Failed);
+```
+
+A pass is **bounded and resumable**: records are considered in ascending `ExperienceId` order, and `pass.LastExaminedId`
+is the cursor to hand to the next pass's `StartAfterId`. Keep going until it comes back `null`, which is how a scope
+larger than one page is walked to the end.
+
+The content hash covers the model ID and the normalized summary, so a record whose vector already came from this
+model and this text is skipped **before** any provider call — running a pass twice over unchanged records costs one
+read and nothing else. Changing the model looks exactly like changing the text, which is the point: two models
+produce incomparable vectors, so "same text" alone must never be enough to skip.
+
+**The approximate-nearest-neighbour index is created out of band**, because it needs a dimension no shipped
+migration can know:
+
+```csharp
+await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(dataSource, dimension: 1536, cancellationToken);
+```
+
+It is optional — every search is correct without it, using an exact scan — it makes search *approximate*, and
+building it locks the table for the duration, so run it from a maintenance path. See the
+[vectors README](src/AgentExperience.Storage.Postgres.Vectors/README.md) for why the `embedding` column is an
+unconstrained `vector` and the index is a partial one over `embedding::vector(n)`.
+
 ## Retrieving applicable experience
 
 Finding experience that applies to a task is one Core call: `ExperienceRetrievalService.RetrieveAsync`. It asks the
-storage adapter for scope-, status- and confidence-filtered text matches, decides the remaining eligibility itself,
-and ranks what survives — always returning a structured result rather than throwing.
+storage adapter for scope-, status- and confidence-filtered text matches — and, when a vector channel is wired in,
+for the same thing matched on meaning — decides the remaining eligibility itself, and ranks what survives, always
+returning a structured result rather than throwing.
 
 ```csharp
 using AgentExperience.Core.Retrieval;
@@ -152,9 +242,13 @@ foreach (var ranked in result.Records)          // highest score first, ties by 
 | Scope | SQL | Only records in the request's *exact* scope; a foreign scope reveals nothing |
 | Status | SQL | Only `Validated` and `Reinforced`. `Candidate`, `Quarantined`, `Contested`, `Stale`, `Superseded`, and `Revoked` are never returned, whatever their text match |
 | Reuse confidence | SQL | Below `RetrievalPolicy.MinimumConfidence` (default 0.5) is excluded |
-| Text match | SQL | PostgreSQL full-text search over task ID, task summary, and reflection lesson |
+| Text match | SQL | PostgreSQL full-text search over task ID, task summary, and reflection lesson (analyzed up to 100,000 characters) |
+| Vector match | SQL | pgvector cosine distance over the embedding of those same three fields (embedded up to 8,192 characters), filtered to the query's own model and dimension |
 | Expiry | Core | Last lifecycle activity older than `RetrievalPolicy.MaxAge` is excluded. `null` (the default) means no expiry |
 | Environment | Core | Every required attribute must equal the record's `EnvironmentFingerprint.Metadata` entry; a missing key excludes the record. A request with no required attributes sets `EnvironmentUnrestricted` on the result |
+
+Scope, status, and the confidence floor are pushed into **both** channels as the same predicates, so neither can
+return something the other would have filtered out.
 
 `result.Excluded` itemizes what the **Core** checks removed — expiry and environment — so "nothing matched" is
 distinguishable from "something matched but was not reusable here". It is deliberately not a complete account of
@@ -162,20 +256,42 @@ everything filtered: scope, status, and the confidence floor are applied in SQL,
 Core and are never listed. That split is the point — a foreign-scope or revoked record must not be observable, even
 as a count.
 
-**There is a recall ceiling, and it is visible.** The search returns at most `RetrievalPolicy.CandidateLimit`
-candidates (default 50), ordered by *text* relevance, and ranking only ever sees those. So a record with a weaker
-text match but strong confidence, recency, or status is not ranked at all once that many stronger text matches exist:
-the weighting can only reorder what the ceiling let through. When the ceiling is reached, `result.Truncated` is
-`true` — the records beyond it are in no exclusion list either, because no eligibility check ever looked at them.
-Raise `CandidateLimit` or narrow the task text when that matters. `request.Limit` may not exceed `CandidateLimit`; a
-larger value is rejected rather than quietly capped.
+**Two channels, one answer.** When an embedding index and an embedding generator are both registered, the task text
+is also embedded and searched as a vector, concurrently with the text search and inside the same timeout. The two
+candidate lists are then deduplicated by `ExperienceId`, and a record found by both keeps the **higher** of its two
+normalized relevances. Ranking runs once over the merged list, with the same five weights as before: there is no
+sixth axis and no "found by both" bonus. An embedding can only make a record a *candidate* — it never decides
+eligibility, status, or confidence.
+
+**A vector channel that cannot be trusted produces an explicit text-only answer, never a failure.** The text
+candidates still come back, and `result.TextOnly` is `true` with `result.VectorFallback.Reason` saying which:
+
+| `TextOnlyReason` | When | Vector comparison attempted? |
+| --- | --- | --- |
+| `NotConfigured` | No embedding index or no generator is registered — a supported, text-only deployment | No channel exists |
+| `ProviderUnavailable` | The provider threw, cancelled for its own reasons (a client-side request timeout), or returned a query vector of the wrong width or with a non-finite component | No — caught before any query is issued |
+| `ModelMismatch` | Every embedding stored in this scope came from a different model | No — excluded by the query's own predicate |
+| `DimensionMismatch` | Every embedding stored in this scope is a different width | No — excluded by the query's own predicate |
+| `VectorSearchFailed` | The vector search threw, was denied, or was refused as malformed | Attempted; nothing usable came back |
+
+`TextOnly` is never set merely because the vector channel matched nothing: "nothing was semantically similar" and
+"the vector channel could not be trusted" are different claims, and only the second one is a reason to look at your
+wiring.
+
+**There is a recall ceiling, and it is visible.** Each channel returns at most `RetrievalPolicy.CandidateLimit`
+candidates (default 50), ordered by its own relevance, and ranking only ever sees those. So a record with a weaker
+match but strong confidence, recency, or status is not ranked at all once that many stronger matches exist in both
+channels: the weighting can only reorder what the ceiling let through. When *either* channel reaches its ceiling,
+`result.Truncated` is `true` — the records beyond it are in no exclusion list either, because no eligibility check
+ever looked at them. Raise `CandidateLimit` or narrow the task text when that matters. `request.Limit` may not
+exceed `CandidateLimit`; a larger value is rejected rather than quietly capped.
 
 **Ranking is explainable.** Every returned record carries all five normalized components (each in 0–1) and the
 effective weight applied to it, so the score is always reproducible from what the result holds.
 
 | Component | Default weight | Normalized as |
 | --- | --- | --- |
-| Relevance | 0.35 | `ts_rank_cd` of the text match, normalized to 0–1 |
+| Relevance | 0.35 | `ts_rank_cd` of the text match, or `1 - cosine_distance / 2` of the vector match — whichever is higher for that record — normalized to 0–1 |
 | Confidence | 0.25 | The record's `ReuseConfidence` |
 | Recency | 0.15 | `2^(-age / RecencyHalfLife)`, half-life 30 days by default. *Age* is measured from `UpdatedAt` |
 | Status | 0.15 | `Reinforced` 1.0, `Validated` 0.5 |
@@ -199,8 +315,9 @@ day), measured with an injected `TimeProvider`.
 | --- | --- | --- |
 | Ran inside the timeout | `Completed` | Every eligible record among the candidates considered, ranked and cut to the request's limit. Check `result.Truncated`: `true` means more matched than were considered |
 | Exceeded the timeout | `TimedOut` (`result.TimedOut`), with the request's `CorrelationId` — never an exception | Empty |
-| Request scope outside the authorization | `Denied` | Empty; **no search is issued** |
-| Search failed, or a candidate could not be read, came back out of scope, or was returned twice | `Failed`, with `result.Failure` | Empty, never unfiltered |
+| Request scope outside the authorization | `Denied` | Empty; **neither channel is issued a query, and nothing is embedded** |
+| The **text** search failed, or a candidate from either channel could not be read, came back out of scope, or was returned twice | `Failed`, with `result.Failure` | Empty, never unfiltered |
+| The **vector** channel failed, timed out on its own, or was incomparable | `Completed`, with `result.TextOnly` and `result.VectorFallback` | The text channel's eligible records, ranked |
 | Caller cancelled | `OperationCanceledException`, unwrapped and distinct from the timeout | — |
 
 `result.Failure.Reason` is content-free and safe to log. `result.Failure.Exception`, when present, is whatever the
@@ -217,20 +334,40 @@ Each package registers its own services, so a host never names a concrete type:
 ```csharp
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Storage.Postgres.DependencyInjection;
+using AgentExperience.Storage.Postgres.Vectors.DependencyInjection;   // optional: the vector channel
 
 services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 services.AddAgentExperiencePostgresStore();                     // IExperienceRecordStore
 services.AddAgentExperiencePostgresCandidateSource();           // IExperienceCandidateSource
+services.AddAgentExperiencePostgresEmbeddingIndex();            // IExperienceEmbeddingIndex
+services.AddAgentExperienceEmbeddingGenerator();                // IExperienceEmbeddingGenerator, over a registered
+                                                                //    IEmbeddingGenerator<string, Embedding<float>>
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
 // -> ISanitizer, IExperienceCaptureService, IExperienceReflector,
 //    ExperienceLifecycleService, ExperienceFinalizationService
+services.AddAgentExperienceIndexing();                          // ExperienceIndexingService, and finalization's
+                                                                //    post-commit hook, in either registration order
 services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService
 // -> defaults to RetrievalPolicy.Default and RankingWeights.Default; pass your own to override
+// -> hybrid, because an index *and* a generator are registered; text-only, and flagged, if either is missing
 ```
+
+Schema comes in two calls, matching that split:
+
+```csharp
+await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003, always
+await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, only with the vector channel
+```
+
+The vector registrations and the second migration are optional, and genuinely so: leave them out and everything
+still works — finalization commits records with no indexing hook, and retrieval answers from text alone with
+`TextOnly` set to `NotConfigured`. That is also why the embedding schema is not in the base adapter's script list:
+`CREATE EXTENSION vector` needs a superuser, and a text-only deployment must never be made to run it for a feature
+it has not enabled.
 
 `AgentExperience.Abstractions` stays BCL-only; only `Core` and the storage adapter take
 `Microsoft.Extensions.DependencyInjection.Abstractions`, and every registration uses `TryAdd`, so a host's own
-implementation wins. Call `ExperienceSchemaMigrator.MigrateAsync` once at startup before the store is used.
+implementation wins.
 
 The MAF adapter can drive finalization for you: set `FinalizationService` and `ResolveFinalization` on
 `ExperienceCaptureOptions` and every successfully captured invocation is finalized right after it is completed. See
@@ -242,21 +379,24 @@ the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#final
 - **Failure-preserving capture.** Failed and cancelled runs are recorded through an outer lifecycle path, never only a success callback.
 - **Evidence before trust.** Verification is deterministic and bound to a host-closed round and artifact revision. A completion score is never mistaken for reuse confidence.
 - **Sanitize before anything is stored.** Unknown payload fields are dropped by default, and secrets are redacted from nested values.
-- **Reuse, don't rebuild.** MAF middleware and `Microsoft.Extensions.Compliance.Redaction` are used at the edges, and planned storage builds on existing pgvector connectors. Each integration was proven with executable compatibility tests before an adapter was built.
+- **Reuse, don't rebuild.** MAF middleware and `Microsoft.Extensions.Compliance.Redaction` are used at the edges, and storage builds on Npgsql and pgvector rather than on a bespoke engine. Each integration was proven with executable compatibility tests before an adapter was built.
+- **Derived data never blocks canonical data.** Embeddings are produced after the commit, through a replaceable provider port, and every failure leaves the record committed, text-searchable, and retryable.
 
 ## Repository layout
 
 ```
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
-  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, retrieval
+  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval
   AgentExperience.MicrosoftAgentFramework/  MAF adapter (pinned Microsoft.Agents.AI 1.20.0)
   AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
+  AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.9.0)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
-  AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle, retrieval tests
+  AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle, indexing, retrieval tests
   AgentExperience.MicrosoftAgentFramework.Tests/  real ChatClientAgent runs against a scripted fake model
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container
+  AgentExperience.Storage.Postgres.Vectors.Tests/  embedding index and hybrid retrieval, against a pgvector container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
 docs/                                       original production architecture research
 _sdlc/                                      product brief, PRD, architecture, epics, and specs
@@ -272,16 +412,16 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. `AgentExperience.CompatibilityProof` and the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
-2. **Reuse relevant experience:** PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, and bounded text retrieval with explainable ranking (in place), vector and hybrid retrieval, historical-reference injection into MAF
+2. **Reuse relevant experience:** PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, and revision-safe embedding ingestion with hybrid retrieval (in place), historical-reference injection into MAF
 3. **Govern experience safely:** sharing grants, the remaining lifecycle transitions, evidence-based confidence updates
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 

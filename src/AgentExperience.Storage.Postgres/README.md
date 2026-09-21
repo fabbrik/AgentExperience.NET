@@ -262,6 +262,14 @@ The schema lives in the embedded scripts under `Migrations/`.
 Adding the generated column rewrites the table, so on a large existing deployment apply this script in a maintenance
 window like any other rewriting migration.
 
+**This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
+extension and the `experience_embeddings` table — belongs to the companion package
+[`AgentExperience.Storage.Postgres.Vectors`](../AgentExperience.Storage.Postgres.Vectors/README.md) and is applied
+by *its* migrator, `ExperienceVectorSchemaMigrator.MigrateAsync`. `CREATE EXTENSION vector` needs a superuser,
+because pgvector is not a trusted extension; putting it in this script list would make that privilege a startup
+requirement for every host, including text-only ones that never enable the vector channel. Nothing here creates an
+extension, and nothing here reads or writes the embedding table.
+
 ### Applying it
 
 Call `ExperienceSchemaMigrator.MigrateAsync` explicitly at startup, before using the store. The store never migrates
@@ -282,7 +290,7 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
 - **Serialized across processes.** The whole run holds a PostgreSQL session advisory lock on its own connection, so
   two hosts starting at once cannot apply the same script twice. The lock is always released.
 - **Permissions.** The migrating role needs `CREATE` on the database (for the `agent_experience` schema) and on that
-  schema (for its tables). The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
+  schema (for its tables). It does **not** need to be a superuser: no script here creates an extension. The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
   `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`; the
   candidate source needs only `SELECT` on `agent_experience.experience_records`.
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one

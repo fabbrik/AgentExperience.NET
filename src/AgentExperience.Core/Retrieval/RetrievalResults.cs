@@ -121,6 +121,60 @@ public enum RetrievalOutcome
 public sealed record RetrievalFailure(string Reason, Exception? Exception);
 
 /// <summary>
+/// Why a retrieval answered from the text channel alone. Every value is an explicit statement that
+/// the vector channel did <em>not</em> contribute -- none of them is ever inferred from an empty
+/// vector result, because "nothing was semantically similar" and "the vector channel could not be
+/// trusted" are different claims and only the second one should make a host look at its wiring.
+/// </summary>
+public enum TextOnlyReason
+{
+    /// <summary>
+    /// No embedding index or no embedding generator was wired in, so there is no vector channel at
+    /// all. This is a configuration fact, not a failure: a text-only deployment is a supported one.
+    /// </summary>
+    NotConfigured,
+
+    /// <summary>
+    /// The embedding provider could not produce a query vector -- it threw, timed out, or returned
+    /// something unusable -- so no vector comparison was possible. The text channel still answered.
+    /// </summary>
+    ProviderUnavailable,
+
+    /// <summary>
+    /// The scope's stored embeddings come from a different model than the query vector, so none of
+    /// them is comparable with it. No vector comparison was attempted.
+    /// </summary>
+    ModelMismatch,
+
+    /// <summary>
+    /// The scope's stored embeddings are from this model but at a different width, so none of them is
+    /// comparable with the query vector. No vector comparison was attempted.
+    /// </summary>
+    DimensionMismatch,
+
+    /// <summary>
+    /// The vector search itself failed, was denied, or was refused as malformed. The text channel
+    /// still answered, and its candidates are still returned.
+    /// </summary>
+    VectorSearchFailed,
+}
+
+/// <summary>
+/// The explicit text-only signal: present exactly when the vector channel contributed nothing to a
+/// result, with the reason it did not. It is deliberately not an error -- a retrieval that fell back
+/// to text is a complete, usable answer, just a narrower one -- but it is always stated rather than
+/// left to be inferred from an empty vector match.
+/// </summary>
+/// <param name="Reason">Which of the documented fallbacks applied.</param>
+/// <param name="Detail">A human-readable, content-free explanation. Safe to log or surface.</param>
+/// <param name="Exception">
+/// The original failure, when one was caught. As with <see cref="RetrievalFailure.Exception"/> this
+/// is <em>not</em> content-free -- a driver or HTTP client message can quote SQL text, parameters, or
+/// a request body. Treat it as local diagnostics only.
+/// </param>
+public sealed record VectorChannelFallback(TextOnlyReason Reason, string Detail, Exception? Exception);
+
+/// <summary>
 /// The result of a retrieval call. It is always a complete answer: an empty
 /// <see cref="Records"/> list with a non-<see cref="RetrievalOutcome.Completed"/>
 /// <see cref="Outcome"/> means retrieval declined to answer, never that the caller may proceed with
@@ -148,6 +202,12 @@ public sealed record RetrievalFailure(string Reason, Exception? Exception);
 /// <param name="CorrelationId">The request's correlation identifier, echoed back on every outcome including <see cref="RetrievalOutcome.TimedOut"/>.</param>
 /// <param name="Elapsed">How long the call took, measured with the service's <see cref="TimeProvider"/>.</param>
 /// <param name="Failure">Why the call failed, when <see cref="Outcome"/> is <see cref="RetrievalOutcome.Failed"/>; otherwise <see langword="null"/>.</param>
+/// <param name="VectorFallback">
+/// Why the vector channel contributed nothing, when it did not; <see langword="null"/> when both
+/// channels ran. Present even on a perfectly good text-only answer, because "this deployment has no
+/// vector channel" and "the vector channel could not be trusted this time" are things a host has to
+/// be able to tell apart.
+/// </param>
 public sealed record ExperienceRetrievalResult(
     RetrievalOutcome Outcome,
     IReadOnlyList<RankedExperience> Records,
@@ -156,7 +216,8 @@ public sealed record ExperienceRetrievalResult(
     bool EnvironmentUnrestricted,
     string? CorrelationId,
     TimeSpan Elapsed,
-    RetrievalFailure? Failure)
+    RetrievalFailure? Failure,
+    VectorChannelFallback? VectorFallback = null)
 {
     /// <summary>
     /// The timeout signal: <see langword="true"/> exactly when the call ran out of time. A timeout is
@@ -164,4 +225,11 @@ public sealed record ExperienceRetrievalResult(
     /// from "something is broken".
     /// </summary>
     public bool TimedOut => Outcome is RetrievalOutcome.TimedOut;
+
+    /// <summary>
+    /// The text-only signal: <see langword="true"/> exactly when <see cref="VectorFallback"/> is
+    /// present, that is, when this answer came from the text channel alone. It is never true merely
+    /// because the vector channel matched nothing.
+    /// </summary>
+    public bool TextOnly => VectorFallback is not null;
 }

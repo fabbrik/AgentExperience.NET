@@ -27,7 +27,10 @@ namespace AgentExperience.Storage.Postgres;
 /// <c>CREATE</c> on the database (to create the <c>agent_experience</c> schema) and on that schema (to
 /// create its tables). The store itself only needs <c>SELECT</c>, <c>INSERT</c>, and <c>UPDATE</c> on
 /// <c>agent_experience.experience_records</c> and <c>SELECT</c> and <c>INSERT</c> on
-/// <c>agent_experience.lifecycle_events</c>.
+/// <c>agent_experience.lifecycle_events</c>. No script here needs a superuser, and none creates an
+/// extension: this package's schema is text-only, and the derived embedding schema -- which does need
+/// <c>CREATE EXTENSION vector</c> -- is applied separately by
+/// <c>AgentExperience.Storage.Postgres.Vectors</c>'s own migrator, only by hosts that enable it.
 /// </para>
 /// <para>
 /// The wait for the advisory lock is deliberately unbounded and ends only with the caller's token. Each
@@ -84,8 +87,12 @@ public static class ExperienceSchemaMigrator
     }
 
     /// <summary>
-    /// The script-selection seam: same run, but over an arbitrary assembly and resource prefix. Test
-    /// only, so a failing script never has to ship in the package.
+    /// The script-selection seam: same run -- same journal table, same advisory lock -- but over an
+    /// arbitrary assembly and resource prefix. It is what lets
+    /// <c>AgentExperience.Storage.Postgres.Vectors</c> apply its own schema without duplicating the
+    /// journalling and locking, and what lets a test drive a failing script that never ships in the
+    /// package. Journal entries record DbUp's script name, which is the full resource name, so two
+    /// prefixes can never claim each other's entries.
     /// </summary>
     internal static async Task<ExperienceSchemaMigrationResult> MigrateAsync(
         NpgsqlDataSource dataSource,

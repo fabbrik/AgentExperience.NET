@@ -1,6 +1,7 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
 using AgentExperience.Core.Finalization;
+using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Reflections;
 using AgentExperience.Core.Retrieval;
@@ -64,7 +65,54 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             captureLimits));
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
         services.TryAddSingleton<ExperienceLifecycleService>();
-        services.TryAddSingleton<ExperienceFinalizationService>();
+
+        // The indexing hook is resolved optionally, not required: a host that never registered
+        // AddAgentExperienceIndexing gets finalization with no hook at all, which is exactly the
+        // text-only deployment. Registering it later still works, because this factory runs when the
+        // finalization singleton is first resolved rather than now.
+        services.TryAddSingleton(provider => new ExperienceFinalizationService(
+            provider.GetRequiredService<IExperienceCaptureService>(),
+            provider.GetRequiredService<IExperienceReflector>(),
+            provider.GetRequiredService<IExperienceRecordStore>(),
+            provider.GetRequiredService<ExperienceLifecycleService>(),
+            provider.GetService<ExperienceIndexingService>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="ExperienceIndexingService"/> as a singleton, so a committed record can be
+    /// embedded and its vector stored.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Registered separately from <see cref="AddAgentExperienceCore"/> because it needs an
+    /// <see cref="IExperienceEmbeddingIndex"/> and an <see cref="IExperienceEmbeddingGenerator"/>,
+    /// neither of which Core implements: register an adapter's index (for example
+    /// <c>AddAgentExperiencePostgresEmbeddingIndex</c>) and a generator as well, or resolving the
+    /// service fails.
+    /// </para>
+    /// <para>
+    /// Order does not matter. <see cref="AddAgentExperienceCore"/> resolves this service optionally
+    /// and lazily, so calling this before or after it wires the post-commit indexing hook either way;
+    /// omitting it entirely leaves finalization with no hook, which is a supported deployment.
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperienceIndexing(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        // The retrieval policy is resolved optionally and shared: its confidence floor is the same one
+        // the vector search applies, so a record the search would never return is never embedded. A
+        // host that never registered one gets RetrievalPolicy.Default, which is what retrieval would
+        // have used anyway.
+        services.TryAddSingleton(provider => new ExperienceIndexingService(
+            provider.GetRequiredService<IExperienceEmbeddingIndex>(),
+            provider.GetRequiredService<IExperienceEmbeddingGenerator>(),
+            provider.GetService<RetrievalPolicy>()));
 
         return services;
     }
@@ -115,11 +163,17 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         // The caller's own policy and weights are captured rather than resolved back out of the
         // container, for the same reason the sanitizer's options are: a RetrievalPolicy the host
         // registered earlier must not silently replace the one passed here.
+        // The vector channel is resolved optionally: both halves of it present means hybrid
+        // retrieval, and anything less means an explicitly flagged text-only result rather than a
+        // failure. A host adds it by registering an IExperienceEmbeddingIndex and an
+        // IExperienceEmbeddingGenerator, in any order relative to this call.
         services.TryAddSingleton(provider => new ExperienceRetrievalService(
             provider.GetRequiredService<IExperienceCandidateSource>(),
             effectivePolicy,
             effectiveWeights,
-            provider.GetRequiredService<TimeProvider>()));
+            provider.GetRequiredService<TimeProvider>(),
+            provider.GetService<IExperienceEmbeddingIndex>(),
+            provider.GetService<IExperienceEmbeddingGenerator>()));
 
         return services;
     }

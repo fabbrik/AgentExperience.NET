@@ -30,8 +30,14 @@ public static class PostgresExperienceRecordSchema
 
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
-    /// <summary>Every embedded script name, in the order they must be applied.</summary>
-    public static IReadOnlyList<string> ScriptNames { get; } = [InitialScriptName, LifecycleEventsScriptName, SearchScriptName];
+    /// <summary>
+    /// Every embedded script name, in the order they must be applied. This package's schema is
+    /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
+    /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
+    /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>.
+    /// </summary>
+    public static IReadOnlyList<string> ScriptNames { get; } =
+        [InitialScriptName, LifecycleEventsScriptName, SearchScriptName];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>

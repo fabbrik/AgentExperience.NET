@@ -209,6 +209,85 @@ public class CoreServiceRegistrationTests
         }
     }
 
+    // ---------------------------------------------------------------- indexing and hybrid retrieval
+
+    [Fact]
+    public void AddAgentExperienceIndexing_registers_the_indexing_service_over_an_adapters_index_and_generator()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IExperienceEmbeddingIndex>(new FakeEmbeddingIndex()); // the adapter's job
+        services.AddSingleton<IExperienceEmbeddingGenerator>(new FakeEmbeddingGenerator());
+        services.AddAgentExperienceIndexing();
+
+        using var provider = services.BuildServiceProvider();
+
+        var indexing = provider.GetRequiredService<Indexing.ExperienceIndexingService>();
+        Assert.Equal("fake-embed-v1", indexing.ModelId);
+        Assert.Equal(4, indexing.Dimension);
+        Assert.Same(indexing, provider.GetRequiredService<Indexing.ExperienceIndexingService>());
+    }
+
+    [Fact]
+    public void Finalization_picks_up_an_indexing_hook_registered_in_either_order()
+    {
+        foreach (var indexingFirst in new[] { true, false })
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton<IExperienceRecordStore>(new StubStore());
+            services.AddSingleton<IExperienceEmbeddingIndex>(new FakeEmbeddingIndex());
+            services.AddSingleton<IExperienceEmbeddingGenerator>(new FakeEmbeddingGenerator());
+
+            if (indexingFirst)
+            {
+                services.AddAgentExperienceIndexing();
+                services.AddAgentExperienceCore(CallerOptions, CallerLimits);
+            }
+            else
+            {
+                services.AddAgentExperienceCore(CallerOptions, CallerLimits);
+                services.AddAgentExperienceIndexing();
+            }
+
+            using var provider = services.BuildServiceProvider();
+            Assert.NotNull(provider.GetRequiredService<ExperienceFinalizationService>());
+            Assert.NotNull(provider.GetRequiredService<Indexing.ExperienceIndexingService>());
+        }
+    }
+
+    [Fact]
+    public void Finalization_resolves_without_an_indexing_hook_at_all()
+    {
+        // A text-only deployment registers no embedding index and no generator, and must still work.
+        var services = new ServiceCollection();
+        services.AddSingleton<IExperienceRecordStore>(new StubStore());
+        services.AddAgentExperienceCore(CallerOptions, CallerLimits);
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.NotNull(provider.GetRequiredService<ExperienceFinalizationService>());
+        Assert.Null(provider.GetService<Indexing.ExperienceIndexingService>());
+    }
+
+    [Fact]
+    public void AddAgentExperienceRetrieval_wires_the_vector_channel_only_when_both_halves_are_registered()
+    {
+        var textOnly = new ServiceCollection();
+        textOnly.AddSingleton<IExperienceCandidateSource>(new StubCandidateSource());
+        textOnly.AddAgentExperienceRetrieval();
+
+        var hybrid = new ServiceCollection();
+        hybrid.AddSingleton<IExperienceCandidateSource>(new StubCandidateSource());
+        hybrid.AddSingleton<IExperienceEmbeddingIndex>(new FakeEmbeddingIndex());
+        hybrid.AddSingleton<IExperienceEmbeddingGenerator>(new FakeEmbeddingGenerator());
+        hybrid.AddAgentExperienceRetrieval();
+
+        using var textProvider = textOnly.BuildServiceProvider();
+        using var hybridProvider = hybrid.BuildServiceProvider();
+
+        Assert.False(textProvider.GetRequiredService<ExperienceRetrievalService>().HybridEnabled);
+        Assert.True(hybridProvider.GetRequiredService<ExperienceRetrievalService>().HybridEnabled);
+    }
+
     /// <summary>Stands in for a storage adapter's registration; finalization never calls it here.</summary>
     private sealed class StubStore : IExperienceRecordStore
     {
