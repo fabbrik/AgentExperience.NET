@@ -7,7 +7,7 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested. Epic 2 has started: a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, moved through its lifecycle with atomic, audited commits, indexed as an embedding after the fact, and retrieved by task text *and* by meaning with bounded, explainable ranking. Injection and governance are planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
+> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested, and so is Epic 2 (reuse relevant experience): a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, moved through its lifecycle with atomic, audited commits, indexed as an embedding after the fact, retrieved by task text *and* by meaning with bounded, explainable ranking, and injected back into a later MAF invocation as a labeled, bounded Historical Reference. Governance is planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
 
 ## Why
 
@@ -37,7 +37,8 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Text retrieval of applicable experience: eligibility decided before ranking, every ranking component and effective weight exposed, bounded by a timeout that is never an exception | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | Embedding ingestion after the canonical commit: only the sanitized retrieval summary is embedded, writes are conditional on the live revision, and every provider failure leaves the record committed and retryable | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
 | Hybrid retrieval: a bounded vector channel merged with the text one under the same eligibility, timeout, and ceiling, with an explicit, flagged text-only fallback whenever the vector channel cannot be trusted | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
-| Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
+| Historical Reference injection into MAF: a context provider that retrieves, re-checks eligibility immediately before injecting, asks the host's risk policy, and injects one delimited, labeled block within record and byte limits — never throwing into the invocation | `AgentExperience.MicrosoftAgentFramework` |
+| Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types. Injection is the one piece the host constructs itself, because the resolver and risk decision are per-host | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 
 ## Quick look
 
@@ -324,8 +325,79 @@ day), measured with an injected `TimeProvider`.
 port threw — a driver message can quote SQL text or connection detail, so treat it as local diagnostics rather than
 something to pass on.
 
-Retrieval returns ranked records and the evidence for their ranking. Building a labeled Historical Reference payload
-and injecting it into an agent is a separate, later step, and retrieved content never becomes authority.
+Retrieval returns ranked records and the evidence for their ranking. Turning them into a labeled Historical
+Reference and injecting it into an agent is a separate step, described next — and retrieved content never becomes
+authority.
+
+## Injecting Historical Reference into MAF
+
+`ExperienceContextProvider` closes the loop. It is a MAF `AIContextProvider` that, before each invocation, retrieves
+the applicable experience, re-checks each candidate one last time, asks the host's risk policy, and injects what
+survives as **one delimited, labeled Historical Reference message**. The host adds it to the agent itself:
+
+```csharp
+using AgentExperience.MicrosoftAgentFramework.Injection;
+
+var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+{
+    ChatOptions = new ChatOptions { Tools = tools },
+    AIContextProviders =
+    [
+        new ExperienceContextProvider(retrieval, recordStore, new ExperienceInjectionOptions
+        {
+            ResolveRequest = context => new RetrieveExperienceRequest(
+                Authorization: hostAuthorization,
+                Scope: hostScope,
+                // Never `Last()`: the list can be empty, and mid-conversation the last message is a
+                // tool result, not the task. Retrieval caps task text at
+                // `ExperienceCandidateQuery.MaxTaskTextLength` (4096 characters).
+                TaskText: context.Messages
+                    .LastOrDefault(m => m.Role == ChatRole.User && !string.IsNullOrWhiteSpace(m.Text))?.Text
+                    ?? taskDescription),
+            DecideInjection = d => riskPolicy.Allows(d.Current) ? InjectionDecision.Permit : InjectionDecision.Deny("risk policy"),
+            OnContextInjected = result => logger.LogDebug("Injected {Count}, omitted {Omitted}", result.InjectedCount, result.Omitted.Count),
+        }),
+    ],
+});
+```
+
+Each record in the block carries its **source** (experience ID, source run ID, task ID), its **confidence**, its
+**applicability** (the rank score and every component with the weight applied to it, labeled *as ranked at
+retrieval*), **when it was learned and last revalidated**, the **environment** it came from, and an **evidence
+summary** — lesson, reuse guidance, preconditions, warnings, verification status, and evidence ID count. Attempts,
+tool calls, arguments, results, errors, and evidence detail are never serialized, so a captured payload cannot reach
+a model through injection.
+
+**The label is hygiene, not a security control.** The block states that it is untrusted reference material and that
+nothing inside it authorizes anything. That wording helps a well-behaved model treat retrieved text as data and
+gives a human reading a transcript the provenance — it does not make a model obey, and this project does not claim
+it does. What actually stops an unauthorized call is the authorization boundary around tools and policy, which lives
+entirely outside the block. An integration test pins that down: a fake model *obeys* an injected instruction to call
+a guarded tool, and the approval boundary denies the call anyway.
+
+| Situation | What the agent sees |
+| --- | --- |
+| Eligible records found | A delimited block, in rank order, within 8 records and 16 KB of UTF-8 (both configurable and validated) |
+| Nothing matched, retrieval timed out or failed, or the final check overran its bound | No injected context at all; the agent runs normally, the outcome is reported, and nothing is fabricated |
+| The request scope lies outside the host authorization | Nothing, reported as `RetrievalDenied`; no search is issued, and a foreign scope reveals nothing |
+| A record revoked, re-scoped, re-scored below the confidence floor, aged past `MaxAge`, environment-mismatched, or unreadable since retrieval | It is absent from the block; the omission is recorded with the rule that dropped it and the stored record is untouched |
+| The host's `DecideInjection` denies a record | Absent whatever its stored confidence or status; the denial is recorded and nothing is written |
+| More records, or more bytes, than the limits allow | Whole records are dropped — never cut — and each omission is recorded as `OverRecordLimit` or `OverByteBudget` |
+
+The final eligibility check runs immediately before the payload is built and re-applies **every rule retrieval
+applies** — status, the reuse-confidence floor, `MaxAge`, and the request's required environment attributes — to the
+record as it stands now, so it catches what changed since retrieval. What it cannot do is reach backwards: once a
+block has been handed to a model, a later revocation cannot retract it, and the provider says so rather than
+implying otherwise.
+
+**Injected blocks accumulate in a reused session.** A block injected on one turn can stay in the `AgentSession`'s
+conversation, so a later turn shows the model the fresh block *and* the earlier ones. MAF filters the provider's
+input to external messages, so it cannot reliably see or strip its own earlier blocks, and it does not pretend to.
+That means `MaxBytes` bounds one injected block rather than a conversation, and revocation only affects injections
+that have not happened yet. Use a fresh session per task where either matters.
+
+See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#injecting-historical-reference) for
+the payload shape, the options, and the failure behaviour.
 
 ## Wiring it all together
 
@@ -350,6 +422,10 @@ services.AddAgentExperienceIndexing();                          // ExperienceInd
 services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService
 // -> defaults to RetrievalPolicy.Default and RankingWeights.Default; pass your own to override
 // -> hybrid, because an index *and* a generator are registered; text-only, and flagged, if either is missing
+
+// Injection has no registration of its own: ExperienceContextProvider needs a per-host resolver and
+// risk decision, so the host constructs it and adds it to ChatClientAgentOptions.AIContextProviders.
+// See "Injecting Historical Reference into MAF" above.
 ```
 
 Schema comes in two calls, matching that split:
@@ -388,7 +464,7 @@ the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#final
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
   AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval
-  AgentExperience.MicrosoftAgentFramework/  MAF adapter (pinned Microsoft.Agents.AI 1.20.0)
+  AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned Microsoft.Agents.AI 1.20.0)
   AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
   AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.9.0)
 tests/
@@ -421,7 +497,7 @@ dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
-2. **Reuse relevant experience:** PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, and revision-safe embedding ingestion with hybrid retrieval (in place), historical-reference injection into MAF
+2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
 3. **Govern experience safely:** sharing grants, the remaining lifecycle transitions, evidence-based confidence updates
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
