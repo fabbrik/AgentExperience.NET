@@ -34,6 +34,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Atomic audited lifecycle commits: the event and the record's projection in one transaction, idempotent by event ID, revision-checked, with bounded, cursored history | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | The full MVP transition table — reinforce, contest, stale, supersede, revoke — with supersession recording its replacement and refusing cycles, event logs made append-only by database triggers, and a record's embedding dropped when it leaves eligibility | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 | Evidence-based reuse confidence: a versioned `(1 + S) / (2 + S + F)` heuristic Core computes from the record it read, with independence enforced by a unique index, a duplicate recorded but counted zero times, a contradiction contesting the record in the same transaction, and the confidence columns guarded by the database | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| Reuse feedback: one idempotent submission links a run to the records it saw, with an outcome, a measure and a trial label; exposure alone records benefit `Unknown` and moves nothing, an attribution that fails its evidence requirements degrades to `Unknown` rather than losing the exposure, and only a human assessment naming a host-established review or a comparative evaluator result carrying its own round-matched evidence becomes supporting or contradicting evidence | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | Journaled schema migrations: embedded scripts applied once, one transaction per script, serialized across processes by an advisory lock | `AgentExperience.Storage.Postgres` |
 | One finalization call: evaluate, gate on authorization and the host's storage decision, reflect, create the record as a `Candidate`, commit the initial event that promotes it — replay-safe and structured at every stage | `AgentExperience.Core` |
 | Text retrieval of applicable experience: eligibility decided before ranking, every ranking component and effective weight exposed, bounded by a timeout that is never an exception | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
@@ -407,6 +408,112 @@ store from the host's authorization and never from anything the caller put in th
 `GetHistoryAsync` like any other transition; `stored.Event.Confidence` is `null` for the events that carried none.
 An *uncounted* submission has no event, by construction — the ledger row is its audit trail, and listing that ledger
 arrives with roadmap story 4.5 along with its retention path.
+
+## Recording what reuse was worth
+
+`ExperienceLifecycleService.ApplyEvidenceAsync` moves a score once you already know what reuse was worth.
+`ExperienceReuseFeedbackService.RecordAsync` is how you find out — and it is deliberately hard to make it say yes.
+
+```csharp
+var result = await feedback.RecordAsync(
+    hostAuthorization,
+    new ExperienceReuseFeedback(
+        FeedbackId: feedbackId,                       // the whole submission's idempotency key
+        RunId: runId,                                 // the run the records were injected into
+        Scope: recordScope,
+        ExposedExperienceIds: injection.InjectedExperienceIds,
+        RunOutcome: TaskVerificationStatus.Verified,
+        Measure: new ReuseMeasure("tool-calls", 7),   // a name you chose, and a number
+        ObservedAt: DateTimeOffset.UtcNow,
+        TrialLabel: "memory-enabled"),                // optional, declared up front
+    cancellationToken);
+
+// Outcome: Recorded. Benefit: Unknown. Nothing moved -- and that is the correct answer.
+```
+
+**Exposure is not attribution.** That call records exactly what happened: a run saw these records and came out this
+way. It does not record that the records *helped*, because nothing established that. Benefit is `Unknown`, no
+confidence evidence is submitted, and no record's score, counters, or status changes. Almost every submission a real
+host makes will end here, and it should.
+
+**A bare claim is never attribution.** `ClaimedBenefit` is stored verbatim, so you can later compare what hosts
+believed against what evidence established, and it is never acted on. Exactly two shapes move a score:
+
+| Attribution | What it must carry | What it produces |
+| --- | --- | --- |
+| `HumanReuseAssessment` | improvement or harm, the exposed records it is about, an auditable rationale, an `AssessmentId` naming the **host-established review** it came out of, optionally the verification round it was made against — and **no reviewer field**, because the reviewer is your `AuthorizationContext.PrincipalId` | `Human` evidence, keyed `human:{principal}:{run}` |
+| `ComparativeEvaluationResult` | the same records and rationale, plus the run it evaluated (which must be *this* run), its verification round, and the evidence it reached its conclusion from — each piece of which must name that same round | `Machine` evidence, keyed `machine:{run}:{round}` |
+
+**This library does not implement a comparative evaluator**; it defines the contract and verifies the result it is
+given. Evidence from another round is not evidence about this comparison, and is refused.
+
+> **Read this before you wire either one up — the library cannot check that any of it is true.**
+> `RunId`, `AssessmentId`, and `VerificationRoundId` are all host-established identifiers. Nothing here can verify
+> that a run happened, that a round was closed, or that a human made an assessment and meant it. What the library
+> actually guarantees is narrow: the reviewer is your `AuthorizationContext.PrincipalId` rather than anything on the
+> submission, and one reviewer's opinion about one run counts once. Because the *caller* supplies `RunId`, a host
+> that lets agent output populate it hands the agent a fresh independence key on every call — and with it the
+> ability to contest its own stored lessons over and over. The human shape is the weakest boundary in this library;
+> requiring an `AssessmentId` makes a moved score traceable back to a review that exists, and that is all it does.
+> Establish these from your own run and review bookkeeping, exactly as you establish `AuthorizationContext`, and
+> never from anything an agent produced.
+
+**A failed attribution costs the attribution, not the exposure.** An attribution that does not meet its evidence
+requirements — no `AssessmentId`, no evidence behind a comparison, a blank rationale, a benefit of `Unknown` — is
+dropped: the submission is still recorded, with benefit `Unknown`, no confidence submission, and a `Reason` naming
+what was refused. Only a structurally incoherent submission is `Invalid` with nothing written: no feedback ID, no
+records, an attribution naming a record the run never saw, or a comparative result about a *different* run. Losing
+a true exposure to punish a bad attribution would throw away the one thing that was never in doubt.
+
+**Improvement supports, harm contradicts.** An accepted attribution submits one piece of evidence per attributed
+record, through `ApplyEvidenceAsync` and nothing else — so independence keying, duplicate suppression, the revision
+guard, the eligibility gate, and the audit trail all apply exactly as described above. Attributed harm therefore
+contests each record in the same transaction that records the evidence. **Nothing is ever deleted**: the record
+stays, and its own history carries the reason.
+
+| Situation | What happens |
+| --- | --- |
+| Records injected, no attribution | Exposure stored, benefit `Unknown`, nothing moves |
+| Caller claims improvement with no evidence | Same — the claim is recorded, not acted on |
+| Authorized human assessment | Supporting evidence per attributed record, counted once each |
+| Comparative evaluator result | Supporting evidence per attributed record, as machine evidence |
+| Attributed harm | Contradicting evidence per record; each `Contested`; all still present |
+| Attribution fails its evidence requirements | Exposure recorded, benefit `Unknown`, `Reason` says what was refused |
+| Attribution names a record the run never saw, or a comparative result names another run | `Invalid` — nothing written |
+| Same feedback ID, identical content — in any record order | `AlreadyRecorded` — nothing written twice, nothing counted twice |
+| Same feedback ID, different content | `Conflict` — nothing written; the stored submission's records are reported back when you are authorized for its scope |
+| One record's submission fails | The rest still apply; that one is `Failed` and `Retryable` |
+| Cancelled part-way through | What was decided is returned; the rest are `Failed` and `Retryable` — never an exception |
+| The same run already produced evidence for a record | `EvidenceApplied` with `Counted: false` — the existing independence rule |
+| An exposed record is `Candidate`, `Quarantined`, `Stale`, `Superseded`, or `Revoked` | Exposure recorded, `Ineligible`, nothing written for it |
+| An exposed ID does not exist in that scope, or is readable only through a sharing grant | Exposure recorded, `Unresolved` with the reason, nothing written for it |
+| Run scope outside the authorization | `Denied` before any write |
+| More than `MaxExposedRecords` (64) exposed records | `Invalid` — nothing written |
+
+**Retrying is how you recover, and it converges.** Each attributed record's evidence ID and event ID are *derived by
+hash* from the feedback ID and the experience ID, and the submission's `OccurredAt` is your own `ObservedAt`. So
+resubmitting the identical feedback re-derives the identical identifiers: the ledger write is a no-op, and any
+outstanding confidence submission replays instead of counting a second time. Read `result.IsRetryable` and resubmit
+the same `ExperienceReuseFeedback` — do not build a new one. The *set* of exposed records is what is compared, not
+the order you listed them in, so a retry assembled differently from the original still converges rather than
+colliding.
+
+**The exposure is written before any score moves.** The feedback ledger commits first, so what a run saw is durable
+even if every confidence submission then fails. Each record is then submitted independently, which is what makes a
+partial failure partial. One consequence is worth knowing: an attributed exposure's stored `evidence_id` says
+*which* ID the submission uses, not that it landed — so an auditor joining the two ledgers uses a `LEFT JOIN`, and
+reads a missing row as "attributed, not yet counted", which is exactly the work a retry converges on.
+
+**The fan-out is bounded by size, not by time.** A submission may name at most `MaxExposedRecords` (64) records, and
+each attributed one costs a scoped read plus its own transaction, run sequentially, with only your
+`CancellationToken` as a time bound. There is deliberately no internal budget, unlike retrieval's: abandoning a
+retrieval yields an empty result and the agent runs on, whereas abandoning half a fan-out would leave some records
+moved and others not, with no way to tell which from a timeout alone. Pass a token with a deadline if you need one —
+what was decided by then is still reported.
+
+**`TrialLabel` is for measuring, not for filtering afterwards.** It names the experimental condition a run was
+declared to belong to — `"memory-enabled"`, `"memory-disabled"` — so a later measurement aggregates conditions that
+were fixed in advance rather than subsets chosen once the results are in.
 
 ## Indexing experience for semantic reuse
 
@@ -788,6 +895,8 @@ services.AddAgentExperiencePostgresStore();                     // IExperienceRe
 services.AddAgentExperiencePostgresCandidateSource();           // IExperienceCandidateSource
 services.AddAgentExperiencePostgresGrantStore();                // IExperienceGrantStore, optional: only a host
                                                                 //    that shares records across scopes needs it
+services.AddAgentExperiencePostgresReuseFeedbackStore();        // IExperienceReuseFeedbackStore, optional: only a
+                                                                //    host that records reuse feedback needs it
 services.AddAgentExperiencePostgresEmbeddingIndex();            // IExperienceEmbeddingIndex
 services.AddAgentExperienceEmbeddingGenerator();                // IExperienceEmbeddingGenerator, over a registered
                                                                 //    IEmbeddingGenerator<string, Embedding<float>>
@@ -799,6 +908,8 @@ services.AddAgentExperienceIndexing();                          // ExperienceInd
 services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService
 // -> defaults to RetrievalPolicy.Default and RankingWeights.Default; pass your own to override
 // -> hybrid, because an index *and* a generator are registered; text-only, and flagged, if either is missing
+services.AddAgentExperienceReuseFeedback();                     // ExperienceReuseFeedbackService, over the ledger
+                                                                //    above and the lifecycle service
 
 // Injection has no registration of its own: ExperienceContextProvider needs a per-host resolver and
 // risk decision, so the host constructs it and adds it to ChatClientAgentOptions.AIContextProviders.
@@ -808,7 +919,7 @@ services.AddAgentExperienceRetrieval();                         // ExperienceRet
 Schema comes in two calls, matching that split:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005, always
+await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005-0008, always
 await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, only with the vector channel
 ```
 
@@ -840,9 +951,9 @@ the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#final
 ```
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
-  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval
+  AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval, reuse feedback
   AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned Microsoft.Agents.AI 1.20.0)
-  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, sharing grants, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
+  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, sharing grants, reuse feedback ledger, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
   AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.9.0)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
@@ -865,17 +976,17 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
 2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
-3. **Govern experience safely:** explicit sharing grants ✅, the full audited lifecycle transition table with supersession and database-enforced append-only logs ✅, evidence-based confidence updates ✅; recording experience reuse feedback is next
+3. **Govern experience safely** ✅ explicit sharing grants, the full audited lifecycle transition table with supersession and database-enforced append-only logs, evidence-based confidence updates, and recording experience reuse feedback
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
 Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).

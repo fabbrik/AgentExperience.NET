@@ -467,6 +467,248 @@ internal static class ExperienceRecordValidator
         }
     }
 
+    /// <summary>
+    /// Validates one reuse-feedback submission as a row: the identifiers, the scope, the measure, the
+    /// exposures, and the shape each <see cref="ReuseAttributionSource"/> requires.
+    /// </summary>
+    /// <remarks>
+    /// This is structural validation of what will be written, not a second opinion about attribution.
+    /// Whether a submission <em>carries</em> attribution is Core's decision and arrives here already
+    /// made; what is checked is that the decision is internally consistent -- that an unattributed row
+    /// claims no benefit and names no reviewer, round, or evaluator, and that an attributed one carries
+    /// exactly the identifiers its derived evidence will be keyed on. The database states the same rules
+    /// as CHECKs, so a writer that bypassed this class is refused too.
+    /// </remarks>
+    public static IReadOnlyList<StoreValidationError> ValidateReuseFeedback(RecordedExperienceReuseFeedback feedback)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (feedback.FeedbackId == Guid.Empty)
+        {
+            errors.Add(new("FeedbackId", "must not be an empty GUID."));
+        }
+
+        if (feedback.RunId == Guid.Empty)
+        {
+            errors.Add(new("RunId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(feedback.Scope, "Scope", errors);
+        RequireDefined(feedback.RunOutcome, "RunOutcome", errors);
+        RequireDefined(feedback.ClaimedBenefit, "ClaimedBenefit", errors);
+        RequireDefined(feedback.Benefit, "Benefit", errors);
+        RequireDefined(feedback.AttributionSource, "AttributionSource", errors);
+
+        if (feedback.ObservedAt == default)
+        {
+            errors.Add(new("ObservedAt", "must be set to when the feedback was observed."));
+        }
+
+        if (feedback.Measure is null)
+        {
+            errors.Add(new("Measure", Required));
+        }
+        else
+        {
+            RequireNotBlank(feedback.Measure.Kind, "Measure.Kind", errors);
+
+            if (!double.IsFinite(feedback.Measure.Value))
+            {
+                errors.Add(new("Measure.Value", "must be a finite number."));
+            }
+        }
+
+        // Through the shared guard, so a NUL -- which PostgreSQL cannot store in text -- is Invalid here
+        // rather than an infrastructure failure from the driver.
+        RequireNullOrNotBlank(feedback.TrialLabel, "TrialLabel", errors);
+
+        if (feedback.AttributedAt is { } attributedAt && attributedAt == default)
+        {
+            errors.Add(new("AttributedAt", "must be set when the submission carries an attribution."));
+        }
+
+        ValidateReuseAttributionShape(feedback, errors);
+        ValidateReuseExposures(feedback, errors);
+
+        return errors;
+    }
+
+    private static void ValidateReuseAttributionShape(RecordedExperienceReuseFeedback feedback, List<StoreValidationError> errors)
+    {
+        // "Benefit is Unknown" and "there was no attribution" are one fact. Two columns that could
+        // disagree would let a row claim an improvement nothing attributed.
+        if ((feedback.AttributionSource == ReuseAttributionSource.None)
+            != (feedback.Benefit == ExperienceReuseBenefit.Unknown))
+        {
+            errors.Add(new(
+                "Benefit",
+                "must be Unknown exactly when there is no attribution source, and named otherwise."));
+        }
+
+        switch (feedback.AttributionSource)
+        {
+            case ReuseAttributionSource.HumanAssessment:
+                RequireNotBlank(feedback.ReviewerIdentity, "ReviewerIdentity", errors);
+                RequireNull(feedback.EvaluatorId, "EvaluatorId", errors);
+                RequireNotBlank(feedback.Rationale, "Rationale", errors);
+                RequireSet(feedback.AttributedAt, "AttributedAt", errors);
+                RequireEmpty(feedback.EvidenceIds, "EvidenceIds", errors);
+
+                // The host-established review this judgement came out of. It is what keeps a human
+                // attribution from being a benefit, a list of IDs, and a string -- which is the bare
+                // claim this ledger refuses from anyone else.
+                if (feedback.AssessmentId is not { } assessment || assessment == Guid.Empty)
+                {
+                    errors.Add(new("AssessmentId", "must name the host-established review a human assessment came out of."));
+                }
+
+                // Optional, and audit only: human evidence is counted once per reviewer and run, so a
+                // round the reviewer chose must never reach the independence key.
+                if (feedback.VerificationRoundId is { } humanRound && humanRound == Guid.Empty)
+                {
+                    errors.Add(new("VerificationRoundId", "must name a verification round or be null."));
+                }
+
+                break;
+
+            case ReuseAttributionSource.ComparativeEvaluation:
+                RequireNotBlank(feedback.EvaluatorId, "EvaluatorId", errors);
+                RequireNull(feedback.ReviewerIdentity, "ReviewerIdentity", errors);
+                RequireNull(feedback.AssessmentId, "AssessmentId", errors);
+                RequireNotBlank(feedback.Rationale, "Rationale", errors);
+                RequireSet(feedback.AttributedAt, "AttributedAt", errors);
+
+                if (feedback.VerificationRoundId is not { } round || round == Guid.Empty)
+                {
+                    errors.Add(new(
+                        "VerificationRoundId",
+                        "must name the verification round the comparison was made in."));
+                }
+
+                // Stored, so an auditor sees what a moved score rested on and not only the evaluator's
+                // own summary of it.
+                if (feedback.EvidenceIds is not { Count: > 0 })
+                {
+                    errors.Add(new("EvidenceIds", "must carry the evidence the comparison was reached from."));
+                }
+                else if (feedback.EvidenceIds.Any(id => id == Guid.Empty))
+                {
+                    errors.Add(new("EvidenceIds", "must not contain an empty GUID."));
+                }
+                else if (feedback.EvidenceIds.Distinct().Count() != feedback.EvidenceIds.Count)
+                {
+                    errors.Add(new("EvidenceIds", "must not name the same piece of evidence twice."));
+                }
+
+                break;
+
+            default:
+                RequireNull(feedback.ReviewerIdentity, "ReviewerIdentity", errors);
+                RequireNull(feedback.EvaluatorId, "EvaluatorId", errors);
+                RequireNull(feedback.VerificationRoundId, "VerificationRoundId", errors);
+                RequireNull(feedback.AssessmentId, "AssessmentId", errors);
+                RequireNull(feedback.Rationale, "Rationale", errors);
+                RequireNull(feedback.AttributedAt, "AttributedAt", errors);
+                RequireEmpty(feedback.EvidenceIds, "EvidenceIds", errors);
+                break;
+        }
+    }
+
+    private static void ValidateReuseExposures(RecordedExperienceReuseFeedback feedback, List<StoreValidationError> errors)
+    {
+        const string Path = "Exposures";
+
+        if (feedback.Exposures is null)
+        {
+            errors.Add(new(Path, Required));
+            return;
+        }
+
+        if (feedback.Exposures.Count == 0)
+        {
+            errors.Add(new(Path, "must name at least one exposed record."));
+            return;
+        }
+
+        // The same bound Core states, mirrored here so the port refuses an oversized fan-out whatever
+        // built the submission, and mirrored again by the schema as a bound on an exposure's ordinal.
+        if (feedback.Exposures.Count > ExperienceReuseFeedback.MaxExposedRecords)
+        {
+            errors.Add(new(Path, $"must name at most {ExperienceReuseFeedback.MaxExposedRecords} records."));
+        }
+
+        var seen = new HashSet<Guid>();
+        var attributedWithoutEvidence = false;
+        var unattributedWithEvidence = false;
+
+        foreach (var exposure in feedback.Exposures)
+        {
+            if (exposure is null)
+            {
+                errors.Add(new(Path, "must not contain a null exposure."));
+                continue;
+            }
+
+            if (exposure.ExperienceId == Guid.Empty)
+            {
+                errors.Add(new($"{Path}.ExperienceId", "must not be an empty GUID."));
+            }
+            else if (!seen.Add(exposure.ExperienceId))
+            {
+                errors.Add(new(Path, "must not name the same record twice."));
+            }
+
+            if (exposure.Attributed && (exposure.EvidenceId is not { } evidenceId || evidenceId == Guid.Empty))
+            {
+                attributedWithoutEvidence = true;
+            }
+
+            if (!exposure.Attributed && exposure.EvidenceId is not null)
+            {
+                unattributedWithEvidence = true;
+            }
+
+            if (exposure.Attributed && feedback.AttributionSource == ReuseAttributionSource.None)
+            {
+                errors.Add(new(Path, "must not mark a record attributed when the submission carries no attribution."));
+            }
+        }
+
+        if (attributedWithoutEvidence)
+        {
+            errors.Add(new($"{Path}.EvidenceId", "is required for an attributed exposure: it is the confidence submission's idempotency key."));
+        }
+
+        if (unattributedWithEvidence)
+        {
+            errors.Add(new($"{Path}.EvidenceId", "must be null for an exposure nothing attributed, which produced no confidence submission."));
+        }
+    }
+
+    private static void RequireNull(object? value, string path, List<StoreValidationError> errors)
+    {
+        if (value is not null)
+        {
+            errors.Add(new(path, "must be null for this attribution source."));
+        }
+    }
+
+    private static void RequireEmpty<T>(IReadOnlyList<T>? value, string path, List<StoreValidationError> errors)
+    {
+        if (value is { Count: > 0 })
+        {
+            errors.Add(new(path, "must be empty for this attribution source."));
+        }
+    }
+
+    private static void RequireSet(DateTimeOffset? value, string path, List<StoreValidationError> errors)
+    {
+        if (value is not { } set || set == default)
+        {
+            errors.Add(new(path, "must be set for this attribution source."));
+        }
+    }
+
     public static IReadOnlyList<StoreValidationError> ValidateQuery(ExperienceRecordQuery query)
     {
         var errors = new List<StoreValidationError>();

@@ -67,6 +67,22 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ConfidenceEvidenceScriptName = "0007_confidence_evidence.sql";
 
+    /// <summary>
+    /// The script that creates the append-only reuse feedback ledger -- <c>reuse_feedback</c>, one row
+    /// per submission, and <c>reuse_feedback_exposures</c>, one row per record a run was exposed to --
+    /// which <see cref="PostgresExperienceReuseFeedbackStore"/> writes before any confidence submission.
+    /// </summary>
+    /// <remarks>
+    /// Exposure is not attribution: a submission's <c>benefit</c> is <c>'Unknown'</c> exactly when its
+    /// <c>attribution_source</c> is <c>'None'</c>, enforced by a CHECK, and such a row produces no
+    /// confidence submission at all. The tables carry no foreign key to <c>experience_records</c>, so a
+    /// run that saw an ID resolving to nothing in its scope is still recordable. Its one deferred
+    /// constraint -- the exposures-to-submissions foreign key -- is added <c>NOT VALID</c>; see the
+    /// script's own header for the confirm-then-<c>VALIDATE</c> step and the <c>CONCURRENTLY</c> note
+    /// for its unique indexes.
+    /// </remarks>
+    public const string ReuseFeedbackScriptName = "0008_reuse_feedback.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -84,6 +100,7 @@ public static class PostgresExperienceRecordSchema
         GrantsScriptName,
         SupersessionAndAppendOnlyScriptName,
         ConfidenceEvidenceScriptName,
+        ReuseFeedbackScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

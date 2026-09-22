@@ -101,6 +101,50 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="PostgresExperienceReuseFeedbackStore"/> as the singleton
+    /// <see cref="IExperienceReuseFeedbackStore"/>, over an <see cref="NpgsqlDataSource"/> resolved
+    /// from the container, so Core's feedback service has a ledger to write exposure to.
+    /// </summary>
+    /// <remarks>
+    /// Registered separately from the record store: recording reuse feedback is optional, and a host
+    /// that never does it never needs the ledger. The schema is not applied here -- the two feedback
+    /// tables live in <c>0008_reuse_feedback.sql</c>, applied by
+    /// <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/> at
+    /// startup like the rest of the schema.
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresReuseFeedbackStore(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<IExperienceReuseFeedbackStore>(provider =>
+            new PostgresExperienceReuseFeedbackStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceReuseFeedbackStore"/> as the singleton
+    /// <see cref="IExperienceReuseFeedbackStore"/> over <paramref name="dataSource"/>, for a host that
+    /// keeps its data source outside the container.
+    /// </summary>
+    /// <param name="services">The service collection to add to.</param>
+    /// <param name="dataSource">The host-owned data source the ledger opens connections from. Never disposed by the store.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresReuseFeedbackStore(this IServiceCollection services, NpgsqlDataSource dataSource)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        services.TryAddSingleton<IExperienceReuseFeedbackStore>(new PostgresExperienceReuseFeedbackStore(dataSource));
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
     /// <see cref="IExperienceCandidateSource"/>, over an <see cref="NpgsqlDataSource"/> resolved from
     /// the container, so Core's retrieval service has something to search.

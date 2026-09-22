@@ -302,6 +302,18 @@ better record may never have been considered), `EnvironmentUnrestricted`, and `V
 vector channel contributed nothing, and why) — so a host auditing injection can tell a clean match from a capped
 search or a degraded channel.
 
+### Feeding the result back
+
+`InjectedExperienceIds` is what a host hands to `ExperienceReuseFeedbackService.RecordAsync` once the run is over,
+together with the `RunId` that `ExperienceCaptureAgentBuilderExtensions` wrote into session state before the
+invocation. That records which records the run was exposed to, how it came out, and what you measured.
+
+It does **not** record that they helped. Exposure alone is stored with benefit `Unknown` and moves no score, no
+counter and no status; only a human assessment naming a host-established review, or a comparative evaluator result
+carrying its own evidence, becomes supporting or contradicting evidence — and the run ID you pass is a host trust
+boundary that nothing in the library can check. See
+[Recording what reuse was worth](../../README.md#recording-what-reuse-was-worth).
+
 ## Supported agent types
 
 | Agent | Run lifecycle | Tool calls |

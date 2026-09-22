@@ -124,9 +124,48 @@ public class PostgresServiceRegistrationTests
     }
 
     [Fact]
+    public void The_reuse_feedback_ledger_is_resolved_independently_of_the_record_store()
+    {
+        using var dataSource = TestRecords.Unreachable();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddAgentExperiencePostgresReuseFeedbackStore();
+
+        using var provider = services.BuildServiceProvider();
+
+        // Recording reuse feedback is opt-in: a host that never does it never needs the ledger, and a
+        // host that does still registers the record store separately for the confidence path.
+        var ledger = provider.GetRequiredService<IExperienceReuseFeedbackStore>();
+        Assert.IsType<PostgresExperienceReuseFeedbackStore>(ledger);
+        Assert.Same(ledger, provider.GetRequiredService<IExperienceReuseFeedbackStore>()); // singleton
+        Assert.Null(provider.GetService<IExperienceRecordStore>());
+    }
+
+    [Fact]
+    public void The_reuse_feedback_overload_taking_a_data_source_needs_nothing_else_in_the_container()
+    {
+        using var dataSource = TestRecords.Unreachable();
+        var hostLedger = new PostgresExperienceReuseFeedbackStore(dataSource);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IExperienceReuseFeedbackStore>(hostLedger);
+        services.AddAgentExperiencePostgresReuseFeedbackStore(dataSource);
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Same(hostLedger, provider.GetRequiredService<IExperienceReuseFeedbackStore>()); // registered first, so TryAdd keeps it
+    }
+
+    [Fact]
     public void Null_arguments_throw()
     {
         using var dataSource = TestRecords.Unreachable();
+
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresReuseFeedbackStore());
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresReuseFeedbackStore(dataSource));
+        Assert.Throws<ArgumentNullException>(() => new ServiceCollection().AddAgentExperiencePostgresReuseFeedbackStore((NpgsqlDataSource)null!));
+        Assert.Throws<ArgumentNullException>(() => new PostgresExperienceReuseFeedbackStore(null!));
 
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresGrantStore());
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresGrantStore(dataSource));
