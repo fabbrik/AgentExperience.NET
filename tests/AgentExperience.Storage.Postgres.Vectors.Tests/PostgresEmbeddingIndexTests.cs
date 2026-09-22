@@ -465,6 +465,45 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
 
     // ---------------------------------------------------------------- helpers
 
+    [Fact]
+    public async Task A_recipient_whose_only_comparable_population_arrives_through_a_grant_is_told_which_mismatch_it_hit()
+    {
+        // Without the grant branch in the probe, an empty search would look like "nothing similar" --
+        // silently, and wrongly, because the scope does hold something it simply cannot compare.
+        var world = await WorldAsync();
+        var owner = world.Scope with { TeamId = "team-a" };
+        var recipient = world.Scope with { TeamId = "team-b" };
+
+        var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock", scope: owner);
+        await world.Indexing.IndexAsync(world.Authorization, owner, id);
+        await world.GrantAsync(id, owner, recipient);
+
+        // The one embedding the recipient can reach is from another model.
+        await world.RestampEmbeddingAsync(id, "some-other-model", world.Generator.Dimension);
+
+        var query = new ExperienceVectorQuery(
+            recipient,
+            world.Generator.ModelId,
+            TopicEmbeddingGenerator.VectorFor("refund stuck on a lock"),
+            [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
+            MinimumConfidence: 0.5,
+            Limit: 50);
+
+        var result = await world.Index.SearchAsync(world.Authorization, query, CancellationToken.None);
+
+        Assert.Equal(ExperienceVectorSearchOutcome.ModelMismatch, result.Outcome);
+        Assert.Empty(result.Candidates);
+
+        // And a scope with nothing at all still reports an ordinary empty answer, not a mismatch.
+        var stranger = await world.Index.SearchAsync(
+            world.Authorization,
+            query with { Scope = world.Scope with { TeamId = "team-c" } },
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceVectorSearchOutcome.Found, stranger.Outcome);
+        Assert.Empty(stranger.Candidates);
+    }
+
     private static ExperienceVectorQuery VectorQuery(TestWorld world, ReadOnlyMemory<float> vector) => new(
         world.Scope,
         "topic-embed-v1",

@@ -21,9 +21,11 @@ public static class ExperienceVectorSchema
     /// <see cref="ExperienceVectorIndexMaintenance"/> rather than by this script.
     /// </summary>
     /// <remarks>
-    /// The number continues the family's sequence past the base adapter's <c>0001</c>-<c>0003</c>, so a
-    /// reader can still order the whole schema at a glance, even though the two packages apply their
-    /// scripts separately.
+    /// The number is this package's place in one sequence the whole family shares, so a reader can
+    /// still order the entire schema at a glance even though the two packages apply their scripts
+    /// separately: the base adapter owns <c>0001</c>-<c>0003</c> and <c>0005</c>
+    /// (<c>experience_grants</c>), and this package owns only <c>0004</c>. A gap in either package's
+    /// list is therefore expected, and neither migrator ever applies the other's scripts.
     /// </remarks>
     public const string EmbeddingsScriptName = "0004_add_experience_embeddings.sql";
 

@@ -534,4 +534,64 @@ public class ContractShapeTests
 
         Assert.Throws<ArgumentNullException>(() => authorization.Permits(null!));
     }
+
+    // ---- Story 3.1: sharing grants ---------------------------------------------------------------
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("team-b", "agent-b", "user-b")]
+    [InlineData("team-b", null, null)]
+    public void The_grant_boundary_ignores_exactly_the_fields_a_grant_may_relax(string? team, string? agent, string? user)
+    {
+        var owner = new Scope("tenant-1", "app-1", "project-1", "team-a", "agent-a", "user-a");
+
+        Assert.True(owner.SharesGrantBoundary(new Scope("tenant-1", "app-1", "project-1", team, agent, user)));
+    }
+
+    [Theory]
+    [InlineData("tenant-2", "app-1", "project-1")]
+    [InlineData("tenant-1", "app-2", "project-1")]
+    [InlineData("tenant-1", "app-1", "project-2")]
+    [InlineData("Tenant-1", "app-1", "project-1")]
+    public void The_grant_boundary_is_never_crossed_by_a_differing_required_field(string tenant, string application, string project)
+    {
+        var owner = new Scope("tenant-1", "app-1", "project-1", "team-a");
+
+        Assert.False(owner.SharesGrantBoundary(new Scope(tenant, application, project, "team-a")));
+        Assert.Throws<ArgumentNullException>(() => owner.SharesGrantBoundary(null!));
+    }
+
+    [Fact]
+    public void Administrator_authority_is_a_separate_required_input_on_every_grant_mutating_call()
+    {
+        // The shape is the guarantee: authority to administer sharing cannot be inferred from an
+        // AuthorizationContext, from its roles, or from a scope, because every mutating call demands a
+        // GrantAdministration of its own alongside the authorization it already takes.
+        foreach (var name in new[] { nameof(IExperienceGrantStore.CreateAsync), nameof(IExperienceGrantStore.RevokeAsync) })
+        {
+            var parameters = typeof(IExperienceGrantStore).GetMethod(name)!.GetParameters();
+            Assert.Equal(typeof(AuthorizationContext), parameters[0].ParameterType);
+            Assert.Equal(typeof(GrantAdministration), parameters[1].ParameterType);
+        }
+
+        // Listing is a read of the owner's own administration, so it takes no administrator authority.
+        var list = typeof(IExperienceGrantStore).GetMethod(nameof(IExperienceGrantStore.ListAsync))!.GetParameters();
+        Assert.DoesNotContain(list, parameter => parameter.ParameterType == typeof(GrantAdministration));
+
+        // And a grant carries who issued it, so an audit can answer "who allowed this, and until when".
+        var grant = new ExperienceGrant(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new Scope("tenant-1", "app-1", "project-1", "team-a"),
+            new Scope("tenant-1", "app-1", "project-1", "team-b"),
+            "the sibling team owns the follow-up",
+            "administrator-1",
+            Now,
+            Now.AddDays(7),
+            RevokedAt: null,
+            RevocationReason: null);
+
+        Assert.True(grant.RecordScope.SharesGrantBoundary(grant.RecipientScope));
+        Assert.Equal("administrator-1", grant.AdministratorPrincipalId);
+    }
 }

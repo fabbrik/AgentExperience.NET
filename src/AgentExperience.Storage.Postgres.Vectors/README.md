@@ -47,7 +47,7 @@ services.AddAgentExperienceRetrieval();                      // hybrid, because 
 Apply the schema once at startup, in two calls:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003, the base schema
+await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005, base schema
 await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, this package's schema
 ```
 
@@ -56,6 +56,12 @@ extension, so that statement ordinarily needs a superuser (on a managed service,
 designates). A text-only deployment never calls the second line and therefore never needs that privilege. If your
 operators install the extension out of band, this call runs fine as an ordinary role — `CREATE EXTENSION IF NOT
 EXISTS` is a no-op once it exists. Run the base migration first: `0004` has a foreign key to `experience_records`.
+
+The searching role needs `SELECT` on `agent_experience.experience_embeddings` and
+`agent_experience.experience_records`, plus `INSERT`/`UPDATE` on the embedding table to index. To honour sharing
+grants it also needs `SELECT` on `agent_experience.experience_grants`; that one is optional, and a role without it
+(or a database that has not applied `0005`) falls back to the exact-scope predicate and reports it once through the
+`onGrantsUnavailable` callback.
 
 Both migrators share the `agent_experience.schema_versions` journal and the same advisory lock, so they serialize
 against each other and against another host, and neither can claim the other's journal entries.
@@ -151,7 +157,8 @@ record rewrites it exactly once. Re-indexing is always explicit and always scope
 SELECT <record columns>, (e.embedding::vector(n) <=> CAST(@query_vector AS vector(n))) AS distance
 FROM agent_experience.experience_embeddings e
 JOIN agent_experience.experience_records r ON r.experience_id = e.experience_id
-WHERE <exact scope> AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence
+WHERE ((<exact scope on e and r>) OR <an active sharing grant naming r and permitting this scope>)
+  AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence
   AND e.model_id = @model_id AND e.dimension = n
 ORDER BY distance, r.experience_id LIMIT @limit
 ```
@@ -160,11 +167,24 @@ Scope, status, and the confidence floor are the same predicates the text channel
 identically, in the database, before anything is ranked. Comparability is a predicate too: a vector from another
 model or of another width is excluded by the query, so no incompatible comparison is ever attempted.
 
-The scope predicate is applied to **both** sides of the join. On `r` it is authoritative; on `e` it is redundant
-(the embedding's scope columns are copied from the record row inside the write) and exists so
+The exact-scope predicate is applied to **both** sides of the join. On `r` it is authoritative; on `e` it is
+redundant (the embedding's scope columns are copied from the record row inside the write) and exists so
 `ix_experience_embeddings_scope_model` can actually serve the query — a btree on
 `(tenant_id, application_id, project_id, model_id, dimension)` is useless when the only predicates on the embeddings
 table are its trailing two columns.
+
+A top-level `OR` is not free: the grant branch is a correlated `EXISTS`, and the planner may well choose a scan
+over the join rather than the scope index. The `EXPLAIN` test in this repository runs with `enable_seqscan = off`,
+so what it proves is that the HNSW index is *reachable* for the ordering -- not that the scope filter stays
+index-served once the `OR` is there. Measure on your own data before assuming it does.
+
+The alternative to that exact match is an **active sharing grant** — issued, not revoked, and not expired as of the
+database's own `clock_timestamp()` — naming the record and permitting the requesting scope. It is the base package's predicate,
+composed rather than retyped, so both retrieval channels honour byte-for-byte the same rule about what a grant does;
+see [Sharing grants](../AgentExperience.Storage.Postgres/README.md#sharing-grants). The grant branch is stated on the
+record side only: an embedding carries its *owner's* scope, so an `e`-side exact match would exclude exactly the rows
+the grant exists to admit. A shared record is still subject to every other predicate here — status, confidence,
+model, and width — so sharing widens who may read a record, never what makes one comparable or eligible.
 
 The distance expression is the **only** sort key. A tie-break on `experience_id` would force the whole join to be
 sorted and the HNSW index never to be used, so exact distance ties are broken arbitrarily here — which costs

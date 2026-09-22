@@ -28,16 +28,29 @@ public static class PostgresExperienceRecordSchema
     /// </summary>
     public const string SearchScriptName = "0003_add_experience_search.sql";
 
+    /// <summary>
+    /// The script that creates <c>experience_grants</c> and its append-only
+    /// <c>experience_grant_events</c> log, which <see cref="PostgresExperienceGrantStore"/> administers
+    /// and every grant-aware read predicate consults.
+    /// </summary>
+    /// <remarks>
+    /// It is numbered <c>0005</c> because <c>0004</c> belongs to
+    /// <c>AgentExperience.Storage.Postgres.Vectors</c>: the two packages apply their own scripts, but
+    /// they share one journal and one number sequence, so the whole schema still orders at a glance.
+    /// </remarks>
+    public const string GrantsScriptName = "0005_create_experience_grants.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
     /// Every embedded script name, in the order they must be applied. This package's schema is
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
-    /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>.
+    /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
+    /// why <c>0004</c> is absent from this list while <c>0005</c> is present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
-        [InitialScriptName, LifecycleEventsScriptName, SearchScriptName];
+        [InitialScriptName, LifecycleEventsScriptName, SearchScriptName, GrantsScriptName];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>

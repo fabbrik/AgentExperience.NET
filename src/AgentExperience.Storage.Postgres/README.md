@@ -1,7 +1,8 @@
 # AgentExperience.Storage.Postgres
 
-Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port and searches
-them by task text through the `IExperienceCandidateSource` port, using plain Npgsql.
+Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port, searches
+them by task text through the `IExperienceCandidateSource` port, and administers explicit sharing grants through the
+`IExperienceGrantStore` port, using plain Npgsql.
 
 Pinned to `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
 `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.11** (all exact; the DI package is abstractions only —
@@ -83,15 +84,18 @@ using AgentExperience.Storage.Postgres.DependencyInjection;
 services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 services.AddAgentExperiencePostgresStore();             // or AddAgentExperiencePostgresStore(dataSource)
 services.AddAgentExperiencePostgresCandidateSource();   // or ...CandidateSource(dataSource)
+services.AddAgentExperiencePostgresGrantStore();        // or ...GrantStore(dataSource) -- only if you share records
 
 // Core's own extensions then supply capture, reflection, lifecycle, finalization, and retrieval over them.
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
 services.AddAgentExperienceRetrieval();
 ```
 
-The two ports are registered independently: a host that only writes experience never has to register the search, and
-one that only reads never has to register the store. Both registrations are `TryAdd`-based, so a host that has
-already registered its own `IExperienceRecordStore` or `IExperienceCandidateSource` keeps it.
+The ports are registered independently: a host that only writes experience never has to register the search, one
+that only reads never has to register the store, and one that never shares a record across scopes never has to
+register the grant store — the reads that honour grants do so in SQL either way. Every registration is
+`TryAdd`-based, so a host that has already registered its own `IExperienceRecordStore`,
+`IExperienceCandidateSource`, or `IExperienceGrantStore` keeps it.
 It does **not** apply the schema: call `ExperienceSchemaMigrator.MigrateAsync` once at startup (see
 [Schema](#schema)).
 
@@ -210,6 +214,109 @@ within-search measure: two candidates' relevances are comparable to each other, 
 query. Candidates come back in descending relevance, ties broken by `experience_id`; Core re-sorts with its own
 total, ordinal tie-break when it ranks.
 
+## Sharing grants
+
+Scope is otherwise all-or-nothing. A **grant** is the one, audited exception: an administrator lets one named record
+be *read* from one other scope, until it expires or is revoked. `PostgresExperienceGrantStore` administers them
+through the `IExperienceGrantStore` port.
+
+```csharp
+IExperienceGrantStore grants = new PostgresExperienceGrantStore(dataSource);
+
+// Administrator authority is a distinct, explicit input the host constructs. It is never derived from
+// an AuthorizationContext, from AuthorizationContext.Roles, or from the requesting scope.
+var administration = new GrantAdministration(AdministratorPrincipalId: "svc-sharing-admin", AuthorizedAt: DateTimeOffset.UtcNow);
+
+var created = await grants.CreateAsync(
+    authorization,                                   // the caller's own authority, over the record's owner scope
+    administration,
+    new ExperienceGrantRequest(
+        GrantId: Guid.NewGuid(),
+        ExperienceId: recordId,
+        RecordScope: ownerScope,
+        RecipientScope: ownerScope with { TeamId = "team-b" },
+        Reason: "team-b owns the follow-up work",
+        ExpiresAt: DateTimeOffset.UtcNow.AddDays(7)),
+    cancellationToken);
+```
+
+**Two authorities, never one.** Every grant-mutating call takes the `AuthorizationContext` *and* a
+`GrantAdministration`. A `null` administration, or one whose principal is blank, is `Denied` before any connection
+opens — administering sharing is not something a role string or a scope can imply.
+
+**What a grant permits.** Reading one named record, and only reading: `GetAsync`, the text channel, and the vector
+channel — and therefore injection, which re-reads through `GetAsync`. A granted record comes back exactly as its
+owner sees it, still carrying the owner's `Scope`. `CreateAsync`, `CommitLifecycleEventAsync`, `GetHistoryAsync`,
+`QueryAsync`'s enumeration, and issuing further grants all keep the exact-scope predicate, so none of them is ever
+widened by a grant.
+
+**Enforcement is a SQL predicate.** Reads compose `(exact scope) OR (an active grant naming this record and
+permitting this scope)` in the same statement as everything else, so the database can never return a row the
+predicate did not permit, and no application code is in a position to widen one. *Active* means issued, not revoked,
+and not expired as of `clock_timestamp()` — the database's own wall clock, so a caller whose clock is wrong cannot
+widen anything. It is `clock_timestamp()` rather than `now()` because `now()` is fixed at the start of the
+surrounding transaction, and inside a long caller-held transaction that would keep admitting a grant that expired
+minutes ago.
+
+**Privileges, and deployments without the grant table.** Honouring grants needs `SELECT` on
+`agent_experience.experience_grants` in addition to `experience_records`; administering them needs `INSERT`/`UPDATE`
+on `experience_grants` and `INSERT` on `experience_grant_events`. The read privilege is **optional**: a role without
+it, and a database that has not applied `0005` yet, are both supported. The first read that meets an undefined table
+(`42P01`) or an insufficient privilege (`42501`) latches that reader into degraded mode, retries with the
+exact-scope predicate alone, and reports it once through the optional `onGrantsUnavailable` callback on
+`PostgresExperienceRecordStore`, `PostgresExperienceCandidateSource`, and `PostgresExperienceEmbeddingIndex`.
+Degrading only ever **narrows** what a read returns, so it is a configuration problem rather than a safety one.
+
+**Atomicity.** `CreateAsync` writes the grant row and its `Issued` event in one transaction, on one connection;
+`RevokeAsync` updates the row and appends a `Revoked` event in another. Both or neither, every time. The insert's
+source row is the canonical record itself, matched on the exact owner scope, so a grant over a record that is not
+there writes nothing and returns `NotFound`, and a stored grant's owner scope is copied from the record rather than
+asserted by the caller.
+
+| Outcome | When |
+| --- | --- |
+| `Created` / `Revoked` | The grant and its audit event were committed together |
+| `Found` | `ListAsync` or `GetHistoryAsync` answered; a listing may legitimately have no grants |
+| `NotFound` | No such record, or no such grant, in the requested owner scope — including when it exists elsewhere |
+| `Denied` | No administrator authority, or a scope outside the host authorization. Nothing was accessed |
+| `Invalid` | Malformed request, with the field path. A recipient scope that changes tenant, application, or project, or that equals the owner's, is reported on that field; so is an undated `GrantAdministration` |
+| `Conflict` | That `GrantId` is already stored in some scope, **or** an active grant already permits the same recipient over the same record. Nothing was written |
+| `AlreadyRevoked` | The grant was already revoked. Nothing was written and its history is unchanged |
+
+`NotFound` says nothing about whether a `GrantId` is free. The insert reads the record row first, so a create naming
+a record that is not in the owner scope selects nothing and reports `NotFound` before the primary key is ever
+tested — even when that `GrantId` is already stored. Generate a fresh ID per attempt.
+
+**One active grant per recipient.** `ux_experience_grants_active_recipient` allows at most one *unrevoked* grant per
+(record, recipient scope) pair, so revoking the grant an administrator knows about genuinely ends that recipient's
+access instead of leaving an overlapping one alive. Re-issuing while one is active is `Conflict`; once it is
+revoked, the same recipient can be granted access again. Different recipients are independent of each other.
+
+**Null optional recipient fields are exact, not "one sibling team".** Scope matching is exact everywhere, so a
+recipient of `(tenant, application, project, null, null, null)` permits exactly the requests whose scope has all
+three optional fields null — the project-level scope, which is usually broader than intended. Name every optional
+field the recipient actually uses.
+
+`ListAsync` returns every grant over a record, revoked and expired ones included, oldest first, bounded by its
+`limit` (1-500, default 100) — from the **owner** scope only. It is driven from the record, so "this record has no
+grants" (`Found`, empty) and "there is no such record here" (`NotFound`) are different answers. A recipient cannot
+enumerate the grants over a record it can read, any more than it can issue one.
+
+`GetHistoryAsync` reads one grant's audit trail: the grant as it stands now plus every `Issued`/`Revoked` event,
+oldest first, each carrying the administrator, when the host established that administrator's authority, both
+scopes, the reason, and the expiry at the time. It mirrors `IExperienceRecordStore.GetHistoryAsync` and is likewise
+owner-scope only. **It is an administration trail, not an access log:** reads made through a grant are not recorded
+anywhere, so it answers "who permitted this?" and never "who read it?".
+
+A grant never changes the record it names: no status, confidence, counter, revision, or timestamp moves on this
+path, and nothing is promoted.
+
+**A borrowed record says so.** A read widened by a grant comes back with `SharedByGrant` set — on
+`ExperienceRecordGetResult` and on every `ExperienceCandidate` — because this adapter is the only layer that knows.
+Core passes it through on `RankedExperience`, and the MAF provider surfaces it to the host's risk policy and labels
+the injected block. Consumers keep a strict "this is my own record" check for anything not flagged, so a source that
+returns a foreign record without declaring a grant is still refused downstream.
+
 ## Schema
 
 The schema lives in the embedded scripts under `Migrations/`.
@@ -262,6 +369,33 @@ The schema lives in the embedded scripts under `Migrations/`.
 Adding the generated column rewrites the table, so on a large existing deployment apply this script in a maintenance
 window like any other rewriting migration.
 
+`0005_create_experience_grants.sql` adds explicit sharing grants (see [Sharing grants](#sharing-grants)):
+
+- `experience_grants`, keyed by `grant_id`, holding the record it names, the owner scope, the recipient scope, the
+  reason, the administrator's principal ID, `issued_at`/`expires_at`, and `revoked_at`/`revocation_reason`.
+- `CHECK` constraints mirroring `0002` (non-empty IDs, non-blank scope, reason and administrator) plus two that carry
+  the policy itself: `recipient_tenant_id = tenant_id AND recipient_application_id = application_id AND
+  recipient_project_id = project_id`, so a grant crossing those boundaries is unstorable however it is written;
+  `expires_at > issued_at`, so a grant that was already expired when issued is refused by the database's own clock;
+  and `experience_grants_recipient_differs`, so a grant to the scope that already owns the record — which would
+  permit nothing while leaving an audit row claiming otherwise — cannot be stored.
+- `experience_grant_events`, append-only, with one row per `Issued` or `Revoked` action, carrying both scopes, the
+  reason, the administrator, `administrator_authorized_at` (when the host established that authority), and
+  `occurred_at`/`recorded_at`. Revoking appends; nothing is ever updated or deleted.
+- A **unique partial** index, `ux_experience_grants_active_recipient`, over the record and the full recipient scope
+  `WHERE revoked_at IS NULL`, with `NULLS NOT DISTINCT` because a null optional scope field is an exact value here
+  rather than a wildcard. It is what makes "revoke the grant you know about" actually end that recipient's access.
+- `ix_experience_grants_active`, partial on the same `revoked_at IS NULL`, carrying every column the read predicate
+  filters on: the record, the recipient scope in full, the expiry, and the owner scope.
+- `ix_experience_grants_record` for listing a record's grants from its owner scope, and, on the event log,
+  `(grant_id, recorded_at)` for one grant's trail plus `(experience_id, recorded_at)` and
+  `(tenant_id, application_id, project_id, recorded_at)` for the two obvious audit questions.
+- Deliberately no foreign key to `experience_records`, for the same reason as `0002`: a grant naming a record that is
+  not in the owner scope is a typed `NotFound`, not an infrastructure failure.
+
+It is numbered `0005` because `0004` belongs to the companion vectors package. The two packages apply their own
+scripts but share one journal and one number sequence, so a gap in either package's list is expected.
+
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package
 [`AgentExperience.Storage.Postgres.Vectors`](../AgentExperience.Storage.Postgres.Vectors/README.md) and is applied
@@ -292,7 +426,10 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
 - **Permissions.** The migrating role needs `CREATE` on the database (for the `agent_experience` schema) and on that
   schema (for its tables). It does **not** need to be a superuser: no script here creates an extension. The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
   `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`; the
-  candidate source needs only `SELECT` on `agent_experience.experience_records`.
+  candidate source needs only `SELECT` on `agent_experience.experience_records`. To honour sharing grants, both also
+  need `SELECT` on `agent_experience.experience_grants` -- optional, because a role without it falls back to the
+  exact-scope predicate (see [Sharing grants](#sharing-grants)). Administering grants additionally needs `INSERT`
+  and `UPDATE` on `agent_experience.experience_grants` and `INSERT` on `agent_experience.experience_grant_events`.
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one
   for the scripts. A multiplexing data source (`NpgsqlDataSourceBuilder.EnableMultiplexing`) cannot hold a session
   advisory lock, because its commands do not stay on one physical connection, so it is not supported for migration.

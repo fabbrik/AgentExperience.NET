@@ -310,6 +310,39 @@ public class InMemoryExperienceCaptureServiceTests
     }
 
     [Fact]
+    public async Task An_unsanitizable_capture_stores_nothing_and_hands_the_host_back_the_decision_and_its_reason()
+    {
+        // Story 3.1's "unsanitizable capture" row. Rejection is a decision the host is told about and
+        // can act on, not a silent drop and not a persisted denial record: there is no store involved
+        // at all, because nothing was ever safe enough to store.
+        var sanitizer = new AlwaysRejectSanitizer();
+        var service = CreateService(sanitizer: sanitizer);
+        var run = StartTestRun(service);
+
+        var result = await service.AppendAttemptAsync(run.RunId, MakeAttemptRequest(toolCalls: [MakeToolCall()], result: "attempt result"));
+
+        Assert.Equal(AppendAttemptOutcome.SanitizationRejected, result.Outcome);
+
+        // The sanitizer's own reason reaches the caller unaltered, so a host can log or surface why.
+        Assert.Equal("test sanitizer rejects everything", result.Reason);
+        Assert.Empty(result.TruncatedFields);
+
+        // And nothing of the rejected attempt survives anywhere: not the attempt, not its tool calls,
+        // and not the raw text that failed. The run is still open, not failed.
+        var stored = MustGetRun(service, run.RunId);
+        Assert.Empty(stored.Attempts);
+        Assert.Null(stored.ExecutionStatus);
+
+        // The run is unharmed: a corrected attempt still records afterwards, which is what makes the
+        // rejection a decision rather than a failure.
+        var permissive = CreateService();
+        var healthy = StartTestRun(permissive);
+        Assert.Equal(
+            AppendAttemptOutcome.Recorded,
+            (await permissive.AppendAttemptAsync(healthy.RunId, MakeAttemptRequest(toolCalls: [MakeToolCall()]))).Outcome);
+    }
+
+    [Fact]
     public async Task Sanitization_rejection_short_circuits_at_the_first_failing_field_without_sanitizing_the_rest()
     {
         var countingSanitizer = new CountingRejectSanitizer();

@@ -246,6 +246,17 @@ a budget too small for the block's own header and footer could never fit a recor
 re-scoped, re-scored, or aged out between retrieval and injection is dropped. Once the block has been handed to a
 model, a later revocation cannot retract it — it only affects injections that have not happened yet.
 
+**Records shared by a grant are injected like any other.** A record another scope owns can be retrieved and injected
+when an active [sharing grant](../AgentExperience.Storage.Postgres/README.md#sharing-grants) permits the request's
+scope to read it; the re-read goes through the same grant-aware `GetAsync`, so a grant that expires or is revoked
+between retrieval and injection drops the record as `Unreadable` — indistinguishable, deliberately, from one that was
+deleted or never readable. The provider decides none of this: whether a grant applies is a predicate in the store's
+own query. What the provider still enforces on its own is the boundary a grant can never cross, so a record from
+another tenant, application, or project is dropped even if a store hands one over. The store says which records
+are borrowed, on `ExperienceRecordGetResult.SharedByGrant`; that reaches the host as
+`ExperienceInjectionDecisionContext.SharedByGrant`, so a risk policy can treat another scope's lesson differently,
+and the block carries a `Shared:` line for the model to read. No scope identifier is ever written into the block.
+
 ### Injected blocks accumulate across a reused session
 
 A block injected on one turn can stay in an `AgentSession`'s conversation, so a later turn of the same session shows

@@ -318,6 +318,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.InitialScriptName,
                 PostgresExperienceRecordSchema.LifecycleEventsScriptName,
                 PostgresExperienceRecordSchema.SearchScriptName,
+                PostgresExperienceRecordSchema.GrantsScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -394,6 +395,86 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Grant_script_is_embedded_separately_and_states_the_boundary_a_grant_cannot_cross()
+    {
+        var grants = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantsScriptName);
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_grants", grants, StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_grant_events", grants, StringComparison.Ordinal);
+
+        // The rule that makes a grant a grant lives in the database, not only in the adapter: a row
+        // that would move a record across a tenant, application, or project cannot be stored at all.
+        Assert.Contains("CONSTRAINT experience_grants_same_boundary CHECK (", grants, StringComparison.Ordinal);
+        Assert.Contains("recipient_tenant_id = tenant_id", grants, StringComparison.Ordinal);
+        Assert.Contains("recipient_application_id = application_id", grants, StringComparison.Ordinal);
+        Assert.Contains("recipient_project_id = project_id", grants, StringComparison.Ordinal);
+
+        // A grant that was expired the moment it was issued is not a grant.
+        Assert.Contains("CHECK (expires_at > issued_at)", grants, StringComparison.Ordinal);
+        // At most one ACTIVE grant per (record, recipient), so revoking the grant an administrator
+        // knows about actually ends that recipient's access rather than leaving an overlapping one.
+        Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_experience_grants_active_recipient", grants, StringComparison.Ordinal);
+        Assert.Contains("NULLS NOT DISTINCT", grants, StringComparison.Ordinal);
+        // The read predicate's own partial index, over the grants that can still permit anything.
+        Assert.Contains("CREATE INDEX IF NOT EXISTS ix_experience_grants_active", grants, StringComparison.Ordinal);
+        Assert.Contains("WHERE revoked_at IS NULL", grants, StringComparison.Ordinal);
+        // A grant to the scope that already owns the record permits nothing and is refused.
+        Assert.Contains("CONSTRAINT experience_grants_recipient_differs CHECK (", grants, StringComparison.Ordinal);
+        // The authority an action was taken under is part of the trail, not only who took it.
+        Assert.Contains("administrator_authorized_at timestamptz NOT NULL", grants, StringComparison.Ordinal);
+
+        var statements = string.Join(
+            '\n',
+            grants.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Append-only, like 0002: 0005 adds its own tables and rewrites nothing earlier scripts created.
+        Assert.DoesNotContain("ALTER TABLE", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DROP", statements, StringComparison.OrdinalIgnoreCase);
+        // No foreign key, so a grant naming a record that is not in the owner scope is a typed
+        // NotFound rather than an infrastructure failure.
+        Assert.DoesNotContain("REFERENCES", statements, StringComparison.OrdinalIgnoreCase);
+        // The vector extension belongs to the vectors package's 0004 and must not leak into this one.
+        Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
+
+        // 0005 is applied last, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void The_grant_predicate_is_correlated_expiry_checked_and_composed_from_the_exact_one()
+    {
+        // This inspects the predicate constants only. It cannot say which statements compose them --
+        // that is proved behaviourally against the container in PostgresGrantTests, which is where the
+        // "writes are never widened" and "history stays owner-scope" claims are actually tested.
+        Assert.Contains("g.revoked_at IS NULL", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+
+        // clock_timestamp(), not now(): now() is fixed at transaction start, so inside a caller-held
+        // transaction an expired grant would keep permitting reads.
+        Assert.Contains("g.expires_at > clock_timestamp()", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.DoesNotContain("expires_at > now()", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains("g.recipient_tenant_id = @tenant_id", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+
+        // The record side of the correlation is aliased, never bare: a bare experience_id inside the
+        // subquery would bind to the grants table's own column and match every record ever granted.
+        Assert.Contains("g.experience_id = r.experience_id", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.DoesNotContain("g.experience_id = experience_id", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+
+        Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.ReadableRecordScopePredicate, StringComparison.Ordinal);
+        Assert.Contains(PostgresExperienceRecordStore.ActiveGrantPredicate, PostgresExperienceRecordStore.ReadableRecordScopePredicate, StringComparison.Ordinal);
+
+        // Expiry is the database's clock, never a value this adapter computed and sent.
+        Assert.DoesNotContain("@now", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+
+        // The shared-by-grant flag is the negation of the exact match, computed by the same statement
+        // that decided readability, so no consumer has to re-derive it by comparing scopes.
+        Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
+        Assert.StartsWith("NOT (", PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
+        Assert.EndsWith(PostgresExperienceRecordStore.SharedByGrantAlias, PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
     }
 
     [Fact]

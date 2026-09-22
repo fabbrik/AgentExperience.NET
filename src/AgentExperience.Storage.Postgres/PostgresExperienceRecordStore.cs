@@ -9,7 +9,8 @@ namespace AgentExperience.Storage.Postgres;
 /// <summary>
 /// <see cref="IExperienceRecordStore"/> over PostgreSQL with plain Npgsql. Each operation validates
 /// the request, checks it against the host-established <see cref="AuthorizationContext"/>, and only
-/// then opens a connection and runs parameterized SQL whose predicates apply the exact scope. The
+/// then opens a connection and runs parameterized SQL whose predicates apply the exact scope -- or,
+/// for <see cref="GetAsync"/> alone, the exact scope or an active sharing grant. The
 /// schema must already exist: the host applies it once by calling
 /// <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/>. The store
 /// never migrates, on construction or otherwise.
@@ -55,8 +56,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "@project_id, @team_id, @agent_id, @user_id, @task_id, @status, @reuse_confidence, @supporting_validations, " +
         "@contradictions, @revision, @created_at, @updated_at, @payload_version, @payload)";
 
+    /// <summary>
+    /// The one read that a grant may widen: exactly this scope, or an active grant naming this record
+    /// and permitting this scope. The table is aliased so the grant subquery's correlation is
+    /// unambiguous -- an unqualified <c>experience_id</c> inside it would silently resolve to the
+    /// grants table's own column and match every record.
+    /// </summary>
     private const string GetSql =
-        $"SELECT {SelectColumns} FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate}";
+        $"SELECT {SelectColumns}, {SharedByGrantColumn} FROM {Table} r " +
+        $"WHERE r.experience_id = @experience_id AND {ReadableRecordScopePredicate}";
+
+    /// <summary>
+    /// The same read with the grant branch removed, for a database that has no
+    /// <c>experience_grants</c> table or a role that may not read it. See <see cref="PostgresGrantSupport"/>.
+    /// </summary>
+    private const string GetExactSql =
+        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias} FROM {Table} r " +
+        $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate}";
 
     private const string QuerySql = $"SELECT {SelectColumns} FROM {Table} WHERE {ScopePredicate}";
 
@@ -112,6 +128,70 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "AND r.team_id IS NOT DISTINCT FROM @team_id AND r.agent_id IS NOT DISTINCT FROM @agent_id " +
         "AND r.user_id IS NOT DISTINCT FROM @user_id";
 
+    /// <summary>The sharing-grant table. Created by <c>0005_create_experience_grants.sql</c>.</summary>
+    internal const string GrantsTable = "agent_experience.experience_grants";
+
+    /// <summary>
+    /// An active grant naming the <c>r</c>-aliased record and permitting the requesting scope. Active
+    /// is decided here and nowhere else: issued, not revoked, and not yet expired as of
+    /// <c>clock_timestamp()</c> -- the database's own wall clock, so a caller whose clock is wrong (or
+    /// convenient) cannot widen anything. It is <c>clock_timestamp()</c> rather than <c>now()</c>
+    /// because <c>now()</c> is fixed at the start of the surrounding transaction: inside a long
+    /// caller-held transaction it would keep admitting a grant that expired minutes ago.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both halves are matched. The grant's owner-scope columns must equal the record's, which is what
+    /// keeps a hand-written grant row from attaching itself to a record it does not describe; the
+    /// grant's recipient columns must equal the request scope, which is what it actually permits.
+    /// Since the recipient's tenant, application, and project are constrained equal to the owner's by
+    /// <c>experience_grants_same_boundary</c>, no grant can move a record across those three however
+    /// this predicate is composed.
+    /// </para>
+    /// <para>
+    /// It uses the same <c>@tenant_id</c>..<c>@user_id</c> parameters the scope predicate does, so any
+    /// statement that already calls <see cref="AddScopeParameters"/> can compose it as it stands.
+    /// </para>
+    /// </remarks>
+    internal const string ActiveGrantPredicate =
+        $"EXISTS (SELECT 1 FROM {GrantsTable} g WHERE g.experience_id = r.experience_id " +
+        "AND g.revoked_at IS NULL AND g.expires_at > clock_timestamp() " +
+        "AND g.tenant_id = r.tenant_id AND g.application_id = r.application_id AND g.project_id = r.project_id " +
+        "AND g.team_id IS NOT DISTINCT FROM r.team_id AND g.agent_id IS NOT DISTINCT FROM r.agent_id " +
+        "AND g.user_id IS NOT DISTINCT FROM r.user_id " +
+        "AND g.recipient_tenant_id = @tenant_id AND g.recipient_application_id = @application_id " +
+        "AND g.recipient_project_id = @project_id " +
+        "AND g.recipient_team_id IS NOT DISTINCT FROM @team_id " +
+        "AND g.recipient_agent_id IS NOT DISTINCT FROM @agent_id " +
+        "AND g.recipient_user_id IS NOT DISTINCT FROM @user_id)";
+
+    /// <summary>
+    /// What a <em>read</em> may return: the record's own exact scope, or an active grant that names it
+    /// and permits the requesting scope. This is the whole of grant enforcement, and it lives in SQL,
+    /// so the database can never hand back a row the predicate did not permit and no application code
+    /// is in a position to widen one.
+    /// <para>
+    /// It is used by <see cref="GetAsync"/>, by the text channel, and by the vector channel -- the
+    /// three paths a grant covers. Writes, lifecycle commits, lifecycle history, and
+    /// <see cref="QueryAsync"/>'s enumeration keep the exact-scope predicate: a grant confers reading
+    /// one named record, never writing, never the audit trail of mutations, and never the right to
+    /// list what a scope holds.
+    /// </para>
+    /// </summary>
+    internal const string ReadableRecordScopePredicate =
+        "((" + RecordScopePredicate + ") OR " + ActiveGrantPredicate + ")";
+
+    /// <summary>The alias the shared-by-grant flag is selected under, read back by name, never by ordinal.</summary>
+    internal const string SharedByGrantAlias = "shared_by_grant";
+
+    /// <summary>
+    /// Whether the row that came back is the requester's own or someone else's, shared. It is the
+    /// negation of the exact-scope match, computed by the same statement that decided readability, so
+    /// the answer cannot be re-derived (or mis-derived) anywhere else. Appended <em>after</em> the
+    /// record columns, so <see cref="ReadRecord"/>'s ordinals 0-17 are untouched.
+    /// </summary>
+    internal const string SharedByGrantColumn = "NOT (" + RecordScopePredicate + ") AS " + SharedByGrantAlias;
+
     /// <summary>
     /// One statement, so the revision and the events come from one snapshot however the server is
     /// configured: a commit landing mid-read can never make the returned revision contradict the
@@ -128,13 +208,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     private readonly NpgsqlDataSource _dataSource;
 
+    private readonly PostgresGrantSupport _grants;
+
     /// <summary>Creates a store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
+    /// <param name="onGrantsUnavailable">
+    /// Called at most once, when a read first finds <c>agent_experience.experience_grants</c> missing
+    /// or unreadable and falls back to the exact-scope predicate. Optional: the fallback happens either
+    /// way, and it only ever narrows what a read returns.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
-    public PostgresExperienceRecordStore(NpgsqlDataSource dataSource)
+    public PostgresExperienceRecordStore(
+        NpgsqlDataSource dataSource,
+        Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
+        _grants = new PostgresGrantSupport(onGrantsUnavailable);
     }
 
     /// <inheritdoc />
@@ -237,22 +327,41 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         try
         {
-            await using var command = _dataSource.CreateCommand(GetSql);
-            command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
-            AddScopeParameters(command.Parameters, scope);
-
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            try
             {
-                return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
+                return await ReadOneAsync(_grants.Available ? GetSql : GetExactSql, scope, experienceId, cancellationToken)
+                    .ConfigureAwait(false);
             }
-
-            return new(ExperienceStoreOutcome.Found, ReadRecord(reader), NoErrors);
+            catch (Exception ex) when (_grants.ShouldFallBack(ex, "get", cancellationToken))
+            {
+                // No grant table, or no permission to read it. Falling back narrows the read to the
+                // exact scope; it can never return a record this scope did not already own.
+                return await ReadOneAsync(GetExactSql, scope, experienceId, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
             throw Translate(ex, "get", cancellationToken);
         }
+    }
+
+    private async Task<ExperienceRecordGetResult> ReadOneAsync(
+        string sql,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+        AddScopeParameters(command.Parameters, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
+        }
+
+        return new(ExperienceStoreOutcome.Found, ReadRecord(reader), NoErrors, ReadSharedByGrant(reader));
     }
 
     /// <inheritdoc />
@@ -599,7 +708,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     private static NpgsqlParameter NullableText(string name, string? value) =>
         new(name, NpgsqlDbType.Text) { Value = value is null ? DBNull.Value : value };
 
-    private static DateTimeOffset ToStoredTimestamp(DateTimeOffset value)
+    internal static DateTimeOffset ToStoredTimestamp(DateTimeOffset value)
     {
         var utcTicks = value.UtcTicks;
         return new DateTimeOffset(utcTicks - (utcTicks % 10), TimeSpan.Zero);
@@ -626,6 +735,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Reads the shared-by-grant flag by name. A reader that did not select it is treated as "not
+    /// shared", which is the safe direction: a consumer that sees no flag keeps its strict scope check.
+    /// </summary>
+    internal static bool ReadSharedByGrant(DbDataReader reader)
+    {
+        try
+        {
+            var ordinal = reader.GetOrdinal(SharedByGrantAlias);
+            return !reader.IsDBNull(ordinal) && reader.GetBoolean(ordinal);
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     internal static ExperienceRecord ReadRecord(DbDataReader reader)

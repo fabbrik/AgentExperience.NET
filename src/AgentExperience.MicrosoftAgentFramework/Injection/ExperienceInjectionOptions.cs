@@ -141,9 +141,16 @@ public sealed record ExperienceInjectionContext(
 /// be rendered. It is already known to be readable in scope and in an eligible status; the host's
 /// decision is a further, independent gate on top of that.
 /// </param>
+/// <param name="SharedByGrant">
+/// <see langword="true"/> when <paramref name="Current"/> belongs to another scope and the store
+/// reported it readable only through an active <see cref="ExperienceGrant"/>. A host that trusts
+/// borrowed experience less than its own can deny on this alone; it is the re-read's answer, so a
+/// grant that has since expired or been revoked never shows up as <see langword="true"/> here.
+/// </param>
 public sealed record ExperienceInjectionDecisionContext(
     RankedExperience Candidate,
-    ExperienceRecord Current);
+    ExperienceRecord Current,
+    bool SharedByGrant = false);
 
 /// <summary>
 /// Host configuration for <see cref="ExperienceContextProvider"/>.

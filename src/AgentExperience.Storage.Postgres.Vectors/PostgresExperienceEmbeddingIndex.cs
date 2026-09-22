@@ -81,6 +81,30 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         PostgresExperienceRecordStore.RecordScopePredicate.Replace("r.", "e.", StringComparison.Ordinal);
 
     /// <summary>
+    /// What the vector channel may return: the exact scope on both sides of the join, or an active
+    /// sharing grant naming the record and permitting the requesting scope. It is the base adapter's
+    /// predicate, composed rather than retyped, so the two retrieval channels honour byte-for-byte the
+    /// same rule about what a grant does.
+    /// <para>
+    /// The exact-scope branch keeps both aliases, so the common case can still be served by
+    /// <c>ix_experience_embeddings_scope_model</c>. The grant branch is stated on the record side
+    /// only: an embedding's scope columns are copied from its record, so a granted record's embedding
+    /// carries the <em>owner's</em> scope and an <c>e</c>-side exact match would exclude exactly the
+    /// rows the grant exists to admit.
+    /// </para>
+    /// </summary>
+    private static readonly string ReadableJoinScopePredicate =
+        $"(({EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate}) " +
+        $"OR {PostgresExperienceRecordStore.ActiveGrantPredicate})";
+
+    /// <summary>
+    /// The same join predicate with the grant branch removed, for a database that has no
+    /// <c>experience_grants</c> table or a role that may not read it.
+    /// </summary>
+    private static readonly string ExactJoinScopePredicate =
+        $"({EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate})";
+
+    /// <summary>
     /// The conditional write. The target table is aliased <c>t</c> so the conflict action can name it
     /// unambiguously, and the source row is the canonical record itself: nothing is inserted unless
     /// that record exists, in exactly this scope, at exactly this revision.
@@ -146,12 +170,20 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// outside the limit, even though the real cause was the width.
     /// </para>
     /// </summary>
-    private static readonly string CompatibilityProbeSql =
+    private static readonly string CompatibilityProbeExactSql =
         $"SELECT EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"WHERE {ExactJoinScopePredicate} " +
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence), " +
         $"EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"WHERE {ExactJoinScopePredicate} " +
+        "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence AND e.model_id = @model_id)";
+
+    private static readonly string CompatibilityProbeSql =
+        $"SELECT EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
+        $"WHERE {ReadableJoinScopePredicate} " +
+        "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence), " +
+        $"EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
+        $"WHERE {ReadableJoinScopePredicate} " +
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence AND e.model_id = @model_id)";
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
@@ -162,13 +194,22 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     private readonly NpgsqlDataSource _dataSource;
 
+    private readonly PostgresGrantSupport _grants;
+
     /// <summary>Creates an embedding index over a host-owned data source. The index never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
+    /// <param name="onGrantsUnavailable">
+    /// Called at most once, when a search first finds <c>agent_experience.experience_grants</c> missing
+    /// or unreadable and falls back to the exact-scope predicate. Optional.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
-    public PostgresExperienceEmbeddingIndex(NpgsqlDataSource dataSource)
+    public PostgresExperienceEmbeddingIndex(
+        NpgsqlDataSource dataSource,
+        Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
+        _grants = new PostgresGrantSupport(onGrantsUnavailable);
     }
 
     /// <inheritdoc />
@@ -333,40 +374,64 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-            var candidates = new List<ExperienceCandidate>();
-            await using (var command = new NpgsqlCommand(SearchSql(dimension), connection))
+            try
             {
-                var parameters = command.Parameters;
-                PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
-                parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
-                parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
-                parameters.Add(new NpgsqlParameter<string>("model_id", NpgsqlDbType.Text) { TypedValue = query.ModelId });
-                parameters.Add(new NpgsqlParameter<string>("query_vector", NpgsqlDbType.Text) { TypedValue = ToVectorLiteral(query.Vector) });
-                parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
-
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    candidates.Add(new ExperienceCandidate(
-                        PostgresExperienceRecordStore.ReadRecord(reader),
-                        ReadRelevance(reader)));
-                }
+                return await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, cancellationToken)
+                    .ConfigureAwait(false);
             }
-
-            if (candidates.Count > 0)
+            catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
             {
-                return new(ExperienceVectorSearchOutcome.Found, candidates, NoErrors);
+                // No grant table, or no permission to read it: search the exact scope only.
+                return await RunSearchAsync(connection, query, dimension, statuses, readable: false, cancellationToken)
+                    .ConfigureAwait(false);
             }
-
-            // Only now -- an empty answer is the one case where "nothing similar" and "nothing
-            // comparable" look the same from outside, and a host must be able to tell them apart.
-            var mismatch = await ProbeCompatibilityAsync(connection, query, statuses, cancellationToken).ConfigureAwait(false);
-            return new(mismatch ?? ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors);
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
         {
             throw PostgresExperienceRecordStore.Translate(ex, "vector search", cancellationToken);
         }
+    }
+
+    private static async Task<ExperienceVectorSearchResult> RunSearchAsync(
+        NpgsqlConnection connection,
+        ExperienceVectorQuery query,
+        int dimension,
+        string[] statuses,
+        bool readable,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<ExperienceCandidate>();
+        await using (var command = new NpgsqlCommand(SearchSql(dimension, readable), connection))
+        {
+            var parameters = command.Parameters;
+            PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
+            parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
+            parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
+            parameters.Add(new NpgsqlParameter<string>("model_id", NpgsqlDbType.Text) { TypedValue = query.ModelId });
+            parameters.Add(new NpgsqlParameter<string>("query_vector", NpgsqlDbType.Text) { TypedValue = ToVectorLiteral(query.Vector) });
+            parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                candidates.Add(new ExperienceCandidate(
+                    PostgresExperienceRecordStore.ReadRecord(reader),
+                    ReadRelevance(reader),
+                    PostgresExperienceRecordStore.ReadSharedByGrant(reader)));
+            }
+        }
+
+        if (candidates.Count > 0)
+        {
+            return new(ExperienceVectorSearchOutcome.Found, candidates, NoErrors);
+        }
+
+        // Only now -- an empty answer is the one case where "nothing similar" and "nothing
+        // comparable" look the same from outside, and a host must be able to tell them apart. The
+        // probe sees exactly what the search saw, grants included, so a recipient whose only
+        // comparable population arrives through a grant is told which mismatch it hit.
+        var mismatch = await ProbeCompatibilityAsync(connection, query, statuses, readable, cancellationToken).ConfigureAwait(false);
+        return new(mismatch ?? ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors);
     }
 
     /// <summary>
@@ -386,18 +451,24 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// planner's choice is only meaningful against the real statement: an approximation would prove the
     /// index matches something this adapter never runs.
     /// </summary>
-    internal static string SearchSqlForTesting(int dimension) => SearchSql(dimension);
+    internal static string SearchSqlForTesting(int dimension) => SearchSql(dimension, readable: true);
 
-    private static string SearchSql(int dimension)
+    private static string SearchSql(int dimension, bool readable)
     {
         var width = dimension.ToString(CultureInfo.InvariantCulture);
-        return $"SELECT {RecordColumns}, " +
+        var scope = readable ? ReadableJoinScopePredicate : ExactJoinScopePredicate;
+        var shared = readable
+            ? PostgresExperienceRecordStore.SharedByGrantColumn
+            : "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias;
+
+        return $"SELECT {RecordColumns}, {shared}, " +
             $"(e.embedding::vector({width}) <=> CAST(@query_vector AS vector({width}))) AS {DistanceColumn} " +
             $"FROM {Table} e " +
             $"JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
             // Both sides of the join carry the scope. The r-side is the authoritative one; the e-side is
             // what makes ix_experience_embeddings_scope_model usable (see EmbeddingScopePredicate).
-            $"WHERE {EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+            // An active grant is the alternative to that exact match, decided in SQL like the rest.
+            $"WHERE {scope} " +
             "AND r.status = ANY(@statuses) " +
             "AND r.reuse_confidence >= @min_confidence " +
             "AND e.model_id = @model_id " +
@@ -433,9 +504,10 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         NpgsqlConnection connection,
         ExperienceVectorQuery query,
         string[] statuses,
+        bool readable,
         CancellationToken cancellationToken)
     {
-        await using var command = new NpgsqlCommand(CompatibilityProbeSql, connection);
+        await using var command = new NpgsqlCommand(readable ? CompatibilityProbeSql : CompatibilityProbeExactSql, connection);
         var parameters = command.Parameters;
         PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
         parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });

@@ -64,6 +64,16 @@ namespace AgentExperience.Core.Retrieval;
 /// could not fully check.
 /// </para>
 /// <para>
+/// <b>Sharing grants are not decided here.</b> A candidate may belong to a sibling scope inside the
+/// same tenant, application, and project, because an adapter's query predicate found an active grant
+/// permitting the requesting scope to read it. This service does not look for grants and cannot
+/// create one: it believes the channel's <see cref="ExperienceCandidate.SharedByGrant"/> flag, which
+/// only the layer that applied the predicate can set, and passes it through on
+/// <see cref="RankedExperience.SharedByGrant"/>. Such a record is otherwise treated exactly like an
+/// owned one -- the same eligibility rules, the same ranking, the same limits -- and the scope guard
+/// stays strict equality for every candidate that does <em>not</em> carry the flag.
+/// </para>
+/// <para>
 /// This service does not build an injectable payload: it returns ranked records and the evidence for
 /// their ranking, and what a host does with them is a separate decision. It also never
 /// <em>writes</em> an embedding -- producing and storing them is
@@ -574,7 +584,7 @@ public sealed class ExperienceRetrievalService
                 continue;
             }
 
-            ranked.Add((Score(record, candidate.Relevance, now), record.ExperienceId.ToString("D")));
+            ranked.Add((Score(record, candidate, now), record.ExperienceId.ToString("D")));
         }
 
         // Ties sort by ExperienceId ascending and ordinal, so the order is total and stable rather than
@@ -643,7 +653,16 @@ public sealed class ExperienceRetrievalService
                     Exception: null);
             }
 
-            if (record.Scope != request.Scope)
+            // Strict by default: a record must be the requester's own. The only exception is one the
+            // channel itself declared shared, and even then it must lie inside the boundary a grant can
+            // never cross. A channel that returns a foreign record without saying so -- a third-party
+            // adapter, or a regression in our own predicate -- is still caught here, and a channel that
+            // claims sharing cannot use the claim to cross a tenant, application, or project.
+            var inScope = candidate.SharedByGrant
+                ? record.Scope.SharesGrantBoundary(request.Scope)
+                : record.Scope == request.Scope;
+
+            if (!inScope)
             {
                 // The channel answered outside the exact request scope. Nothing it returned can be
                 // trusted to be in scope, so none of it is returned.
@@ -699,11 +718,11 @@ public sealed class ExperienceRetrievalService
     /// Scores one eligible record. Every component is normalized to [0, 1] and reported with the
     /// weight applied to it, so the total is always reproducible from what the result carries.
     /// </summary>
-    private RankedExperience Score(ExperienceRecord record, double relevance, DateTimeOffset now)
+    private RankedExperience Score(ExperienceRecord record, ExperienceCandidate candidate, DateTimeOffset now)
     {
         RankingComponent[] components =
         [
-            new(RankingComponentKind.Relevance, Normalize(relevance), _weights.Relevance),
+            new(RankingComponentKind.Relevance, Normalize(candidate.Relevance), _weights.Relevance),
             new(RankingComponentKind.Confidence, Normalize(record.ReuseConfidence), _weights.Confidence),
             new(RankingComponentKind.Recency, Recency(record.UpdatedAt, now), _weights.Recency),
             new(RankingComponentKind.Status, StatusScore(record.Status), _weights.Status),
@@ -716,7 +735,9 @@ public sealed class ExperienceRetrievalService
             score += component.Contribution;
         }
 
-        return new RankedExperience(record, score, components);
+        // Passed through, never decided here: only the adapter that applied the scope predicate knows
+        // whether a grant was what admitted this record.
+        return new RankedExperience(record, score, components, candidate.SharedByGrant);
     }
 
     /// <summary>

@@ -19,7 +19,34 @@ public sealed record Scope(
     string ProjectId,
     string? TeamId = null,
     string? AgentId = null,
-    string? UserId = null);
+    string? UserId = null)
+{
+    /// <summary>
+    /// Whether <paramref name="other"/> lies inside the boundary an <see cref="ExperienceGrant"/> can
+    /// never cross: the same <see cref="TenantId"/>, <see cref="ApplicationId"/>, and
+    /// <see cref="ProjectId"/>, compared ordinally and case-sensitively. The optional fields are
+    /// deliberately not compared, because relaxing exactly those three is all a grant may ever do.
+    /// </summary>
+    /// <remarks>
+    /// This is not an authorization check and it never widens a read. It exists so that the
+    /// defence-in-depth checks over records a store has already returned -- retrieval's own
+    /// "is this candidate in scope" guard and the pre-injection re-check -- can keep rejecting a
+    /// record from another tenant, application, or project while still accepting a record that was
+    /// legitimately read through a grant. Whether a grant actually permitted that read is decided in
+    /// the persistence layer's query predicate, never here.
+    /// </remarks>
+    /// <param name="other">The scope to compare against.</param>
+    /// <returns><see langword="true"/> when both scopes share the three required fields; otherwise <see langword="false"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
+    public bool SharesGrantBoundary(Scope other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+
+        return string.Equals(TenantId, other.TenantId, StringComparison.Ordinal)
+            && string.Equals(ApplicationId, other.ApplicationId, StringComparison.Ordinal)
+            && string.Equals(ProjectId, other.ProjectId, StringComparison.Ordinal);
+    }
+}
 
 /// <summary>
 /// Represents what a host application has already established a caller is permitted to do,
