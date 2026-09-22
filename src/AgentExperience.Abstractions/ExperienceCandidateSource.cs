@@ -88,7 +88,15 @@ public sealed record ExperienceCandidateQuery(
 /// 0 is no measurable match and 1 is the strongest the implementation can report. Comparable only
 /// between candidates from the same search.
 /// </param>
-public sealed record ExperienceCandidate(ExperienceRecord Record, double Relevance);
+/// <param name="SharedByGrant">
+/// <see langword="true"/> when this record does not belong to the requested scope and was matched
+/// only because an active <see cref="ExperienceGrant"/> permits that scope to read it. Only the
+/// implementation that applied the scope predicate knows this, so only it may set it: a caller must
+/// never infer sharing from comparing scopes, and a consumer must treat an unset flag as "this record
+/// is the requester's own". It exists so a consumer can keep the strict scope check it would
+/// otherwise have to weaken, and so borrowed experience can be labelled as such.
+/// </param>
+public sealed record ExperienceCandidate(ExperienceRecord Record, double Relevance, bool SharedByGrant = false);
 
 /// <summary>
 /// The result of <see cref="IExperienceCandidateSource.SearchAsync"/>.

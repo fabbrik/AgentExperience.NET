@@ -38,6 +38,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Embedding ingestion after the canonical commit: only the sanitized retrieval summary is embedded, writes are conditional on the live revision, and every provider failure leaves the record committed and retryable | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
 | Hybrid retrieval: a bounded vector channel merged with the text one under the same eligibility, timeout, and ceiling, with an explicit, flagged text-only fallback whenever the vector channel cannot be trusted | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
 | Historical Reference injection into MAF: a context provider that retrieves, re-checks eligibility immediately before injecting, asks the host's risk policy, and injects one delimited, labeled block within record and byte limits — never throwing into the invocation | `AgentExperience.MicrosoftAgentFramework` |
+| Explicit sharing grants: an administrator the host names lets one named record be *read* by a sibling scope until it expires or is revoked; the grant and its audit event commit together, and reads honour it in SQL, never in application code | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
 | Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types. Injection is the one piece the host constructs itself, because the resolver and risk decision are per-host | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 
 ## Quick look
@@ -115,6 +116,14 @@ a retry re-derives exactly the event the store already deduplicates on.
 
 Finalization never sanitizes — capture already rejected anything unsafe — and never decides storage or risk policy on
 the host's behalf: `StorageDecision` travels in the request and Core simply obeys it.
+
+**What "already rejected" means.** Sanitization is the first gate, and it is fail-closed at capture time rather than
+at storage time. When content cannot be sanitized, `AppendAttemptAsync` returns
+`AppendAttemptOutcome.SanitizationRejected` and the sanitizer's own `Reason`, the attempt is not recorded, the run
+stays open, and **nothing is stored anywhere** — there is no database involved, so there is no partial write and no
+persisted denial record to reconcile later. The host is told the decision and why, and can correct and resubmit the
+same attempt ID; the rejected ID is not tracked, so a corrected resubmission succeeds. Unsafe content therefore never
+reaches an Experience Record, and never becomes something a grant could later share.
 
 If an indexing hook is registered, one more thing happens *after* those six stages: the committed record is embedded
 and its vector stored. That step is outside the canonical write and can never change the outcome above — see
@@ -399,6 +408,93 @@ that have not happened yet. Use a fresh session per task where either matters.
 See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#injecting-historical-reference) for
 the payload shape, the options, and the failure behaviour.
 
+## Sharing experience across scopes
+
+Scope is otherwise all-or-nothing: a record is readable only from the exact scope that owns it. A **sharing grant**
+is the one, audited exception. An administrator names one record, one recipient scope, a reason, and an expiry, and
+that recipient can *read* that record until the grant expires or is revoked.
+
+```csharp
+using AgentExperience.Storage.Postgres.DependencyInjection;
+
+services.AddAgentExperiencePostgresGrantStore();   // IExperienceGrantStore
+
+// The host decides who may administer sharing. This is a separate, explicit input: it is never
+// derived from an AuthorizationContext, from a role string, or from the requesting scope.
+var administration = new GrantAdministration(
+    AdministratorPrincipalId: currentUser.Id,
+    AuthorizedAt: DateTimeOffset.UtcNow);
+
+var result = await grants.CreateAsync(
+    hostAuthorization,                                  // the caller's own authority, over the owner scope
+    administration,                                     // authority to administer sharing
+    new ExperienceGrantRequest(
+        GrantId: Guid.NewGuid(),
+        ExperienceId: recordId,
+        RecordScope: ownerScope,                        // where the record lives: team-a
+        RecipientScope: ownerScope with { TeamId = "team-b" },
+        Reason: "team-b owns the follow-up work",
+        ExpiresAt: DateTimeOffset.UtcNow.AddDays(7)),
+    cancellationToken);
+// Created — the grant row and its audit event were written in one transaction.
+```
+
+**What a grant permits.** Reading, and only reading: `GetAsync`, the text channel, the vector channel, and
+therefore injection, which re-reads through the same call. A granted record comes back exactly as its owner sees
+it, still carrying the owner's scope. Creating records, committing lifecycle changes, reading lifecycle history,
+listing what a scope holds, and issuing further grants are never inferred from a grant, and still need the caller's
+own authority.
+
+**What a grant can never do.**
+
+| Rule | Where it is enforced |
+| --- | --- |
+| Relaxes only `TeamId`, `AgentId`, `UserId`; tenant, application, and project are always the record's own | Validation with the field path, *and* a `CHECK` constraint, so an unstorable grant is unstorable |
+| Confers no write, no lifecycle history, and no enumeration | Every non-read statement keeps the exact-scope predicate |
+| Stops permitting reads once `ExpiresAt` passes | The read predicate, against `clock_timestamp()` — the *database's* wall clock, never the caller's, and never the transaction's start time |
+| Stops permitting reads the moment it is revoked | The same predicate; revocation appends an event and deletes nothing. At most one grant per (record, recipient scope) may be active at a time, so revoking the grant you know about really is the end of that recipient's access -- a second, overlapping one is refused as `Conflict` rather than stacked |
+| Cannot be issued or revoked without administrator authority | `Denied`, before any connection is opened |
+| Changes nothing about the record: not its status, confidence, counters, or revision | The grant path never touches `experience_records` |
+
+Grant enforcement lives in SQL, alongside the existing scope predicate, so the database can never return a record
+the predicate did not permit and no application code is in a position to widen one. Revoking is an append:
+
+```csharp
+await grants.RevokeAsync(
+    hostAuthorization,
+    administration,
+    new ExperienceGrantRevocation(grant.GrantId, ownerScope, "the collaboration ended"),
+    cancellationToken);
+// Revoked — the next read is denied, and the grant's history keeps both events.
+
+var history = await grants.ListAsync(hostAuthorization, ownerScope, recordId, cancellationToken);
+// Every grant over the record, revoked and expired ones included. Owner scope only: a recipient
+// cannot enumerate the grants over a record it can read.
+```
+
+Nothing about sharing weakens eligibility. A shared record still has to be `Validated` or `Reinforced`, still has
+to clear the confidence floor, expiry, and environment checks, and is ranked exactly like an owned one.
+
+**A borrowed lesson is labelled as one.** The adapter is the only layer that knows a record came back through a
+grant, so it says so: the flag travels on `ExperienceCandidate.SharedByGrant` and `RankedExperience.SharedByGrant`,
+reaches the host's risk policy as `ExperienceInjectionDecisionContext.SharedByGrant`, and the injected Historical
+Reference block carries a `Shared:` line (with no scope identifier in it). Everything downstream keeps its strict
+"this must be my own record" check for anything that is *not* flagged, so a source that returns a foreign record
+without declaring a grant is still dropped.
+
+**What the audit trail is, and is not.** `experience_grant_events` records administration -- who allowed what, under
+authority established when, until when, and when they stopped allowing it -- and
+`IExperienceGrantStore.GetHistoryAsync` reads one grant's trail. Reads made *through* a grant are not recorded
+anywhere: the trail answers "who permitted this?", never "who read it?".
+
+**Two deployment notes.** Reading through a grant needs `SELECT` on `agent_experience.experience_grants`; a role
+without it, or a database that has not applied `0005` yet, falls back to the exact-scope predicate -- which narrows
+what a read returns rather than failing it -- and reports it once through the reader's optional
+`onGrantsUnavailable` callback. And `NotFound` does not mean a `GrantId` is free: the insert reads the record row
+first, so a create naming a record that is not in the owner scope selects nothing and reports `NotFound` before the
+primary key is ever tested -- even when that `GrantId` is already stored. Only `Created` and `Conflict` say anything
+about the ID, so generate a fresh one per attempt rather than inferring availability from `NotFound`.
+
 ## Wiring it all together
 
 Each package registers its own services, so a host never names a concrete type:
@@ -411,6 +507,8 @@ using AgentExperience.Storage.Postgres.Vectors.DependencyInjection;   // optiona
 services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 services.AddAgentExperiencePostgresStore();                     // IExperienceRecordStore
 services.AddAgentExperiencePostgresCandidateSource();           // IExperienceCandidateSource
+services.AddAgentExperiencePostgresGrantStore();                // IExperienceGrantStore, optional: only a host
+                                                                //    that shares records across scopes needs it
 services.AddAgentExperiencePostgresEmbeddingIndex();            // IExperienceEmbeddingIndex
 services.AddAgentExperienceEmbeddingGenerator();                // IExperienceEmbeddingGenerator, over a registered
                                                                 //    IEmbeddingGenerator<string, Embedding<float>>
@@ -431,7 +529,7 @@ services.AddAgentExperienceRetrieval();                         // ExperienceRet
 Schema comes in two calls, matching that split:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003, always
+await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005, always
 await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, only with the vector channel
 ```
 
@@ -465,7 +563,7 @@ src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
   AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval
   AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned Microsoft.Agents.AI 1.20.0)
-  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
+  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, sharing grants, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
   AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.9.0)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
@@ -488,17 +586,17 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresGrantTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
 2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
-3. **Govern experience safely:** sharing grants, the remaining lifecycle transitions, evidence-based confidence updates
+3. **Govern experience safely:** explicit sharing grants ✅; the remaining lifecycle transitions and evidence-based confidence updates are next
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
 Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).

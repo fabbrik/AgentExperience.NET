@@ -67,10 +67,17 @@ public sealed record RankingComponent(RankingComponentKind Kind, double Value, d
 /// <param name="Record">The eligible record, exactly as stored. Retrieval never rewrites it.</param>
 /// <param name="Score">The weighted total of <paramref name="Components"/>, in [0, 1] whenever the weights sum to 1.</param>
 /// <param name="Components">Every component, in <see cref="RankingComponentKind"/> order, each with the weight applied to it.</param>
+/// <param name="SharedByGrant">
+/// <see langword="true"/> when the candidate source reported that this record belongs to another
+/// scope and was matched only through an active <see cref="ExperienceGrant"/>. Retrieval passes the
+/// flag through unchanged -- it never decides sharing itself -- so a host's risk policy and anything
+/// that renders the record can tell borrowed experience from the requester's own.
+/// </param>
 public sealed record RankedExperience(
     ExperienceRecord Record,
     double Score,
-    IReadOnlyList<RankingComponent> Components);
+    IReadOnlyList<RankingComponent> Components,
+    bool SharedByGrant = false);
 
 /// <summary>Why a candidate the search returned was not ranked.</summary>
 public enum RetrievalExclusionReason

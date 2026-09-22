@@ -37,7 +37,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// attributes -- and anything that now fails one is omitted as
 /// <see cref="InjectionOmissionReason.Ineligible"/> with the rule named. A record that can no longer
 /// be read in the request's scope is omitted as <see cref="InjectionOmissionReason.Unreadable"/>,
-/// which deliberately does not distinguish "deleted" from "not yours". The whole check is bounded by
+/// which deliberately does not distinguish "deleted" from "not yours" -- and, since the re-read goes
+/// through the same grant-aware store call retrieval used, a record shared by an
+/// <see cref="ExperienceGrant"/> that has since expired or been revoked falls out here exactly like
+/// one that was deleted. The whole check is bounded by
 /// <see cref="ExperienceInjectionLimits.EligibilityCheckTimeout"/>, because it is up to
 /// <see cref="ExperienceInjectionLimits.MaxRecords"/> serial store reads on the invocation's critical
 /// path and retrieval's own timeout has already been spent.
@@ -384,9 +387,18 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
             // Denied, NotFound, Invalid, a null record, a record that came back under another ID, and a
             // record outside the requested scope are all one thing here: not readable in this scope.
+            //
+            // The scope check stays strict equality unless the store itself declared the record shared
+            // through an active grant -- only it applied the predicate, so only it can say -- and even
+            // then the record must lie inside the boundary no grant can cross. So a store that hands
+            // back a foreign record without declaring it, and one that declares a record from another
+            // tenant, application, or project, are both still dropped here.
             if (result is not { Outcome: ExperienceStoreOutcome.Found, Record: { } current }
                 || current.ExperienceId != experienceId
-                || current.Scope != request.Scope)
+                || current.Scope is null
+                || !(result.SharedByGrant
+                    ? current.Scope.SharesGrantBoundary(request.Scope)
+                    : current.Scope == request.Scope))
             {
                 omitted.Add(new OmittedExperience(
                     experienceId,
@@ -403,14 +415,16 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 continue;
             }
 
-            var refreshed = candidate with { Record = current };
+            // The re-read decides sharing too: a grant that expired since retrieval leaves the record
+            // readable only if the reader owns it, and the block must say what is true now.
+            var refreshed = candidate with { Record = current, SharedByGrant = result.SharedByGrant };
 
             if (_options.DecideInjection is { } decide)
             {
                 InjectionDecision? decision;
                 try
                 {
-                    decision = decide(new ExperienceInjectionDecisionContext(refreshed, current));
+                    decision = decide(new ExperienceInjectionDecisionContext(refreshed, current, result.SharedByGrant));
                 }
                 catch (Exception ex)
                 {

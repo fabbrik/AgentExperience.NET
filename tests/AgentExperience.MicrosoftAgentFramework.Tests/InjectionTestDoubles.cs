@@ -69,6 +69,35 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// <summary>Records <see cref="GetAsync"/> answers with a record carrying a <em>different</em> ID.</summary>
     public HashSet<Guid> Misidentified { get; } = [];
 
+    /// <summary>
+    /// Active sharing grants, as (record, recipient scope) pairs. They widen exactly the two calls the
+    /// real adapter's SQL predicate widens -- the search and the re-read -- and nothing else, so a test
+    /// can share a record with a sibling scope, or revoke it mid-flight by removing the pair.
+    /// </summary>
+    public HashSet<(Guid ExperienceId, Scope Recipient)> Grants { get; } = [];
+
+    /// <summary>Shares one record with one recipient scope, the way an administrator's grant would.</summary>
+    public void Grant(Guid experienceId, Scope recipient) => Grants.Add((experienceId, recipient));
+
+    /// <summary>Withdraws a grant, the way a revocation or an expiry would between two reads.</summary>
+    public void Revoke(Guid experienceId, Scope recipient) => Grants.Remove((experienceId, recipient));
+
+    /// <summary>
+    /// Records <see cref="GetAsync"/> answers <c>Found</c> for with a record from another tenant,
+    /// without declaring any grant -- a store that hands back something it was never asked for.
+    /// </summary>
+    public HashSet<Guid> Foreign { get; } = [];
+
+    /// <summary>Whether <paramref name="scope"/> may read <paramref name="record"/>: its own scope, or an active grant.</summary>
+    private bool Readable(ExperienceRecord record, Scope scope) =>
+        record.Scope == scope || Grants.Contains((record.ExperienceId, scope));
+
+    /// <summary>
+    /// Whether the read was widened by a grant, which is exactly what the real adapter reports: it is
+    /// the negation of the exact-scope match, decided by the same layer that decided readability.
+    /// </summary>
+    private bool SharedByGrant(ExperienceRecord record, Scope scope) => record.Scope != scope;
+
     /// <summary>Every record ID the final eligibility check re-read, in order.</summary>
     public IReadOnlyList<Guid> Reads
     {
@@ -144,11 +173,12 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         lock (_indexed)
         {
             matches = _indexed
-                .Where(candidate => candidate.Record.Scope == query.Scope
+                .Where(candidate => Readable(candidate.Record, query.Scope)
                     && query.EligibleStatuses.Contains(candidate.Record.Status)
                     && candidate.Record.ReuseConfidence >= query.MinimumConfidence)
                 .OrderByDescending(candidate => candidate.Relevance)
                 .Take(query.Limit)
+                .Select(candidate => candidate with { SharedByGrant = SharedByGrant(candidate.Record, query.Scope) })
                 .ToList();
         }
 
@@ -192,15 +222,24 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         {
             if (Unreadable.Contains(experienceId)
                 || !_stored.TryGetValue(experienceId, out var record)
-                || record.Scope != scope)
+                || !Readable(record, scope))
             {
                 return new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, []);
+            }
+
+            // A store that answers Found with a record from another tenant and declares no grant.
+            if (Foreign.Contains(experienceId))
+            {
+                return new ExperienceRecordGetResult(
+                    ExperienceStoreOutcome.Found,
+                    record with { Scope = record.Scope with { TenantId = "tenant-elsewhere" } },
+                    []);
             }
 
             // A store that answers Found with somebody else's record: the provider must not trust it.
             return Misidentified.Contains(experienceId)
                 ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record with { ExperienceId = Guid.NewGuid() }, [])
-                : new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, []);
+                : new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, [], SharedByGrant(record, scope));
         }
     }
 

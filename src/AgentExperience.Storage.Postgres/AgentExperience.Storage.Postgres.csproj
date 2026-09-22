@@ -28,6 +28,9 @@
     <EmbeddedResource Include="Migrations\0001_create_experience_records.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0001_create_experience_records.sql" />
     <EmbeddedResource Include="Migrations\0002_create_lifecycle_events.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0002_create_lifecycle_events.sql" />
     <EmbeddedResource Include="Migrations\0003_add_experience_search.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0003_add_experience_search.sql" />
+    <!-- 0004 is owned by AgentExperience.Storage.Postgres.Vectors, which applies it separately: it needs
+         CREATE EXTENSION vector and must not become a startup requirement for text-only hosts. -->
+    <EmbeddedResource Include="Migrations\0005_create_experience_grants.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0005_create_experience_grants.sql" />
   </ItemGroup>
 
   <ItemGroup>

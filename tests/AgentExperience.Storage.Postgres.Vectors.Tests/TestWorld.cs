@@ -61,19 +61,24 @@ internal sealed class TestWorld
         hybrid ? Index : null,
         hybrid ? queryGenerator ?? Generator : null);
 
-    /// <summary>Creates a record in this world's scope, already eligible for retrieval unless told otherwise.</summary>
+    /// <summary>
+    /// Creates a record in this world's scope, already eligible for retrieval unless told otherwise.
+    /// A <c>scope</c> other than <see cref="Scope"/> -- which the sharing-grant tests pass to own a
+    /// record from a sibling team -- must still lie inside this world's tenant.
+    /// </summary>
     public async Task<Guid> AddRecordAsync(
         string taskId,
         string? taskSummary,
         string? lesson,
         ExperienceStatus status = ExperienceStatus.Validated,
-        double confidence = 0.8)
+        double confidence = 0.8,
+        Scope? scope = null)
     {
         var id = Guid.NewGuid();
         var record = new ExperienceRecord(
             ExperienceId: id,
             SourceRunId: Guid.NewGuid(),
-            Scope: Scope,
+            Scope: scope ?? Scope,
             TaskId: taskId,
             TaskSummary: taskSummary,
             Attempts: [],
@@ -97,6 +102,42 @@ internal sealed class TestWorld
         var created = await Store.CreateAsync(Authorization, record, CancellationToken.None);
         Assert.Equal(ExperienceStoreOutcome.Created, created.Outcome);
         return id;
+    }
+
+    /// <summary>
+    /// Issues a sharing grant over one record, through the real grant store, so the vector channel can
+    /// be asked what a recipient scope actually sees.
+    /// </summary>
+    public async Task<ExperienceGrant> GrantAsync(Guid experienceId, Scope owner, Scope recipient)
+    {
+        var store = new PostgresExperienceGrantStore(DataSource);
+        var result = await store.CreateAsync(
+            Authorization,
+            new GrantAdministration("sharing-administrator", Stamp),
+            new ExperienceGrantRequest(
+                Guid.NewGuid(),
+                experienceId,
+                owner,
+                recipient,
+                "sibling team owns the follow-up",
+                DateTimeOffset.UtcNow.AddHours(1)),
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceGrantOutcome.Created, result.Outcome);
+        return result.Grant!;
+    }
+
+    /// <summary>Revokes a grant through the real grant store.</summary>
+    public async Task RevokeAsync(Guid grantId, Scope owner)
+    {
+        var store = new PostgresExperienceGrantStore(DataSource);
+        var result = await store.RevokeAsync(
+            Authorization,
+            new GrantAdministration("sharing-administrator", Stamp),
+            new ExperienceGrantRevocation(grantId, owner, "the collaboration ended"),
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceGrantOutcome.Revoked, result.Outcome);
     }
 
     /// <summary>The stored embedding row, read straight out of SQL rather than through the port.</summary>

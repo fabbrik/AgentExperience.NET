@@ -124,6 +124,133 @@ internal static class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>
+    /// Validates a grant request: both scopes, the record it names, its reason, and -- the rule that
+    /// makes a grant a grant rather than a scope change -- that the recipient keeps the record's
+    /// tenant, application, and project. Each of those three is reported on its own field path, so a
+    /// caller learns which boundary it tried to cross without being told anything about the record.
+    /// </summary>
+    /// <remarks>
+    /// Expiry is deliberately not checked against the local clock. Whether a grant is still live is
+    /// decided by the database's clock in the read predicate, and rejecting an already-past expiry
+    /// here would put a second, disagreeing clock in charge of the same question. The
+    /// <c>experience_grants_expires_after_issue</c> constraint catches it against the clock that does
+    /// decide.
+    /// </remarks>
+    public static IReadOnlyList<StoreValidationError> ValidateGrantRequest(ExperienceGrantRequest request)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (request.GrantId == Guid.Empty)
+        {
+            errors.Add(new("GrantId", "must not be an empty GUID."));
+        }
+
+        if (request.ExperienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(request.RecordScope, "RecordScope", errors);
+        ValidateScope(request.RecipientScope, "RecipientScope", errors);
+        RequireNotBlank(request.Reason, "Reason", errors);
+
+        if (request.ExpiresAt == default)
+        {
+            errors.Add(new("ExpiresAt", "must be set to when the grant stops permitting reads."));
+        }
+
+        if (request.RecordScope is { } record && request.RecipientScope is { } recipient)
+        {
+            RequireSameBound(record.TenantId, recipient.TenantId, "RecipientScope.TenantId", errors);
+            RequireSameBound(record.ApplicationId, recipient.ApplicationId, "RecipientScope.ApplicationId", errors);
+            RequireSameBound(record.ProjectId, recipient.ProjectId, "RecipientScope.ProjectId", errors);
+
+            if (record == recipient)
+            {
+                // A grant to the scope that already owns the record permits nothing, and storing one
+                // would leave an audit row claiming access was given when none was.
+                errors.Add(new("RecipientScope", "must differ from the record's own scope, which already permits the read."));
+            }
+        }
+
+        return errors;
+    }
+
+    public static IReadOnlyList<StoreValidationError> ValidateGrantRevocation(ExperienceGrantRevocation revocation)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (revocation.GrantId == Guid.Empty)
+        {
+            errors.Add(new("GrantId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(revocation.RecordScope, "RecordScope", errors);
+        RequireNotBlank(revocation.Reason, "Reason", errors);
+
+        return errors;
+    }
+
+    public static IReadOnlyList<StoreValidationError> ValidateGrantList(Scope recordScope, Guid experienceId, int limit)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (experienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        if (limit is < ExperienceGrant.MinListLimit or > ExperienceGrant.MaxListLimit)
+        {
+            errors.Add(new(
+                "Limit",
+                $"must be between {ExperienceGrant.MinListLimit} and {ExperienceGrant.MaxListLimit}."));
+        }
+
+        ValidateScope(recordScope, "RecordScope", errors);
+        return errors;
+    }
+
+    public static IReadOnlyList<StoreValidationError> ValidateGrantHistory(Scope recordScope, Guid grantId)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (grantId == Guid.Empty)
+        {
+            errors.Add(new("GrantId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(recordScope, "RecordScope", errors);
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates the explicit administrator authority itself. It is validated, not merely checked for
+    /// presence, because its <see cref="GrantAdministration.AuthorizedAt"/> is recorded on the audit
+    /// event: an unset value would put "authority established at year zero" into the trail.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateAdministration(GrantAdministration administration)
+    {
+        var errors = new List<StoreValidationError>();
+        RequireNotBlank(administration.AdministratorPrincipalId, "Administration.AdministratorPrincipalId", errors);
+
+        if (administration.AuthorizedAt == default)
+        {
+            errors.Add(new("Administration.AuthorizedAt", "must be set to when the host established this authority."));
+        }
+
+        return errors;
+    }
+
+    private static void RequireSameBound(string? recordValue, string? recipientValue, string path, List<StoreValidationError> errors)
+    {
+        if (!string.Equals(recordValue, recipientValue, StringComparison.Ordinal))
+        {
+            errors.Add(new(path, "must equal the record's, because a grant may relax only the team, agent, and user fields."));
+        }
+    }
+
     public static IReadOnlyList<StoreValidationError> ValidateQuery(ExperienceRecordQuery query)
     {
         var errors = new List<StoreValidationError>();

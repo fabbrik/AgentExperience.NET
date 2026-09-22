@@ -207,6 +207,113 @@ public class ExperienceRetrievalServiceTests
         Assert.NotNull(result.Failure);
     }
 
+    [Theory]
+    [InlineData("tenant-2", "app-1", "project-1")]
+    [InlineData("tenant-1", "app-2", "project-1")]
+    [InlineData("tenant-1", "app-1", "project-2")]
+    public async Task A_candidate_from_another_tenant_application_or_project_empties_the_result_whatever_the_optional_fields_say(
+        string tenant,
+        string application,
+        string project)
+    {
+        // The boundary a sharing grant can never cross. Relaxing the guard to accommodate grants must
+        // not have relaxed it to accommodate these: each differs in exactly one required field while
+        // matching the request on every optional one.
+        var foreign = Record(Id(2), scope: new Scope(tenant, application, project));
+        var service = Service(Found(new ExperienceCandidate(Record(Id(1)), 1d), new ExperienceCandidate(foreign, 1d)));
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Failed, result.Outcome);
+        Assert.Empty(result.Records);
+    }
+
+    // ---------------------------------------------------------------- matrix: retrieval through a grant
+
+    [Theory]
+    [InlineData("team-b", null, null)]
+    [InlineData(null, "agent-b", null)]
+    [InlineData(null, null, "user-b")]
+    public async Task A_candidate_shared_from_a_sibling_scope_is_ranked_like_any_other(string? team, string? agent, string? user)
+    {
+        // A record the adapter returned because an active grant permitted this scope to read it, and
+        // said so. The grant itself was decided in SQL; what is under test here is that Core honours
+        // the channel's declaration instead of throwing the answer away.
+        var shared = Record(Id(2), scope: RequestScope with { TeamId = team, AgentId = agent, UserId = user });
+        var service = Service(Found(
+            new ExperienceCandidate(Record(Id(1)), 0.4d),
+            new ExperienceCandidate(shared, 0.9d, SharedByGrant: true)));
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+        Assert.Null(result.Failure);
+        Assert.Equal([Id(2), Id(1)], result.Records.Select(ranked => ranked.Record.ExperienceId));
+
+        // It is ranked as the record it is, carrying its owner's scope rather than the reader's, and
+        // nothing about it is rewritten on the way through. The channel's declaration travels with it,
+        // so a host's risk policy and the injected block can tell borrowed experience from its own.
+        var ranked = result.Records[0];
+        Assert.Equal(shared.Scope, ranked.Record.Scope);
+        Assert.True(ranked.SharedByGrant);
+        Assert.False(result.Records[1].SharedByGrant);
+        Assert.Empty(result.Excluded);
+    }
+
+    [Theory]
+    [InlineData("team-b", null, null)]
+    [InlineData(null, "agent-b", null)]
+    [InlineData(null, null, "user-b")]
+    public async Task A_sibling_scope_candidate_the_channel_did_not_declare_shared_still_empties_the_whole_result(
+        string? team,
+        string? agent,
+        string? user)
+    {
+        // The defence in depth grants must not cost: a third-party source, or a regression in our own
+        // predicate composition, handing back a sibling scope's record without declaring a grant is
+        // still a source that answered out of scope, and none of its answer is used.
+        var undeclared = Record(Id(2), scope: RequestScope with { TeamId = team, AgentId = agent, UserId = user });
+        var service = Service(Found(new ExperienceCandidate(Record(Id(1)), 1d), new ExperienceCandidate(undeclared, 1d)));
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Failed, result.Outcome);
+        Assert.Empty(result.Records);
+        Assert.NotNull(result.Failure);
+    }
+
+    [Fact]
+    public async Task A_declared_grant_can_still_not_carry_a_candidate_across_a_tenant_application_or_project()
+    {
+        // The flag says "a grant admitted this", not "trust this": a grant can never cross the three
+        // required fields, so a channel claiming one that did is not believed.
+        var service = Service(Found(
+            new ExperienceCandidate(Record(Id(1), scope: new Scope("tenant-2", "app-1", "project-1")), 1d, SharedByGrant: true)));
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Failed, result.Outcome);
+        Assert.Empty(result.Records);
+    }
+
+    [Fact]
+    public async Task A_shared_candidate_is_excluded_by_the_same_eligibility_rules_as_an_owned_one()
+    {
+        // Sharing widens who may read a record, never what makes one injectable.
+        var siblingScope = RequestScope with { TeamId = "team-b" };
+        var revoked = Record(Id(1), scope: siblingScope, status: ExperienceStatus.Revoked);
+        var neverValidated = Record(Id(2), scope: siblingScope, status: ExperienceStatus.Candidate);
+        var service = Service(Found(
+            new ExperienceCandidate(revoked, 1d, SharedByGrant: true),
+            new ExperienceCandidate(neverValidated, 1d, SharedByGrant: true)));
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+        Assert.Empty(result.Records);
+        Assert.Equal(2, result.Excluded.Count);
+    }
+
     // ---------------------------------------------------------------- matrix: beyond authority
 
     [Fact]

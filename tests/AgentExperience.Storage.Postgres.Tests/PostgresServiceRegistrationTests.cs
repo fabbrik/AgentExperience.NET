@@ -90,9 +90,48 @@ public class PostgresServiceRegistrationTests
     }
 
     [Fact]
+    public void The_grant_store_is_resolved_independently_of_the_record_store()
+    {
+        using var dataSource = TestRecords.Unreachable();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddAgentExperiencePostgresGrantStore();
+
+        using var provider = services.BuildServiceProvider();
+
+        // Another independent port: administering sharing is opt-in, and the reads that honour grants
+        // do so in SQL whether or not a host ever registers this.
+        var grants = provider.GetRequiredService<IExperienceGrantStore>();
+        Assert.IsType<PostgresExperienceGrantStore>(grants);
+        Assert.Same(grants, provider.GetRequiredService<IExperienceGrantStore>()); // singleton
+        Assert.Null(provider.GetService<IExperienceRecordStore>());
+    }
+
+    [Fact]
+    public void The_grant_store_overload_taking_a_data_source_needs_nothing_else_in_the_container()
+    {
+        using var dataSource = TestRecords.Unreachable();
+        var hostGrants = new PostgresExperienceGrantStore(dataSource);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IExperienceGrantStore>(hostGrants);
+        services.AddAgentExperiencePostgresGrantStore(dataSource);
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Same(hostGrants, provider.GetRequiredService<IExperienceGrantStore>()); // registered first, so TryAdd keeps it
+    }
+
+    [Fact]
     public void Null_arguments_throw()
     {
         using var dataSource = TestRecords.Unreachable();
+
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresGrantStore());
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresGrantStore(dataSource));
+        Assert.Throws<ArgumentNullException>(() => new ServiceCollection().AddAgentExperiencePostgresGrantStore((NpgsqlDataSource)null!));
+        Assert.Throws<ArgumentNullException>(() => new PostgresExperienceGrantStore(null!));
 
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresStore());
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresStore(dataSource));

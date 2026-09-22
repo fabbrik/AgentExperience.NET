@@ -116,6 +116,7 @@ public static class HistoricalReferenceWriter
     private static readonly string[] FieldLabels =
     [
         "Source:",
+        "Shared:",
         "Confidence:",
         "Applicability",
         "Verification:",
@@ -229,6 +230,13 @@ public static class HistoricalReferenceWriter
         text.Append("Source: experience ").Append(record.ExperienceId.ToString("D", CultureInfo.InvariantCulture))
             .Append("; source run ").Append(record.SourceRunId.ToString("D", CultureInfo.InvariantCulture))
             .Append("; task ").Append(Clean(record.TaskId)).Append('\n');
+
+        // Borrowed experience says so. No scope identifier is written -- the block never carries who
+        // owns or may act on anything -- only the fact that this lesson is not the reader's own.
+        if (ranked.SharedByGrant)
+        {
+            text.Append("Shared: this lesson belongs to another scope and was read through an explicit sharing grant.\n");
+        }
 
         text.Append("Confidence: ").Append(Number(record.ReuseConfidence))
             .Append(" (status ").Append(record.Status).Append(")\n");

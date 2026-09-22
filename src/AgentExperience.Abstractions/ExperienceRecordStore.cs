@@ -5,6 +5,9 @@ namespace AgentExperience.Abstractions;
 /// operation takes a host-established <see cref="AuthorizationContext"/>; a request scope outside
 /// it is <see cref="ExperienceStoreOutcome.Denied"/> before any storage access, and scope matching
 /// is exact (ordinal, case-sensitive, <see langword="null"/> matches only <see langword="null"/>).
+/// The single, explicit exception is <see cref="GetAsync"/>, which also returns a record an active
+/// <see cref="ExperienceGrant"/> permits this scope to read; every other operation here, writes and
+/// the lifecycle audit trail included, stays exact-scope whatever grants exist.
 /// Expected conditions return typed results; infrastructure failures throw
 /// <see cref="ExperienceStoreException"/>; caller cancellation surfaces as an unwrapped
 /// <see cref="OperationCanceledException"/>.
@@ -30,9 +33,18 @@ public interface IExperienceRecordStore
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Reads one record by ID within exactly <paramref name="scope"/>. A record that exists in a
-    /// different scope is indistinguishable from a missing one (<see cref="ExperienceStoreOutcome.NotFound"/>).
+    /// Reads one record by ID within exactly <paramref name="scope"/>, or one that an active
+    /// <see cref="ExperienceGrant"/> names and permits <paramref name="scope"/> to read. A record that
+    /// is neither is indistinguishable from a missing one
+    /// (<see cref="ExperienceStoreOutcome.NotFound"/>), and so is one whose grant has expired or been
+    /// revoked.
     /// </summary>
+    /// <remarks>
+    /// A record read through a grant comes back exactly as its owner sees it, carrying its owner's
+    /// <see cref="ExperienceRecord.Scope"/> -- reading it does not move it, and the reader gains no
+    /// authority over it. Whether a grant applies is decided inside the implementation's own query,
+    /// never by the caller and never in application code.
+    /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>
     /// <param name="scope">The exact request scope to read within.</param>
     /// <param name="experienceId">The record to read. Must not be <see cref="Guid.Empty"/>.</param>
@@ -218,10 +230,18 @@ public sealed record ExperienceRecordCreateResult(
 /// <param name="Outcome">What happened.</param>
 /// <param name="Record">The record when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Found"/>; otherwise <see langword="null"/>.</param>
 /// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+/// <param name="SharedByGrant">
+/// <see langword="true"/> when <paramref name="Record"/> belongs to another scope and was readable
+/// only because an active <see cref="ExperienceGrant"/> permits the requested scope to read it. Only
+/// the implementation that applied the scope predicate knows this, so only it may set it; a consumer
+/// must treat an unset flag as "this record is the requester's own" rather than comparing scopes to
+/// decide.
+/// </param>
 public sealed record ExperienceRecordGetResult(
     ExperienceStoreOutcome Outcome,
     ExperienceRecord? Record,
-    IReadOnlyList<StoreValidationError> Errors);
+    IReadOnlyList<StoreValidationError> Errors,
+    bool SharedByGrant = false);
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.QueryAsync"/>.

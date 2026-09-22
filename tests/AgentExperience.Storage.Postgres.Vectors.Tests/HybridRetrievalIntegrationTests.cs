@@ -215,6 +215,53 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
         Assert.True(provider.GetRequiredService<ExperienceRetrievalService>().HybridEnabled);
     }
 
+    [Fact]
+    public async Task A_record_shared_by_a_grant_is_retrieved_through_both_channels_until_the_grant_is_revoked()
+    {
+        var world = await TestWorld.CreateAsync(DataSource);
+        var owner = world.Scope with { TeamId = "team-a" };
+        var recipient = world.Scope with { TeamId = "team-b" };
+
+        // One record found only by meaning, one found only by words: between them they exercise the
+        // vector channel's predicate and the text channel's, from the recipient's scope.
+        var byMeaning = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice", scope: owner);
+        var byWords = await world.AddRecordAsync("refund-ticket", "Resolve a chargeback contention case", "Check the ledger", scope: owner);
+        var ungranted = await world.AddRecordAsync("billing-dispute-2", "Reimburse a blocked payment", "Release the stuck invoice", scope: owner);
+
+        foreach (var id in new[] { byMeaning, byWords, ungranted })
+        {
+            await world.Indexing.IndexAsync(world.Authorization, owner, id);
+        }
+
+        var request = new RetrieveExperienceRequest(world.Authorization, recipient, SemanticTaskText);
+
+        // Before any grant, the recipient's scope holds nothing, however similar the text or the vector.
+        var before = await world.Retrieval().RetrieveAsync(request);
+        Assert.Equal(RetrievalOutcome.Completed, before.Outcome);
+        Assert.Empty(before.Records);
+
+        var meaningGrant = await world.GrantAsync(byMeaning, owner, recipient);
+        await world.GrantAsync(byWords, owner, recipient);
+
+        var shared = await world.Retrieval().RetrieveAsync(request);
+
+        Assert.Equal(RetrievalOutcome.Completed, shared.Outcome);
+        Assert.False(shared.TextOnly);
+        // Both granted records, and only those: the ungranted sibling in the same owner scope stays out
+        // even though it is indexed, eligible, and semantically identical to one that was shared.
+        Assert.Equal(
+            new[] { byMeaning, byWords }.Order(),
+            shared.Records.Select(ranked => ranked.Record.ExperienceId).Order());
+        // A shared record arrives as its owner's, carrying the owner's scope rather than the reader's.
+        Assert.All(shared.Records, ranked => Assert.Equal(owner, ranked.Record.Scope));
+
+        await world.RevokeAsync(meaningGrant.GrantId, owner);
+
+        var afterRevocation = await world.Retrieval().RetrieveAsync(request);
+        Assert.Equal(RetrievalOutcome.Completed, afterRevocation.Outcome);
+        Assert.Equal(byWords, Assert.Single(afterRevocation.Records).Record.ExperienceId);
+    }
+
     private static RetrieveExperienceRequest Request(TestWorld world, string taskText) =>
         new(world.Authorization, world.Scope, taskText);
 
