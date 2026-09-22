@@ -147,10 +147,18 @@ public sealed record ExperienceInjectionContext(
 /// borrowed experience less than its own can deny on this alone; it is the re-read's answer, so a
 /// grant that has since expired or been revoked never shows up as <see langword="true"/> here.
 /// </param>
+/// <param name="PermittingGrantId">
+/// <em>Which</em> grant permitted it, when <paramref name="SharedByGrant"/> is
+/// <see langword="true"/>: the one the store's own predicate used for this re-read, which is also the
+/// grant the access row for this delivery names. A host can deny one specific grant's records, or
+/// correlate what it injected with the sharing trail, instead of only knowing that some grant applied.
+/// <see langword="null"/> when the record is the requester's own, or when the store did not say.
+/// </param>
 public sealed record ExperienceInjectionDecisionContext(
     RankedExperience Candidate,
     ExperienceRecord Current,
-    bool SharedByGrant = false);
+    bool SharedByGrant = false,
+    Guid? PermittingGrantId = null);
 
 /// <summary>
 /// Host configuration for <see cref="ExperienceContextProvider"/>.

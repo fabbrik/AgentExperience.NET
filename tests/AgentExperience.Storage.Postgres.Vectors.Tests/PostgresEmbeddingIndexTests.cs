@@ -463,6 +463,104 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         Assert.Throws<ArgumentOutOfRangeException>(() => ExperienceVectorIndexMaintenance.IndexNameFor(0));
     }
 
+    [Fact]
+    public async Task A_vector_search_that_discloses_a_borrowed_record_audits_it_and_names_the_grant()
+    {
+        // The vector channel returns ExperienceCandidate.Record read back in full, exactly as the text
+        // channel does, so handing one across a scope boundary is a disclosure and is recorded.
+        var world = await WorldAsync();
+        var owner = world.Scope with { TeamId = "team-a" };
+        var recipient = world.Scope with { TeamId = "team-b" };
+
+        var borrowed = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock", scope: owner);
+        var mine = await world.AddRecordAsync("refund-retry", "Retry a refund ticket", "Retry once", scope: recipient);
+        await world.Indexing.IndexAsync(world.Authorization, owner, borrowed);
+        await world.Indexing.IndexAsync(world.Authorization, recipient, mine);
+        var grant = await world.GrantAsync(borrowed, owner, recipient);
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+        var log = new PostgresExperienceGrantAccessLog(world.DataSource);
+        var audited = new PostgresExperienceEmbeddingIndex(
+            world.DataSource, onGrantsUnavailable: null, auditing: new ExperienceGrantAuditing(log, failures.Add));
+
+        var query = new ExperienceVectorQuery(
+            recipient,
+            world.Generator.ModelId,
+            TopicEmbeddingGenerator.VectorFor("refund stuck on a lock"),
+            [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
+            MinimumConfidence: 0.5,
+            Limit: 50,
+            CorrelationId: "corr-vector");
+
+        var result = await audited.SearchAsync(world.Authorization, query, CancellationToken.None);
+
+        Assert.Equal(ExperienceVectorSearchOutcome.Found, result.Outcome);
+        Assert.Empty(failures);
+
+        var shared = Assert.Single(result.Candidates, candidate => candidate.SharedByGrant);
+        Assert.Equal(borrowed, shared.Record.ExperienceId);
+        Assert.Equal(grant.GrantId, shared.PermittingGrantId);
+
+        var rows = await log.QueryAsync(
+            world.Authorization, new ExperienceGrantAccessQuery(owner), CancellationToken.None);
+
+        var row = Assert.Single(rows.Accesses);
+        Assert.Equal(borrowed, row.ExperienceId);
+        Assert.Equal(grant.GrantId, row.GrantId);
+        Assert.Equal(recipient, row.RecipientScope);
+        Assert.Equal("corr-vector", row.CorrelationId);
+
+        // The reader's own record needed no grant, so nothing claims it was disclosed.
+        var minesTrail = await log.QueryAsync(
+            world.Authorization, new ExperienceGrantAccessQuery(recipient), CancellationToken.None);
+        Assert.Empty(minesTrail.Accesses);
+    }
+
+    [Fact]
+    public async Task A_required_vector_search_whose_rows_cannot_be_written_returns_no_candidates()
+    {
+        var world = await WorldAsync();
+        var owner = world.Scope with { TeamId = "team-a" };
+        var recipient = world.Scope with { TeamId = "team-b" };
+
+        var borrowed = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock", scope: owner);
+        await world.Indexing.IndexAsync(world.Authorization, owner, borrowed);
+        await world.GrantAsync(borrowed, owner, recipient);
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+        var audited = new PostgresExperienceEmbeddingIndex(
+            world.DataSource,
+            onGrantsUnavailable: null,
+            auditing: new ExperienceGrantAuditing(
+                new FailingAccessLog(), failures.Add, ExperienceGrantAuditingMode.Required));
+
+        var result = await audited.SearchAsync(
+            world.Authorization,
+            new ExperienceVectorQuery(
+                recipient,
+                world.Generator.ModelId,
+                TopicEmbeddingGenerator.VectorFor("refund stuck on a lock"),
+                [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
+                MinimumConfidence: 0.5,
+                Limit: 50),
+            CancellationToken.None);
+
+        Assert.Empty(result.Candidates);
+        Assert.Equal(ExperienceGrantAuditingMode.Required, Assert.Single(failures).Mode);
+    }
+
+    private sealed class FailingAccessLog : IExperienceGrantAccessLog
+    {
+        public Task RecordAsync(IReadOnlyList<ExperienceGrantAccess> accesses, CancellationToken cancellationToken) =>
+            Task.FromException(new ExperienceStoreException("the ledger is down."));
+
+        public Task<ExperienceGrantAccessQueryResult> QueryAsync(
+            AuthorizationContext authorization,
+            ExperienceGrantAccessQuery query,
+            CancellationToken cancellationToken) =>
+            Task.FromException<ExperienceGrantAccessQueryResult>(new ExperienceStoreException("the ledger is down."));
+    }
+
     // ---------------------------------------------------------------- helpers
 
     [Fact]

@@ -54,12 +54,18 @@ public interface IExperienceCandidateSource
 /// <param name="EligibleStatuses">The statuses a record must be in to be returned. Must be non-empty and contain only defined values; the caller decides which statuses are eligible.</param>
 /// <param name="MinimumConfidence">The smallest <see cref="ExperienceRecord.ReuseConfidence"/> a record may have and still be returned, in [0, 1].</param>
 /// <param name="Limit">Maximum number of candidates to return, from <see cref="MinLimit"/> to <see cref="MaxLimit"/>. Defaults to <see cref="DefaultLimit"/>.</param>
+/// <param name="CorrelationId">
+/// The host's identifier for the work causing this search, recorded on the access rows written for
+/// any grant-permitted records it returns, so a disclosure can be tied to the invocation behind it.
+/// Nothing else reads it. <see langword="null"/> when the caller has none.
+/// </param>
 public sealed record ExperienceCandidateQuery(
     Scope Scope,
     string TaskText,
     IReadOnlyList<ExperienceStatus> EligibleStatuses,
     double MinimumConfidence,
-    int Limit = ExperienceCandidateQuery.DefaultLimit)
+    int Limit = ExperienceCandidateQuery.DefaultLimit,
+    string? CorrelationId = null)
 {
     /// <summary>
     /// The longest permitted <see cref="TaskText"/>. A task description is a sentence or a paragraph;
@@ -96,7 +102,22 @@ public sealed record ExperienceCandidateQuery(
 /// is the requester's own". It exists so a consumer can keep the strict scope check it would
 /// otherwise have to weaken, and so borrowed experience can be labelled as such.
 /// </param>
-public sealed record ExperienceCandidate(ExperienceRecord Record, double Relevance, bool SharedByGrant = false);
+/// <param name="PermittingGrantId">
+/// Which <see cref="ExperienceGrant"/> permitted this record to be returned, when
+/// <paramref name="SharedByGrant"/> is <see langword="true"/>: the one the implementation's own
+/// predicate used, not merely one that could have. <see langword="null"/> for a record the requester
+/// owns, and <see langword="null"/> from an implementation that cannot say which grant applied.
+/// <para>
+/// <paramref name="Record"/> is the record read back <em>in full</em>, so returning one is a
+/// disclosure and not a match notice. This ID is the one on the access row an
+/// <see cref="IExperienceGrantAccessLog"/> writes for it.
+/// </para>
+/// </param>
+public sealed record ExperienceCandidate(
+    ExperienceRecord Record,
+    double Relevance,
+    bool SharedByGrant = false,
+    Guid? PermittingGrantId = null);
 
 /// <summary>
 /// The result of <see cref="IExperienceCandidateSource.SearchAsync"/>.

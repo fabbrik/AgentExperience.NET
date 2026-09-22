@@ -104,6 +104,14 @@ public sealed class ExperienceLifecycleService
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
+    /// <summary>
+    /// How the confidence path reads a record: to check it against the caller's own scope, never to
+    /// hand it over. A grant confers reading one record and never writing to it, so a record only a
+    /// grant made readable is refused a few lines later -- which makes the read a scope check rather
+    /// than a delivery, and means no access row should claim otherwise.
+    /// </summary>
+    private static readonly ExperienceReadOptions ScopeCheckRead = new(ExperienceReadPurpose.ScopeCheck);
+
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceIndexingService? _indexingService;
 
@@ -336,8 +344,11 @@ public sealed class ExperienceLifecycleService
             return new(ConfidenceUpdateOutcome.Invalid, null, null, 0, null, shapeErrors);
         }
 
+        // A scope check, not a delivery: the grant branch below refuses the record outright, so nothing
+        // is handed over and an access log must not record one. Declaring it also keeps that refusal's
+        // own message, which a fail-closed audit would otherwise replace with a bare NotFound.
         var read = await _store
-            .GetAsync(authorization, request.Scope, request.ExperienceId, cancellationToken)
+            .GetAsync(authorization, request.Scope, request.ExperienceId, ScopeCheckRead, cancellationToken)
             .ConfigureAwait(false);
 
         if (read.Outcome != ExperienceStoreOutcome.Found)

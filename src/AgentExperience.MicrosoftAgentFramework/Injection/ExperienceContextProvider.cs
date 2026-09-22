@@ -353,8 +353,16 @@ public sealed class ExperienceContextProvider : AIContextProvider
             ExperienceRecordGetResult result;
             try
             {
+                // A delivery, and named: this re-read is what actually hands the record to the model,
+                // so an access log records it, and the request's correlation ID ties that row to the
+                // invocation it was injected into.
                 result = await _store
-                    .GetAsync(request.Authorization, request.Scope, experienceId, bounded.Token)
+                    .GetAsync(
+                        request.Authorization,
+                        request.Scope,
+                        experienceId,
+                        new ExperienceReadOptions(ExperienceReadPurpose.Delivery, request.CorrelationId),
+                        bounded.Token)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -417,14 +425,22 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
             // The re-read decides sharing too: a grant that expired since retrieval leaves the record
             // readable only if the reader owns it, and the block must say what is true now.
-            var refreshed = candidate with { Record = current, SharedByGrant = result.SharedByGrant };
+            // The re-read decides which grant, too. It is the delivery the store audits, so the ID the
+            // host sees here is the one that appears in the access trail for this record.
+            var refreshed = candidate with
+            {
+                Record = current,
+                SharedByGrant = result.SharedByGrant,
+                PermittingGrantId = result.SharedByGrant ? result.PermittingGrantId : null,
+            };
 
             if (_options.DecideInjection is { } decide)
             {
                 InjectionDecision? decision;
                 try
                 {
-                    decision = decide(new ExperienceInjectionDecisionContext(refreshed, current, result.SharedByGrant));
+                    decision = decide(new ExperienceInjectionDecisionContext(
+                        refreshed, current, result.SharedByGrant, refreshed.PermittingGrantId));
                 }
                 catch (Exception ex)
                 {

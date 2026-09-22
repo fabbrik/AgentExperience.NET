@@ -404,6 +404,211 @@ public class ExperienceInjectionTests
         Assert.Equal(InjectionOmissionReason.Unreadable, Assert.Single(result.Omitted).Reason);
     }
 
+    // ---- Matrix: Auditing the pre-injection re-read ----------------------------------------------
+
+    [Fact]
+    public async Task The_pre_injection_re_read_writes_one_access_row_per_record_a_grant_delivered()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = ReadingAs(reader);
+        var log = new InMemoryGrantAccessLog();
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+
+        var borrowedFirst = InjectionRecords.Id(1);
+        var borrowedSecond = InjectionRecords.Id(2);
+        var mine = InjectionRecords.Id(3);
+        harness.World.Publish(InjectionRecords.Record(borrowedFirst, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(borrowedSecond, owner, lesson: "Escalate after two retries."), relevance: 0.9d);
+        harness.World.Publish(InjectionRecords.Record(mine, reader, lesson: "Retry the refund once."), relevance: 0.8d);
+
+        var firstGrant = harness.World.Grant(borrowedFirst, reader);
+        var secondGrant = harness.World.Grant(borrowedSecond, reader);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Injected, result.Outcome);
+        Assert.Equal([borrowedFirst, borrowedSecond, mine], result.InjectedExperienceIds);
+
+        // Three records were re-read and delivered; two of them needed a grant to be. The reader's own
+        // record produced no row, because no grant permitted anything there.
+        Assert.Equal([borrowedFirst, borrowedSecond, mine], harness.World.Reads);
+        Assert.Equal([borrowedFirst, borrowedSecond], log.Rows.Select(row => row.ExperienceId));
+
+        // Each row names the grant that permitted it, whose record it was, who read it, and as whom.
+        Assert.Equal([firstGrant, secondGrant], log.Rows.Select(row => row.GrantId));
+        Assert.All(log.Rows, row =>
+        {
+            Assert.Equal(owner, row.RecordScope);
+            Assert.Equal(reader, row.RecipientScope);
+            Assert.Equal("host", row.PrincipalId);
+            Assert.NotEqual(Guid.Empty, row.AccessId);
+            Assert.NotEqual(default, row.OccurredAt);
+        });
+
+        // One row per delivery, never per candidate the search matched.
+        Assert.Equal(log.Rows.Count, log.Rows.Select(row => row.AccessId).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task The_host_is_told_which_grant_permitted_each_borrowed_record()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var log = new InMemoryGrantAccessLog();
+        var seen = new List<(Guid Id, Guid? Grant)>();
+
+        var shared = InjectionRecords.Id(1);
+        var mine = InjectionRecords.Id(2);
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                seen.Add((context.Current.ExperienceId, context.PermittingGrantId));
+                return InjectionDecision.Permit;
+            },
+        };
+
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(InjectionRecords.Record(shared, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(mine, reader, lesson: "Escalate after two retries."), relevance: 0.9d);
+        var grantId = harness.World.Grant(shared, reader);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // Knowing *which* grant, not merely that one applied, is what lets a host tie an injected
+        // lesson to the sharing decision behind it -- and it is the same ID sitting in the trail.
+        Assert.Contains((shared, (Guid?)grantId), seen);
+        Assert.Contains((mine, (Guid?)null), seen);
+        Assert.Equal(grantId, Assert.Single(log.Rows).GrantId);
+
+        // The grant ID is for the host, not for the model: the block still names no grant and no scope.
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.DoesNotContain(grantId.ToString("D"), text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_record_the_host_then_denies_was_still_delivered_and_is_still_recorded()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var log = new InMemoryGrantAccessLog();
+
+        var shared = InjectionRecords.Id(1);
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = _ => InjectionDecision.Deny("borrowed"),
+        };
+
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(InjectionRecords.Record(shared, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Grant(shared, reader);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Empty(result.InjectedExperienceIds);
+        Assert.Equal(InjectionOmissionReason.HostDenied, Assert.Single(result.Omitted).Reason);
+
+        // The host's risk policy ran *after* the store handed the record over, so the record really was
+        // read out of the owner's scope. The trail says so. An access row is "this was delivered", not
+        // "this reached a model".
+        Assert.Equal(shared, Assert.Single(log.Rows).ExperienceId);
+    }
+
+    [Fact]
+    public async Task A_grant_revoked_between_retrieval_and_injection_delivers_nothing_and_records_nothing()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = ReadingAs(reader);
+        var log = new InMemoryGrantAccessLog();
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(shared, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Grant(shared, reader);
+
+        // Retrieval matched it; the grant is gone before the re-read that would deliver it.
+        harness.World.GetDelay = _ =>
+        {
+            harness.World.Revoke(shared, reader);
+            return Task.CompletedTask;
+        };
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Empty(result.InjectedExperienceIds);
+        Assert.Equal(InjectionOmissionReason.Unreadable, Assert.Single(result.Omitted).Reason);
+
+        // Nothing was delivered, so nothing is recorded: the trail counts reads that handed something
+        // over, never searches that matched.
+        Assert.Empty(log.Rows);
+    }
+
+    [Fact]
+    public async Task Required_auditing_drops_a_borrowed_record_whose_access_row_cannot_be_written()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = ReadingAs(reader);
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+        var log = new InMemoryGrantAccessLog { Throws = new ExperienceStoreException("the ledger is down.") };
+        harness.World.Auditing = new ExperienceGrantAuditing(log, failures.Add, ExperienceGrantAuditingMode.Required);
+
+        var shared = InjectionRecords.Id(1);
+        var mine = InjectionRecords.Id(2);
+        harness.World.Publish(InjectionRecords.Record(shared, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(mine, reader, lesson: "Escalate after two retries."), relevance: 0.9d);
+        harness.World.Grant(shared, reader);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+
+        // The re-read returned nothing for the borrowed record, so the provider drops it exactly as it
+        // drops any record it cannot read at injection time -- and the reader's own record is
+        // untouched, because no grant was needed to deliver it.
+        Assert.Equal([mine], result.InjectedExperienceIds);
+        Assert.Equal(InjectionOmissionReason.Unreadable, Assert.Single(result.Omitted).Reason);
+        Assert.Equal(shared, Assert.Single(result.Omitted).ExperienceId);
+
+        Assert.Equal(ExperienceGrantAuditingMode.Required, Assert.Single(failures).Mode);
+        Assert.Empty(log.Rows);
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.DoesNotContain("Check the lock table first.", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Best_effort_auditing_still_injects_a_borrowed_record_and_reports_the_missing_row()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = ReadingAs(reader);
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+        var log = new InMemoryGrantAccessLog { Throws = new ExperienceStoreException("the ledger is down.") };
+        harness.World.Auditing = new ExperienceGrantAuditing(log, failures.Add);
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(shared, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Grant(shared, reader);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([shared], Assert.Single(harness.Results).InjectedExperienceIds);
+        Assert.Equal(ExperienceGrantAuditingMode.BestEffort, Assert.Single(failures).Mode);
+        Assert.Empty(log.Rows);
+    }
+
     // ---- Matrix: Shared by a grant --------------------------------------------------------------
 
     [Fact]

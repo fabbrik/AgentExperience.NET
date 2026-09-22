@@ -98,6 +98,17 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         $"OR {PostgresExperienceRecordStore.ActiveGrantPredicate})";
 
     /// <summary>
+    /// The same rule for the one statement that must also <em>name</em> the grant it admitted a row
+    /// through: the grant branch reads the row the lateral join already produced instead of asking the
+    /// same question a second time as an <c>EXISTS</c>. It is only for the search, because that is the
+    /// only statement carrying the join; the compatibility probes, which select nothing and name
+    /// nothing, keep <see cref="ReadableJoinScopePredicate"/>.
+    /// </summary>
+    private static readonly string ReadableJoinScopeWithNamedGrantPredicate =
+        $"(({EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate}) " +
+        $"OR {PostgresExperienceRecordStore.PermittingGrantFoundPredicate})";
+
+    /// <summary>
     /// The same join predicate with the grant branch removed, for a database that has no
     /// <c>experience_grants</c> table or a role that may not read it.
     /// </summary>
@@ -205,20 +216,30 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     private readonly PostgresGrantSupport _grants;
 
+    private readonly ExperienceGrantAuditing? _auditing;
+
     /// <summary>Creates an embedding index over a host-owned data source. The index never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="onGrantsUnavailable">
     /// Called at most once, when a search first finds <c>agent_experience.experience_grants</c> missing
     /// or unreadable and falls back to the exact-scope predicate. Optional.
     /// </param>
+    /// <param name="auditing">
+    /// Where to record the grant-permitted records this search <em>returns</em>, and what a failed
+    /// recording does to the search. A candidate carries the record read back in full, so returning one
+    /// is a disclosure; the whole search's rows are written in one statement. <see langword="null"/> --
+    /// the default -- switches auditing off entirely.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceEmbeddingIndex(
         NpgsqlDataSource dataSource,
-        Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null)
+        Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
+        ExperienceGrantAuditing? auditing = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
+        _auditing = auditing;
     }
 
     /// <inheritdoc />
@@ -379,19 +400,20 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         var dimension = query.Vector.Length;
         var statuses = query.EligibleStatuses.Distinct().Select(status => status.ToString()).ToArray();
 
+        ExperienceVectorSearchResult result;
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             try
             {
-                return await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, cancellationToken)
+                result = await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only.
-                return await RunSearchAsync(connection, query, dimension, statuses, readable: false, cancellationToken)
+                result = await RunSearchAsync(connection, query, dimension, statuses, readable: false, cancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -399,6 +421,50 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         {
             throw PostgresExperienceRecordStore.Translate(ex, "vector search", cancellationToken);
         }
+
+        // Outside the read's own translation, and on its own connection: an audit failure is the host's
+        // policy to decide, never a storage failure raised as a failed search.
+        return _auditing is null
+            ? result
+            : await RecordGrantAccessAsync(authorization, query, result, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Appends one access row per grant-permitted record this search is about to return, all in a
+    /// single statement, and decides what a failed append does to the result.
+    /// </summary>
+    /// <remarks>
+    /// The vector channel returns <see cref="ExperienceCandidate.Record"/> read back in full exactly as
+    /// the text channel does, so the same rule applies: handing one to a caller that does not own it is
+    /// a disclosure. Under <see cref="ExperienceGrantAuditingMode.Required"/> a search whose rows
+    /// cannot be written returns no candidates at all rather than the subset that needed no grant.
+    /// </remarks>
+    private async Task<ExperienceVectorSearchResult> RecordGrantAccessAsync(
+        AuthorizationContext authorization,
+        ExperienceVectorQuery query,
+        ExperienceVectorSearchResult result,
+        CancellationToken cancellationToken)
+    {
+        var auditing = _auditing!;
+
+        if (result.Outcome != ExperienceVectorSearchOutcome.Found)
+        {
+            return result;
+        }
+
+        var accesses = new List<ExperienceGrantAccess>();
+        foreach (var candidate in result.Candidates)
+        {
+            if (candidate is { SharedByGrant: true, Record: { } record })
+            {
+                accesses.Add(GrantAuditing.Access(
+                    auditing, authorization, query.Scope, query.CorrelationId, record, candidate.PermittingGrantId));
+            }
+        }
+
+        return await GrantAuditing.RecordAsync(auditing, accesses, cancellationToken).ConfigureAwait(false)
+            ? result
+            : new(ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors);
     }
 
     /// <inheritdoc />
@@ -470,7 +536,8 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                 candidates.Add(new ExperienceCandidate(
                     PostgresExperienceRecordStore.ReadRecord(reader),
                     ReadRelevance(reader),
-                    PostgresExperienceRecordStore.ReadSharedByGrant(reader)));
+                    PostgresExperienceRecordStore.ReadSharedByGrant(reader),
+                    PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
             }
         }
 
@@ -509,15 +576,22 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     private static string SearchSql(int dimension, bool readable)
     {
         var width = dimension.ToString(CultureInfo.InvariantCulture);
-        var scope = readable ? ReadableJoinScopePredicate : ExactJoinScopePredicate;
+        var scope = readable ? ReadableJoinScopeWithNamedGrantPredicate : ExactJoinScopePredicate;
         var shared = readable
-            ? PostgresExperienceRecordStore.SharedByGrantColumn
-            : "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias;
+            ? PostgresExperienceRecordStore.SharedByGrantColumn + ", " + PostgresExperienceRecordStore.PermittingGrantColumn
+            : "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
+                + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias;
+
+        // The lateral join both decides the grant branch and names the grant, so a candidate this
+        // channel discloses carries the same ID its access row does. It exposes only grant_id, so every
+        // unqualified name in the rest of the statement still resolves exactly as it did.
+        var grantJoin = readable ? " " + PostgresExperienceRecordStore.PermittingGrantJoin : string.Empty;
 
         return $"SELECT {RecordColumns}, {shared}, " +
             $"(e.embedding::vector({width}) <=> CAST(@query_vector AS vector({width}))) AS {DistanceColumn} " +
             $"FROM {Table} e " +
-            $"JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
+            $"JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id" +
+            grantJoin + " " +
             // Both sides of the join carry the scope. The r-side is the authoritative one; the e-side is
             // what makes ix_experience_embeddings_scope_model usable (see EmbeddingScopePredicate).
             // An active grant is the alternative to that exact match, decided in SQL like the rest.

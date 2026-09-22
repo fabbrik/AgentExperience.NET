@@ -37,7 +37,10 @@ public static class AgentExperiencePostgresVectorsServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IExperienceEmbeddingIndex>(provider =>
-            new PostgresExperienceEmbeddingIndex(provider.GetRequiredService<NpgsqlDataSource>()));
+            new PostgresExperienceEmbeddingIndex(
+                provider.GetRequiredService<NpgsqlDataSource>(),
+                onGrantsUnavailable: null,
+                auditing: provider.GetService<ExperienceGrantAuditing>()));
 
         return services;
     }
@@ -58,7 +61,13 @@ public static class AgentExperiencePostgresVectorsServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(dataSource);
 
-        services.TryAddSingleton<IExperienceEmbeddingIndex>(new PostgresExperienceEmbeddingIndex(dataSource));
+        // A factory rather than a ready-made instance, so a registered ExperienceGrantAuditing is picked
+        // up however the two registrations are ordered. Still one singleton either way.
+        services.TryAddSingleton<IExperienceEmbeddingIndex>(provider =>
+            new PostgresExperienceEmbeddingIndex(
+                dataSource,
+                onGrantsUnavailable: null,
+                auditing: provider.GetService<ExperienceGrantAuditing>()));
 
         return services;
     }

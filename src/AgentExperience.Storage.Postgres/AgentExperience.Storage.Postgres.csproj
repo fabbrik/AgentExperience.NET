@@ -34,6 +34,7 @@
     <EmbeddedResource Include="Migrations\0006_lifecycle_supersession_and_append_only.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0006_lifecycle_supersession_and_append_only.sql" />
     <EmbeddedResource Include="Migrations\0007_confidence_evidence.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0007_confidence_evidence.sql" />
     <EmbeddedResource Include="Migrations\0008_reuse_feedback.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0008_reuse_feedback.sql" />
+    <EmbeddedResource Include="Migrations\0009_grant_access_log.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0009_grant_access_log.sql" />
   </ItemGroup>
 
   <ItemGroup>

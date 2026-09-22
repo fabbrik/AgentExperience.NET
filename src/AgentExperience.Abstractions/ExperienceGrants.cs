@@ -37,7 +37,7 @@ public sealed record GrantAdministration(
 /// <see cref="Scope.ProjectId"/> as <see cref="RecordScope"/>.
 /// </para>
 /// <para>
-/// A grant permits reading only -- <see cref="IExperienceRecordStore.GetAsync"/>, text retrieval, and
+/// A grant permits reading only -- <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>, text retrieval, and
 /// vector retrieval, and therefore injection, which re-reads through the same path. Creating,
 /// committing lifecycle changes, reading lifecycle history, submitting feedback, and issuing further
 /// grants are never inferred from a grant and still require the caller's own authority.
@@ -103,6 +103,13 @@ public sealed record ExperienceGrant(
 /// <param name="ExpiresAt">
 /// When the grant stops permitting reads. Must be later than the moment the database issues it,
 /// which is the database's own clock rather than the caller's.
+/// <para>
+/// It is also bounded above: an implementation applies a host-configured maximum grant lifetime, and
+/// an expiry beyond it is <see cref="ExperienceGrantOutcome.Invalid"/> on this field with nothing
+/// written. There is therefore no such thing as a permanent grant --
+/// <see cref="DateTimeOffset.MaxValue"/> is refused like any other over-long expiry. An expiry
+/// exactly at the maximum is accepted.
+/// </para>
 /// </param>
 public sealed record ExperienceGrantRequest(
     Guid GrantId,
@@ -142,8 +149,9 @@ public enum ExperienceGrantAction
 /// </summary>
 /// <remarks>
 /// The trail records <em>administration</em> -- who allowed what, until when, and when they stopped
-/// allowing it. It is deliberately not an access log: reads made through a grant are not recorded
-/// anywhere, so this history answers "who permitted this?" and never "who read it?".
+/// allowing it -- so this history answers "who permitted this?". Who actually <em>read</em> the
+/// record is a separate, optional ledger: <see cref="IExperienceGrantAccessLog"/>, which a host wires
+/// on its own and which records the reads a grant delivered rather than the permissions it granted.
 /// </remarks>
 /// <param name="EventId">The event's identity.</param>
 /// <param name="GrantId">The grant this event is about.</param>

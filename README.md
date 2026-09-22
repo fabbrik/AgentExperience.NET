@@ -41,7 +41,8 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Embedding ingestion after the canonical commit: only the sanitized retrieval summary is embedded, writes are conditional on the live revision, and every provider failure leaves the record committed and retryable | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
 | Hybrid retrieval: a bounded vector channel merged with the text one under the same eligibility, timeout, and ceiling, with an explicit, flagged text-only fallback whenever the vector channel cannot be trusted | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
 | Historical Reference injection into MAF: a context provider that retrieves, re-checks eligibility immediately before injecting, asks the host's risk policy, and injects one delimited, labeled block within record and byte limits — never throwing into the invocation | `AgentExperience.MicrosoftAgentFramework` |
-| Explicit sharing grants: an administrator the host names lets one named record be *read* by a sibling scope until it expires or is revoked; the grant and its audit event commit together, and reads honour it in SQL, never in application code | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
+| Explicit sharing grants: an administrator the host names lets one named record be *read* by a sibling scope until it expires or is revoked; the grant and its audit event commit together, and reads honour it in SQL, never in application code. A grant's lifetime is bounded by a host-configured maximum, so there is no permanent grant | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
+| An optional access log answering "who read our team's experience, and when": one append-only row per record a grant *delivered*, naming that grant and the revision disclosed, written outside the read's own statement and batched per search, best-effort or fail-closed as the host chooses, with an owner-scoped reader for the trail | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
 | Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types. Injection is the one piece the host constructs itself, because the resolver and risk decision are per-host | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 
 ## Quick look
@@ -825,6 +826,21 @@ var result = await grants.CreateAsync(
 // Created — the grant row and its audit event were written in one transaction.
 ```
 
+**A grant's lifetime is bounded, and there is no permanent grant.** `PostgresExperienceGrantPolicy` carries the
+maximum lifetime a *new* grant may be issued with — 90 days by default — and an expiry further ahead than that is
+`Invalid` on `ExpiresAt` with nothing written. `DateTimeOffset.MaxValue` is refused like any other over-long
+expiry; an expiry exactly at the maximum is accepted. The bound is a policy on the store, not a hidden constant:
+
+```csharp
+services.AddAgentExperiencePostgresGrantStore(new PostgresExperienceGrantPolicy(TimeSpan.FromDays(30)));
+```
+
+It binds a grant when it is created and never afterwards. Raising the maximum does not extend a grant already
+issued, and lowering it does not shorten one — end an over-long grant by revoking it. The existing rule that an
+expiry may only ever shrink is unchanged. Underneath the policy the database keeps its own fixed, generous ceiling
+(`expires_at <= issued_at + interval '10 years'`), so a writer that bypasses this library still cannot store a
+grant that never ends.
+
 **What a grant permits.** Reading, and only reading: `GetAsync`, the text channel, the vector channel, and
 therefore injection, which re-reads through the same call. A granted record comes back exactly as its owner sees
 it, still carrying the owner's scope. Creating records, committing lifecycle changes, reading lifecycle history,
@@ -839,6 +855,7 @@ own authority.
 | Confers no write, no lifecycle history, and no enumeration | Every non-read statement keeps the exact-scope predicate |
 | Stops permitting reads once `ExpiresAt` passes | The read predicate, against `clock_timestamp()` — the *database's* wall clock, never the caller's, and never the transaction's start time |
 | Stops permitting reads the moment it is revoked | The same predicate; revocation appends an event and deletes nothing. At most one grant per (record, recipient scope) may be active at a time, so revoking the grant you know about really is the end of that recipient's access -- a second, overlapping one is refused as `Conflict` rather than stacked |
+| Cannot be issued to last longer than the configured maximum, and can never be permanent | `Invalid` on `ExpiresAt` with nothing written, *and* a fixed `CHECK` ceiling underneath it |
 | Cannot be issued or revoked without administrator authority | `Denied`, before any connection is opened |
 | Changes nothing about the record: not its status, confidence, counters, or revision | The grant path never touches `experience_records` |
 
@@ -868,10 +885,72 @@ Reference block carries a `Shared:` line (with no scope identifier in it). Every
 "this must be my own record" check for anything that is *not* flagged, so a source that returns a foreign record
 without declaring a grant is still dropped.
 
-**What the audit trail is, and is not.** `experience_grant_events` records administration -- who allowed what, under
-authority established when, until when, and when they stopped allowing it -- and
-`IExperienceGrantStore.GetHistoryAsync` reads one grant's trail. Reads made *through* a grant are not recorded
-anywhere: the trail answers "who permitted this?", never "who read it?".
+**Two trails, and they answer different questions.** `experience_grant_events` records administration -- who
+allowed what, under authority established when, until when, and when they stopped allowing it -- and
+`IExperienceGrantStore.GetHistoryAsync` reads one grant's trail. It answers "who permitted this?".
+
+"Who read it?" is the **access log**, a separate, optional ledger:
+
+```csharp
+services.AddAgentExperiencePostgresGrantAccessLog(
+    onNotRecorded: failure => logger.LogError(failure.Failure, "grant access row not written"),
+    mode: ExperienceGrantAuditingMode.BestEffort);   // or Required
+```
+
+With it wired, every record a grant *delivers* appends a row naming the grant, the record **and the revision that
+was disclosed**, the owner scope, the recipient scope, the reading principal, the host's correlation ID for the
+work behind the read, and when. The read also tells the caller **which** grant permitted it —
+`ExperienceRecordGetResult.PermittingGrantId` and `ExperienceCandidate.PermittingGrantId`, carried on to
+`RankedExperience` and to the host's `ExperienceInjectionDecisionContext` — so an injected lesson can be tied back
+to the sharing decision behind it. The grant ID is for the host: the injected block still names no grant and no
+scope.
+
+**What is audited.** Every read that hands a caller a record it does not own. That is `GetAsync` (the
+pre-injection re-read included) *and* both search channels: `ExperienceCandidate.Record` is the record read back
+**in full**, so a host consuming `IExperienceCandidateSource` or `IExperienceEmbeddingIndex` directly receives
+complete foreign records — a search result is a disclosure, not a notice that something matched. A search's rows
+are written in **one** statement, so auditing costs one round trip per search rather than one per row.
+
+Two reads are not deliveries and write nothing. An owner reading its own record: no grant permitted it. And a read
+the caller refuses after fetching it *because* a grant is what made it readable — declare it with
+`ExperienceReadOptions(ExperienceReadPurpose.ScopeCheck)`, as Core's confidence path does, since a grant never
+confers writing.
+
+**Reading the trail** is `IExperienceGrantAccessLog.QueryAsync`: owner scope only, bounded and cursored, mirroring
+`IExperienceGrantStore.GetHistoryAsync`. A recipient cannot enumerate who else read a record it can read.
+
+**Auditing never fails silently.** `BestEffort` — the default — returns the records and reports the failed write
+through `onNotRecorded`, which is why that callback is required rather than optional. `Required` fails closed: a
+`GetAsync` returns `NotFound`, the same answer a record no grant permitted would give, and a search returns no
+candidates at all rather than the subset that needed no grant. A blank `AuthorizationContext.PrincipalId` is itself
+an audit failure — a row that cannot say *who* read the record does not answer the question the ledger exists for.
+Rows are append-only in the database, so a delivery cannot be edited or deleted out of the trail afterwards.
+
+**What it costs.** Every disclosing read does a second, synchronous round trip on a pooled connection before it
+returns, and under `Required` read availability becomes a function of *write* availability. That is the mode's
+promise, not a bug; the `dataSource` overloads exist largely so the ledger can have its own pool and a slow ledger
+cannot exhaust the connections reads depend on. Wire nothing and auditing is off: no extra write, no extra round
+trip, no extra failure mode, and a deployment behaves exactly as before. Registrations use `TryAdd`, so a host that
+registered its own store or candidate source first keeps it — and takes on the obligation to honour the policy
+itself.
+
+**Source-compatible, not binary-compatible.** Everything below is additive at the source level — defaulted
+positional parameters, defaulted constructor arguments, and one default interface method — so code recompiles
+unchanged. None of it is binary-compatible, so recompile rather than drop in the new assemblies:
+
+| Type | Change |
+| --- | --- |
+| `ExperienceRecordGetResult` | gained `Guid? PermittingGrantId = null` |
+| `ExperienceCandidate` | gained `Guid? PermittingGrantId = null` |
+| `ExperienceCandidateQuery`, `ExperienceVectorQuery` | gained `string? CorrelationId = null` |
+| `RankedExperience`, `ExperienceInjectionDecisionContext` | gained `Guid? PermittingGrantId = null` |
+| `IExperienceRecordStore` | gained a defaulted `GetAsync(..., ExperienceReadOptions, ...)` overload that forwards to the existing one |
+| `PostgresExperienceRecordStore`, `PostgresExperienceCandidateSource`, `PostgresExperienceEmbeddingIndex` | constructors gained `ExperienceGrantAuditing? auditing = null` |
+| `PostgresExperienceGrantStore` | constructor gained `PostgresExperienceGrantPolicy? policy = null, TimeProvider? timeProvider = null` |
+
+The one *behavioural* break is deliberate: a grant issued with an expiry more than 90 days out — including
+`DateTimeOffset.MaxValue` — is now `Invalid`. Configure `PostgresExperienceGrantPolicy` if your deployment needs a
+different window.
 
 **Two deployment notes.** Reading through a grant needs `SELECT` on `agent_experience.experience_grants`; a role
 without it, or a database that has not applied `0005` yet, falls back to the exact-scope predicate -- which narrows
@@ -897,6 +976,9 @@ services.AddAgentExperiencePostgresGrantStore();                // IExperienceGr
                                                                 //    that shares records across scopes needs it
 services.AddAgentExperiencePostgresReuseFeedbackStore();        // IExperienceReuseFeedbackStore, optional: only a
                                                                 //    host that records reuse feedback needs it
+services.AddAgentExperiencePostgresGrantAccessLog(              // IExperienceGrantAccessLog, optional: only a host
+    onNotRecorded: failure => logger.LogError(                  //    that wants to know who read shared records
+        failure.Failure, "grant access row not written"));      //    needs it. Off unless wired.
 services.AddAgentExperiencePostgresEmbeddingIndex();            // IExperienceEmbeddingIndex
 services.AddAgentExperienceEmbeddingGenerator();                // IExperienceEmbeddingGenerator, over a registered
                                                                 //    IEmbeddingGenerator<string, Embedding<float>>
@@ -919,7 +1001,7 @@ services.AddAgentExperienceReuseFeedback();                     // ExperienceReu
 Schema comes in two calls, matching that split:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005-0008, always
+await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005-0009, always
 await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, only with the vector channel
 ```
 

@@ -83,6 +83,22 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ReuseFeedbackScriptName = "0008_reuse_feedback.sql";
 
+    /// <summary>
+    /// The script that creates the append-only <c>experience_grant_access</c> ledger, which
+    /// <see cref="PostgresExperienceGrantAccessLog"/> writes one row to per record a grant delivered,
+    /// and that adds the database's own fixed ceiling on how long a grant may live.
+    /// </summary>
+    /// <remarks>
+    /// It records <em>deliveries</em>: a get that a grant permitted (the pre-injection re-read
+    /// included), and every grant-permitted record the text and vector channels return -- a candidate
+    /// carries the record read back in full, so returning one across a scope boundary is a disclosure.
+    /// A search's rows are written in one statement. The lifetime ceiling is added to the
+    /// existing <c>experience_grants</c> table <c>NOT VALID</c>; see the script's own header for the
+    /// confirm-then-<c>VALIDATE</c> step, what to do about a grant already issued beyond it, and the
+    /// <c>CONCURRENTLY</c> note for the two indexes.
+    /// </remarks>
+    public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -101,6 +117,7 @@ public static class PostgresExperienceRecordSchema
         SupersessionAndAppendOnlyScriptName,
         ConfidenceEvidenceScriptName,
         ReuseFeedbackScriptName,
+        GrantAccessLogScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
