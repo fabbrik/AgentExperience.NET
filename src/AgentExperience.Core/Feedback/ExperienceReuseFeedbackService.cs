@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Lifecycle;
 
 namespace AgentExperience.Core.Feedback;
@@ -177,6 +178,37 @@ public sealed class ExperienceReuseFeedbackService
     /// <exception cref="ExperienceStoreException">The feedback ledger write failed. Nothing was recorded and no score moved.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled before the ledger write completed, so nothing was recorded. Cancellation after it is reported per record instead.</exception>
     public async Task<ExperienceReuseFeedbackResult> RecordAsync(
+        AuthorizationContext authorization,
+        ExperienceReuseFeedback feedback,
+        CancellationToken cancellationToken)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.ReuseFeedback, cancellationToken);
+
+        ExperienceReuseFeedbackResult result;
+        try
+        {
+            // The submission's own identifier and the run it is about are both on the request, so both
+            // are on the span before the call and survive a throw.
+            ArgumentNullException.ThrowIfNull(feedback);
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.FeedbackIdAttribute, feedback.FeedbackId.ToString("D"));
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, feedback.RunId.ToString("D"));
+
+            result = await RecordCoreAsync(authorization, feedback, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.ReuseFeedback, ex);
+            throw;
+        }
+
+        // Per-record dispositions stay on the typed result: they are a list whose length is the
+        // submission's, which is exactly the kind of thing a span attribute must not become.
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.ReuseFeedback, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>The body of <see cref="RecordAsync"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
+    private async Task<ExperienceReuseFeedbackResult> RecordCoreAsync(
         AuthorizationContext authorization,
         ExperienceReuseFeedback feedback,
         CancellationToken cancellationToken)
@@ -361,6 +393,9 @@ public sealed class ExperienceReuseFeedbackService
         ApplyConfidenceEvidenceResult applied;
         try
         {
+            // The public, instrumented sibling: a submission exposing five records really does apply
+            // confidence evidence five times, and an operator who cannot see those five -- or the one
+            // of them that failed -- cannot tell a working feedback loop from a stuck one.
             applied = await _lifecycleService.ApplyEvidenceAsync(authorization, request, cancellationToken).ConfigureAwait(false);
         }
         catch (ExperienceStoreException ex)

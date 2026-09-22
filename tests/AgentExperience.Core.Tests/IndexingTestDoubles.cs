@@ -18,8 +18,8 @@ internal sealed class FakeEmbeddingGenerator : IExperienceEmbeddingGenerator
 
     public int Dimension { get; init; } = 4;
 
-    /// <summary>When set, every call throws this instead of embedding.</summary>
-    public Exception? Throws { get; init; }
+    /// <summary>When set, every call throws this instead of embedding. Settable, so a test can script an outage part-way through a drive.</summary>
+    public Exception? Throws { get; set; }
 
     /// <summary>When set, the returned vector has this many components instead of <see cref="Dimension"/>.</summary>
     public int? ReturnDimension { get; init; }
@@ -117,14 +117,14 @@ internal sealed class FakeEmbeddingIndex : IExperienceEmbeddingIndex
     /// <summary>Every vector search this index was asked for, in order.</summary>
     public List<ExperienceVectorQuery> Queries { get; } = [];
 
-    /// <summary>When set, every scan throws this.</summary>
-    public Exception? ScanThrows { get; init; }
+    /// <summary>When set, every scan throws this. Settable, so a test can script an outage part-way through a drive.</summary>
+    public Exception? ScanThrows { get; set; }
 
-    /// <summary>When set, every write throws this.</summary>
-    public Exception? WriteThrows { get; init; }
+    /// <summary>When set, every write throws this. Settable, so a test can script an outage part-way through a drive.</summary>
+    public Exception? WriteThrows { get; set; }
 
-    /// <summary>When set, every search throws this.</summary>
-    public Exception? SearchThrows { get; init; }
+    /// <summary>When set, every search throws this. Settable, so a test can script an outage part-way through a drive.</summary>
+    public Exception? SearchThrows { get; set; }
 
     /// <summary>When set, every scan returns this outcome instead of listing anything.</summary>
     public ExperienceStoreOutcome? ScanOutcome { get; init; }
@@ -138,8 +138,8 @@ internal sealed class FakeEmbeddingIndex : IExperienceEmbeddingIndex
     /// <summary>Every removal this index was asked for, in order -- including the ones that found nothing.</summary>
     public List<(Scope Scope, Guid ExperienceId)> Removals { get; } = [];
 
-    /// <summary>When set, every removal throws this.</summary>
-    public Exception? RemoveThrows { get; init; }
+    /// <summary>When set, every removal throws this. Settable, so a test can script an outage part-way through a drive.</summary>
+    public Exception? RemoveThrows { get; set; }
 
     /// <summary>When set, runs before a removal is applied -- the seam for a removal that hangs or is cancelled.</summary>
     public Action<CancellationToken>? BeforeRemove { get; init; }
