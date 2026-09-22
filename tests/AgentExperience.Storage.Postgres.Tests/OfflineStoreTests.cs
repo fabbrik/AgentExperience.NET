@@ -189,6 +189,61 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_malformed_confidence_payload_is_Invalid_before_any_connection_opens()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var recordId = Guid.NewGuid();
+        var valid = new ConfidenceUpdate(
+            EvidenceId: Guid.NewGuid(),
+            Kind: ConfidenceEvidenceKind.Supporting,
+            Source: ConfidenceEvidenceSource.Machine,
+            RunId: Guid.NewGuid(),
+            VerificationRoundId: Guid.NewGuid(),
+            ReviewerIdentity: null,
+            RuleVersion: "1.0.0",
+            PriorReuseConfidence: 2d / 3d,
+            NewReuseConfidence: 3d / 4d,
+            PriorSupportingValidations: 1,
+            NewSupportingValidations: 2,
+            PriorContradictions: 0,
+            NewContradictions: 0);
+
+        foreach (var (confidence, path) in new[]
+        {
+            (valid with { EvidenceId = Guid.Empty }, "Confidence.EvidenceId"),
+            (valid with { RunId = Guid.Empty }, "Confidence.RunId"),
+            (valid with { RuleVersion = " " }, "Confidence.RuleVersion"),
+            (valid with { NewReuseConfidence = 1.5 }, "Confidence.NewReuseConfidence"),
+            (valid with { PriorContradictions = -1 }, "Confidence.PriorContradictions"),
+            // Evidence only ever moves a counter up; a smaller new value is a rewrite of history.
+            (valid with { NewSupportingValidations = 0 }, "Confidence.NewSupportingValidations"),
+            // Each source carries exactly the identifier its independence key is made of.
+            (valid with { VerificationRoundId = null }, "Confidence.VerificationRoundId"),
+            (valid with { ReviewerIdentity = "someone" }, "Confidence.ReviewerIdentity"),
+            (valid with { Source = ConfidenceEvidenceSource.Human, ReviewerIdentity = null }, "Confidence.ReviewerIdentity"),
+            (valid with { Source = (ConfidenceEvidenceSource)99 }, "Confidence.Source"),
+        })
+        {
+            var result = await Store.CommitLifecycleEventAsync(
+                Authorize(tenant),
+                scope,
+                Event(recordId, ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = confidence },
+                CancellationToken.None);
+
+            Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+            Assert.Contains(result.Errors, error => error.Path == path);
+        }
+
+        // The well-formed payload passes validation and only then reaches the (unreachable) database.
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => Store.CommitLifecycleEventAsync(
+            Authorize(tenant),
+            scope,
+            Event(recordId, ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = valid },
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Malformed_get_and_query_return_Invalid()
     {
         var tenant = NewTenant();
@@ -320,6 +375,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.SearchScriptName,
                 PostgresExperienceRecordSchema.GrantsScriptName,
                 PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
+                PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -536,13 +592,72 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
 
-        // 0006 is applied last, which the migrator relies on for ordinal name ordering.
+        // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^1]);
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Confidence_script_adds_the_evidence_ledger_and_guards_the_columns_it_starts_moving()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName);
+
+        // The independence rule is the index, and the key it is on is generated -- a writer that could
+        // choose its own key could submit one observation under a fresh key every time.
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.confidence_evidence", script, StringComparison.Ordinal);
+        Assert.Contains("GENERATED ALWAYS AS", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_confidence_evidence_independence", script, StringComparison.Ordinal);
+
+        // Partial, so a later submission for a taken key is recorded rather than rejected: the counters
+        // must not move, but the submission belongs in the audit trail either way.
+        Assert.Contains("WHERE counted;", script, StringComparison.Ordinal);
+
+        // The projection guard now covers reuse confidence and its counters, and ties them to the event
+        // that recorded them: advancing the revision alone is not a way to set any number you like.
+        Assert.Contains("NEW.reuse_confidence IS DISTINCT FROM OLD.reuse_confidence", script, StringComparison.Ordinal);
+        Assert.Contains("e.new_reuse_confidence = NEW.reuse_confidence", script, StringComparison.Ordinal);
+
+        // The run and the round are a host trust boundary, and the header has to say so rather than
+        // leaving a reader to believe the generated key makes inflation impossible.
+        Assert.Contains("HOST TRUST BOUNDARY", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE UNIQUE INDEX CONCURRENTLY", script, StringComparison.Ordinal);
+        Assert.Contains("NEW.supporting_validations IS DISTINCT FROM OLD.supporting_validations", script, StringComparison.Ordinal);
+        Assert.Contains("NEW.contradictions IS DISTINCT FROM OLD.contradictions", script, StringComparison.Ordinal);
+
+        // The ledger is append-only for the same reason the event logs are.
+        foreach (var trigger in new[] { "confidence_evidence_append_only", "confidence_evidence_no_truncate" })
+        {
+            Assert.Contains($"ENABLE ALWAYS TRIGGER {trigger}", script, StringComparison.Ordinal);
+        }
+
+        // Every CHECK added to the already-populated event log is deferred, with the documented step
+        // that validates it afterwards.
+        Assert.Equal(7, CountOccurrences(script, "NOT VALID;"));
+        Assert.Contains("VALIDATE CONSTRAINT lifecycle_events_confidence_all_or_nothing", script, StringComparison.Ordinal);
+
+        // The header has to say what the number is, and what it is not.
+        Assert.Contains("THE SCORE IS A HEURISTIC", script, StringComparison.Ordinal);
+        Assert.Contains("not the probability", script, StringComparison.Ordinal);
+
+        var statements = string.Join(
+            '\n',
+            script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Additive only: a new table, new nullable columns, new indexes, a replaced function, and
+        // triggers. Nothing is dropped, retyped, or left unguarded through a recreate.
+        Assert.DoesNotContain("DROP", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ALTER COLUMN", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
+
+        // 0007 is applied last, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     private static int CountOccurrences(string text, string value)

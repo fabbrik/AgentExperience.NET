@@ -84,23 +84,102 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     /// <summary>
     /// The event columns every read selects, in the order <see cref="DecodeEvent"/> expects (ordinals
-    /// 0-16). A reader that selects more must append its extra columns <em>after</em> these.
+    /// 0-31). A reader that selects more must append its extra columns <em>after</em> these.
+    /// <para>
+    /// Everything from <c>actor</c> onwards arrived with <c>0007</c>. <c>actor</c> is written for every
+    /// commit; the <c>confidence_*</c> and score columns are written together or not at all, which the
+    /// table states as a CHECK, so a half-written update cannot reach the log.
+    /// </para>
     /// </summary>
     private const string EventColumns =
         "event_id, experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
         "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision, " +
-        "replacement_experience_id";
+        "replacement_experience_id, actor, confidence_evidence_id, confidence_kind, confidence_source, " +
+        "confidence_run_id, confidence_verification_round_id, confidence_reviewer_identity, confidence_rule_version, " +
+        "confidence_detail, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
+        "new_supporting_validations, prior_contradictions, new_contradictions";
+
+    /// <summary>The ordinal <c>r.revision</c> sits at in <see cref="HistorySql"/>, straight after <see cref="EventColumns"/>.</summary>
+    private const int HistoryRevisionOrdinal = 32;
 
     private const string InsertEventSql =
         $"INSERT INTO {EventsTable} ({EventColumns}) VALUES (@event_id, @experience_id, @tenant_id, @application_id, " +
         "@project_id, @team_id, @agent_id, @user_id, @prior_status, @current_status, @reason, @producer, " +
-        "@occurred_at, @recorded_at, @expected_revision, @applied_revision, @replacement_experience_id)";
+        "@occurred_at, @recorded_at, @expected_revision, @applied_revision, @replacement_experience_id, @actor, " +
+        "@confidence_evidence_id, @confidence_kind, @confidence_source, @confidence_run_id, " +
+        "@confidence_verification_round_id, @confidence_reviewer_identity, @confidence_rule_version, " +
+        "@confidence_detail, @prior_reuse_confidence, @new_reuse_confidence, @prior_supporting_validations, " +
+        "@new_supporting_validations, @prior_contradictions, @new_contradictions)";
 
     /// <summary>The primary key a resubmitted <see cref="LifecycleEvent.EventId"/> violates.</summary>
     private const string EventPrimaryKey = "lifecycle_events_pkey";
 
     /// <summary>The unique index a second event claiming an already-taken record revision violates.</summary>
     private const string EventRevisionIndex = "ix_lifecycle_events_record_revision";
+
+    /// <summary>The evidence ledger. Created by <c>0007_confidence_evidence.sql</c>.</summary>
+    private const string EvidenceTable = "agent_experience.confidence_evidence";
+
+    /// <summary>
+    /// The evidence row's own columns. <c>independence_key</c> is deliberately absent: it is a generated
+    /// column the database derives from <c>source</c>, <c>run_id</c>, <c>verification_round_id</c>, and
+    /// <c>reviewer_identity</c>, precisely so no writer -- this one included -- can choose it.
+    /// </summary>
+    private const string EvidenceColumns =
+        "evidence_id, experience_id, event_id, kind, source, run_id, verification_round_id, " +
+        "reviewer_identity, counted, actor, rule_version, detail, recorded_at, applied_revision, applied_status, " +
+        "prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, new_supporting_validations, " +
+        "prior_contradictions, new_contradictions";
+
+    private const string InsertEvidenceSql =
+        $"INSERT INTO {EvidenceTable} ({EvidenceColumns}) VALUES (@evidence_id, @experience_id, @event_id, " +
+        "@confidence_kind, @confidence_source, @confidence_run_id, @confidence_verification_round_id, " +
+        "@confidence_reviewer_identity, @counted, @actor, @confidence_rule_version, @confidence_detail, " +
+        "@recorded_at, @applied_revision, @applied_status, @prior_reuse_confidence, @new_reuse_confidence, " +
+        "@prior_supporting_validations, @new_supporting_validations, @prior_contradictions, @new_contradictions)";
+
+    /// <summary>The primary key a resubmitted <see cref="ConfidenceUpdate.EvidenceId"/> violates.</summary>
+    private const string EvidencePrimaryKey = "confidence_evidence_pkey";
+
+    /// <summary>
+    /// The partial unique index that decides independence. Violating it means this observation has
+    /// already been counted for this record, which is not a failure: the submission is stored anyway,
+    /// with <c>counted = false</c>, and the counters stay where they are.
+    /// </summary>
+    private const string EvidenceIndependenceIndex = "ux_confidence_evidence_independence";
+
+    /// <summary>
+    /// The savepoint the first evidence insert runs under, so a taken independence key costs only that
+    /// statement rather than the whole transaction. Without it the unique violation would abort the
+    /// commit that is supposed to record the duplicate.
+    /// </summary>
+    private const string EvidenceSavepoint = "confidence_evidence_attempt";
+
+    /// <summary>
+    /// One resubmitted evidence ID, read back whole from the ledger row itself, which carries every number
+    /// a replay has to report so the answer describes one moment rather than one value from here and
+    /// another from a later read.
+    /// <para>
+    /// The join to the record is not for data -- nothing is selected from it. It is there to carry
+    /// <see cref="RecordScopePredicate"/>, so an evidence ID that belongs to another scope reads back as
+    /// no row at all. Without it a guessed ID would hand a caller another tenant's scores, counters, and
+    /// revision: the primary key is global, and this is the one statement that looks a row up by it alone.
+    /// </para>
+    /// </summary>
+    private const string SelectEvidenceSql =
+        "SELECT ev.experience_id, ev.event_id, ev.kind, ev.source, ev.run_id, ev.verification_round_id, " +
+        "ev.reviewer_identity, ev.counted, ev.applied_revision, ev.applied_status, ev.rule_version, ev.detail, " +
+        "ev.prior_reuse_confidence, ev.new_reuse_confidence, ev.prior_supporting_validations, " +
+        "ev.new_supporting_validations, ev.prior_contradictions, ev.new_contradictions " +
+        $"FROM {EvidenceTable} ev JOIN {Table} r ON r.experience_id = ev.experience_id " +
+        $"WHERE ev.evidence_id = @evidence_id AND {RecordScopePredicate}";
+
+    /// <summary>
+    /// The record's revision and status, locked for the rest of the transaction. Used only on the
+    /// duplicate path, which writes no projection update and therefore has no revision-guarded statement
+    /// of its own to hold the row still while it records what the record currently looks like.
+    /// </summary>
+    private const string LockRevisionAndStatusSql = SelectRevisionAndStatusSql + " FOR UPDATE";
 
     /// <summary>
     /// The revision guard, the prior-status guard, and the scope predicate live in the same statement,
@@ -114,10 +193,27 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// Core's transition table exists to prevent.
     /// </para>
     /// </summary>
-    private const string UpdateProjectionSql =
-        $"UPDATE {Table} SET status = @current_status, revision = @applied_revision, updated_at = @recorded_at " +
-        $"WHERE experience_id = @experience_id AND revision = @expected_revision " +
+    private const string UpdateProjectionSetSql =
+        $"UPDATE {Table} SET status = @current_status, revision = @applied_revision, updated_at = @recorded_at";
+
+    /// <summary>
+    /// The three columns a counted confidence update moves, written in the same statement as the status
+    /// and the revision -- which is what satisfies the database's own projection guard, and what makes
+    /// "the counters moved" and "the event that says so was appended" one fact rather than two.
+    /// Every value is one the event carried: this statement reads nothing and derives nothing.
+    /// </summary>
+    private const string UpdateProjectionConfidenceSetSql =
+        ", reuse_confidence = @new_reuse_confidence, supporting_validations = @new_supporting_validations, " +
+        "contradictions = @new_contradictions";
+
+    private const string UpdateProjectionWhereSql =
+        " WHERE experience_id = @experience_id AND revision = @expected_revision " +
         $"AND status = COALESCE(@prior_status, @current_status) AND {ScopePredicate}";
+
+    private const string UpdateProjectionSql = UpdateProjectionSetSql + UpdateProjectionWhereSql;
+
+    private const string UpdateProjectionWithConfidenceSql =
+        UpdateProjectionSetSql + UpdateProjectionConfidenceSetSql + UpdateProjectionWhereSql;
 
     private const string SelectRevisionAndStatusSql =
         $"SELECT revision, status FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate}";
@@ -127,7 +223,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     private const string JoinedEventColumns =
         "e.event_id, e.experience_id, e.tenant_id, e.application_id, e.project_id, e.team_id, e.agent_id, e.user_id, " +
         "e.prior_status, e.current_status, e.reason, e.producer, e.occurred_at, e.recorded_at, e.expected_revision, " +
-        "e.applied_revision, e.replacement_experience_id";
+        "e.applied_revision, e.replacement_experience_id, e.actor, e.confidence_evidence_id, e.confidence_kind, " +
+        "e.confidence_source, e.confidence_run_id, e.confidence_verification_round_id, e.confidence_reviewer_identity, " +
+        "e.confidence_rule_version, e.confidence_detail, e.prior_reuse_confidence, e.new_reuse_confidence, " +
+        "e.prior_supporting_validations, e.new_supporting_validations, e.prior_contradictions, e.new_contradictions";
 
     /// <summary>
     /// The same exact-scope predicate as <see cref="ScopePredicate"/>, qualified with the <c>r</c>
@@ -500,7 +599,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(lifecycleEvent);
 
-        var errors = ExperienceRecordValidator.ValidateLifecycleEvent(scope, lifecycleEvent);
+        var errors = ExperienceRecordValidator.ValidateLifecycleEvent(scope, lifecycleEvent, authorization);
         if (errors.Count > 0)
         {
             return new(ExperienceStoreOutcome.Invalid, 0, null, errors);
@@ -529,10 +628,47 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             await using var transaction = await connection
                 .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
 
+            // The evidence goes in first, because whether its independence key was free decides whether
+            // there is anything else to write at all. An event is append-only once written, so it cannot
+            // be corrected afterwards to say the counters did not move after all.
+            ConfidenceUpdate? storedConfidence = null;
+            if (lifecycleEvent.Confidence is { } submitted)
+            {
+                var applied = await InsertEvidenceAsync(
+                    connection, transaction, scope, Actor(authorization), lifecycleEvent, submitted, recordedAt,
+                    appliedRevision, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (applied.Settled is { } settled)
+                {
+                    // Either a resubmitted evidence ID, which writes nothing and reports the original
+                    // outcome, or a duplicate independence key, whose ledger row is the whole of what this
+                    // call writes. A duplicate that also moved the status, the revision, or updated_at
+                    // would let one observation, replayed under fresh evidence IDs, keep a record
+                    // permanently recent -- and would contest a record on evidence already counted.
+                    if (settled.Commit)
+                    {
+                        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    return settled.Result;
+                }
+
+                storedConfidence = applied.Stored;
+            }
+
+            var eventToStore = storedConfidence is null
+                ? lifecycleEvent
+                : lifecycleEvent with { Confidence = storedConfidence };
+
             try
             {
                 await using var insert = new NpgsqlCommand(InsertEventSql, connection, transaction);
-                AddEventParameters(insert.Parameters, scope, lifecycleEvent, occurredAt, recordedAt, appliedRevision);
+                AddEventParameters(insert.Parameters, authorization, scope, eventToStore, occurredAt, recordedAt, appliedRevision);
                 await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, EventPrimaryKey, cancellationToken))
@@ -563,10 +699,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 return refusal;
             }
 
+            // Only a counted update writes the three confidence columns. A duplicate submission takes the
+            // statement that leaves them alone, so "the counters did not move" is a fact about the SQL
+            // that ran, not a value that happened to be equal.
+            var counted = storedConfidence is { Counted: true };
+
             int updated;
             try
             {
-                await using var update = new NpgsqlCommand(UpdateProjectionSql, connection, transaction);
+                await using var update = new NpgsqlCommand(
+                    counted ? UpdateProjectionWithConfidenceSql : UpdateProjectionSql, connection, transaction);
                 var parameters = update.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", lifecycleEvent.ExperienceRecordId));
                 parameters.Add(new NpgsqlParameter<string>("current_status", lifecycleEvent.CurrentStatus.ToString()));
@@ -574,6 +716,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 parameters.Add(new NpgsqlParameter<long>("expected_revision", lifecycleEvent.ExpectedRevision));
                 parameters.Add(new NpgsqlParameter<long>("applied_revision", appliedRevision));
                 parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
+                if (counted)
+                {
+                    parameters.Add(new NpgsqlParameter<double>("new_reuse_confidence", storedConfidence!.NewReuseConfidence));
+                    parameters.Add(new NpgsqlParameter<int>("new_supporting_validations", storedConfidence.NewSupportingValidations));
+                    parameters.Add(new NpgsqlParameter<int>("new_contradictions", storedConfidence.NewContradictions));
+                }
+
                 AddScopeParameters(parameters, scope);
                 updated = await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -607,7 +756,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors);
+            return new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors, storedConfidence);
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
@@ -659,7 +808,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 return new(ExperienceStoreOutcome.NotFound, 0, [], NoErrors);
             }
 
-            var revision = ReadRevision(reader, 17);
+            var revision = ReadRevision(reader, HistoryRevisionOrdinal);
 
             var events = new List<StoredLifecycleEvent>();
             if (!reader.IsDBNull(0))
@@ -856,8 +1005,253 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         // record's current one.
         var resubmitted = lifecycleEvent with { OccurredAt = occurredAt };
         return stored.Event == resubmitted && storedScope == scope
-            ? new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors)
+            ? new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors, stored.Event.Confidence)
             : new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
+    }
+
+    /// <summary>
+    /// Writes the evidence row, and decides -- from the database, inside the commit transaction -- which
+    /// of the three things this submission is: the first for its independence key, a later one for a key
+    /// already counted, or a resubmission of an evidence ID that is already stored.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The first insert claims the key by writing <c>counted = true</c>, which the partial unique index
+    /// admits exactly once per record and key. It runs under a savepoint because losing that race is an
+    /// <em>expected</em> outcome that the commit has to survive: a unique violation aborts the whole
+    /// transaction otherwise, and the transaction is what is supposed to record the duplicate.
+    /// </para>
+    /// <para>
+    /// On the violation the statement is undone and the same submission is written again with
+    /// <c>counted = false</c> -- and that row is <em>all</em> this call writes. No event, no counters, no
+    /// status, no revision, no <c>updated_at</c>. Each of those would be a way for one observation,
+    /// replayed under fresh evidence IDs, to keep changing a record the independence rule has already
+    /// declared it finished with: refreshing <c>updated_at</c> would keep it permanently recent for
+    /// ranking and permanently un-expired, and writing the status would contest it on evidence that was
+    /// not counted. An event is impossible as well as unwanted -- it must claim
+    /// <c>expected_revision + 1</c>, and claiming a revision the record never reaches would wedge every
+    /// later commit against the unique index on <c>(experience_id, applied_revision)</c>.
+    /// </para>
+    /// <para>
+    /// Because that path writes no revision-guarded statement of its own, it re-reads the record
+    /// <c>FOR UPDATE</c> first: the row it records has to say what the record actually looks like, and the
+    /// usual refusals (gone, moved on, not in this status) still have to be reported rather than silently
+    /// recorded against stale values.
+    /// </para>
+    /// <para>
+    /// Whether this store's own reading of the key agrees with the database's is never asked: the key is
+    /// a generated column, so the only writer who decides it is the database.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// <c>Stored</c> is the payload the event must record, and is <see langword="null"/> when
+    /// <c>Settled</c> is set. <c>Settled</c> is the outcome to return instead of writing an event and a
+    /// projection: <c>Commit</c> says whether the transaction holds a ledger row worth keeping (a
+    /// duplicate) or nothing at all (a resubmitted evidence ID, or a refusal).
+    /// </returns>
+    private static async Task<(ConfidenceUpdate? Stored, (ExperienceLifecycleCommitResult Result, bool Commit)? Settled)> InsertEvidenceAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Scope scope,
+        string? actor,
+        LifecycleEvent lifecycleEvent,
+        ConfidenceUpdate submitted,
+        DateTimeOffset recordedAt,
+        long appliedRevision,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync($"SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await InsertOneAsync(submitted, lifecycleEvent.EventId, appliedRevision, lifecycleEvent.CurrentStatus)
+                .ConfigureAwait(false);
+        }
+        catch (PostgresException ex) when (IsViolationOf(ex, EvidenceIndependenceIndex, cancellationToken))
+        {
+            await ExecuteAsync($"ROLLBACK TO SAVEPOINT {EvidenceSavepoint}", CancellationToken.None).ConfigureAwait(false);
+            return (null, await RecordDuplicateAsync().ConfigureAwait(false));
+        }
+        catch (PostgresException ex) when (IsViolationOf(ex, EvidencePrimaryKey, cancellationToken))
+        {
+            return (null, (await ReplayEvidenceAsync().ConfigureAwait(false), Commit: false));
+        }
+
+        await ExecuteAsync($"RELEASE SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);
+        return (submitted, null);
+
+        async Task ExecuteAsync(string sql, CancellationToken token)
+        {
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        async Task InsertOneAsync(ConfidenceUpdate update, Guid? eventId, long revision, ExperienceStatus status)
+        {
+            await using var insert = new NpgsqlCommand(InsertEvidenceSql, connection, transaction);
+            var parameters = insert.Parameters;
+            parameters.Add(new NpgsqlParameter<Guid>("evidence_id", update.EvidenceId));
+            parameters.Add(new NpgsqlParameter<Guid>("experience_id", lifecycleEvent.ExperienceRecordId));
+            parameters.Add(NullableUuid("event_id", eventId));
+            parameters.Add(new NpgsqlParameter<string>("confidence_kind", update.Kind.ToString()));
+            parameters.Add(new NpgsqlParameter<string>("confidence_source", update.Source.ToString()));
+            parameters.Add(new NpgsqlParameter<Guid>("confidence_run_id", update.RunId));
+            parameters.Add(NullableUuid("confidence_verification_round_id", update.VerificationRoundId));
+            parameters.Add(NullableText("confidence_reviewer_identity", update.ReviewerIdentity));
+            parameters.Add(new NpgsqlParameter<bool>("counted", update.Counted));
+            parameters.Add(NullableText("actor", actor));
+            parameters.Add(new NpgsqlParameter<string>("confidence_rule_version", update.RuleVersion));
+            parameters.Add(NullableText("confidence_detail", update.Detail));
+            parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
+            parameters.Add(new NpgsqlParameter<long>("applied_revision", revision));
+            parameters.Add(new NpgsqlParameter<string>("applied_status", status.ToString()));
+            parameters.Add(new NpgsqlParameter<double>("prior_reuse_confidence", update.PriorReuseConfidence));
+            parameters.Add(new NpgsqlParameter<double>("new_reuse_confidence", update.NewReuseConfidence));
+            parameters.Add(new NpgsqlParameter<int>("prior_supporting_validations", update.PriorSupportingValidations));
+            parameters.Add(new NpgsqlParameter<int>("new_supporting_validations", update.NewSupportingValidations));
+            parameters.Add(new NpgsqlParameter<int>("prior_contradictions", update.PriorContradictions));
+            parameters.Add(new NpgsqlParameter<int>("new_contradictions", update.NewContradictions));
+            await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        async Task<(ExperienceLifecycleCommitResult Result, bool Commit)> RecordDuplicateAsync()
+        {
+            var current = await ReadRevisionAndStatusAsync(
+                connection, transaction, scope, lifecycleEvent.ExperienceRecordId, cancellationToken, forUpdate: true)
+                .ConfigureAwait(false);
+
+            if (current is not { } record)
+            {
+                return (new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors), Commit: false);
+            }
+
+            if (record.Revision != lifecycleEvent.ExpectedRevision)
+            {
+                return (new(ExperienceStoreOutcome.StaleRevision, record.Revision, null, NoErrors), Commit: false);
+            }
+
+            if (lifecycleEvent.PriorStatus is { } prior && record.Status != prior)
+            {
+                return (new(ExperienceStoreOutcome.StatusMismatch, record.Revision, record.Status, NoErrors), Commit: false);
+            }
+
+            var recordedOnly = submitted.AsRecordedOnly();
+            try
+            {
+                await InsertOneAsync(recordedOnly, eventId: null, record.Revision, record.Status).ConfigureAwait(false);
+            }
+            catch (PostgresException pk) when (IsViolationOf(pk, EvidencePrimaryKey, cancellationToken))
+            {
+                return (await ReplayEvidenceAsync().ConfigureAwait(false), Commit: false);
+            }
+
+            await ExecuteAsync($"RELEASE SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);
+
+            // The record is untouched, so its revision and status are reported exactly as they were read.
+            return (
+                new(ExperienceStoreOutcome.Committed, record.Revision, record.Status, NoErrors, recordedOnly),
+                Commit: true);
+        }
+
+        async Task<ExperienceLifecycleCommitResult> ReplayEvidenceAsync()
+        {
+            // The failed statement has left the transaction unusable; undoing it to the savepoint makes
+            // the connection readable again so the stored row can be compared. The caller rolls the
+            // whole transaction back afterwards, so nothing this call attempted survives either way.
+            await ExecuteAsync($"ROLLBACK TO SAVEPOINT {EvidenceSavepoint}", CancellationToken.None).ConfigureAwait(false);
+            return await CompareStoredEvidenceAsync(connection, transaction, scope, lifecycleEvent, submitted, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Decides a resubmitted <see cref="ConfidenceUpdate.EvidenceId"/>: the same evidence about the same
+    /// observation is the original submission replayed, so its original outcome is returned and nothing
+    /// is written; anything else is a <see cref="ExperienceStoreOutcome.Conflict"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// What is compared is the evidence's <em>identity and claim</em>: the record it is about, the
+    /// lifecycle event it rode in on, which way it points, who observed it, the run and round or reviewer
+    /// it came from, the rule version, and the detail. The counters and the score are deliberately not
+    /// compared -- they are derived from whatever the record held when the submission was first made, so a
+    /// genuine replay that arrived after other evidence landed would otherwise be reported as a conflict
+    /// for agreeing with itself.
+    /// </para>
+    /// <para>
+    /// The event ID <em>is</em> compared, for a stored row that produced one. Without that, a retry under
+    /// a fresh event ID would be reported as committed while carrying a lifecycle event that was never
+    /// written -- the same trap the plain lifecycle replay avoids by comparing every field. A stored row
+    /// that produced no event (a duplicate) has no event ID to contradict, so there is nothing to compare.
+    /// </para>
+    /// <para>
+    /// Every number reported comes from the ledger row, so a replay describes the one moment the original
+    /// submission settled rather than mixing a stored revision with a freshly read status.
+    /// </para>
+    /// </remarks>
+    private static async Task<ExperienceLifecycleCommitResult> CompareStoredEvidenceAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Scope scope,
+        LifecycleEvent lifecycleEvent,
+        ConfidenceUpdate submitted,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(SelectEvidenceSql, connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter<Guid>("evidence_id", submitted.EvidenceId));
+        AddScopeParameters(command.Parameters, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // Either no such row, or one whose record is in another scope -- reported identically, so a
+            // guessed evidence ID reveals nothing about another scope's scores or counters. Evidence rows
+            // are never deleted, so the row that just collided cannot otherwise vanish.
+            return new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
+        }
+
+        try
+        {
+            var storedEventId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
+
+            var sameContent =
+                reader.GetGuid(0) == lifecycleEvent.ExperienceRecordId
+                && (storedEventId is null || storedEventId == lifecycleEvent.EventId)
+                && DecodeEnumText<ConfidenceEvidenceKind>(reader.GetString(2), "confidence evidence") == submitted.Kind
+                && DecodeEnumText<ConfidenceEvidenceSource>(reader.GetString(3), "confidence evidence") == submitted.Source
+                && reader.GetGuid(4) == submitted.RunId
+                && (reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5)) == submitted.VerificationRoundId
+                && string.Equals(reader.IsDBNull(6) ? null : reader.GetString(6), submitted.ReviewerIdentity, StringComparison.Ordinal)
+                && string.Equals(reader.GetString(10), submitted.RuleVersion, StringComparison.Ordinal)
+                && string.Equals(reader.IsDBNull(11) ? null : reader.GetString(11), submitted.Detail, StringComparison.Ordinal);
+
+            if (!sameContent)
+            {
+                return new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
+            }
+
+            var stored = submitted with
+            {
+                PriorReuseConfidence = reader.GetDouble(12),
+                NewReuseConfidence = reader.GetDouble(13),
+                PriorSupportingValidations = reader.GetInt32(14),
+                NewSupportingValidations = reader.GetInt32(15),
+                PriorContradictions = reader.GetInt32(16),
+                NewContradictions = reader.GetInt32(17),
+            };
+
+            return new(
+                ExperienceStoreOutcome.Committed,
+                reader.GetInt64(8),
+                ReadStoredStatus(reader, 9),
+                NoErrors,
+                stored);
+        }
+        catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
+        {
+            // A retyped or hand-written row, reported the way every other decode failure is.
+            throw new ExperienceStoreException("Stored confidence evidence could not be decoded.", ex);
+        }
     }
 
     /// <summary>
@@ -878,14 +1272,21 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             : new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors);
     }
 
+    /// <summary>
+    /// Reads the record's revision and status within exactly <paramref name="scope"/>, optionally locking
+    /// the row for the rest of the transaction. Only the duplicate path needs the lock: every other caller
+    /// either holds the row through its own revision-guarded UPDATE or is reporting a race it already lost.
+    /// </summary>
     private static async Task<(long Revision, ExperienceStatus Status)?> ReadRevisionAndStatusAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         Scope scope,
         Guid experienceId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forUpdate = false)
     {
-        await using var command = new NpgsqlCommand(SelectRevisionAndStatusSql, connection, transaction);
+        await using var command = new NpgsqlCommand(
+            forUpdate ? LockRevisionAndStatusSql : SelectRevisionAndStatusSql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
         AddScopeParameters(command.Parameters, scope);
 
@@ -908,8 +1309,19 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         && string.Equals(ex.ConstraintName, constraintName, StringComparison.Ordinal)
         && !cancellationToken.IsCancellationRequested;
 
+    /// <summary>
+    /// Binds the event row, including the confidence payload when the event carries one and the actor
+    /// the commit ran under.
+    /// </summary>
+    /// <remarks>
+    /// The actor is <see cref="AuthorizationContext.PrincipalId"/> and is taken from the
+    /// host-established context rather than from anything on the event -- which is the same rule the
+    /// reviewer identity follows, for the same reason. It is written for every commit, not only a
+    /// confidence one, because "who did this" is the question an auditor asks of every transition.
+    /// </remarks>
     private static void AddEventParameters(
         NpgsqlParameterCollection parameters,
+        AuthorizationContext authorization,
         Scope scope,
         LifecycleEvent lifecycleEvent,
         DateTimeOffset occurredAt,
@@ -927,10 +1339,24 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
         parameters.Add(new NpgsqlParameter<long>("expected_revision", lifecycleEvent.ExpectedRevision));
         parameters.Add(new NpgsqlParameter<long>("applied_revision", appliedRevision));
-        parameters.Add(new NpgsqlParameter("replacement_experience_id", NpgsqlDbType.Uuid)
-        {
-            Value = lifecycleEvent.ReplacementExperienceId is { } replacementId ? replacementId : DBNull.Value,
-        });
+        parameters.Add(NullableUuid("replacement_experience_id", lifecycleEvent.ReplacementExperienceId));
+        parameters.Add(NullableText("actor", Actor(authorization)));
+
+        var confidence = lifecycleEvent.Confidence;
+        parameters.Add(NullableUuid("confidence_evidence_id", confidence?.EvidenceId));
+        parameters.Add(NullableText("confidence_kind", confidence?.Kind.ToString()));
+        parameters.Add(NullableText("confidence_source", confidence?.Source.ToString()));
+        parameters.Add(NullableUuid("confidence_run_id", confidence?.RunId));
+        parameters.Add(NullableUuid("confidence_verification_round_id", confidence?.VerificationRoundId));
+        parameters.Add(NullableText("confidence_reviewer_identity", confidence?.ReviewerIdentity));
+        parameters.Add(NullableText("confidence_rule_version", confidence?.RuleVersion));
+        parameters.Add(NullableText("confidence_detail", confidence?.Detail));
+        parameters.Add(NullableDouble("prior_reuse_confidence", confidence?.PriorReuseConfidence));
+        parameters.Add(NullableDouble("new_reuse_confidence", confidence?.NewReuseConfidence));
+        parameters.Add(NullableInt("prior_supporting_validations", confidence?.PriorSupportingValidations));
+        parameters.Add(NullableInt("new_supporting_validations", confidence?.NewSupportingValidations));
+        parameters.Add(NullableInt("prior_contradictions", confidence?.PriorContradictions));
+        parameters.Add(NullableInt("new_contradictions", confidence?.NewContradictions));
     }
 
     internal static void AddScopeParameters(NpgsqlParameterCollection parameters, Scope scope)
@@ -943,8 +1369,28 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(NullableText("user_id", scope.UserId));
     }
 
+    /// <summary>
+    /// The principal to record on a row, or <see langword="null"/> when the host established none worth
+    /// recording. It is bound as null rather than as the blank string on purpose: the column's non-blank
+    /// CHECK would otherwise turn a host with an empty <see cref="AuthorizationContext.PrincipalId"/> into
+    /// an infrastructure failure on *every* lifecycle commit, confidence or not. A blank principal is
+    /// still refused where it actually matters -- human evidence, whose whole independence rule rests on
+    /// it -- and there it is a typed validation error naming the field.
+    /// </summary>
+    private static string? Actor(AuthorizationContext authorization) =>
+        string.IsNullOrWhiteSpace(authorization.PrincipalId) ? null : authorization.PrincipalId;
+
     private static NpgsqlParameter NullableText(string name, string? value) =>
         new(name, NpgsqlDbType.Text) { Value = value is null ? DBNull.Value : value };
+
+    private static NpgsqlParameter NullableUuid(string name, Guid? value) =>
+        new(name, NpgsqlDbType.Uuid) { Value = value is { } id ? id : DBNull.Value };
+
+    private static NpgsqlParameter NullableDouble(string name, double? value) =>
+        new(name, NpgsqlDbType.Double) { Value = value is { } number ? number : DBNull.Value };
+
+    private static NpgsqlParameter NullableInt(string name, int? value) =>
+        new(name, NpgsqlDbType.Integer) { Value = value is { } number ? number : DBNull.Value };
 
     internal static DateTimeOffset ToStoredTimestamp(DateTimeOffset value)
     {
@@ -1028,9 +1474,35 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             Producer: reader.GetString(11),
             OccurredAt: reader.GetFieldValue<DateTimeOffset>(12),
             ExpectedRevision: reader.GetInt64(14),
-            ReplacementExperienceId: reader.IsDBNull(16) ? null : reader.GetGuid(16)),
+            ReplacementExperienceId: reader.IsDBNull(16) ? null : reader.GetGuid(16),
+            Confidence: DecodeConfidence(reader)),
         RecordedAt: reader.GetFieldValue<DateTimeOffset>(13),
-        AppliedRevision: reader.GetInt64(15));
+        AppliedRevision: reader.GetInt64(15),
+        Actor: reader.IsDBNull(17) ? null : reader.GetString(17));
+
+    /// <summary>
+    /// Rebuilds the confidence payload an event carried, or <see langword="null"/> for the events that
+    /// carried none. The evidence ID alone decides which: the table's own CHECK makes the eleven
+    /// always-present columns all null or all set together, so a row can never be half an update, and
+    /// reading any one of them as the flag is enough.
+    /// </summary>
+    private static ConfidenceUpdate? DecodeConfidence(DbDataReader reader) => reader.IsDBNull(18)
+        ? null
+        : new ConfidenceUpdate(
+            EvidenceId: reader.GetGuid(18),
+            Kind: DecodeEnumText<ConfidenceEvidenceKind>(reader.GetString(19), "lifecycle event"),
+            Source: DecodeEnumText<ConfidenceEvidenceSource>(reader.GetString(20), "lifecycle event"),
+            RunId: reader.GetGuid(21),
+            VerificationRoundId: reader.IsDBNull(22) ? null : reader.GetGuid(22),
+            ReviewerIdentity: reader.IsDBNull(23) ? null : reader.GetString(23),
+            RuleVersion: reader.GetString(24),
+            PriorReuseConfidence: reader.GetDouble(26),
+            NewReuseConfidence: reader.GetDouble(27),
+            PriorSupportingValidations: reader.GetInt32(28),
+            NewSupportingValidations: reader.GetInt32(29),
+            PriorContradictions: reader.GetInt32(30),
+            NewContradictions: reader.GetInt32(31),
+            Detail: reader.IsDBNull(25) ? null : reader.GetString(25));
 
     /// <summary>Reads a <c>bigint</c> revision, reporting schema drift the way the row decoders do.</summary>
     private static long ReadRevision(DbDataReader reader, int ordinal)
@@ -1076,6 +1548,26 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
 
         return status;
+    }
+
+    /// <summary>
+    /// Reads an enum stored as its own member name, matched case-sensitively and against the defined
+    /// members only -- the same strictness <see cref="DecodeStatus"/> applies, for the same reason: a
+    /// row whose text is nearly right must fail loudly rather than decode into something else.
+    /// </summary>
+    /// <typeparam name="T">The enum to decode.</typeparam>
+    /// <param name="text">The stored text.</param>
+    /// <param name="objectKind">Which stored object the text came from, so a failure names the right row.</param>
+    private static T DecodeEnumText<T>(string text, string objectKind)
+        where T : struct, Enum
+    {
+        if (!Enum.TryParse<T>(text, ignoreCase: false, out var value) || !Enum.IsDefined(value)
+            || !string.Equals(value.ToString(), text, StringComparison.Ordinal))
+        {
+            throw new ExperienceStoreException($"Stored {objectKind} has an unrecognized {typeof(T).Name}.");
+        }
+
+        return value;
     }
 
     private static ExperienceRecord DecodeRecord(DbDataReader reader)

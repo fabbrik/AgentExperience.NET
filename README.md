@@ -33,6 +33,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | PostgreSQL Experience Record store: create, get, and scoped query; host authorization checked before database access; exact scope matching in SQL | `AgentExperience.Storage.Postgres` |
 | Atomic audited lifecycle commits: the event and the record's projection in one transaction, idempotent by event ID, revision-checked, with bounded, cursored history | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | The full MVP transition table — reinforce, contest, stale, supersede, revoke — with supersession recording its replacement and refusing cycles, event logs made append-only by database triggers, and a record's embedding dropped when it leaves eligibility | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
+| Evidence-based reuse confidence: a versioned `(1 + S) / (2 + S + F)` heuristic Core computes from the record it read, with independence enforced by a unique index, a duplicate recorded but counted zero times, a contradiction contesting the record in the same transaction, and the confidence columns guarded by the database | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | Journaled schema migrations: embedded scripts applied once, one transaction per script, serialized across processes by an advisory lock | `AgentExperience.Storage.Postgres` |
 | One finalization call: evaluate, gate on authorization and the host's storage decision, reflect, create the record as a `Candidate`, commit the initial event that promotes it — replay-safe and structured at every stage | `AgentExperience.Core` |
 | Text retrieval of applicable experience: eligibility decided before ranking, every ranking component and effective weight exposed, bounded by a timeout that is never an exception | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
@@ -156,10 +157,10 @@ Three consequences are worth stating outright rather than leaving to be discover
   `Contested`/`Stale`/`Superseded`/`Reinforced → Quarantined`). Those are refused now, at runtime, with no
   compile-time signal — the enum and the request type are unchanged. A host that quarantined a live record must
   `Revoke` it instead, or contest it.
-- **A record can be reinforced once.** `Reinforced → Reinforced` records no transition and is refused, so the table
-  as it stands cannot express repeated reinforcement. Story 3.4 (evidence-based confidence updates) will need either
-  a self-transition carved out for this pair or a counter that moves without a status change; it is a known limit of
-  this table, not an oversight.
+- **A record can be reinforced once.** `Reinforced → Reinforced` records no transition and is refused, so this
+  table cannot express repeated reinforcement. Evidence can:
+  [`ApplyEvidenceAsync`](#updating-confidence-from-evidence) moves the counters without moving the status, which is
+  the counter-that-moves-without-a-status-change answer to this limit rather than a carve-out in the table.
 - **`Contested` and `Stale` are one-way.** Nothing resolves a contest or refreshes a stale record back into
   eligibility in this version; both exit only to `Revoked`.
 
@@ -169,6 +170,14 @@ has four breaks to absorb: `IExperienceRecordStore` gained `CheckSupersessionAsy
 `StoredLifecycleEvent`s rather than bare `LifecycleEvent`s (`GetFirstHistoryPageAsync` is the convenience for the
 old four-argument shape); `IExperienceEmbeddingIndex` gained `RemoveAsync`; and `ExperienceStoreOutcome` gained
 `ReplacementNotAllowed`, which a commit can now return. All four fail at compile time.
+
+Evidence-based confidence adds three more, and none of them fails at compile time, so read them rather than trusting
+the build: `LifecycleEvent` gained an optional `Confidence`, `StoredLifecycleEvent` an optional `Actor`, and
+`ExperienceLifecycleCommitResult` an optional `AppliedConfidence`. An out-of-tree store still compiles and still
+commits — it will simply drop a confidence payload on the floor while reporting `Committed`, which is a silently
+wrong answer rather than a failed one. A store that means to support
+[`ApplyEvidenceAsync`](#updating-confidence-from-evidence) has to persist the payload, enforce the independence key,
+and report what it stored.
 
 Only `Validated` and `Reinforced` are **eligible**. A record in any other status is never retrieved, never injected,
 and never indexed — so contesting, staling, superseding, or revoking a record takes it out of reuse immediately,
@@ -285,6 +294,119 @@ because deleting an event does not move the projection.
 cannot abort on a pre-`0006` `Superseded` event that has no replacement — one the public port accepted, because the
 store never applied Core's table. New and updated rows are checked from that moment on. The script's header carries
 the reconciliation query and the `VALIDATE CONSTRAINT` statements to run once it comes back empty.
+
+## Updating confidence from evidence
+
+Finalization stamps a record at 2/3 and stops. `ExperienceLifecycleService.ApplyEvidenceAsync` is how that number
+moves afterwards: submit what happened when the lesson was reused, and the evidence, the counters, the score, any
+status change, and the audit entry are committed in one transaction.
+
+```csharp
+var result = await lifecycle.ApplyEvidenceAsync(
+    hostAuthorization,
+    new ApplyConfidenceEvidenceRequest(
+        EventId: Guid.NewGuid(),              // the commit's idempotency key
+        ExperienceId: experienceId,
+        Scope: recordScope,
+        EvidenceId: Guid.NewGuid(),           // the evidence's own; reuse it verbatim on a retry
+        Kind: ConfidenceEvidenceKind.Supporting,      // or Contradicting
+        Source: ConfidenceEvidenceSource.Machine,     // or Human
+        RunId: runId,                         // the run the *reuse* happened in, not the record's source run
+        VerificationRoundId: roundId,         // machine evidence only
+        Reason: "the retry-after-lock lesson was applied and the checks passed",
+        Producer: "verification-aggregator/1.0.0",
+        OccurredAt: DateTimeOffset.UtcNow),
+    cancellationToken);
+
+if (result.Outcome == ConfidenceUpdateOutcome.Applied)
+{
+    logger.LogInformation(
+        "Experience {Id} is now {Confidence:F3} ({S} supporting, {F} contradicting){Counted}",
+        experienceId, result.ReuseConfidence, result.SupportingValidations, result.Contradictions,
+        result.Counted ? "" : " — already counted, recorded only");
+}
+```
+
+**The score is `(1 + S) / (2 + S + F)`.** `S` counts independent accepted supporting validations, including the one
+the record was finalized with; `F` counts independent accepted contradictions. So a fresh validated record is
+`2/3`, a first independent confirmation takes it to `3/4`, and a contradiction after that takes it to `3/5`.
+
+**It is a heuristic, not a probability.** Laplace's rule of succession is a monotone, bounded summary of how often
+reuse held up — useful for ranking and for a floor. It is not calibrated against anything, and nothing here claims
+it is the probability that the next reuse will succeed. The rule is versioned: every accepted update records the
+`RuleVersion` that produced it, so a later rule change stays auditable against scores computed under an earlier one.
+
+**It never changes eligibility.** Confidence is independent of the completion score and of status; a number cannot
+make an ineligible record eligible. What takes a record out of reuse is the *status*: a contradiction moves a
+`Validated` or `Reinforced` record to `Contested` in the same transaction, and a record already `Contested` stays
+there while its counters keep moving. Supporting evidence never changes a status by itself — which is how a record
+keeps being reinforced through its counters even though `Validated → Reinforced` happens only once. (That is the
+known limit the lifecycle table left open above; this is how it is expressed.)
+
+**Independence is keyed, and the database owns the key.** Machine evidence counts once per `(record, run,
+verification round)`; human evidence once per `(record, reviewer, run)`. The key is a *generated* column in
+`confidence_evidence` with a partial unique index over it, so no caller picks the key **string**: two submissions
+describing the same observation collide however they are phrased.
+
+**The key's inputs are a host trust boundary — read this before wiring it up.** Nothing stops a caller that invents
+the key's *inputs*. There is no foreign key behind `RunId` or `VerificationRoundId` and nothing in the schema can
+check that a run happened or that a round was closed, so a caller passing a fresh `Guid` for both on every
+submission gets a fresh key every time and can drive the score as high as it likes. Establish them the way you
+establish `AuthorizationContext`: from your own run bookkeeping and your own closed verification rounds, never
+passed through from something an agent produced. `ReviewerIdentity` is the same boundary, and is the one the library
+can enforce for you — it is taken from `AuthorizationContext.PrincipalId` and the request has no field for it,
+because the number of distinct human reviewers is exactly what this rule protects. Principals are compared
+ordinally, like every other identity here, and one with leading or trailing whitespace is refused rather than
+trimmed. What the rule guarantees, stated exactly: a host that establishes these honestly cannot have its own
+observations counted twice.
+
+| Submission | Outcome |
+| --- | --- |
+| First for its independence key | `Applied`, `Counted: true` — counters and score move |
+| Same run and round (or reviewer and run) under a **new** evidence ID | `Applied`, `Counted: false` — a ledger row is written and *nothing else* moves: no counters, no status, no revision, no `UpdatedAt`, and no lifecycle event |
+| …and the record moved between the read and the commit | `StaleRevision`, `StatusMismatch` or `NotFound`, with nothing stored at all — a duplicate is still committed against the record it describes |
+| Same evidence ID, identical content | `Applied` — the original outcome, reported again; nothing is written twice |
+| Same evidence ID, different content | `Conflict` — nothing written |
+| Two submissions computed from one revision | Exactly one `Applied`; the other `StaleRevision` with the revision to retry against |
+| Against a `Candidate`, `Quarantined`, `Stale`, `Superseded`, or `Revoked` record | `Ineligible` — refused before anything is written |
+
+**A record cannot be created claiming evidence it does not have.** `CreateAsync` refuses a record whose
+`ReuseConfidence` is not the one its own counters explain — creation is the single moment the two arrive
+independently, and after it every change goes through the guarded path above. A record created with *no* counters
+may carry any confidence its host wants to seed it with; the first accepted evidence recomputes from those counters,
+so a seeded number never survives contact with evidence.
+
+**Core owns the arithmetic; the adapter owns independence.** Core reads the record, computes the new counters and
+the new score from what it read, and submits them with *that* revision, so the arithmetic and the concurrency guard
+are about the same version of the record. The adapter writes those numbers and derives none: what it decides is
+whether the independence key was free, and whether the revision still holds. Everything else is a fact it was given.
+
+**Why a duplicate must move nothing.** The two obvious exceptions are the harmful ones. Refreshing `UpdatedAt`
+would let one observation, replayed under fresh evidence IDs, keep a record permanently recent for ranking and
+permanently un-expired — retrieval reads recency and expiry off that column. Writing the status would contest a
+record on the strength of an observation the independence rule had just declared already counted, leaving an event
+that says nothing moved beside a ledger with zero counted contradictions.
+
+**The counters are guarded like the rest of the projection.** Migration `0007` extends the `experience_records`
+trigger so `reuse_confidence`, `supporting_validations`, and `contradictions` move only together with the revision
+of the lifecycle event that recorded the evidence for them — and only to the values that event recorded, so
+`UPDATE … SET reuse_confidence = 1, revision = revision + 1` is refused too. A direct `UPDATE` on any of them gets
+SQLSTATE `42501`, exactly as one on `status` or `revision` does — see the limits stated above for what that guard does and does not
+bind. `confidence_evidence` is append-only for the same reason the event logs are: a row that could be edited or
+removed would free an independence key, and the same observation could then be counted twice.
+
+**One ordering wart, stated rather than hidden.** Core's eligibility gate runs on the record it read, before the
+store is asked anything, so it takes precedence over the store's idempotency check: resubmitting evidence that was
+already accepted, *after* the record has since been revoked or quarantined, reports `Ineligible` rather than
+replaying `Applied`. Nothing is lost — the original update is durable and in the history — but reconcile retries
+against the history rather than reading that as "it never landed".
+
+**History makes an update reconstructable.** Each *counted* update's event carries the prior and new score, the
+prior and new counters, the evidence ID, the rule version, and the `Actor` — the principal the commit ran under, recorded by the
+store from the host's authorization and never from anything the caller put in the event. Read it through
+`GetHistoryAsync` like any other transition; `stored.Event.Confidence` is `null` for the events that carried none.
+An *uncounted* submission has no event, by construction — the ledger row is its audit trail, and listing that ledger
+arrives with roadmap story 4.5 along with its retention path.
 
 ## Indexing experience for semantic reuse
 
@@ -743,17 +865,17 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresGrantTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
 
 ## Roadmap
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
 2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
-3. **Govern experience safely:** explicit sharing grants ✅, the full audited lifecycle transition table with supersession and database-enforced append-only logs ✅; evidence-based confidence updates are next
+3. **Govern experience safely:** explicit sharing grants ✅, the full audited lifecycle transition table with supersession and database-enforced append-only logs ✅, evidence-based confidence updates ✅; recording experience reuse feedback is next
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
 Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).

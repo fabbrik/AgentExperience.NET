@@ -52,6 +52,8 @@ internal static class ExperienceRecordValidator
             errors.Add(new("Contradictions", "must not be negative."));
         }
 
+        ValidateCreatedConfidence(record, errors);
+
         if (record.Revision < 0)
         {
             errors.Add(new("Revision", "must not be negative."));
@@ -134,9 +136,28 @@ internal static class ExperienceRecordValidator
     /// in. Field paths name the <see cref="LifecycleEvent"/> member, so a caller can map an error back
     /// to what it supplied.
     /// </summary>
-    public static IReadOnlyList<StoreValidationError> ValidateLifecycleEvent(Scope scope, LifecycleEvent lifecycleEvent)
+    /// <param name="scope">The exact request scope the record must lie in.</param>
+    /// <param name="lifecycleEvent">The event to validate.</param>
+    /// <param name="authorization">
+    /// The host-established context the commit runs under. Only its
+    /// <see cref="AuthorizationContext.PrincipalId"/> is checked, and only when the event carries a
+    /// confidence payload: that principal becomes the reviewer identity a human submission is counted
+    /// under, so a blank one would silently dissolve the human independence rule. Every other commit
+    /// records it when there is one and null when there is not.
+    /// </param>
+    public static IReadOnlyList<StoreValidationError> ValidateLifecycleEvent(
+        Scope scope,
+        LifecycleEvent lifecycleEvent,
+        AuthorizationContext authorization)
     {
         var errors = new List<StoreValidationError>();
+
+        if (lifecycleEvent.Confidence is not null && string.IsNullOrWhiteSpace(authorization.PrincipalId))
+        {
+            errors.Add(new(
+                "Authorization.PrincipalId",
+                "must be non-blank for a confidence update: it is the actor the update is recorded against, and the reviewer a human submission is counted under."));
+        }
 
         if (lifecycleEvent.EventId == Guid.Empty)
         {
@@ -172,6 +193,16 @@ internal static class ExperienceRecordValidator
         // and is settled before the event reaches this port.
         if (lifecycleEvent.ReplacementExperienceId is { } replacementId)
         {
+            // Supersession and a confidence update are different facts about different things, and an
+            // event claiming both would make the replacement chain and the evidence trail depend on each
+            // other. The database states this as a CHECK too.
+            if (lifecycleEvent.Confidence is not null)
+            {
+                errors.Add(new(
+                    "ReplacementExperienceId",
+                    "must be null on an event that carries a confidence update; supersession and evidence are separate transitions."));
+            }
+
             if (lifecycleEvent.CurrentStatus != ExperienceStatus.Superseded)
             {
                 errors.Add(new(
@@ -196,6 +227,8 @@ internal static class ExperienceRecordValidator
                 $"is required when the event moves the record to {ExperienceStatus.Superseded}."));
         }
 
+        ValidateConfidenceUpdate(lifecycleEvent.Confidence, errors);
+
         if (lifecycleEvent.ExpectedRevision < 0)
         {
             errors.Add(new("ExpectedRevision", "must not be negative."));
@@ -209,6 +242,102 @@ internal static class ExperienceRecordValidator
         }
 
         return errors;
+    }
+
+    /// <summary>
+    /// Validates the optional confidence payload an event may carry. The database states every one of
+    /// these rules as a CHECK, so they hold for a writer that bypasses the store; stating them here too
+    /// turns a malformed submission into a typed <see cref="ExperienceStoreOutcome.Invalid"/> with a
+    /// field path rather than an infrastructure failure.
+    /// </summary>
+    /// <remarks>
+    /// The score is deliberately not re-derived here. Core owns the rule that turns counters into a score
+    /// for a <em>write</em>, and a second implementation of it on this path would be a second rule that
+    /// could disagree. What is checked is only what the columns can hold: ranges, non-negativity, that a
+    /// counter only ever moves up, and that each evidence source carries the identifier its independence
+    /// key is made of. (Creation is the exception -- see <c>ValidateCreatedConfidence</c> -- because it is
+    /// the one moment the counters and the score arrive independently of each other.)
+    /// </remarks>
+    private static void ValidateConfidenceUpdate(ConfidenceUpdate? confidence, List<StoreValidationError> errors)
+    {
+        if (confidence is not { } update)
+        {
+            return;
+        }
+
+        const string Path = "Confidence";
+
+        if (update.EvidenceId == Guid.Empty)
+        {
+            errors.Add(new($"{Path}.EvidenceId", "must not be an empty GUID."));
+        }
+
+        if (update.RunId == Guid.Empty)
+        {
+            errors.Add(new($"{Path}.RunId", "must name the run the reuse was observed in."));
+        }
+
+        RequireDefined(update.Kind, $"{Path}.Kind", errors);
+        RequireNotBlank(update.RuleVersion, $"{Path}.RuleVersion", errors);
+        RequireUnitInterval(update.PriorReuseConfidence, $"{Path}.PriorReuseConfidence", errors);
+        RequireUnitInterval(update.NewReuseConfidence, $"{Path}.NewReuseConfidence", errors);
+
+        foreach (var (count, name) in new[]
+        {
+            (update.PriorSupportingValidations, nameof(update.PriorSupportingValidations)),
+            (update.NewSupportingValidations, nameof(update.NewSupportingValidations)),
+            (update.PriorContradictions, nameof(update.PriorContradictions)),
+            (update.NewContradictions, nameof(update.NewContradictions)),
+        })
+        {
+            if (count < 0)
+            {
+                errors.Add(new($"{Path}.{name}", "must not be negative."));
+            }
+        }
+
+        // A counter that went backwards is not a smaller update, it is a rewrite of history: the event
+        // would claim evidence moved a count down, which no evidence can do.
+        if (update.NewSupportingValidations < update.PriorSupportingValidations
+            || update.NewContradictions < update.PriorContradictions)
+        {
+            errors.Add(new($"{Path}.NewSupportingValidations", "evidence only ever moves a counter up, never down."));
+        }
+
+        if (!Enum.IsDefined(update.Source))
+        {
+            errors.Add(new($"{Path}.Source", "must be a defined value."));
+            return;
+        }
+
+        if (update.Source == ConfidenceEvidenceSource.Machine)
+        {
+            if (update.VerificationRoundId is not { } roundId || roundId == Guid.Empty)
+            {
+                errors.Add(new(
+                    $"{Path}.VerificationRoundId",
+                    $"is required for {ConfidenceEvidenceSource.Machine} evidence, which is counted once per run and round."));
+            }
+
+            if (update.ReviewerIdentity is not null)
+            {
+                errors.Add(new($"{Path}.ReviewerIdentity", $"must be null for {ConfidenceEvidenceSource.Machine} evidence."));
+            }
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(update.ReviewerIdentity))
+            {
+                errors.Add(new(
+                    $"{Path}.ReviewerIdentity",
+                    $"is required for {ConfidenceEvidenceSource.Human} evidence, which is counted once per reviewer and run."));
+            }
+
+            if (update.VerificationRoundId is not null)
+            {
+                errors.Add(new($"{Path}.VerificationRoundId", $"must be null for {ConfidenceEvidenceSource.Human} evidence."));
+            }
+        }
     }
 
     /// <summary>
@@ -803,6 +932,56 @@ internal static class ExperienceRecordValidator
         if (value.Contains('\0', StringComparison.Ordinal))
         {
             errors.Add(new(path, "must not contain the NUL character (U+0000)."));
+        }
+    }
+
+    /// <summary>
+    /// Checks that a record arrives with a reuse confidence its own counters explain. Creation is the one
+    /// moment the two can be set independently -- after it, every change goes through a revision-guarded
+    /// update the database ties to the lifecycle event that recorded the evidence -- so without this a
+    /// host could create a record at 0.99 with a single supporting validation and every guard this library
+    /// adds afterwards would be satisfied forever.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a consistency check, not the arithmetic: nothing here decides what a score should be for a
+    /// <em>write</em>, which stays Core's alone. It applies only to a record that <em>claims</em>
+    /// evidence -- one with a non-zero counter -- and requires its confidence to be the
+    /// <c>(1 + S) / (2 + S + F)</c> those counters explain. The comparison allows a relative slack of
+    /// 1e-12, so a caller that computed the same value through a different association of the same
+    /// operations is not rejected over the last bit.
+    /// </para>
+    /// <para>
+    /// A record created with no counters at all is deliberately left alone, whatever confidence it
+    /// carries. That is the quarantined shape (no lesson, no evidence, no confidence), and it is also a
+    /// host seeding a record it has its own reasons to trust -- which is its prerogative, since it
+    /// chooses the status too. The seeded number cannot outlive contact with evidence: the first accepted
+    /// submission recomputes from the counters, which are still zero, so it lands wherever the rule says
+    /// and not wherever the record was seeded.
+    /// </para>
+    /// </remarks>
+    private static void ValidateCreatedConfidence(ExperienceRecord record, List<StoreValidationError> errors)
+    {
+        if (record.SupportingValidations < 0 || record.Contradictions < 0
+            || !(record.ReuseConfidence >= 0d && record.ReuseConfidence <= 1d))
+        {
+            // Already reported above; a second message about the same values would only be noise.
+            return;
+        }
+
+        if (record.SupportingValidations == 0 && record.Contradictions == 0)
+        {
+            return;
+        }
+
+        var expected = (1d + record.SupportingValidations)
+            / (2d + record.SupportingValidations + record.Contradictions);
+
+        if (Math.Abs(record.ReuseConfidence - expected) > 1e-12 * expected)
+        {
+            errors.Add(new(
+                "ReuseConfidence",
+                "must be the confidence the record's own evidence counters explain."));
         }
     }
 

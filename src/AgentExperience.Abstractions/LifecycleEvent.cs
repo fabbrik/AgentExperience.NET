@@ -80,6 +80,13 @@ public static class ExperienceStatuses
 /// the same exact scope, currently eligible, and not one this record already replaces -- is decided by
 /// Core before the event is stamped.
 /// </param>
+/// <param name="Confidence">
+/// The evidence-based confidence movement this event applies, or <see langword="null"/> when the
+/// transition carries none. It rides the lifecycle event rather than travelling a write path of its own,
+/// so the evidence row, the counters, the score, the status change, and the audit entry are one
+/// transaction under one idempotency key. Core computes every number on it from the record it read; a
+/// store persists them as given and never derives a score. See <see cref="ConfidenceUpdate"/>.
+/// </param>
 public sealed record LifecycleEvent(
     Guid EventId,
     Guid ExperienceRecordId,
@@ -89,4 +96,5 @@ public sealed record LifecycleEvent(
     string Producer,
     DateTimeOffset OccurredAt,
     long ExpectedRevision,
-    Guid? ReplacementExperienceId = null);
+    Guid? ReplacementExperienceId = null,
+    ConfidenceUpdate? Confidence = null);

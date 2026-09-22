@@ -1,5 +1,6 @@
 using System.Globalization;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Retrieval;
 
@@ -69,11 +70,20 @@ namespace AgentExperience.Core.Lifecycle;
 /// port rather than becoming a pass-through this service would only forward.
 /// </para>
 /// <para>
-/// Nothing here computes reuse confidence or counters, decides storage or risk policy, or orchestrates
-/// finalization. A store outcome is surfaced one-to-one, so a database failure can never be reported as
-/// a durable success: infrastructure failures throw <see cref="ExperienceStoreException"/> and caller
-/// cancellation surfaces as an unwrapped <see cref="OperationCanceledException"/>, both straight from
-/// the port.
+/// <b>Confidence moves only through <see cref="ApplyEvidenceAsync"/>.</b> That is the one entry point
+/// that touches <see cref="ExperienceRecord.ReuseConfidence"/> and the counters behind it, and it owns
+/// the arithmetic outright: it reads the record, computes the new counters and the new score with
+/// <see cref="ReuseConfidenceHeuristic"/>, and submits them on the lifecycle event with the revision it
+/// read. The adapter writes those numbers and never derives any. A contradiction moves a live record to
+/// <see cref="ExperienceStatus.Contested"/> in the same transaction; supporting evidence never moves a
+/// status by itself. <see cref="CommitAsync"/> carries no confidence payload and changes no counter, so
+/// the ordinary transition table is unchanged by any of this.
+/// </para>
+/// <para>
+/// Nothing here decides storage or risk policy, or orchestrates finalization. A store outcome is
+/// surfaced one-to-one, so a database failure can never be reported as a durable success:
+/// infrastructure failures throw <see cref="ExperienceStoreException"/> and caller cancellation
+/// surfaces as an unwrapped <see cref="OperationCanceledException"/>, both straight from the port.
 /// </para>
 /// </remarks>
 public sealed class ExperienceLifecycleService
@@ -255,7 +265,9 @@ public sealed class ExperienceLifecycleService
 
         // Only after the transition is durable, and only when it actually left eligibility.
         var deindexing = outcome == LifecycleTransitionOutcome.Committed
-            ? await TryRemoveEmbeddingAsync(authorization, request, cancellationToken).ConfigureAwait(false)
+            ? await TryRemoveEmbeddingAsync(
+                authorization, request.Scope, request.ExperienceId, request.PriorStatus, request.CurrentStatus, cancellationToken)
+                .ConfigureAwait(false)
             : null;
 
         var reason = outcome == LifecycleTransitionOutcome.ReplacementNotAllowed
@@ -263,6 +275,324 @@ public sealed class ExperienceLifecycleService
             : null;
 
         return new(outcome, lifecycleEvent, result.Revision, result.CurrentStatus, result.Errors, reason, deindexing);
+    }
+
+    /// <summary>
+    /// Applies one piece of evidence about a stored lesson having been reused: reads the record,
+    /// computes its new counters and score from what it read, and commits the evidence, the counters,
+    /// the score, any status change, and the lifecycle event in one store transaction.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Core owns the arithmetic.</b> The new counters and the new score are computed here, by
+    /// <see cref="ReuseConfidenceHeuristic"/>, from the record this call read, and are submitted with
+    /// <em>that</em> record's revision. The store writes those numbers and enforces two rules only it
+    /// can: that the revision has not moved, and that this submission's independence key has not already
+    /// been counted. Nothing downstream derives a score.
+    /// </para>
+    /// <para>
+    /// <b>A duplicate is accepted, recorded, and counted zero times.</b> Resubmitting the same
+    /// observation under a fresh <see cref="ApplyConfidenceEvidenceRequest.EvidenceId"/> is
+    /// <see cref="ConfidenceUpdateOutcome.Applied"/> with
+    /// <see cref="ApplyConfidenceEvidenceResult.Counted"/> <see langword="false"/>: the submission is in
+    /// the audit trail and the counters did not move. Resubmitting the same <em>evidence ID</em> with
+    /// identical content reports the original outcome; with different content it is
+    /// <see cref="ConfidenceUpdateOutcome.Conflict"/> and nothing is written.
+    /// </para>
+    /// <para>
+    /// <b>Status, not score, decides reuse.</b> A contradiction against a
+    /// <see cref="ExperienceStatus.Validated"/> or <see cref="ExperienceStatus.Reinforced"/> record
+    /// moves it to <see cref="ExperienceStatus.Contested"/> in the same transaction, and a record
+    /// already <see cref="ExperienceStatus.Contested"/> stays there while its counters keep moving.
+    /// Supporting evidence never changes a status. A record in any other status refuses the evidence
+    /// outright (<see cref="ConfidenceUpdateOutcome.Ineligible"/>), so a score can never be used to
+    /// argue a withdrawn, quarantined, stale, or superseded record back into reuse.
+    /// </para>
+    /// <para>
+    /// <b>The reviewer is the host's, never the caller's.</b> For
+    /// <see cref="ConfidenceEvidenceSource.Human"/> evidence the reviewer identity is
+    /// <see cref="AuthorizationContext.PrincipalId"/>. The request has no field for it, because the
+    /// count of distinct human reviewers is exactly what the independence rule protects.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do. Also the source of the reviewer identity for human evidence.</param>
+    /// <param name="request">The evidence to apply.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>What happened, and the confidence movement as the transaction stored it.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="request"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ExperienceStoreException">Storage infrastructure failed. Lifecycle state and counters are unchanged.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public async Task<ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(
+        AuthorizationContext authorization,
+        ApplyConfidenceEvidenceRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Scope, $"{nameof(request)}.{nameof(request.Scope)}");
+
+        if (ValidateEvidenceShape(request, authorization.PrincipalId) is { Count: > 0 } shapeErrors)
+        {
+            return new(ConfidenceUpdateOutcome.Invalid, null, null, 0, null, shapeErrors);
+        }
+
+        var read = await _store
+            .GetAsync(authorization, request.Scope, request.ExperienceId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (read.Outcome != ExperienceStoreOutcome.Found)
+        {
+            return new(ToConfidenceOutcome(read.Outcome), null, null, 0, null, read.Errors);
+        }
+
+        if (read.Record is not { } record)
+        {
+            // A store that reports Found with no record is broken, but a broken store is a refusal to
+            // report, not an infrastructure failure to raise: there is nothing here to compute against
+            // and nothing was written, which is exactly what NotFound already means.
+            return new(
+                ConfidenceUpdateOutcome.NotFound,
+                null,
+                null,
+                0,
+                null,
+                NoErrors,
+                "The store reported the record as found but returned nothing to compute against.");
+        }
+
+        if (read.SharedByGrant)
+        {
+            // A grant confers reading one named record and nothing else. Writing to it would be a
+            // foreign-scope write, so it is refused exactly like a record that is not here at all --
+            // which is also what the store's own exact-scope projection update would report.
+            return new(
+                ConfidenceUpdateOutcome.NotFound,
+                null,
+                null,
+                0,
+                null,
+                NoErrors,
+                "The record was readable only through a sharing grant, which never confers writing to it.");
+        }
+
+        if (!ReuseConfidenceHeuristic.AcceptsEvidenceIn(record.Status))
+        {
+            return new(
+                ConfidenceUpdateOutcome.Ineligible,
+                null,
+                null,
+                record.Revision,
+                record.Status,
+                NoErrors,
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "A {0} record does not accept confidence evidence; only {1} do, and no score may change that.",
+                    record.Status,
+                    string.Join(", ", ReuseConfidenceHeuristic.AcceptsEvidence)));
+        }
+
+        if (ValidateStoredCounters(record) is { Count: > 0 } counterErrors)
+        {
+            // Apply throws on these, and an unreadable record is a typed refusal everywhere else in this
+            // library; a store that hands back a negative or saturated counter must not become the one
+            // place a caller has to catch.
+            return new(
+                ConfidenceUpdateOutcome.Invalid,
+                null,
+                null,
+                record.Revision,
+                record.Status,
+                counterErrors,
+                "The stored record's evidence counters cannot have evidence applied to them.");
+        }
+
+        var update = ReuseConfidenceHeuristic.Apply(
+            record,
+            request.EvidenceId,
+            request.Kind,
+            request.Source,
+            request.RunId,
+            request.VerificationRoundId,
+            request.Source == ConfidenceEvidenceSource.Human ? authorization.PrincipalId : null,
+            request.Detail);
+
+        var currentStatus = ReuseConfidenceHeuristic.StatusAfter(record.Status, request.Kind);
+
+        var lifecycleEvent = new LifecycleEvent(
+            EventId: request.EventId,
+            ExperienceRecordId: request.ExperienceId,
+            PriorStatus: record.Status,
+            CurrentStatus: currentStatus,
+            Reason: request.Reason,
+            Producer: request.Producer,
+            OccurredAt: request.OccurredAt,
+            ExpectedRevision: record.Revision,
+            ReplacementExperienceId: null,
+            Confidence: update);
+
+        var result = await _store
+            .CommitLifecycleEventAsync(authorization, request.Scope, lifecycleEvent, cancellationToken)
+            .ConfigureAwait(false);
+
+        var outcome = ToConfidenceOutcome(result.Outcome);
+
+        if (outcome != ConfidenceUpdateOutcome.Applied)
+        {
+            return new(outcome, lifecycleEvent, null, result.Revision, result.CurrentStatus, result.Errors);
+        }
+
+        // Only after the update is durable, and only when this call's contradiction actually took the
+        // record out of reuse. A duplicate and a replay both leave the record where it was, and the store
+        // reports that by naming the status it did not move -- so the hook is asked about the status the
+        // record is in, never about the one an unapplied submission would have produced.
+        var settledStatus = result.CurrentStatus ?? currentStatus;
+        var deindexing = await TryRemoveEmbeddingAsync(
+                authorization, request.Scope, request.ExperienceId, record.Status, settledStatus, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new(
+            ConfidenceUpdateOutcome.Applied,
+            lifecycleEvent,
+            // What the transaction stored, which is the submitted payload unless the independence key
+            // was taken; a store that reports nothing is taken at its word that nothing moved.
+            result.AppliedConfidence ?? update.AsRecordedOnly(),
+            result.Revision,
+            // The store reports the record's status when it knows it -- which is every case where it did
+            // not move the record: a duplicate that left it alone, and a replay reporting the moment the
+            // original submission settled. Falling back to the derived status covers the plain accepted
+            // update, where the store moved the record to exactly this.
+            settledStatus,
+            result.Errors,
+            Reason: null,
+            deindexing);
+    }
+
+    /// <summary>
+    /// The rules about a submission's own shape, which need no stored state and are therefore settled
+    /// before the record is read: the identifiers that must be present, and the two fields that belong
+    /// to exactly one <see cref="ConfidenceEvidenceSource"/> each.
+    /// </summary>
+    /// <summary>
+    /// Checks that the counters the store handed back can have evidence applied to them at all: not
+    /// negative, and not already at <see cref="int.MaxValue"/>, where the increment would have nowhere to
+    /// go. Both are contract violations by the store rather than caller errors, but they are reported the
+    /// way every other refusal here is -- a typed result naming the field -- because a caller that has
+    /// never had to catch an exception from this call should not start now.
+    /// </summary>
+    private static List<StoreValidationError> ValidateStoredCounters(ExperienceRecord record)
+    {
+        var errors = new List<StoreValidationError>();
+
+        foreach (var (count, path) in new[]
+        {
+            (record.SupportingValidations, nameof(record.SupportingValidations)),
+            (record.Contradictions, nameof(record.Contradictions)),
+        })
+        {
+            if (count < 0)
+            {
+                errors.Add(new(path, "the stored record reports a negative evidence counter."));
+            }
+            else if (count == int.MaxValue)
+            {
+                errors.Add(new(path, "the stored record's evidence counter is already at its maximum, so no further evidence can be counted."));
+            }
+        }
+
+        return errors;
+    }
+
+    private static List<StoreValidationError> ValidateEvidenceShape(ApplyConfidenceEvidenceRequest request, string? principalId)
+    {
+        const string PrincipalPath = "Authorization.PrincipalId";
+
+        var errors = new List<StoreValidationError>();
+
+        if (request.EventId == Guid.Empty)
+        {
+            errors.Add(new(nameof(request.EventId), "must not be an empty GUID."));
+        }
+
+        if (request.ExperienceId == Guid.Empty)
+        {
+            errors.Add(new(nameof(request.ExperienceId), "must not be an empty GUID."));
+        }
+
+        if (request.EvidenceId == Guid.Empty)
+        {
+            errors.Add(new(nameof(request.EvidenceId), "must not be an empty GUID."));
+        }
+
+        if (request.RunId == Guid.Empty)
+        {
+            // The run is half of every independence key; without it the submission cannot be counted
+            // once rather than every time it is sent.
+            errors.Add(new(nameof(request.RunId), "must name the run the reuse was observed in."));
+        }
+
+        if (!Enum.IsDefined(request.Kind))
+        {
+            errors.Add(new(nameof(request.Kind), "must be a defined evidence kind."));
+        }
+
+        if (!Enum.IsDefined(request.Source))
+        {
+            errors.Add(new(nameof(request.Source), "must be a defined evidence source."));
+        }
+        else if (request.Source == ConfidenceEvidenceSource.Machine)
+        {
+            if (request.VerificationRoundId is not { } roundId || roundId == Guid.Empty)
+            {
+                errors.Add(new(
+                    nameof(request.VerificationRoundId),
+                    $"is required for {ConfidenceEvidenceSource.Machine} evidence, which is counted once per run and round."));
+            }
+        }
+        else
+        {
+            if (request.VerificationRoundId is not null)
+            {
+                errors.Add(new(
+                    nameof(request.VerificationRoundId),
+                    $"must be null for {ConfidenceEvidenceSource.Human} evidence, which is counted once per reviewer and run."));
+            }
+
+            // The reviewer identity is the whole of the human independence rule, and it comes from the
+            // authorization context rather than the request -- so it is checked here, before the record is
+            // read, rather than being discovered as a constraint violation after the work is done.
+            if (string.IsNullOrWhiteSpace(principalId))
+            {
+                errors.Add(new(
+                    PrincipalPath,
+                    $"must be non-blank for {ConfidenceEvidenceSource.Human} evidence: it is the reviewer the submission is counted under."));
+            }
+            else if (!string.Equals(principalId, principalId.Trim(), StringComparison.Ordinal))
+            {
+                // Compared ordinally, like every other identity here, so " alice" and "alice" would key as
+                // two independent reviewers. Refused rather than trimmed: normalizing would be this
+                // library deciding who a reviewer is.
+                errors.Add(new(
+                    PrincipalPath,
+                    "must not have leading or trailing whitespace: it would be counted as a second, independent reviewer."));
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            errors.Add(new(nameof(request.Reason), "must be a non-blank, auditable reason."));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Producer))
+        {
+            errors.Add(new(nameof(request.Producer), "must be a non-blank producer identity."));
+        }
+
+        if (request.OccurredAt == default)
+        {
+            errors.Add(new(nameof(request.OccurredAt), "must be set to when the observation was made."));
+        }
+
+        return errors;
     }
 
     /// <summary>
@@ -346,13 +676,16 @@ public sealed class ExperienceLifecycleService
     /// </remarks>
     private async Task<ExperienceDeindexingResult?> TryRemoveEmbeddingAsync(
         AuthorizationContext authorization,
-        CommitLifecycleTransitionRequest request,
+        Scope scope,
+        Guid experienceId,
+        ExperienceStatus? priorStatus,
+        ExperienceStatus currentStatus,
         CancellationToken cancellationToken)
     {
         if (_indexingService is null
-            || request.PriorStatus is not { } priorStatus
-            || !IsEligible(priorStatus)
-            || IsEligible(request.CurrentStatus))
+            || priorStatus is not { } prior
+            || !IsEligible(prior)
+            || IsEligible(currentStatus))
         {
             return null;
         }
@@ -365,7 +698,7 @@ public sealed class ExperienceLifecycleService
         try
         {
             return await _indexingService
-                .RemoveAsync(authorization, request.Scope, request.ExperienceId, deindexing.Token)
+                .RemoveAsync(authorization, scope, experienceId, deindexing.Token)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -376,7 +709,7 @@ public sealed class ExperienceLifecycleService
 
             return new(
                 ExperienceDeindexingOutcome.Failed,
-                request.ExperienceId,
+                experienceId,
                 new ExperienceIndexingFailure(
                     $"The de-indexing hook threw {ex.GetType().FullName} after the transition was already committed; " +
                     "the record is ineligible and the text channel already excludes it, and the vector can be removed later.",
@@ -409,5 +742,23 @@ public sealed class ExperienceLifecycleService
         ExperienceStoreOutcome.Invalid => LifecycleTransitionOutcome.Invalid,
         _ => throw new ExperienceStoreException(
             $"The Experience Record store returned '{outcome}', which is not a lifecycle commit outcome."),
+    };
+
+    /// <summary>
+    /// Maps a store outcome to its confidence-update counterpart one-to-one. It covers both port calls
+    /// this operation makes -- the read and the commit -- because both can refuse for the same reasons
+    /// and a caller should not have to know which stage reported it.
+    /// </summary>
+    private static ConfidenceUpdateOutcome ToConfidenceOutcome(ExperienceStoreOutcome outcome) => outcome switch
+    {
+        ExperienceStoreOutcome.Committed => ConfidenceUpdateOutcome.Applied,
+        ExperienceStoreOutcome.StaleRevision => ConfidenceUpdateOutcome.StaleRevision,
+        ExperienceStoreOutcome.StatusMismatch => ConfidenceUpdateOutcome.StatusMismatch,
+        ExperienceStoreOutcome.Conflict => ConfidenceUpdateOutcome.Conflict,
+        ExperienceStoreOutcome.NotFound => ConfidenceUpdateOutcome.NotFound,
+        ExperienceStoreOutcome.Denied => ConfidenceUpdateOutcome.Denied,
+        ExperienceStoreOutcome.Invalid => ConfidenceUpdateOutcome.Invalid,
+        _ => throw new ExperienceStoreException(
+            $"The Experience Record store returned '{outcome}', which is not a confidence-update outcome."),
     };
 }

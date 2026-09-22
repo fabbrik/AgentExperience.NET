@@ -93,7 +93,9 @@ internal sealed class TestWorld
             Provenance: new Provenance("tests", null, Stamp, null),
             Status: status,
             ReuseConfidence: confidence,
-            SupportingValidations: 1,
+            // No counters: these records are seeded at a confidence chosen to exercise the floor, and a
+            // record that *claims* evidence has to carry the confidence its counters explain.
+            SupportingValidations: 0,
             Contradictions: 0,
             Revision: 0,
             CreatedAt: Stamp,

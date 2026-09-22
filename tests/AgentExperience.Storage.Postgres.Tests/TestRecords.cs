@@ -130,7 +130,9 @@ internal static class TestRecords
             Environment: new EnvironmentFingerprint("worker-01", "10.0.0", "linux-x64", "1.2.3", new Dictionary<string, string> { ["region"] = "us-east", ["az"] = "1b", ["a"] = "x" }),
             Provenance: new Provenance("AgentExperience.MicrosoftAgentFramework", "1.0.0", PayloadTime, "trace-123"),
             Status: ExperienceStatus.Validated,
-            ReuseConfidence: 2d / 3d,
+            // The confidence its own counters explain: (1 + 4) / (2 + 4 + 1). A record that claims
+            // evidence has to agree with it, so this cannot be an arbitrary number.
+            ReuseConfidence: 5d / 7d,
             SupportingValidations: 4,
             Contradictions: 1,
             Revision: 3,

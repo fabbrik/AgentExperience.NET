@@ -154,8 +154,10 @@ when retried. After a `Conflict`, call `GetAsync` in your own scope to check whe
 connection**: both writes commit together, or neither does. A failure between them leaves no event and no
 projection change.
 
-The adapter persists the decision exactly as given. It never derives a status, a reuse confidence, or a counter, and
-it never invents a transition the command did not carry — deciding which transitions are legal belongs to Core's
+The adapter persists the decision exactly as given. It never derives a status, a reuse confidence, or a counter — a
+confidence update writes the numbers Core computed and nothing else (see
+[Confidence evidence](#confidence-evidence)) — and it never invents a transition the command did not carry:
+deciding which transitions are legal belongs to Core's
 `ExperienceLifecycleService` (ARCHITECTURE-SPINE AD-6). Authorization is checked against the request scope before
 the transaction opens, exactly as for the store's other operations, and the scope predicate is applied in SQL.
 
@@ -234,6 +236,57 @@ the transaction opens, exactly as for the store's other operations, and the scop
   `DELETE`, `ENABLE ALWAYS TRIGGER`, all in one transaction so the guard is never off across a failure — and
   reconciles `experience_records` afterwards, because deleting an event does not move the projection. `0006`'s
   header carries the exact statements.
+
+## Confidence evidence
+
+A `LifecycleEvent` may carry an optional `ConfidenceUpdate`. When it does, the same transaction that appends the
+event and updates the projection also writes a row to `confidence_evidence` and sets the record's
+`reuse_confidence`, `supporting_validations`, and `contradictions`. Every number in it was computed by Core's
+`ReuseConfidenceHeuristic` from the record Core read; this adapter writes them and derives none. The score is
+`(1 + S) / (2 + S + F)` — a heuristic, never a calibrated probability — and the `RuleVersion` that produced it
+travels on the row.
+
+Two rules are the adapter's, because only the transaction that writes the counters can decide them:
+
+- **Independence is a unique index.** `confidence_evidence.independence_key` is a **generated** column:
+  `'machine:' || run_id || ':' || verification_round_id` for machine evidence, `'human:' || reviewer_identity || ':'
+  || run_id` for human evidence. A partial unique index on `(experience_id, independence_key) WHERE counted` admits
+  the first submission for a key and no other. Generating it here means no writer picks the key *string*; it does
+  **not** stop a writer inventing the key's inputs, and there is no foreign key behind `run_id` or
+  `verification_round_id` because nothing in this schema knows what a run or a closed round is. Those two are a host
+  trust boundary exactly like `reviewer_identity` — see the script header and the
+  [main README](../../README.md#updating-confidence-from-evidence). Core computes the same string in
+  `ConfidenceIndependenceKey`, and an integration test pins the two against each other.
+- **A duplicate is recorded, and changes nothing else.** The first insert claims the key with `counted = true`,
+  under a savepoint, because losing that race is an expected outcome the commit has to survive — a unique violation
+  would otherwise abort the transaction that is supposed to record the duplicate. On the violation the statement is
+  undone, the record is re-read `FOR UPDATE` (so the usual `NotFound`/`StaleRevision`/`StatusMismatch` refusals
+  still apply), and the same submission is written again with `counted = false`. That ledger row is *all* the call
+  writes: no counters, no status, no revision, no `updated_at`, and no lifecycle event. Refreshing `updated_at`
+  would keep a record permanently recent and permanently un-expired under replay; writing the status would contest
+  it on evidence that was not counted; and an event is impossible as well as unwanted, since it must claim
+  `expected_revision + 1`. `result.AppliedConfidence` reports what was stored and its `Counted` says which happened,
+  while `result.Revision` and `result.CurrentStatus` report the record the call left untouched.
+
+`EvidenceId` is a second idempotency key alongside `EventId`. Resubmitting it with identical content — the same
+record, kind, source, run and round or reviewer, rule version, and detail — reports the original outcome and the
+revision that commit produced, and writes nothing. Resubmitting it with different content is `Conflict` with nothing
+written. The counters are deliberately *not* compared: they are derived from whatever the record held when the
+submission was first made, so comparing them would report a genuine replay as a conflict for agreeing with itself.
+The event ID *is* compared for a stored row that produced one, so a retry under a fresh event ID is a `Conflict`
+rather than a `Committed` carrying a lifecycle event that was never written. The lookup joins `experience_records`
+and applies the exact scope predicate, so a guessed evidence ID from another scope reads back as no row at all —
+the primary key is global, and this is the one statement that finds a row by it alone. Every number a replay
+reports comes from that ledger row, so the answer describes one moment rather than a stored revision beside a
+freshly read status.
+
+Every commit now also records `lifecycle_events.actor` — the host's `AuthorizationContext.PrincipalId`, taken from
+the authorization context and never from anything on the event, and surfaced as `StoredLifecycleEvent.Actor`. For
+human evidence the same principal is the reviewer identity, which is what makes "one reviewer, one vote per run"
+enforceable at all.
+
+Ordering inside the transaction is not incidental: the evidence goes in **before** the event, because whether its
+key was free decides which numbers the event must record, and an event is append-only the moment it is written.
 
 ## Text search
 
@@ -494,6 +547,40 @@ freely. Row-level security and column-privilege `REVOKE` would be no stronger; n
 guard against a bug, a careless script, or a compromised application path, not tamper-proofing against an
 administrator. A deployment that needs more should ship the log off-box, or own these tables with a role the
 application does not have.
+
+`0007_confidence_evidence.sql` adds the evidence ledger and guards the columns it starts moving:
+
+- `confidence_evidence`: `evidence_id` as the primary key, the record and the event it rode in on, the evidence's
+  kind and source, the run, the verification round or the reviewer identity, `counted`, `recorded_at`, and
+  `applied_revision` — plus `independence_key`, `GENERATED ALWAYS AS ... STORED` from the source, run, round, and
+  reviewer. `CHECK` constraints make each source carry exactly the identifiers its key is made of: without them a
+  machine row with no round (or a human row with no reviewer) would generate a `NULL` key, which a unique index
+  cannot deduplicate, so every such submission would count.
+- A **partial** unique index on `(experience_id, independence_key) WHERE counted`. Partial rather than plain,
+  because a plain one would have to reject a later submission for a taken key — and the submission belongs in the
+  audit trail whether or not it moves a counter.
+- Columns on `lifecycle_events` that make an update reconstructable from the log alone: `actor`, the evidence ID,
+  kind, source, run, round, reviewer, rule version and detail, and the prior and new score and counters. A `CHECK`
+  using `num_nonnulls(...) IN (0, 11)` makes them all present or all absent, because a new score with no prior one
+  to compare it against says nothing at all. Another refuses an event that is both a supersession and a confidence
+  update.
+- `enforce_record_projection` (from `0006`) replaced with a version that guards `reuse_confidence`,
+  `supporting_validations`, and `contradictions`: they change only together with a revision that moved forward
+  **and** only to the values a lifecycle event already recorded for exactly that revision. Advancing the revision
+  alone is not enough, so `UPDATE … SET reuse_confidence = 1, revision = revision + 1` is refused like any other
+  direct write, with SQLSTATE `42501`. It is why the store writes the event before the projection.
+- The script's header carries a `CREATE UNIQUE INDEX CONCURRENTLY` runbook for
+  `ux_lifecycle_events_confidence_evidence`: a plain build takes a `SHARE` lock and blocks appends, which is
+  imperceptible on a small log and a write outage on a long one.
+- `BEFORE UPDATE OR DELETE` and `BEFORE TRUNCATE` triggers making `confidence_evidence` append-only, reusing
+  `0006`'s function. A row that could be edited or removed would free an independence key, and the same observation
+  could then be counted twice.
+
+Like `0006`, every `CHECK` it adds to the already-populated `lifecycle_events` is `NOT VALID`: the new columns are
+`NULL` on existing rows and would in fact validate, but a scan of a large append-only log at startup is a cost no
+deployment asked for. The script's header carries the confirmation query and the `VALIDATE CONSTRAINT` statements.
+The new table's own constraints are plain — it starts empty, so there is nothing to scan. The same limits apply to
+its triggers as to `0006`'s: read them above before relying on them.
 
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package

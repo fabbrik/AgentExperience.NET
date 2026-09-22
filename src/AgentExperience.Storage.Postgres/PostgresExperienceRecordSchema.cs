@@ -53,6 +53,20 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string SupersessionAndAppendOnlyScriptName = "0006_lifecycle_supersession_and_append_only.sql";
 
+    /// <summary>
+    /// The script that creates <c>confidence_evidence</c> with the unique index that decides evidence
+    /// independence, adds the score, counter, evidence, rule-version, and actor columns to
+    /// <c>lifecycle_events</c>, and extends <c>enforce_record_projection</c> so reuse confidence and its
+    /// counters move only with the revision of the lifecycle event that recorded the evidence for them.
+    /// </summary>
+    /// <remarks>
+    /// The score those columns carry is a heuristic -- <c>(1 + S) / (2 + S + F)</c> -- and never a
+    /// calibrated probability; nothing in the database computes it, and the rule version travels with
+    /// every update. Its CHECKs on the existing <c>lifecycle_events</c> table are added
+    /// <c>NOT VALID</c>; see the script's own header for the confirm-then-<c>VALIDATE</c> step.
+    /// </remarks>
+    public const string ConfidenceEvidenceScriptName = "0007_confidence_evidence.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -63,7 +77,14 @@ public static class PostgresExperienceRecordSchema
     /// why <c>0004</c> is absent from this list while <c>0005</c> is present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
-        [InitialScriptName, LifecycleEventsScriptName, SearchScriptName, GrantsScriptName, SupersessionAndAppendOnlyScriptName];
+    [
+        InitialScriptName,
+        LifecycleEventsScriptName,
+        SearchScriptName,
+        GrantsScriptName,
+        SupersessionAndAppendOnlyScriptName,
+        ConfidenceEvidenceScriptName,
+    ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>
