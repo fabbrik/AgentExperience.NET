@@ -267,11 +267,11 @@ public sealed class PostgresGrantTests
         // Aged past its expiry using the server's own clock, so nothing about this assertion depends on
         // the test host's clock agreeing with the database's. Both timestamps move, because a grant
         // that expires before it was issued is one the schema refuses to store at all.
-        await ExecuteAsync(
+        await AsOwnerBypassingGuardsAsync(
             "UPDATE agent_experience.experience_grants " +
             "SET issued_at = now() - interval '2 seconds', expires_at = now() - interval '1 second' " +
             "WHERE grant_id = @grant_id",
-            ("grant_id", grant.GrantId));
+            grant.GrantId);
 
         Assert.Equal(ExperienceStoreOutcome.NotFound, (await ReadAsync(tenant, recipient, id)).Outcome);
         Assert.Empty((await SearchAsync(tenant, recipient, "refund")).Candidates);
@@ -409,8 +409,8 @@ public sealed class PostgresGrantTests
         Assert.Equal(0, stored.Revision);
 
         // The audit trail of mutations is not reusable experience, so it stays owner-scope only.
-        Assert.Equal(ExperienceStoreOutcome.NotFound, (await _store.GetHistoryAsync(auth, recipient, id, CancellationToken.None)).Outcome);
-        Assert.Equal(ExperienceStoreOutcome.Found, (await _store.GetHistoryAsync(auth, owner, id, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.NotFound, (await _store.GetFirstHistoryPageAsync(auth, recipient, id, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Found, (await _store.GetFirstHistoryPageAsync(auth, owner, id, CancellationToken.None)).Outcome);
 
         // Nor does a grant let a recipient enumerate what the owner scope holds.
         var listed = await _store.QueryAsync(auth, new ExperienceRecordQuery(recipient), CancellationToken.None);
@@ -608,8 +608,8 @@ public sealed class PostgresGrantTests
 
         // No status, confidence, counter, revision, or timestamp moves on the grant path.
         Assert.Equal(Canonical(before), Canonical(after));
-        Assert.Equal(ExperienceStoreOutcome.Found, (await _store.GetHistoryAsync(Authorize(tenant), owner, id, CancellationToken.None)).Outcome);
-        Assert.Empty((await _store.GetHistoryAsync(Authorize(tenant), owner, id, CancellationToken.None)).Events);
+        Assert.Equal(ExperienceStoreOutcome.Found, (await _store.GetFirstHistoryPageAsync(Authorize(tenant), owner, id, CancellationToken.None)).Outcome);
+        Assert.Empty((await _store.GetFirstHistoryPageAsync(Authorize(tenant), owner, id, CancellationToken.None)).Events);
     }
 
     // ---------------------------------------------------------------- the owner half of the predicate
@@ -627,9 +627,9 @@ public sealed class PostgresGrantTests
 
         // A writer that bypassed this store and lied about which scope owns the record. The predicate
         // matches the grant's owner columns against the record's own, so the lie admits nothing.
-        await ExecuteAsync(
+        await AsOwnerBypassingGuardsAsync(
             "UPDATE agent_experience.experience_grants SET team_id = 'team-z' WHERE grant_id = @grant_id",
-            ("grant_id", grant.GrantId));
+            grant.GrantId);
 
         Assert.Equal(ExperienceStoreOutcome.NotFound, (await ReadAsync(tenant, recipient, id)).Outcome);
         Assert.Empty((await SearchAsync(tenant, recipient, "refund")).Candidates);
@@ -915,6 +915,25 @@ public sealed class PostgresGrantTests
         }
 
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>
+    /// Writes a grant row the store would never write, with 0006's monotonicity trigger off for the
+    /// duration. That trigger pins a grant's identity and audit columns, so these deliberately-corrupt
+    /// setups are only reachable the way the migration's own header says they are: as the tables' owner,
+    /// explicitly disabling the guard. Doing it here keeps the tests honest about what the guard binds.
+    /// </summary>
+    private async Task AsOwnerBypassingGuardsAsync(string sql, Guid grantId)
+    {
+        await ExecuteAsync("ALTER TABLE agent_experience.experience_grants DISABLE TRIGGER experience_grants_monotonic");
+        try
+        {
+            await ExecuteAsync(sql, ("grant_id", grantId));
+        }
+        finally
+        {
+            await ExecuteAsync("ALTER TABLE agent_experience.experience_grants ENABLE ALWAYS TRIGGER experience_grants_monotonic");
+        }
     }
 
     private async Task ExecuteAsync(string sql, params (string Name, object Value)[] parameters)

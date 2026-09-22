@@ -33,6 +33,30 @@ public enum ExperienceStatus
 }
 
 /// <summary>
+/// Facts about <see cref="ExperienceStatus"/> itself, as opposed to the state machine over it. Which
+/// transitions are legal belongs to Core; which statuses describe a record that may still be reused is a
+/// property of the enum's own members, spelled out here once so retrieval, indexing, and the storage
+/// adapter that has to apply it inside a transaction all read the same list.
+/// </summary>
+public static class ExperienceStatuses
+{
+    /// <summary>
+    /// The statuses in which a record may be retrieved, injected, indexed, or named as another record's
+    /// replacement. Every other status describes a record that is withheld, disputed, out of date,
+    /// already replaced, or withdrawn -- none of which may be handed to an agent as applicable
+    /// experience.
+    /// </summary>
+    public static IReadOnlyList<ExperienceStatus> EligibleForReuse { get; } =
+        [ExperienceStatus.Validated, ExperienceStatus.Reinforced];
+
+    /// <summary>Whether a record in <paramref name="status"/> may still be reused.</summary>
+    /// <param name="status">The status to test.</param>
+    /// <returns><see langword="true"/> when the status is one of <see cref="EligibleForReuse"/>.</returns>
+    public static bool IsEligibleForReuse(ExperienceStatus status) =>
+        status is ExperienceStatus.Validated or ExperienceStatus.Reinforced;
+}
+
+/// <summary>
 /// An append-only record of a single lifecycle state transition for an Experience Record.
 /// Lifecycle changes are events first; current state is a projection derived from them. This
 /// package defines only the event's data shape. Which transitions are valid is owned by Core's
@@ -47,6 +71,15 @@ public enum ExperienceStatus
 /// <param name="Producer">Identity of whatever produced this transition (a policy, an evaluator, or a human principal identifier). Not tied to any identity-provider shape.</param>
 /// <param name="OccurredAt">When this transition occurred.</param>
 /// <param name="ExpectedRevision">The Experience Record revision this event was appended against, for optimistic-concurrency enforcement by the store that applies it.</param>
+/// <param name="ReplacementExperienceId">
+/// The Experience Record that replaces this one, for a transition to
+/// <see cref="ExperienceStatus.Superseded"/>; <see langword="null"/> for every other transition. It is
+/// a column on the event rather than a field of the record's payload because supersession is a fact
+/// about <em>this transition</em>, and because the replacement chain is walked over the event log
+/// itself when a store rejects a cycle. Which replacements are acceptable -- a different record, in
+/// the same exact scope, currently eligible, and not one this record already replaces -- is decided by
+/// Core before the event is stamped.
+/// </param>
 public sealed record LifecycleEvent(
     Guid EventId,
     Guid ExperienceRecordId,
@@ -55,4 +88,5 @@ public sealed record LifecycleEvent(
     string Reason,
     string Producer,
     DateTimeOffset OccurredAt,
-    long ExpectedRevision);
+    long ExpectedRevision,
+    Guid? ReplacementExperienceId = null);

@@ -73,6 +73,63 @@ internal static class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates a bounded history read: the scope, the record, the page bound, and the optional keyset
+    /// cursor. A negative cursor is rejected rather than treated as "from the beginning", because a
+    /// caller that computed one is asking for something it did not mean.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateHistoryQuery(ExperienceRecordHistoryQuery query)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (query.ExperienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(query.Scope, "Scope", errors);
+
+        if (query.Limit is < ExperienceRecordHistoryQuery.MinLimit or > ExperienceRecordHistoryQuery.MaxLimit)
+        {
+            errors.Add(new(
+                "Limit",
+                $"must be between {ExperienceRecordHistoryQuery.MinLimit} and {ExperienceRecordHistoryQuery.MaxLimit}."));
+        }
+
+        if (query.StartAfterRevision is < 0)
+        {
+            errors.Add(new("StartAfterRevision", "must be null or a non-negative revision."));
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a supersession check: the scope both records must lie in, and the two record IDs. The
+    /// two being equal is not checked here -- a record replacing itself is a lifecycle rule Core refuses
+    /// before any store call, not a malformed request.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateSupersessionCheck(
+        Scope scope,
+        Guid experienceId,
+        Guid replacementExperienceId)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (experienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        if (replacementExperienceId == Guid.Empty)
+        {
+            errors.Add(new("ReplacementExperienceId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates a lifecycle commit: the event's own fields plus the request scope the record must lie
     /// in. Field paths name the <see cref="LifecycleEvent"/> member, so a caller can map an error back
     /// to what it supplied.
@@ -107,6 +164,36 @@ internal static class ExperienceRecordValidator
             // OccurredAt is part of the event's stored identity, so an unset value would silently become
             // part of the idempotency key. No upper bound: clock skew makes a future check unsafe.
             errors.Add(new("OccurredAt", "must be set to when the transition occurred."));
+        }
+
+        // The database states the same rule as a CHECK, so it holds for a writer that bypasses the
+        // store; stating it here too turns it into a typed Invalid with a field path rather than an
+        // infrastructure failure. Whether a *particular* replacement is acceptable is Core's decision
+        // and is settled before the event reaches this port.
+        if (lifecycleEvent.ReplacementExperienceId is { } replacementId)
+        {
+            if (lifecycleEvent.CurrentStatus != ExperienceStatus.Superseded)
+            {
+                errors.Add(new(
+                    "ReplacementExperienceId",
+                    $"must be null unless the event moves the record to {ExperienceStatus.Superseded}."));
+            }
+
+            if (replacementId == Guid.Empty)
+            {
+                errors.Add(new("ReplacementExperienceId", "must not be an empty GUID."));
+            }
+
+            if (replacementId == lifecycleEvent.ExperienceRecordId)
+            {
+                errors.Add(new("ReplacementExperienceId", "must name a record other than the one being superseded."));
+            }
+        }
+        else if (lifecycleEvent.CurrentStatus == ExperienceStatus.Superseded)
+        {
+            errors.Add(new(
+                "ReplacementExperienceId",
+                $"is required when the event moves the record to {ExperienceStatus.Superseded}."));
         }
 
         if (lifecycleEvent.ExpectedRevision < 0)
@@ -349,6 +436,20 @@ internal static class ExperienceRecordValidator
             errors.Add(new("Vector", "must hold exactly Descriptor.Dimension components."));
         }
 
+        return errors;
+    }
+
+    /// <summary>Validates a vector removal: the scope the embedding must lie in, and the record it belongs to.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateIndexRemove(Scope scope, Guid experienceId)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (experienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
         return errors;
     }
 

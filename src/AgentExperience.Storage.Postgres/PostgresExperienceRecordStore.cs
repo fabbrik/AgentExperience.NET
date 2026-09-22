@@ -82,14 +82,19 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     private const string EventsTable = "agent_experience.lifecycle_events";
 
+    /// <summary>
+    /// The event columns every read selects, in the order <see cref="DecodeEvent"/> expects (ordinals
+    /// 0-16). A reader that selects more must append its extra columns <em>after</em> these.
+    /// </summary>
     private const string EventColumns =
         "event_id, experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
-        "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision";
+        "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision, " +
+        "replacement_experience_id";
 
     private const string InsertEventSql =
         $"INSERT INTO {EventsTable} ({EventColumns}) VALUES (@event_id, @experience_id, @tenant_id, @application_id, " +
         "@project_id, @team_id, @agent_id, @user_id, @prior_status, @current_status, @reason, @producer, " +
-        "@occurred_at, @recorded_at, @expected_revision, @applied_revision)";
+        "@occurred_at, @recorded_at, @expected_revision, @applied_revision, @replacement_experience_id)";
 
     /// <summary>The primary key a resubmitted <see cref="LifecycleEvent.EventId"/> violates.</summary>
     private const string EventPrimaryKey = "lifecycle_events_pkey";
@@ -100,13 +105,19 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <summary>
     /// The revision guard, the prior-status guard, and the scope predicate live in the same statement,
     /// so a stale revision, a prior status the record is not in, and a foreign scope are all "no row
-    /// updated" and none of them can overwrite state it does not own. A <see langword="null"/>
-    /// <c>@prior_status</c> (a record's first event) skips the status match.
+    /// updated" and none of them can overwrite state it does not own.
+    /// <para>
+    /// A <see langword="null"/> <c>@prior_status</c> does <em>not</em> skip the status match: it falls
+    /// back to <c>@current_status</c>, so a record's first event may only record the status the record
+    /// is already in. Skipping the match -- which this statement used to do -- let a caller move a
+    /// record from any status to any other simply by omitting the prior status, which is precisely what
+    /// Core's transition table exists to prevent.
+    /// </para>
     /// </summary>
     private const string UpdateProjectionSql =
         $"UPDATE {Table} SET status = @current_status, revision = @applied_revision, updated_at = @recorded_at " +
         $"WHERE experience_id = @experience_id AND revision = @expected_revision " +
-        $"AND (@prior_status IS NULL OR status = @prior_status) AND {ScopePredicate}";
+        $"AND status = COALESCE(@prior_status, @current_status) AND {ScopePredicate}";
 
     private const string SelectRevisionAndStatusSql =
         $"SELECT revision, status FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate}";
@@ -116,7 +127,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     private const string JoinedEventColumns =
         "e.event_id, e.experience_id, e.tenant_id, e.application_id, e.project_id, e.team_id, e.agent_id, e.user_id, " +
         "e.prior_status, e.current_status, e.reason, e.producer, e.occurred_at, e.recorded_at, e.expected_revision, " +
-        "e.applied_revision";
+        "e.applied_revision, e.replacement_experience_id";
 
     /// <summary>
     /// The same exact-scope predicate as <see cref="ScopePredicate"/>, qualified with the <c>r</c>
@@ -197,12 +208,73 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// configured: a commit landing mid-read can never make the returned revision contradict the
     /// returned events. The outer join keeps a record with no events a <see cref="ExperienceStoreOutcome.Found"/>
     /// with an empty history -- that row has a null <c>event_id</c>.
+    /// <para>
+    /// Both the cursor and the bound are deliberately awkward here, and both are placed the only way
+    /// that works. The cursor lives in the join's <c>ON</c> clause rather than in the <c>WHERE</c>:
+    /// moved to the <c>WHERE</c>, a cursor past the last event would filter the single joined row away
+    /// and turn an exhausted history into <see cref="ExperienceStoreOutcome.NotFound"/> -- losing the
+    /// distinction between "this record has nothing more to show" and "no such record in this scope".
+    /// The <c>LIMIT</c> is safe where it is for the mirror reason: the no-events row appears only
+    /// when the join matched nothing at all, so any limit of at least one still keeps the row that
+    /// carries <c>r.revision</c>.
+    /// </para>
     /// </summary>
     private const string HistorySql =
         $"SELECT {JoinedEventColumns}, r.revision FROM {Table} r " +
         $"LEFT JOIN {EventsTable} e ON e.experience_id = r.experience_id " +
+        "AND (@start_after_revision IS NULL OR e.applied_revision > @start_after_revision) " +
         $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate} " +
-        "ORDER BY e.applied_revision";
+        "ORDER BY e.applied_revision LIMIT @limit";
+
+    /// <summary>
+    /// The same exact-scope predicate, written out against the <c>e</c> alias rather than derived from
+    /// <see cref="RecordScopePredicate"/> by string replacement. A blind <c>"r." -&gt; "e."</c> rewrite
+    /// would also rewrite any future parameter or column name containing those two characters, and the
+    /// failure would be a silently wrong scope filter inside the recursive chain walk rather than a
+    /// syntax error. The two are kept honest by <c>Scope_predicates_stay_in_step_across_aliases</c>.
+    /// </summary>
+    internal const string EventScopePredicate =
+        "e.tenant_id = @tenant_id AND e.application_id = @application_id AND e.project_id = @project_id " +
+        "AND e.team_id IS NOT DISTINCT FROM @team_id AND e.agent_id IS NOT DISTINCT FROM @agent_id " +
+        "AND e.user_id IS NOT DISTINCT FROM @user_id";
+
+    /// <summary>
+    /// Locks both the record being superseded and its proposed replacement, in a deterministic order so
+    /// two supersessions naming each other cannot deadlock. Held for the rest of the commit transaction,
+    /// which is what makes the replacement checks below atomic with the write: a concurrent transition
+    /// of the replacement either lands before this lock (and is therefore seen by the check) or blocks
+    /// behind it (and is therefore decided against a record this commit has already moved).
+    /// </summary>
+    private const string LockSupersessionRowsSql =
+        $"SELECT experience_id FROM {Table} WHERE experience_id = ANY(@lock_ids) ORDER BY experience_id FOR UPDATE";
+
+    /// <summary>
+    /// The whole supersession check, in one statement and one round trip: is the record in this exact
+    /// scope, is the replacement, and does the replacement already sit on a chain that leads back to
+    /// the record.
+    /// <para>
+    /// The recursive term walks <c>replacement_experience_id</c> forward from the proposed replacement:
+    /// each step asks "and what replaced <em>that</em>". Reaching the record being superseded means the
+    /// record already replaces the replacement, directly or transitively, so accepting this one would
+    /// close a cycle. It is <c>UNION</c>, not <c>UNION ALL</c>, so the walk terminates even over a chain
+    /// some earlier writer managed to close. The recursion is scope-qualified like everything else, so
+    /// a foreign-scope event can neither extend the chain nor reveal that it exists.
+    /// </para>
+    /// </summary>
+    private static readonly string SupersessionCheckSql = $"""
+        WITH RECURSIVE replaced_by(experience_id) AS (
+            SELECT @replacement_id::uuid
+            UNION
+            SELECT e.replacement_experience_id
+            FROM {EventsTable} e
+            JOIN replaced_by c ON e.experience_id = c.experience_id
+            WHERE e.replacement_experience_id IS NOT NULL AND {EventScopePredicate}
+        )
+        SELECT
+            (SELECT r.status FROM {Table} r WHERE r.experience_id = @experience_id AND {RecordScopePredicate}),
+            (SELECT r.status FROM {Table} r WHERE r.experience_id = @replacement_id AND {RecordScopePredicate}),
+            EXISTS (SELECT 1 FROM replaced_by WHERE experience_id = @experience_id)
+        """;
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -479,6 +551,18 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 return await StaleOrMissingAsync(connection, null, scope, lifecycleEvent.ExperienceRecordId, cancellationToken).ConfigureAwait(false);
             }
 
+            // Deliberately after the insert, so a replay never reaches it: retrying a committed
+            // supersession must report the original outcome even once the replacement has itself moved
+            // on, which is exactly the retry a lost acknowledgement calls for.
+            if (lifecycleEvent.ReplacementExperienceId is { } replacementId
+                && await CheckReplacementInTransactionAsync(
+                    connection, transaction, scope, lifecycleEvent.ExperienceRecordId, replacementId, cancellationToken)
+                    .ConfigureAwait(false) is { } refusal)
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                return refusal;
+            }
+
             int updated;
             try
             {
@@ -536,20 +620,20 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <inheritdoc />
     public async Task<ExperienceRecordHistoryResult> GetHistoryAsync(
         AuthorizationContext authorization,
-        Scope scope,
-        Guid experienceId,
+        ExperienceRecordHistoryQuery query,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
-        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(query.Scope, $"{nameof(query)}.{nameof(query.Scope)}");
 
-        var errors = ExperienceRecordValidator.ValidateGet(scope, experienceId);
+        var errors = ExperienceRecordValidator.ValidateHistoryQuery(query);
         if (errors.Count > 0)
         {
             return new(ExperienceStoreOutcome.Invalid, 0, [], errors);
         }
 
-        if (!authorization.Permits(scope))
+        if (!authorization.Permits(query.Scope))
         {
             return new(ExperienceStoreOutcome.Denied, 0, [], NoErrors);
         }
@@ -559,8 +643,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         try
         {
             await using var command = _dataSource.CreateCommand(HistorySql);
-            command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
-            AddScopeParameters(command.Parameters, scope);
+            var parameters = command.Parameters;
+            parameters.Add(new NpgsqlParameter<Guid>("experience_id", query.ExperienceId));
+            AddScopeParameters(parameters, query.Scope);
+            parameters.Add(new NpgsqlParameter("start_after_revision", NpgsqlDbType.Bigint)
+            {
+                Value = query.StartAfterRevision is { } cursor ? cursor : DBNull.Value,
+            });
+            parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -569,12 +659,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 return new(ExperienceStoreOutcome.NotFound, 0, [], NoErrors);
             }
 
-            var revision = ReadRevision(reader, 16);
+            var revision = ReadRevision(reader, 17);
 
-            var events = new List<LifecycleEvent>();
+            var events = new List<StoredLifecycleEvent>();
             if (!reader.IsDBNull(0))
             {
-                // A null event_id is the outer join's single "record with no events" row.
+                // A null event_id is the outer join's single "record with no events" row -- which is
+                // also what an exhausted cursor produces, and deliberately so: it keeps the record
+                // Found with nothing left to show rather than making it look missing.
                 do
                 {
                     events.Add(ReadEvent(reader));
@@ -582,12 +674,152 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false));
             }
 
-            return new(ExperienceStoreOutcome.Found, revision, events, NoErrors);
+            return new(
+                ExperienceStoreOutcome.Found,
+                revision,
+                events,
+                NoErrors,
+                events.Count > 0 ? events[^1].AppliedRevision : null);
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
             throw Translate(ex, "history", cancellationToken);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        Guid replacementExperienceId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateSupersessionCheck(scope, experienceId, replacementExperienceId);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceSupersessionOutcome.Invalid, null, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceSupersessionOutcome.Denied, null, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            return await ReadSupersessionAsync(connection, null, scope, experienceId, replacementExperienceId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "supersession check", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Re-decides the replacement rules inside the commit transaction, with both record rows locked, and
+    /// returns the refusal when they no longer hold. <see langword="null"/> means the supersession may
+    /// proceed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the authoritative check, not a second opinion.
+    /// <see cref="CheckSupersessionAsync"/> answers the same question on its own connection, which makes
+    /// it useful for telling a caller <em>why</em> before it tries -- but an answer read outside this
+    /// transaction is only a prediction. Two supersessions naming each other ("A by B" and "B by A")
+    /// each pass such a prediction and would both commit the cycle the contract refuses. Running the
+    /// check here, after locking both rows in a deterministic order, is what makes "a cycle is refused"
+    /// and "an ineligible replacement is refused" true under concurrency: the loser either sees the
+    /// winner's event or waits for it.
+    /// </para>
+    /// <para>
+    /// Eligibility is read from <see cref="ExperienceStatuses.EligibleForReuse"/> rather than decided
+    /// here, so the rule the transaction enforces is the same list retrieval and indexing apply.
+    /// </para>
+    /// </remarks>
+    private static async Task<ExperienceLifecycleCommitResult?> CheckReplacementInTransactionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Scope scope,
+        Guid experienceId,
+        Guid replacementId,
+        CancellationToken cancellationToken)
+    {
+        await using (var locks = new NpgsqlCommand(LockSupersessionRowsSql, connection, transaction))
+        {
+            locks.Parameters.Add(new NpgsqlParameter<Guid[]>("lock_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid)
+            {
+                TypedValue = [experienceId, replacementId],
+            });
+            await locks.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var check = await ReadSupersessionAsync(connection, transaction, scope, experienceId, replacementId, cancellationToken)
+            .ConfigureAwait(false);
+
+        // The record itself is left to the projection update, which reports NotFound in the one way every
+        // other operation does.
+        if (check.Outcome is ExperienceSupersessionOutcome.RecordNotFound or ExperienceSupersessionOutcome.Allowed
+            && check.ReplacementStatus is { } status
+            && ExperienceStatuses.IsEligibleForReuse(status))
+        {
+            return null;
+        }
+
+        return new(ExperienceStoreOutcome.ReplacementNotAllowed, 0, check.ReplacementStatus, NoErrors);
+    }
+
+    /// <summary>
+    /// Runs the supersession statement, optionally inside a transaction, and turns its three values into
+    /// an outcome. Shared by the read-only port operation and the in-transaction gate, so the two can
+    /// never disagree about what a cycle is.
+    /// </summary>
+    private static async Task<ExperienceSupersessionCheckResult> ReadSupersessionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        Scope scope,
+        Guid experienceId,
+        Guid replacementId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(SupersessionCheckSql, connection, transaction);
+        var parameters = command.Parameters;
+        parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+        parameters.Add(new NpgsqlParameter<Guid>("replacement_id", replacementId));
+        AddScopeParameters(parameters, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // The statement always produces exactly one row; treat the impossible case as "no record".
+            return new(ExperienceSupersessionOutcome.RecordNotFound, null, NoErrors);
+        }
+
+        if (reader.IsDBNull(0))
+        {
+            return new(ExperienceSupersessionOutcome.RecordNotFound, null, NoErrors);
+        }
+
+        if (reader.IsDBNull(1))
+        {
+            // Missing, or in another scope: identical either way, so nothing about it is revealed.
+            return new(ExperienceSupersessionOutcome.ReplacementNotFound, null, NoErrors);
+        }
+
+        var replacementStatus = ReadStoredStatus(reader, 1);
+
+        // The cycle is reported before the status, so a replacement that is both eligible and on a
+        // closing chain is still refused for the reason that actually matters.
+        return reader.GetBoolean(2)
+            ? new(ExperienceSupersessionOutcome.Cycle, replacementStatus, NoErrors)
+            : new(ExperienceSupersessionOutcome.Allowed, replacementStatus, NoErrors);
     }
 
     /// <summary>
@@ -616,12 +848,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         var stored = ReadEvent(reader);
         var storedScope = ReadEventScope(reader);
-        var appliedRevision = ReadRevision(reader, 15);
+        var appliedRevision = stored.AppliedRevision;
 
-        // Record equality compares every field of the event; the scope is compared alongside it. The
-        // revision reported is the one the original commit produced, not the record's current one.
+        // Record equality compares every field of the event -- the replacement ID included, so a replay
+        // that names a different replacement is a conflict rather than a silent no-op. The scope is
+        // compared alongside it. The revision reported is the one the original commit produced, not the
+        // record's current one.
         var resubmitted = lifecycleEvent with { OccurredAt = occurredAt };
-        return stored == resubmitted && storedScope == scope
+        return stored.Event == resubmitted && storedScope == scope
             ? new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors)
             : new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
     }
@@ -693,6 +927,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
         parameters.Add(new NpgsqlParameter<long>("expected_revision", lifecycleEvent.ExpectedRevision));
         parameters.Add(new NpgsqlParameter<long>("applied_revision", appliedRevision));
+        parameters.Add(new NpgsqlParameter("replacement_experience_id", NpgsqlDbType.Uuid)
+        {
+            Value = lifecycleEvent.ReplacementExperienceId is { } replacementId ? replacementId : DBNull.Value,
+        });
     }
 
     internal static void AddScopeParameters(NpgsqlParameterCollection parameters, Scope scope)
@@ -767,7 +1005,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
     }
 
-    private static LifecycleEvent ReadEvent(DbDataReader reader)
+    private static StoredLifecycleEvent ReadEvent(DbDataReader reader)
     {
         try
         {
@@ -780,15 +1018,19 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
     }
 
-    private static LifecycleEvent DecodeEvent(DbDataReader reader) => new(
-        EventId: reader.GetGuid(0),
-        ExperienceRecordId: reader.GetGuid(1),
-        PriorStatus: reader.IsDBNull(8) ? null : DecodeStatus(reader.GetString(8), "lifecycle event"),
-        CurrentStatus: DecodeStatus(reader.GetString(9), "lifecycle event"),
-        Reason: reader.GetString(10),
-        Producer: reader.GetString(11),
-        OccurredAt: reader.GetFieldValue<DateTimeOffset>(12),
-        ExpectedRevision: reader.GetInt64(14));
+    private static StoredLifecycleEvent DecodeEvent(DbDataReader reader) => new(
+        new LifecycleEvent(
+            EventId: reader.GetGuid(0),
+            ExperienceRecordId: reader.GetGuid(1),
+            PriorStatus: reader.IsDBNull(8) ? null : DecodeStatus(reader.GetString(8), "lifecycle event"),
+            CurrentStatus: DecodeStatus(reader.GetString(9), "lifecycle event"),
+            Reason: reader.GetString(10),
+            Producer: reader.GetString(11),
+            OccurredAt: reader.GetFieldValue<DateTimeOffset>(12),
+            ExpectedRevision: reader.GetInt64(14),
+            ReplacementExperienceId: reader.IsDBNull(16) ? null : reader.GetGuid(16)),
+        RecordedAt: reader.GetFieldValue<DateTimeOffset>(13),
+        AppliedRevision: reader.GetInt64(15));
 
     /// <summary>Reads a <c>bigint</c> revision, reporting schema drift the way the row decoders do.</summary>
     private static long ReadRevision(DbDataReader reader, int ordinal)

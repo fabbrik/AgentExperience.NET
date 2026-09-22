@@ -88,8 +88,7 @@ public sealed class ExperienceRetrievalService
     /// a default: a record in any other status is never injectable, whatever its text match or
     /// confidence.
     /// </summary>
-    public static IReadOnlyList<ExperienceStatus> EligibleStatuses { get; } =
-        [ExperienceStatus.Validated, ExperienceStatus.Reinforced];
+    public static IReadOnlyList<ExperienceStatus> EligibleStatuses => ExperienceStatuses.EligibleForReuse;
 
     /// <summary>The status component's value for a <see cref="ExperienceStatus.Validated"/> record.</summary>
     public const double ValidatedStatusScore = 0.5;

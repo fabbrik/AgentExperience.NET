@@ -122,6 +122,54 @@ public sealed record ExperienceIndexingResult(
         or ExperienceIndexingOutcome.Stale;
 }
 
+/// <summary>What removing one record's embedding ended as.</summary>
+public enum ExperienceDeindexingOutcome
+{
+    /// <summary>The stored vector was removed, so the vector channel can no longer return this record.</summary>
+    Removed,
+
+    /// <summary>
+    /// There was nothing to remove: the record was never embedded, its vector was already removed, or
+    /// it lies in another scope. Nothing was written, and repeating the call changes nothing.
+    /// </summary>
+    NotIndexed,
+
+    /// <summary>The request scope lies outside the host-established authorization. Nothing was read or written.</summary>
+    Denied,
+
+    /// <summary>
+    /// The index failed, refused the request, or was cancelled. The vector may still be stored, so a
+    /// later pass should try again -- but nothing about the record's lifecycle depends on this.
+    /// </summary>
+    Failed,
+}
+
+/// <summary>
+/// The result of removing one record's embedding. Like every indexing result it is structured rather
+/// than thrown, because de-indexing is derived work that must never be able to fail the canonical
+/// transition that triggered it.
+/// </summary>
+/// <param name="Outcome">What happened.</param>
+/// <param name="ExperienceId">The record this result is about.</param>
+/// <param name="Failure">Why the vector could not be removed; otherwise <see langword="null"/>.</param>
+public sealed record ExperienceDeindexingResult(
+    ExperienceDeindexingOutcome Outcome,
+    Guid ExperienceId,
+    ExperienceIndexingFailure? Failure)
+{
+    /// <summary>Whether no vector for this record is stored any more, whether this call removed it or found none.</summary>
+    public bool IsRemoved => Outcome is ExperienceDeindexingOutcome.Removed or ExperienceDeindexingOutcome.NotIndexed;
+
+    /// <summary>
+    /// Whether running the <em>same</em> removal again could succeed. Only an index failure is: an
+    /// absent vector needs nothing, and a denied scope needs a different authorization rather than
+    /// another attempt. A <see cref="ExperienceDeindexingOutcome.Denied"/> removal therefore still
+    /// leaves a vector to reclaim even though this is <see langword="false"/> -- nothing in this
+    /// library sweeps for it, so a host that cares should record it and remove it out of band.
+    /// </summary>
+    public bool IsRetryable => Outcome is ExperienceDeindexingOutcome.Failed;
+}
+
 /// <summary>What a whole re-index pass ended as.</summary>
 public enum ExperienceReindexOutcome
 {

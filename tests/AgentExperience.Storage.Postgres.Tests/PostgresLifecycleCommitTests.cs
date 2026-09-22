@@ -47,16 +47,24 @@ public sealed class PostgresLifecycleCommitTests
         Assert.Equal(record.Contradictions, stored.Contradictions);
         Assert.Equal(record.CreatedAt, stored.CreatedAt);
 
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
         Assert.Equal(ExperienceStoreOutcome.Found, history.Outcome);
         Assert.Equal(record.Revision + 1, history.Revision);
-        var only = Assert.Single(history.Events);
+        var stamped = Assert.Single(history.Events);
+        var only = stamped.Event;
         Assert.Equal(lifecycleEvent.EventId, only.EventId);
         Assert.Equal(ExperienceStatus.Candidate, only.PriorStatus);
         Assert.Equal(ExperienceStatus.Validated, only.CurrentStatus);
         Assert.Equal(lifecycleEvent.Reason, only.Reason);
         Assert.Equal(lifecycleEvent.Producer, only.Producer);
         Assert.Equal(TimeSpan.Zero, only.OccurredAt.Offset);
+        Assert.Null(only.ReplacementExperienceId);
+
+        // The store's own two facts about the row, which no caller supplies.
+        Assert.Equal(record.Revision + 1, stamped.AppliedRevision);
+        Assert.Equal(TimeSpan.Zero, stamped.RecordedAt.Offset);
+        Assert.True(stamped.RecordedAt >= only.OccurredAt);
+        Assert.Equal(stamped.AppliedRevision, history.NextStartAfterRevision);
     }
 
     [Fact]
@@ -77,7 +85,7 @@ public sealed class PostgresLifecycleCommitTests
         Assert.Equal(first.Revision, replay.Revision);
         Assert.Equal(first.Outcome, replayAgain.Outcome);
 
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
         Assert.Single(history.Events);
         Assert.Equal(1, history.Revision);
     }
@@ -130,10 +138,10 @@ public sealed class PostgresLifecycleCommitTests
         Assert.Empty(result.Errors);
 
         // Neither the stored event nor either record moved.
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
-        Assert.Equal(original, Assert.Single(history.Events) with { OccurredAt = original.OccurredAt });
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(original, Assert.Single(history.Events).Event with { OccurredAt = original.OccurredAt });
         Assert.Equal(1, history.Revision);
-        var otherHistory = await _store.GetHistoryAsync(auth, other.Scope, other.ExperienceId, CancellationToken.None);
+        var otherHistory = await _store.GetFirstHistoryPageAsync(auth, other.Scope, other.ExperienceId, CancellationToken.None);
         Assert.Empty(otherHistory.Events);
         Assert.Equal(0, otherHistory.Revision);
     }
@@ -160,7 +168,7 @@ public sealed class PostgresLifecycleCommitTests
 
         Assert.Equal(ExperienceStoreOutcome.Conflict, result.Outcome);
         Assert.Empty(result.Errors);
-        var foreignHistory = await _store.GetHistoryAsync(Authorize(foreignTenant), foreignRecord.Scope, foreignRecord.ExperienceId, CancellationToken.None);
+        var foreignHistory = await _store.GetFirstHistoryPageAsync(Authorize(foreignTenant), foreignRecord.Scope, foreignRecord.ExperienceId, CancellationToken.None);
         Assert.Empty(foreignHistory.Events);
         Assert.Equal(0, foreignHistory.Revision);
     }
@@ -190,7 +198,7 @@ public sealed class PostgresLifecycleCommitTests
         var stored = (await _store.GetAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
         Assert.Equal(ExperienceStatus.Validated, stored.Status);
         Assert.Equal(1, stored.Revision);
-        Assert.Single((await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Events);
+        Assert.Single((await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Events);
     }
 
     [Fact]
@@ -219,7 +227,7 @@ public sealed class PostgresLifecycleCommitTests
         var stored = (await _store.GetAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
         Assert.Equal(ExperienceStatus.Candidate, stored.Status);
         Assert.Equal(0, stored.Revision);
-        Assert.Empty((await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Events);
+        Assert.Empty((await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Events);
         Assert.Equal(0, await CountEventsAsync(record.ExperienceId));
     }
 
@@ -233,8 +241,8 @@ public sealed class PostgresLifecycleCommitTests
         await _store.CommitLifecycleEventAsync(
             auth, record.Scope, Event(record.ExperienceId, ExperienceStatus.Candidate, ExperienceStatus.Revoked, 0), CancellationToken.None);
 
-        var otherTeam = await _store.GetHistoryAsync(auth, Scope(tenant, team: "team-2"), record.ExperienceId, CancellationToken.None);
-        var missing = await _store.GetHistoryAsync(auth, record.Scope, Guid.NewGuid(), CancellationToken.None);
+        var otherTeam = await _store.GetFirstHistoryPageAsync(auth, Scope(tenant, team: "team-2"), record.ExperienceId, CancellationToken.None);
+        var missing = await _store.GetFirstHistoryPageAsync(auth, record.Scope, Guid.NewGuid(), CancellationToken.None);
 
         Assert.All([otherTeam, missing], result =>
         {
@@ -264,21 +272,22 @@ public sealed class PostgresLifecycleCommitTests
                 (await _store.CommitLifecycleEventAsync(auth, record.Scope, step, CancellationToken.None)).Outcome);
         }
 
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Found, history.Outcome);
         Assert.Equal(3, history.Revision);
-        Assert.Equal([validated.EventId, quarantined.EventId, revoked.EventId], history.Events.Select(e => e.EventId));
+        Assert.Equal([validated.EventId, quarantined.EventId, revoked.EventId], history.Events.Select(e => e.Event.EventId));
         Assert.Equal(
             [
                 (ExperienceStatus.Candidate, ExperienceStatus.Validated),
                 (ExperienceStatus.Validated, ExperienceStatus.Quarantined),
                 (ExperienceStatus.Quarantined, ExperienceStatus.Revoked),
             ],
-            history.Events.Select(e => (e.PriorStatus, e.CurrentStatus)));
-        Assert.Equal([0L, 1L, 2L], history.Events.Select(e => e.ExpectedRevision));
-        Assert.Equal("withdrawn by policy", history.Events[^1].Reason);
-        Assert.Equal("governance", history.Events[^1].Producer);
+            history.Events.Select(e => (e.Event.PriorStatus, e.Event.CurrentStatus)));
+        Assert.Equal([0L, 1L, 2L], history.Events.Select(e => e.Event.ExpectedRevision));
+        Assert.Equal([1L, 2L, 3L], history.Events.Select(e => e.AppliedRevision));
+        Assert.Equal("withdrawn by policy", history.Events[^1].Event.Reason);
+        Assert.Equal("governance", history.Events[^1].Event.Producer);
 
         var stored = (await _store.GetAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
         Assert.Equal(ExperienceStatus.Revoked, stored.Status);
@@ -292,26 +301,36 @@ public sealed class PostgresLifecycleCommitTests
         var record = Minimal(Scope(tenant));
         await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
-        var history = await _store.GetHistoryAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Found, history.Outcome);
         Assert.Equal(0, history.Revision);
         Assert.Empty(history.Events);
+        Assert.Null(history.NextStartAfterRevision);
     }
 
     [Fact]
-    public async Task A_first_lifecycle_event_may_carry_a_null_prior_status()
+    public async Task A_first_lifecycle_event_may_carry_a_null_prior_status_only_for_the_status_the_record_is_in()
     {
         var tenant = NewTenant();
         var record = Minimal(Scope(tenant));
         await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
+        // A null prior status is not a way past the status guard: it falls back to the current status,
+        // so a first event can only record where the record already is.
+        var elsewhere = await _store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, null, ExperienceStatus.Validated, 0), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.StatusMismatch, elsewhere.Outcome);
+        Assert.Equal(ExperienceStatus.Candidate, elsewhere.CurrentStatus);
+        Assert.Equal(0, await CountEventsAsync(record.ExperienceId));
+
         var result = await _store.CommitLifecycleEventAsync(
-            Authorize(tenant), record.Scope, Event(record.ExperienceId, null, ExperienceStatus.Quarantined, 0), CancellationToken.None);
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, null, ExperienceStatus.Candidate, 0), CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Committed, result.Outcome);
-        var history = await _store.GetHistoryAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None);
-        Assert.Null(Assert.Single(history.Events).PriorStatus);
+        var history = await _store.GetFirstHistoryPageAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None);
+        Assert.Null(Assert.Single(history.Events).Event.PriorStatus);
     }
 
     [Fact]
@@ -335,9 +354,9 @@ public sealed class PostgresLifecycleCommitTests
         var stored = (await _store.GetAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
         Assert.Equal(1, stored.Revision);
 
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
         Assert.Equal(1, history.Revision);
-        var winner = Assert.Single(history.Events);
+        var winner = Assert.Single(history.Events).Event;
         Assert.Equal(winner.CurrentStatus, stored.Status);
 
         // The loser's event never reached the log, so the log matches the projection exactly.
@@ -490,20 +509,34 @@ public sealed class PostgresLifecycleCommitTests
     public async Task A_corrupt_stored_status_throws_ExperienceStoreException_on_history()
     {
         var tenant = NewTenant();
-        var record = Minimal(Scope(tenant));
+        var scope = Scope(tenant);
+        var record = Minimal(scope);
         await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
-        var lifecycleEvent = Event(record.ExperienceId, ExperienceStatus.Candidate, ExperienceStatus.Validated, 0);
-        await _store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, lifecycleEvent, CancellationToken.None);
 
+        // The row cannot be corrupted by UPDATE any more -- 0006's trigger refuses that -- and 0006 also
+        // constrains the status column to the known names, so reaching a status .NET cannot parse now
+        // takes the owner's own hand: drop the constraint, write the row, put it back NOT VALID (the row
+        // just written would fail a validating re-add, which is the point).
+        await ExecuteAsync("ALTER TABLE agent_experience.lifecycle_events DROP CONSTRAINT lifecycle_events_current_status_known");
         await using (var corrupt = _fixture.DataSource.CreateCommand(
-            "UPDATE agent_experience.lifecycle_events SET current_status = 'validated' WHERE event_id = @id"))
+            "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, project_id, " +
+            "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision) " +
+            "VALUES (gen_random_uuid(), @id, @tenant, @app, @project, NULL, 'validated', 'hand-written', 'tests', now(), now(), 0, 1)"))
         {
-            corrupt.Parameters.Add(new NpgsqlParameter<Guid>("id", lifecycleEvent.EventId));
+            corrupt.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
+            corrupt.Parameters.Add(new NpgsqlParameter<string>("tenant", tenant));
+            corrupt.Parameters.Add(new NpgsqlParameter<string>("app", scope.ApplicationId));
+            corrupt.Parameters.Add(new NpgsqlParameter<string>("project", scope.ProjectId));
             Assert.Equal(1, await corrupt.ExecuteNonQueryAsync());
         }
 
+        await ExecuteAsync(
+            "ALTER TABLE agent_experience.lifecycle_events ADD CONSTRAINT lifecycle_events_current_status_known " +
+            "CHECK (current_status IN ('Candidate', 'Validated', 'Quarantined', 'Contested', 'Stale', " +
+            "'Superseded', 'Revoked', 'Reinforced')) NOT VALID");
+
         var ex = await Assert.ThrowsAsync<ExperienceStoreException>(
-            () => _store.GetHistoryAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None));
+            () => _store.GetFirstHistoryPageAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None));
 
         // The message must name the row that is actually corrupt, not the record.
         Assert.Equal("Stored lifecycle event has an unrecognized status.", ex.Message);
@@ -610,9 +643,9 @@ public sealed class PostgresLifecycleCommitTests
         Assert.Equal(2, middle.Revision);
 
         // Nothing was written by either replay.
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
         Assert.Equal(3, history.Revision);
-        Assert.Equal([first.EventId, second.EventId, third.EventId], history.Events.Select(e => e.EventId));
+        Assert.Equal([first.EventId, second.EventId, third.EventId], history.Events.Select(e => e.Event.EventId));
     }
 
     [Fact]
@@ -626,9 +659,10 @@ public sealed class PostgresLifecycleCommitTests
             auth, record.Scope, Event(record.ExperienceId, ExperienceStatus.Candidate, ExperienceStatus.Validated, 0), CancellationToken.None);
 
         // Whatever else is happening, the revision must equal the highest applied revision in the events.
-        var history = await _store.GetHistoryAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, record.Scope, record.ExperienceId, CancellationToken.None);
 
-        Assert.Equal(history.Events.Max(e => e.ExpectedRevision) + 1, history.Revision);
+        Assert.Equal(history.Events.Max(e => e.Event.ExpectedRevision) + 1, history.Revision);
+        Assert.Equal(history.Events.Max(e => e.AppliedRevision), history.Revision);
     }
 
     private async Task<long> CountEventsAsync(Guid experienceId)

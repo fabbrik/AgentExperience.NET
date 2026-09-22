@@ -36,6 +36,11 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// them fails.
     /// </para>
     /// <para>
+    /// Both also pick up an <see cref="ExperienceIndexingService"/> when one is registered -- so a
+    /// committed record is embedded and a record that leaves eligibility is de-indexed -- and work
+    /// without one, which is the text-only deployment. Registration order does not matter.
+    /// </para>
+    /// <para>
     /// No sanitization policy or capture limit is invented here: both are host decisions with real
     /// security and memory consequences, so both are required arguments.
     /// </para>
@@ -64,7 +69,12 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<ISanitizer>(),
             captureLimits));
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
-        services.TryAddSingleton<ExperienceLifecycleService>();
+        // Both hooks are resolved through an explicit factory rather than by constructor selection,
+        // because the optional ExperienceIndexingService has to come back as null when nothing
+        // registered it -- which is what a text-only deployment is.
+        services.TryAddSingleton(provider => new ExperienceLifecycleService(
+            provider.GetRequiredService<IExperienceRecordStore>(),
+            provider.GetService<ExperienceIndexingService>()));
 
         // The indexing hook is resolved optionally, not required: a host that never registered
         // AddAgentExperienceIndexing gets finalization with no hook at all, which is exactly the

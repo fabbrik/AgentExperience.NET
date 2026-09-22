@@ -255,6 +255,57 @@ public class CoreServiceRegistrationTests
     }
 
     [Fact]
+    public async Task The_lifecycle_service_picks_up_a_de_indexing_hook_when_one_is_registered_and_works_without_one()
+    {
+        var index = new FakeEmbeddingIndex();
+        var wired = new ServiceCollection();
+        wired.AddSingleton<IExperienceRecordStore>(new StubStore());
+        wired.AddSingleton<IExperienceEmbeddingIndex>(index);
+        wired.AddSingleton<IExperienceEmbeddingGenerator>(new FakeEmbeddingGenerator());
+        wired.AddAgentExperienceIndexing();
+        wired.AddAgentExperienceCore(CallerOptions, CallerLimits);
+
+        using var withHook = wired.BuildServiceProvider();
+        var committed = await withHook.GetRequiredService<Lifecycle.ExperienceLifecycleService>().CommitAsync(
+            Authorization,
+            Transition(ExperienceStatus.Validated, ExperienceStatus.Stale),
+            CancellationToken.None);
+
+        // The hook ran, which is only observable through the result and the index it was given.
+        Assert.Equal(Lifecycle.LifecycleTransitionOutcome.Committed, committed.Outcome);
+        Assert.NotNull(committed.Deindexing);
+        Assert.Single(index.Removals);
+
+        // And a text-only deployment resolves the same service with no hook at all.
+        var textOnly = new ServiceCollection();
+        textOnly.AddSingleton<IExperienceRecordStore>(new StubStore());
+        textOnly.AddAgentExperienceCore(CallerOptions, CallerLimits);
+
+        using var withoutHook = textOnly.BuildServiceProvider();
+        var plain = await withoutHook.GetRequiredService<Lifecycle.ExperienceLifecycleService>().CommitAsync(
+            Authorization,
+            Transition(ExperienceStatus.Validated, ExperienceStatus.Stale),
+            CancellationToken.None);
+
+        Assert.Equal(Lifecycle.LifecycleTransitionOutcome.Committed, plain.Outcome);
+        Assert.Null(plain.Deindexing);
+    }
+
+    private static readonly AuthorizationContext Authorization =
+        new("tenant-1", "principal", ["experience:write"], new DateTimeOffset(2026, 9, 22, 10, 0, 0, TimeSpan.Zero));
+
+    private static Lifecycle.CommitLifecycleTransitionRequest Transition(ExperienceStatus prior, ExperienceStatus current) => new(
+        EventId: Guid.NewGuid(),
+        ExperienceId: Guid.NewGuid(),
+        Scope: new Scope("tenant-1", "app-1", "project-1"),
+        PriorStatus: prior,
+        CurrentStatus: current,
+        Reason: "later evidence",
+        Producer: "tests",
+        OccurredAt: new DateTimeOffset(2026, 9, 22, 10, 0, 0, TimeSpan.Zero),
+        ExpectedRevision: 0);
+
+    [Fact]
     public void Finalization_resolves_without_an_indexing_hook_at_all()
     {
         // A text-only deployment registers no embedding index and no generator, and must still work.
@@ -288,7 +339,10 @@ public class CoreServiceRegistrationTests
         Assert.True(hybridProvider.GetRequiredService<ExperienceRetrievalService>().HybridEnabled);
     }
 
-    /// <summary>Stands in for a storage adapter's registration; finalization never calls it here.</summary>
+    /// <summary>
+    /// Stands in for a storage adapter's registration. Finalization never calls it here; the lifecycle
+    /// registration test does, so the one operation it needs accepts the commit and nothing else does.
+    /// </summary>
     private sealed class StubStore : IExperienceRecordStore
     {
         public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken) =>
@@ -301,9 +355,13 @@ public class CoreServiceRegistrationTests
             throw new NotSupportedException();
 
         public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AuthorizationContext authorization, Scope scope, LifecycleEvent lifecycleEvent, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExperienceLifecycleCommitResult(
+                ExperienceStoreOutcome.Committed, lifecycleEvent.ExpectedRevision + 1, null, []));
+
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

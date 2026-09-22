@@ -135,6 +135,15 @@ internal sealed class FakeEmbeddingIndex : IExperienceEmbeddingIndex
     /// <summary>When set, answers every vector search instead of the default empty result.</summary>
     public Func<ExperienceVectorQuery, ExperienceVectorSearchResult>? OnSearch { get; init; }
 
+    /// <summary>Every removal this index was asked for, in order -- including the ones that found nothing.</summary>
+    public List<(Scope Scope, Guid ExperienceId)> Removals { get; } = [];
+
+    /// <summary>When set, every removal throws this.</summary>
+    public Exception? RemoveThrows { get; init; }
+
+    /// <summary>When set, runs before a removal is applied -- the seam for a removal that hangs or is cancelled.</summary>
+    public Action<CancellationToken>? BeforeRemove { get; init; }
+
     public Task<ExperienceIndexWriteResult> WriteAsync(
         AuthorizationContext authorization,
         ExperienceIndexWrite write,
@@ -170,6 +179,36 @@ internal sealed class FakeEmbeddingIndex : IExperienceEmbeddingIndex
 
         Stored[write.ExperienceId] = (write.Descriptor, write.Vector);
         return Task.FromResult(new ExperienceIndexWriteResult(ExperienceIndexOutcome.Written, 0, []));
+    }
+
+    public Task<ExperienceIndexRemoveResult> RemoveAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken)
+    {
+        Assert.NotNull(authorization);
+        Assert.NotNull(scope);
+        Removals.Add((scope, experienceId));
+
+        if (RemoveThrows is not null)
+        {
+            throw RemoveThrows;
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return Task.FromResult(new ExperienceIndexRemoveResult(ExperienceIndexRemoveOutcome.Denied, []));
+        }
+
+        BeforeRemove?.Invoke(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Removal is a DELETE: it does not care whether the canonical record still exists, only
+        // whether a vector was there to remove.
+        return Task.FromResult(new ExperienceIndexRemoveResult(
+            Stored.Remove(experienceId) ? ExperienceIndexRemoveOutcome.Removed : ExperienceIndexRemoveOutcome.NotIndexed,
+            []));
     }
 
     public Task<ExperienceIndexScanResult> ScanAsync(
