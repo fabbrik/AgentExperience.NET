@@ -102,7 +102,12 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "e.prior_status, e.current_status, e.reason, e.producer, e.occurred_at, e.recorded_at, e.expected_revision, " +
         "e.applied_revision";
 
-    private const string RecordScopePredicate =
+    /// <summary>
+    /// The same exact-scope predicate as <see cref="ScopePredicate"/>, qualified with the <c>r</c>
+    /// alias for a statement that joins the record table to another one. Shared with the vectors
+    /// adapter, so both retrieval channels apply a byte-for-byte identical scope match.
+    /// </summary>
+    internal const string RecordScopePredicate =
         "r.tenant_id = @tenant_id AND r.application_id = @application_id AND r.project_id = @project_id " +
         "AND r.team_id IS NOT DISTINCT FROM @team_id AND r.agent_id IS NOT DISTINCT FROM @agent_id " +
         "AND r.user_id IS NOT DISTINCT FROM @user_id";

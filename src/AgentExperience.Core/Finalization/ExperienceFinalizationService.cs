@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
+using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Reflections;
 using AgentExperience.Core.Verification;
@@ -21,6 +22,18 @@ namespace AgentExperience.Core.Finalization;
 /// the record's initial lifecycle event. The two gates deliberately precede reflection:
 /// <see cref="IExperienceReflector"/> is the documented seam for a model-backed reflector, so a run
 /// the host is about to refuse is never handed to it.
+/// </para>
+/// <para>
+/// <b>Indexing, after the fact.</b> When an <see cref="ExperienceIndexingService"/> is wired in, the
+/// committed record's sanitized retrieval summary is embedded once the initial event has landed --
+/// outside the canonical write, and only for an event <em>this</em> call committed, so an
+/// <see cref="FinalizationOutcome.AlreadyFinalized"/> replay never re-embeds. It runs only for a
+/// record a vector search could actually return
+/// (<see cref="ExperienceIndexingService.IsIndexable"/>), so a quarantined record's summary and lesson
+/// are never sent to a provider, and it is bounded by <see cref="IndexingTimeout"/>, so a hung
+/// provider cannot hold this call open after the record is durable. It is reported on
+/// <see cref="FinalizeExperienceResult.Indexing"/> and can never change the outcome: a provider that
+/// is down leaves the record committed, durable, text-searchable, and indexable by a later pass.
 /// </para>
 /// <para>
 /// <b>Validated vs quarantined.</b> A verified evaluation plus a successful reflection plus a
@@ -61,7 +74,8 @@ namespace AgentExperience.Core.Finalization;
 /// throws; the captured snapshot is never evicted, so the host can retry. The one exception is
 /// cancellation: an <see cref="OperationCanceledException"/> from <em>any</em> stage -- the caller's
 /// token or a port cancelling for its own reasons -- always propagates, so a cancelled call never
-/// silently becomes a quarantined record.
+/// silently becomes a quarantined record. The post-commit indexing hook is outside that rule, because
+/// by the time it runs the record is already durable and throwing would deny a fact that is true.
 /// </para>
 /// </remarks>
 public sealed class ExperienceFinalizationService
@@ -79,6 +93,14 @@ public sealed class ExperienceFinalizationService
     public const ExperienceStatus CreatedStatus = ExperienceStatus.Candidate;
 
     /// <summary>
+    /// The default budget for the post-commit indexing hook, after which it is abandoned and reported
+    /// as retryable. The record is already durable when the hook starts, so this bounds nothing but the
+    /// caller's wait -- which is exactly what it exists for: a hung provider must not hold
+    /// <see cref="FinalizeAsync"/> open after the canonical work is done.
+    /// </summary>
+    public static readonly TimeSpan DefaultIndexingTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
     /// Fixed namespace for the derived identifiers below. Changing it would re-issue every record ID,
     /// so it is a constant of this library, never configurable.
     /// </summary>
@@ -94,8 +116,9 @@ public sealed class ExperienceFinalizationService
     private readonly IExperienceReflector _reflector;
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceLifecycleService _lifecycleService;
+    private readonly ExperienceIndexingService? _indexingService;
 
-    /// <summary>Creates a finalization service over the capture snapshot, the reflector, the record store, and Core's lifecycle owner.</summary>
+    /// <summary>Creates a finalization service over the capture snapshot, the reflector, the record store, and Core's lifecycle owner, with no indexing hook.</summary>
     /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
     /// <param name="reflector">Turns the evaluated run into an auditable reflection.</param>
     /// <param name="store">The durable Experience Record store.</param>
@@ -106,6 +129,34 @@ public sealed class ExperienceFinalizationService
         IExperienceReflector reflector,
         IExperienceRecordStore store,
         ExperienceLifecycleService lifecycleService)
+        : this(captureService, reflector, store, lifecycleService, indexingService: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a finalization service with an optional post-commit indexing hook.
+    /// </summary>
+    /// <remarks>
+    /// The hook runs only after an initial lifecycle event this call actually committed, never on a
+    /// replay of an already-finalized run, and it can never fail finalization: every outcome it
+    /// reaches, including a provider that throws and a cancellation, is reported on the result and
+    /// nothing more. See <see cref="FinalizeExperienceResult.Indexing"/>.
+    /// </remarks>
+    /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
+    /// <param name="reflector">Turns the evaluated run into an auditable reflection.</param>
+    /// <param name="store">The durable Experience Record store.</param>
+    /// <param name="lifecycleService">Core's lifecycle owner, which stamps and commits the initial event.</param>
+    /// <param name="indexingService">Optional. Embeds the committed record's sanitized retrieval summary after the fact.</param>
+    /// <param name="indexingTimeout">Optional. How long that hook may take before it is abandoned and reported as retryable. Must be strictly positive. Defaults to <see cref="DefaultIndexingTimeout"/>.</param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="indexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceFinalizationService(
+        IExperienceCaptureService captureService,
+        IExperienceReflector reflector,
+        IExperienceRecordStore store,
+        ExperienceLifecycleService lifecycleService,
+        ExperienceIndexingService? indexingService,
+        TimeSpan? indexingTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(captureService);
         ArgumentNullException.ThrowIfNull(reflector);
@@ -116,7 +167,20 @@ public sealed class ExperienceFinalizationService
         _reflector = reflector;
         _store = store;
         _lifecycleService = lifecycleService;
+        _indexingService = indexingService;
+        IndexingTimeout = indexingTimeout ?? DefaultIndexingTimeout;
+
+        if (IndexingTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(indexingTimeout),
+                IndexingTimeout,
+                "The indexing budget must be strictly positive; an unbounded hook is what this exists to prevent.");
+        }
     }
+
+    /// <summary>The budget this service gives the post-commit indexing hook.</summary>
+    public TimeSpan IndexingTimeout { get; }
 
     /// <summary>The <see cref="ExperienceRecord.ExperienceId"/> finalizing <paramref name="runId"/> issues, derived from the run so a retry re-derives the same ID.</summary>
     /// <param name="runId">The captured run.</param>
@@ -526,6 +590,12 @@ public sealed class ExperienceFinalizationService
             UpdatedAt = transition.OccurredAt,
         };
 
+        // Stage 7 -- Index, after the commit and outside it. The record is already durable at this
+        // point; nothing below can undo that, and nothing below is allowed to change this result's
+        // outcome. An AlreadyFinalized replay never reaches here, so a re-finalized run never
+        // re-embeds.
+        var indexing = await TryIndexAsync(request, committed, cancellationToken).ConfigureAwait(false);
+
         return new FinalizeExperienceResult(
             targetStatus == ExperienceStatus.Validated ? FinalizationOutcome.Validated : FinalizationOutcome.Quarantined,
             FinalizationStage.CommitInitialEvent,
@@ -535,7 +605,92 @@ public sealed class ExperienceFinalizationService
             evaluation,
             committed.Reflection,
             failure,
-            Reason: null);
+            Reason: null,
+            indexing);
+    }
+
+    /// <summary>
+    /// Runs the optional indexing hook for a record whose initial event this call just committed, and
+    /// swallows everything it can do wrong.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Embeddings are derived data: the canonical write must never depend on a provider being up. So
+    /// every failure here -- a throwing provider, an unreachable index, a stale or missing record --
+    /// is turned into a reported, retryable <see cref="ExperienceIndexingResult"/> and never rethrown
+    /// into finalization.
+    /// </para>
+    /// <para>
+    /// <b>Even cancellation.</b> This is the one place in the service where an
+    /// <see cref="OperationCanceledException"/> does not propagate, and deliberately: by the time this
+    /// runs the record is already committed and durable. Throwing would discard that fact and leave
+    /// the caller believing finalization did not happen, which is a worse lie than reporting a
+    /// cancelled index.
+    /// </para>
+    /// </remarks>
+    private async Task<ExperienceIndexingResult?> TryIndexAsync(
+        FinalizeExperienceRequest request,
+        ExperienceRecord committed,
+        CancellationToken cancellationToken)
+    {
+        if (_indexingService is null)
+        {
+            return null;
+        }
+
+        if (!_indexingService.IsIndexable(committed.Status, committed.ReuseConfidence))
+        {
+            // A quarantined (or otherwise ineligible) record's vector could never be returned by a
+            // search, so its task summary and reflection lesson are never handed to a provider. This is
+            // checked here, before any call, rather than discovered from an empty scan.
+            return new ExperienceIndexingResult(
+                ExperienceIndexingOutcome.Ineligible,
+                committed.ExperienceId,
+                Descriptor: null,
+                new ExperienceIndexingFailure(
+                    $"The record is {committed.Status} with reuse confidence {committed.ReuseConfidence.ToString("R", CultureInfo.InvariantCulture)}, " +
+                    "so a vector search could never return it; nothing was embedded and nothing left the database.",
+                    NoErrors,
+                    Exception: null));
+        }
+
+        // Bounded, and on its own budget. The record is already durable at this point, so a hung
+        // provider must not hold FinalizeAsync open: derived data never blocks canonical data, and that
+        // includes blocking the caller's thread after the canonical work is done.
+        using var indexing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        indexing.CancelAfter(IndexingTimeout);
+
+        try
+        {
+            return await _indexingService
+                .IndexAsync(request.Authorization, committed.Scope, committed.ExperienceId, indexing.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+        {
+            return new ExperienceIndexingResult(
+                ExperienceIndexingOutcome.IndexFailed,
+                committed.ExperienceId,
+                Descriptor: null,
+                new ExperienceIndexingFailure(
+                    cancellationToken.IsCancellationRequested
+                        ? "Indexing was cancelled after the record was already committed; the record is durable and text-searchable, and can be indexed later."
+                        : $"Indexing did not finish within {IndexingTimeout.TotalSeconds.ToString("R", CultureInfo.InvariantCulture)}s of the commit; " +
+                          "the record is durable and text-searchable, and can be indexed later.",
+                    NoErrors,
+                    ex));
+        }
+        catch (Exception ex)
+        {
+            return new ExperienceIndexingResult(
+                ExperienceIndexingOutcome.IndexFailed,
+                committed.ExperienceId,
+                Descriptor: null,
+                new ExperienceIndexingFailure(
+                    $"The indexing hook threw {ex.GetType().FullName} after the record was already committed; the record is durable and text-searchable, and can be indexed later.",
+                    NoErrors,
+                    ex));
+        }
     }
 
     /// <summary>

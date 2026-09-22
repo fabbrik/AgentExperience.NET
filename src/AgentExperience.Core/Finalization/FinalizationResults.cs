@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Verification;
 
 namespace AgentExperience.Core.Finalization;
@@ -120,6 +121,14 @@ public sealed record FinalizationFailure(
 /// <param name="Reflection">The reflection stored on the record, or <see langword="null"/> -- always <see langword="null"/> for a quarantined record.</param>
 /// <param name="Failure">Why the call failed, or why a record was (or was going to be) quarantined; otherwise <see langword="null"/>.</param>
 /// <param name="Reason">Optional, auditable, content-free explanation of the outcome.</param>
+/// <param name="Indexing">
+/// What the optional post-commit indexing hook did, when one is wired in and this call actually
+/// committed the record's initial event; otherwise <see langword="null"/>. It is reported, never
+/// acted on: an indexing failure here is always retryable and never changes
+/// <see cref="Outcome"/>, <see cref="IsDurable"/>, or anything about the stored record. A
+/// <see langword="null"/> value means no indexing was attempted -- because no hook is registered, or
+/// because nothing was committed by this call (a replay of an already-finalized run never re-indexes).
+/// </param>
 public sealed record FinalizeExperienceResult(
     FinalizationOutcome Outcome,
     FinalizationStage Stage,
@@ -129,7 +138,8 @@ public sealed record FinalizeExperienceResult(
     VerificationResult? Evaluation,
     Reflection? Reflection,
     FinalizationFailure? Failure,
-    string? Reason)
+    string? Reason,
+    ExperienceIndexingResult? Indexing = null)
 {
     /// <summary>The Experience Record's ID, when one exists. No ID is issued when nothing was persisted.</summary>
     public Guid? ExperienceId => Record?.ExperienceId;

@@ -32,6 +32,11 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Tests" />
+    <!-- The vectors package is the same adapter family, split out only because this package's
+         dependency boundary forbids Pgvector and the model-provider abstractions it needs. It reuses
+         this package's column list, scope predicate, row decoder, and failure translation so the two
+         retrieval channels cannot drift apart. -->
+    <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors" />
   </ItemGroup>
 
   <ItemGroup>
