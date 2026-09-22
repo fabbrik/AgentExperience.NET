@@ -25,7 +25,9 @@ namespace AgentExperience.Core.Verification;
 /// </para>
 /// <para>
 /// <b>Per-check resolution</b> (the two AC4 conflict clauses, reconciled -- see this story's Design
-/// Notes): for each required <c>CheckId</c>, gather only the selected evidence carrying it. No
+/// Notes): for each <see cref="RequiredCheck"/>, gather only the selected evidence carrying its
+/// <see cref="RequiredCheck.CheckId"/> <em>and</em> a <see cref="Evidence.Kind"/> its
+/// <see cref="RequiredCheck.ExpectedKind"/> accepts. No
 /// evidence at all is a missing check (<see cref="CheckResult.Unknown"/>); any
 /// <see cref="CheckResult.Fail"/> among it makes the check <see cref="CheckResult.Fail"/> --
 /// dominating even a <see cref="CheckResult.Pass"/> recorded for the same check in the same
@@ -65,26 +67,26 @@ public static class VerificationAggregator
     public const string RuleVersion = "1.0.0";
 
     /// <summary>
-    /// Aggregates <paramref name="evidence"/> against <paramref name="requiredCheckIds"/>, reading
+    /// Aggregates <paramref name="evidence"/> against <paramref name="requiredChecks"/>, reading
     /// only the evidence in <paramref name="closedRound"/> for <paramref name="currentArtifactRevision"/>
     /// -- see this type's remarks for the full selection, per-check, and overall-verdict rules.
     /// </summary>
     /// <param name="evidence">All evidence available to consider, in the order it was produced. Never filtered or reordered by the caller; this call does that filtering itself. A <see langword="null"/> entry is a caller error and throws.</param>
-    /// <param name="requiredCheckIds">The task's declared required check IDs, which must be unique (a duplicate is a caller error and throws, rather than silently skewing the completion score). An empty set always yields <see cref="TaskVerificationStatus.Unknown"/>.</param>
+    /// <param name="requiredChecks">The task's declared required checks, whose <see cref="RequiredCheck.CheckId"/>s must be unique (a duplicate is a caller error and throws, rather than silently skewing the completion score) and non-blank. A <see langword="null"/> entry is a caller error and throws. An empty set always yields <see cref="TaskVerificationStatus.Unknown"/>.</param>
     /// <param name="closedRound">The host-closed verification round and artifact revision to read from, or <see langword="null"/> if the host has not closed a round yet. Never agent-suppliable -- only a host establishes this.</param>
     /// <param name="currentArtifactRevision">The artifact's current revision. If it does not match <paramref name="closedRound"/>'s own revision, verification is stale.</param>
     /// <param name="evaluatedAt">When this aggregation is being performed.</param>
     /// <param name="cancellationToken">Checked cooperatively; a cancelled call throws rather than returning any <see cref="VerificationResult"/>.</param>
     public static VerificationResult Aggregate(
         IReadOnlyList<Evidence> evidence,
-        IReadOnlyList<string> requiredCheckIds,
+        IReadOnlyList<RequiredCheck> requiredChecks,
         ClosedVerificationRound? closedRound,
         string currentArtifactRevision,
         DateTimeOffset evaluatedAt,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(evidence);
-        ArgumentNullException.ThrowIfNull(requiredCheckIds);
+        ArgumentNullException.ThrowIfNull(requiredChecks);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentArtifactRevision);
 
         // Invalid input throws -- never silently dropped or tolerated into a fabricated result, per
@@ -94,15 +96,30 @@ public static class VerificationAggregator
             throw new ArgumentException("Evidence must not contain null entries.", nameof(evidence));
         }
 
-        if (requiredCheckIds.Distinct(StringComparer.Ordinal).Count() != requiredCheckIds.Count)
+        if (requiredChecks.Any(c => c is null))
         {
-            throw new ArgumentException("Required check IDs must be unique.", nameof(requiredCheckIds));
+            throw new ArgumentException("Required checks must not contain null entries.", nameof(requiredChecks));
+        }
+
+        if (requiredChecks.Any(c => string.IsNullOrWhiteSpace(c.CheckId)))
+        {
+            throw new ArgumentException("Required check IDs must not be null, empty, or whitespace.", nameof(requiredChecks));
+        }
+
+        if (requiredChecks.Any(c => c.ExpectedKind is not null && string.IsNullOrWhiteSpace(c.ExpectedKind)))
+        {
+            throw new ArgumentException("A required check's ExpectedKind must be null or non-blank.", nameof(requiredChecks));
+        }
+
+        if (requiredChecks.Select(c => c.CheckId).Distinct(StringComparer.Ordinal).Count() != requiredChecks.Count)
+        {
+            throw new ArgumentException("Required check IDs must be unique.", nameof(requiredChecks));
         }
 
         cancellationToken.ThrowIfCancellationRequested();
 
         // Stale/unclosed short-circuit -- no round or revision selection from evidence or
-        // requiredCheckIds themselves is ever consulted here; only the host-supplied closedRound
+        // requiredChecks themselves is ever consulted here; only the host-supplied closedRound
         // decides. Nothing is examined further.
         if (closedRound is null)
         {
@@ -116,7 +133,7 @@ public static class VerificationAggregator
                 evaluatedAt);
         }
 
-        if (requiredCheckIds.Count == 0)
+        if (requiredChecks.Count == 0)
         {
             return UnknownResult("No required checks were declared for this task; an empty required set can never be conclusively verified.", evaluatedAt);
         }
@@ -132,11 +149,17 @@ public static class VerificationAggregator
         var failedCheckIds = new List<string>();
         var unknownCheckIds = new List<string>();
 
-        foreach (var checkId in requiredCheckIds)
+        foreach (var requiredCheck in requiredChecks)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var checkEvidence = selectedEvidence.Where(e => string.Equals(e.CheckId, checkId, StringComparison.Ordinal)).ToList();
+            // A named ExpectedKind narrows the evidence for this check: evidence of any other kind is
+            // ignored outright, so a mismatched evaluator can never satisfy the check (it becomes a
+            // check with no evidence, i.e. Unknown).
+            var checkEvidence = selectedEvidence
+                .Where(e => string.Equals(e.CheckId, requiredCheck.CheckId, StringComparison.Ordinal) && requiredCheck.Accepts(e.Kind))
+                .ToList();
+
             foreach (var e in checkEvidence)
             {
                 contributingEvidenceIds.Add(e.EvidenceId);
@@ -145,11 +168,11 @@ public static class VerificationAggregator
             switch (ResolveCheck(checkEvidence))
             {
                 case CheckResult.Fail:
-                    failedCheckIds.Add(checkId);
+                    failedCheckIds.Add(requiredCheck.CheckId);
                     break;
 
                 case CheckResult.Unknown:
-                    unknownCheckIds.Add(checkId);
+                    unknownCheckIds.Add(requiredCheck.CheckId);
                     break;
 
                 case CheckResult.Pass:
@@ -158,10 +181,10 @@ public static class VerificationAggregator
             }
         }
 
-        var completionScore = (double)passingCheckCount / requiredCheckIds.Count;
+        var completionScore = (double)passingCheckCount / requiredChecks.Count;
 
         // The evidence backing the outcome, in the order it was produced (Outcome.Evidence's own
-        // contract) -- the original evidence list's own order, not the order requiredCheckIds
+        // contract) -- the original evidence list's own order, not the order requiredChecks
         // happened to name checks in. Drawn only from the already round/revision-scoped selection.
         var contributingEvidence = selectedEvidence.Where(e => contributingEvidenceIds.Contains(e.EvidenceId)).ToList();
 

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Finalization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -32,6 +33,16 @@ public sealed record ExperienceRunDescriptor(
     Scope Scope,
     string? TaskDescription = null);
 
+/// <summary>
+/// What the host sees when it is asked how a completed, captured run should be finalized into a
+/// durable Experience Record.
+/// </summary>
+/// <param name="Run">
+/// The completed run's sanitized snapshot, read back from the capture service after the invocation's
+/// attempt and completion were recorded. Its <see cref="ExperienceRun.ExecutionStatus"/> is set.
+/// </param>
+public sealed record ExperienceFinalizationContext(ExperienceRun Run);
+
 /// <summary>Where in the capture pipeline an <see cref="ExperienceCaptureFailure"/> happened.</summary>
 public enum ExperienceCaptureFailureStage
 {
@@ -46,6 +57,15 @@ public enum ExperienceCaptureFailureStage
 
     /// <summary>Capturing a tool call's start, result, or error threw; that tool call is not recorded.</summary>
     ToolCall,
+
+    /// <summary>
+    /// Finalizing the completed run into a durable Experience Record threw, was declined for a
+    /// foreign run ID, or failed a stage. A host decision (storage denied, or a scope outside the
+    /// authorization) is not reported here -- it is an expected outcome on
+    /// <see cref="ExperienceCaptureOptions.OnRunFinalized"/>. The captured run is unchanged and still
+    /// available for the host to retry.
+    /// </summary>
+    Finalization,
 }
 
 /// <summary>
@@ -89,9 +109,18 @@ public sealed class ExperienceCaptureOptions
     public bool CaptureToolCalls { get; init; } = true;
 
     /// <summary>
-    /// The upper bound on finalization (append attempt, then complete run) per run. Default 5 seconds.
-    /// Must be positive and at most <see cref="uint.MaxValue"/> - 1 milliseconds. Finalization never uses the caller's cancellation token.
+    /// The upper bound on the whole post-invocation step per run: append the attempt, complete the
+    /// run, and -- when <see cref="FinalizationService"/> is configured -- finalize it into a durable
+    /// Experience Record. Default 5 seconds. Must be positive and at most
+    /// <see cref="uint.MaxValue"/> - 1 milliseconds. It never uses the caller's cancellation token.
     /// </summary>
+    /// <remarks>
+    /// With finalization configured this bound covers database round trips, not just in-memory
+    /// capture, so 5 seconds may be too tight for a slow or distant database. A timeout is reported
+    /// through <see cref="OnCaptureFailure"/> and can leave the Experience Record created but not yet
+    /// confirmed -- a <c>Candidate</c>, which is never reusable. Finalizing that run again completes
+    /// the same commit.
+    /// </remarks>
     public TimeSpan FinalizationTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
@@ -100,6 +129,40 @@ public sealed class ExperienceCaptureOptions
     /// per run. Exceptions thrown by the callback are swallowed.
     /// </summary>
     public Action<ExperienceCaptureFailure>? OnCaptureFailure { get; init; }
+
+    /// <summary>
+    /// Optional. The Core service that turns each completed, captured run into a durable Experience
+    /// Record. Leave it <see langword="null"/> to capture only -- the host can still finalize runs
+    /// itself, whenever it likes, from the capture service's snapshot.
+    /// </summary>
+    /// <remarks>
+    /// Setting this requires <see cref="ResolveFinalization"/> too (and vice versa), because only the
+    /// host knows a run's required checks, its verification evidence, its authorization context, and
+    /// its storage policy. Finalization runs inside the same once-only, <see cref="FinalizationTimeout"/>-bounded
+    /// step as capture finalization, after the run's attempt and completion were recorded, and only
+    /// when both of those succeeded. It never uses the caller's cancellation token and never changes
+    /// what the caller of the agent observes.
+    /// </remarks>
+    public ExperienceFinalizationService? FinalizationService { get; init; }
+
+    /// <summary>
+    /// Required when <see cref="FinalizationService"/> is set (and only valid then): builds the
+    /// finalize request for one completed run. Returning <see langword="null"/> skips finalizing that
+    /// run. The request's <c>RunId</c> must be this invocation's run. If it throws, or returns a
+    /// request for another run, the run is not finalized and the failure is reported through
+    /// <see cref="OnCaptureFailure"/>.
+    /// </summary>
+    public Func<ExperienceFinalizationContext, FinalizeExperienceRequest?>? ResolveFinalization { get; init; }
+
+    /// <summary>
+    /// Optional. Receives every finalization result, durable or not -- including an expected
+    /// <see cref="FinalizationOutcome.StorageDenied"/> or
+    /// <see cref="FinalizationOutcome.NotAuthorized"/>, which are host decisions rather than capture
+    /// failures and are therefore not reported through <see cref="OnCaptureFailure"/>. Not called when
+    /// finalization already overran <see cref="FinalizationTimeout"/>. Exceptions thrown by the
+    /// callback are swallowed.
+    /// </summary>
+    public Action<FinalizeExperienceResult>? OnRunFinalized { get; init; }
 
     /// <summary>The clock used for run, attempt, and tool-call timestamps, durations, and the finalization timeout.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;

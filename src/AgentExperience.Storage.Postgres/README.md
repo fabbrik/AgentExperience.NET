@@ -3,9 +3,11 @@
 Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port, using plain
 Npgsql.
 
-Pinned to `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, and `dbup-core` **6.1.1** (all exact). Integration tests
-run against PostgreSQL 16 (`pgvector/pgvector:pg16`) through `Testcontainers.PostgreSql` 4.15.0. This package does not
-use EF Core, Dapper, Pgvector, or the pgvector extension.
+Pinned to `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
+`Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.11** (all exact; the DI package is abstractions only —
+no container, no hosting — and exists for this package's own registration extension). Integration tests run against
+PostgreSQL 16 (`pgvector/pgvector:pg16`) through `Testcontainers.PostgreSql` 4.15.0. This package does not use EF
+Core, Dapper, Pgvector, or the pgvector extension.
 
 ## Usage
 
@@ -57,6 +59,27 @@ var history = await store.GetHistoryAsync(authorization, record.Scope, record.Ex
 ```
 
 The store never disposes the data source. The host owns it.
+
+### Registering it
+
+```csharp
+using AgentExperience.Core.DependencyInjection;
+using AgentExperience.Storage.Postgres.DependencyInjection;
+
+services.AddSingleton(NpgsqlDataSource.Create(connectionString));
+services.AddAgentExperiencePostgresStore();   // or AddAgentExperiencePostgresStore(dataSource)
+
+// Core's own extension then supplies capture, reflection, lifecycle, and finalization over this store.
+services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
+```
+
+The registration is `TryAdd`-based, so a host that has already registered its own `IExperienceRecordStore` keeps it.
+It does **not** apply the schema: call `ExperienceSchemaMigrator.MigrateAsync` once at startup (see
+[Schema](#schema)).
+
+Records are normally written by Core's `ExperienceFinalizationService`, which creates the record and commits its
+initial lifecycle event; `CreateAsync` and `CommitLifecycleEventAsync` stay available for hosts that orchestrate that
+themselves.
 
 ## Trusted host boundary
 

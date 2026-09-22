@@ -14,6 +14,9 @@ namespace AgentExperience.Core.Tests;
 /// </summary>
 public class VerificationAggregatorTests
 {
+    /// <summary>A required check with no expected kind, i.e. one any evidence kind may satisfy.</summary>
+    private static RequiredCheck Check(string checkId, string? expectedKind = null) => new(checkId, expectedKind);
+
     private static Evidence MakeEvidence(Guid roundId, string artifactRevision, string checkId, CheckResult result, string producer = "evaluator") =>
         new(
             EvidenceId: Guid.NewGuid(),
@@ -36,7 +39,7 @@ public class VerificationAggregatorTests
             MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass),
         };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["build", "tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("build"), Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Verified, result.Outcome.Status);
         Assert.Equal(1.0, result.CompletionScore);
@@ -54,7 +57,7 @@ public class VerificationAggregatorTests
             MakeEvidence(round.RoundId, round.ArtifactRevision, "lint", CheckResult.Pass),
         };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["build", "tests", "lint"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("build"), Check("tests"), Check("lint")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Failed, result.Outcome.Status);
         Assert.Contains("build", result.Outcome.Reason);
@@ -67,7 +70,7 @@ public class VerificationAggregatorTests
         var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
         var evidence = new[] { MakeEvidence(round.RoundId, round.ArtifactRevision, "build", CheckResult.Pass) };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["build", "tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("build"), Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
         Assert.Equal(0.5, result.CompletionScore);
@@ -82,7 +85,7 @@ public class VerificationAggregatorTests
         var required = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass);
         var unrelated = MakeEvidence(round.RoundId, round.ArtifactRevision, "lint", CheckResult.Fail);
 
-        var result = VerificationAggregator.Aggregate([required, unrelated], ["tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate([required, unrelated], [Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Verified, result.Outcome.Status);
         Assert.Same(required, Assert.Single(result.Outcome.Evidence));
@@ -95,7 +98,7 @@ public class VerificationAggregatorTests
         var producedFirst = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass);
         var producedSecond = MakeEvidence(round.RoundId, round.ArtifactRevision, "build", CheckResult.Pass);
 
-        var result = VerificationAggregator.Aggregate([producedFirst, producedSecond], ["build", "tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate([producedFirst, producedSecond], [Check("build"), Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal([producedFirst, producedSecond], result.Outcome.Evidence);
     }
@@ -106,7 +109,7 @@ public class VerificationAggregatorTests
         var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
         var evidence = new[] { MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", (CheckResult)999) };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
         Assert.Equal(0.0, result.CompletionScore);
@@ -119,7 +122,7 @@ public class VerificationAggregatorTests
         var evidence = new[] { MakeEvidence(round.RoundId, round.ArtifactRevision, "build", CheckResult.Pass) };
 
         Assert.Throws<ArgumentException>(() =>
-            VerificationAggregator.Aggregate(evidence, ["build", "build", "tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
+            VerificationAggregator.Aggregate(evidence, [Check("build"), Check("build"), Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -129,7 +132,7 @@ public class VerificationAggregatorTests
         var evidence = new[] { MakeEvidence(round.RoundId, round.ArtifactRevision, "build", CheckResult.Pass), null! };
 
         Assert.Throws<ArgumentException>(() =>
-            VerificationAggregator.Aggregate(evidence, ["build"], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
+            VerificationAggregator.Aggregate(evidence, [Check("build")], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -142,7 +145,7 @@ public class VerificationAggregatorTests
             MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Unknown),
         };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["build", "tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("build"), Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
     }
@@ -172,7 +175,7 @@ public class VerificationAggregatorTests
         var laterPass = MakeEvidence(laterRoundId, artifactRevision, "tests", CheckResult.Pass);
         var allEvidence = new[] { earlierFailure, laterPass };
 
-        var result = VerificationAggregator.Aggregate(allEvidence, ["tests"], closedRound, artifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(allEvidence, [Check("tests")], closedRound, artifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Verified, result.Outcome.Status);
         // The earlier round's failing evidence never contributes to the outcome...
@@ -193,7 +196,7 @@ public class VerificationAggregatorTests
         // contribute even though VerificationRoundId matches.
         var staleRevisionEvidence = MakeEvidence(roundId, "rev-1", "tests", CheckResult.Pass);
 
-        var result = VerificationAggregator.Aggregate([staleRevisionEvidence], ["tests"], closedRound, "rev-2", DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate([staleRevisionEvidence], [Check("tests")], closedRound, "rev-2", DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
         Assert.Empty(result.Outcome.Evidence);
@@ -207,7 +210,7 @@ public class VerificationAggregatorTests
 
         var otherRoundEvidence = MakeEvidence(Guid.NewGuid(), artifactRevision, "tests", CheckResult.Pass);
 
-        var result = VerificationAggregator.Aggregate([otherRoundEvidence], ["tests"], closedRound, artifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate([otherRoundEvidence], [Check("tests")], closedRound, artifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
         Assert.Empty(result.Outcome.Evidence);
@@ -216,7 +219,7 @@ public class VerificationAggregatorTests
     [Fact]
     public void AC4_no_closed_round_yields_Unknown()
     {
-        var result = VerificationAggregator.Aggregate([], ["tests"], null, "rev-1", DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate([], [Check("tests")], null, "rev-1", DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
         Assert.Equal(0.0, result.CompletionScore);
@@ -229,7 +232,7 @@ public class VerificationAggregatorTests
         var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
         var evidence = new[] { MakeEvidence(round.RoundId, "rev-2", "tests", CheckResult.Pass) };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["tests"], round, "rev-2", DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("tests")], round, "rev-2", DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
     }
@@ -244,7 +247,7 @@ public class VerificationAggregatorTests
             MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Fail),
         };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Failed, result.Outcome.Status);
         // Both pieces of conflicting evidence are retained for audit, not discarded.
@@ -262,7 +265,7 @@ public class VerificationAggregatorTests
             // "lint" has no evidence at all -> Unknown, so overall stays Unknown even though 2/3 passed.
         };
 
-        var result = VerificationAggregator.Aggregate(evidence, ["build", "tests", "lint"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate(evidence, [Check("build"), Check("tests"), Check("lint")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status); // completion score alone never grants verification
         Assert.Equal(2.0 / 3.0, result.CompletionScore, precision: 10);
@@ -297,10 +300,100 @@ public class VerificationAggregatorTests
         Assert.Equal(CheckResult.Unknown, produced.Result);
         Assert.False(string.IsNullOrWhiteSpace(produced.Detail));
 
-        var result = VerificationAggregator.Aggregate([produced], ["workflow-completes"], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+        var result = VerificationAggregator.Aggregate([produced], [Check("workflow-completes")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
 
         Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
         Assert.Same(produced, Assert.Single(result.Outcome.Evidence));
+    }
+
+    [Fact]
+    public void A_required_check_naming_an_ExpectedKind_ignores_evidence_of_any_other_kind()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+
+        // A human approval claiming the check the task declared must be answered by a test run. Under
+        // CheckId-only matching this would have verified the task; the expected kind stops it.
+        var wrongKind = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass) with { Kind = "HumanApproval" };
+
+        var result = VerificationAggregator.Aggregate(
+            [wrongKind], [Check("tests", "TestResult")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+
+        Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
+        Assert.Equal(0.0, result.CompletionScore);
+        Assert.Empty(result.Outcome.Evidence);
+    }
+
+    [Fact]
+    public void A_required_check_naming_an_ExpectedKind_is_satisfied_by_matching_evidence()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+        var matching = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass); // Kind "TestResult"
+
+        var result = VerificationAggregator.Aggregate(
+            [matching], [Check("tests", "TestResult")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+
+        Assert.Equal(TaskVerificationStatus.Verified, result.Outcome.Status);
+        Assert.Same(matching, Assert.Single(result.Outcome.Evidence));
+    }
+
+    [Fact]
+    public void An_ExpectedKind_match_is_ordinal_and_case_sensitive()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+        var wrongCase = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass) with { Kind = "testresult" };
+
+        var result = VerificationAggregator.Aggregate(
+            [wrongCase], [Check("tests", "TestResult")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+
+        Assert.Equal(TaskVerificationStatus.Unknown, result.Outcome.Status);
+    }
+
+    [Fact]
+    public void A_null_ExpectedKind_accepts_evidence_of_any_kind()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+        var approval = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass) with { Kind = "HumanApproval" };
+
+        var result = VerificationAggregator.Aggregate(
+            [approval], [Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+
+        Assert.Equal(TaskVerificationStatus.Verified, result.Outcome.Status);
+    }
+
+    [Fact]
+    public void Evidence_of_the_wrong_kind_cannot_hide_a_Fail_recorded_by_the_expected_kind()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+        var failingTest = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Fail);
+        var approvalPass = MakeEvidence(round.RoundId, round.ArtifactRevision, "tests", CheckResult.Pass) with { Kind = "HumanApproval" };
+
+        var result = VerificationAggregator.Aggregate(
+            [failingTest, approvalPass], [Check("tests", "TestResult")], round, round.ArtifactRevision, DateTimeOffset.UtcNow);
+
+        Assert.Equal(TaskVerificationStatus.Failed, result.Outcome.Status);
+        Assert.Same(failingTest, Assert.Single(result.Outcome.Evidence));
+    }
+
+    [Fact]
+    public void A_malformed_required_check_throws_rather_than_being_tolerated()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+
+        Assert.Throws<ArgumentException>(() =>
+            VerificationAggregator.Aggregate([], [null!], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
+        Assert.Throws<ArgumentException>(() =>
+            VerificationAggregator.Aggregate([], [Check("  ")], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
+        Assert.Throws<ArgumentException>(() =>
+            VerificationAggregator.Aggregate([], [Check("tests", "  ")], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Duplicate_check_ids_throw_even_when_their_expected_kinds_differ()
+    {
+        var round = new ClosedVerificationRound(Guid.NewGuid(), "rev-1");
+
+        Assert.Throws<ArgumentException>(() => VerificationAggregator.Aggregate(
+            [], [Check("tests", "TestResult"), Check("tests", "HumanApproval")], round, round.ArtifactRevision, DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -311,7 +404,7 @@ public class VerificationAggregatorTests
         cts.Cancel();
 
         Assert.Throws<OperationCanceledException>(() =>
-            VerificationAggregator.Aggregate([], ["tests"], round, round.ArtifactRevision, DateTimeOffset.UtcNow, cts.Token));
+            VerificationAggregator.Aggregate([], [Check("tests")], round, round.ArtifactRevision, DateTimeOffset.UtcNow, cts.Token));
     }
 
     [Fact]
@@ -323,6 +416,6 @@ public class VerificationAggregatorTests
         cts.Cancel();
 
         Assert.Throws<OperationCanceledException>(() =>
-            VerificationAggregator.Aggregate(evidence, ["build", "tests", "lint"], round, round.ArtifactRevision, DateTimeOffset.UtcNow, cts.Token));
+            VerificationAggregator.Aggregate(evidence, [Check("build"), Check("tests"), Check("lint")], round, round.ArtifactRevision, DateTimeOffset.UtcNow, cts.Token));
     }
 }

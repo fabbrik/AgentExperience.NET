@@ -7,8 +7,11 @@ namespace AgentExperience.Core.Tests;
 /// <summary>
 /// Proves <c>AgentExperience.Core</c> has no dependency on MAF, EF Core, Npgsql, DbUp, OpenTelemetry,
 /// or a model-provider package (AD-1) -- its only allowed dependencies are
-/// <c>AgentExperience.Abstractions</c> and <c>Microsoft.Extensions.Compliance.Redaction</c> (plus
-/// that package's own transitive <c>Microsoft.Extensions.*</c> configuration/DI/options graph).
+/// <c>AgentExperience.Abstractions</c>, <c>Microsoft.Extensions.Compliance.Redaction</c>, and
+/// <c>Microsoft.Extensions.DependencyInjection.Abstractions</c> (plus the redaction package's own
+/// transitive <c>Microsoft.Extensions.*</c> configuration/DI/options graph). The DI package is
+/// abstractions only -- no container, no hosting -- and exists so Core can ship its own
+/// <c>AddAgentExperienceCore</c> registration extension without a host guessing concrete types.
 /// Mirrors <c>AgentExperience.Abstractions.Tests/DependencyBoundaryTests.cs</c>. This runs in CI on
 /// every push/PR so the boundary cannot silently regress as later stories/adapters are added to
 /// the solution.
@@ -77,6 +80,28 @@ public class DependencyBoundaryTests
                     $"AgentExperience.Core.csproj declares PackageReference '{include}', which matches forbidden dependency '{forbidden}'.");
             }
         }
+    }
+
+    [Fact]
+    public void AgentExperience_Core_csproj_declares_exactly_the_allowed_PackageReferences()
+    {
+        // The forbidden-substring checks above cannot catch a newly added package that is merely
+        // unwanted rather than forbidden. Pinning the whole declared set makes every future addition
+        // a deliberate, reviewed change to this list.
+        var declared = XDocument.Load(GetCoreCsprojPath())
+            .Descendants("PackageReference")
+            .Select(element => $"{element.Attribute("Include")?.Value} {element.Attribute("Version")?.Value}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // The DI abstractions pin is exact, matching AgentExperience.Storage.Postgres, so the two
+        // packages can never resolve different versions of the same dependency.
+        Assert.Equal(
+            [
+                "Microsoft.Extensions.Compliance.Redaction 10.9.0",
+                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+            ],
+            declared);
     }
 
     private static string GetCoreCsprojPath([CallerFilePath] string testSourceFilePath = "")

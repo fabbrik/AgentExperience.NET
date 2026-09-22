@@ -25,7 +25,11 @@ public static class ExperienceCaptureAgentBuilderExtensions
     /// executes and completes it exactly once on success, failure, cancellation, or a streaming
     /// consumer that stops reading early -- and then, when
     /// <see cref="ExperienceCaptureOptions.CaptureToolCalls"/> is <see langword="true"/>, function
-    /// middleware that records each tool call into that run.
+    /// middleware that records each tool call into that run. When
+    /// <see cref="ExperienceCaptureOptions.FinalizationService"/> and
+    /// <see cref="ExperienceCaptureOptions.ResolveFinalization"/> are configured, each successfully
+    /// captured run is then handed to Core's finalization service to become a durable Experience
+    /// Record, inside the same timeout-bounded step.
     /// </summary>
     /// <param name="builder">The agent builder.</param>
     /// <param name="captureService">The capture service runs are recorded through.</param>
@@ -38,6 +42,7 @@ public static class ExperienceCaptureAgentBuilderExtensions
     /// (a <see cref="ChatClientAgent"/>); <see cref="AIAgentBuilder.Build"/> throws otherwise.
     /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceCaptureOptions.ResolveRun"/>, <see cref="ExperienceCaptureOptions.Environment"/>, <see cref="ExperienceCaptureOptions.TimeProvider"/>, or <see cref="ExperienceCaptureOptions.NewId"/>, is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Exactly one of <see cref="ExperienceCaptureOptions.FinalizationService"/> and <see cref="ExperienceCaptureOptions.ResolveFinalization"/> is set.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceCaptureOptions.FinalizationTimeout"/> is not positive or exceeds the timer maximum.</exception>
     public static AIAgentBuilder UseExperienceCapture(
         this AIAgentBuilder builder,
@@ -54,6 +59,16 @@ public static class ExperienceCaptureAgentBuilderExtensions
         if (options.FinalizationTimeout <= TimeSpan.Zero || options.FinalizationTimeout.TotalMilliseconds > uint.MaxValue - 1)
         {
             throw new ArgumentOutOfRangeException(nameof(options), options.FinalizationTimeout, $"FinalizationTimeout must be positive and at most {uint.MaxValue - 1} milliseconds.");
+        }
+
+        // Either half alone could only ever do nothing, silently -- and a resolver without a service is
+        // the easier mistake to make. Only the host can supply a run's required checks, evidence,
+        // authorization, and storage decision, so the two are configured together or not at all.
+        if (options.FinalizationService is null != (options.ResolveFinalization is null))
+        {
+            throw new ArgumentException(
+                $"{nameof(ExperienceCaptureOptions.FinalizationService)} and {nameof(ExperienceCaptureOptions.ResolveFinalization)} must be set together, or neither set.",
+                nameof(options));
         }
 
         var middleware = new ExperienceCaptureMiddleware(captureService, options);
