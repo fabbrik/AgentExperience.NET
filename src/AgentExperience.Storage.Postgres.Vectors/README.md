@@ -109,7 +109,12 @@ and lesson never reach a provider.
 | `created_at`, `updated_at` | UTC, truncated to whole microseconds like the rest of the schema |
 
 None of this takes part in a lifecycle decision. Status, revision, and reuse confidence live on the record and are
-never read from or written to this table.
+never read from or written to this table. Reuse confidence does move now — evidence submitted after a lesson is
+reused updates it through the canonical store (see
+[evidence-based confidence updates](../../README.md#updating-confidence-from-evidence)) — but it moves there and is
+only ever *read* here, as a floor in the search predicate. A record whose score drops below the floor stops being
+returned without anything being rewritten or re-embedded; the number the search compares is the one the join reads
+from `experience_records`, so it is never stale.
 
 ## Writes are conditional, in SQL
 

@@ -113,6 +113,23 @@ public interface IExperienceRecordStore
     /// <em>after</em> replay detection, so retrying a committed supersession still reports its original
     /// outcome even once the replacement has itself moved on.
     /// </para>
+    /// <para>
+    /// <b>Confidence guard.</b> An event carrying <see cref="LifecycleEvent.Confidence"/> also writes
+    /// the evidence row and the record's <see cref="ExperienceRecord.ReuseConfidence"/>,
+    /// <see cref="ExperienceRecord.SupportingValidations"/>, and
+    /// <see cref="ExperienceRecord.Contradictions"/> -- in this same transaction, so the evidence, the
+    /// counters, the status change, and the audit entry commit together or not at all. Two rules are the
+    /// store's own to enforce and nobody else's. <em>Independence:</em> a unique index on the record and
+    /// the submission's independence key decides whether this evidence is the first for that key; a
+    /// later submission under a new <see cref="ConfidenceUpdate.EvidenceId"/> is still stored, and the
+    /// counters are left exactly where they were
+    /// (<see cref="ExperienceLifecycleCommitResult.AppliedConfidence"/> reports which happened).
+    /// <em>Evidence identity:</em> <see cref="ConfidenceUpdate.EvidenceId"/> is a second idempotency
+    /// key -- resubmitting it with identical content reports the original outcome and writes nothing,
+    /// and resubmitting it with different content is <see cref="ExperienceStoreOutcome.Conflict"/> with
+    /// nothing written. The store never computes a score: every number it writes is one the event
+    /// carried.
+    /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>
     /// <param name="scope">The exact request scope the record must lie in. Never treated as authority.</param>
@@ -364,14 +381,31 @@ public sealed record ExperienceRecordQueryResult(
 /// against the state the record is actually in. On
 /// <see cref="ExperienceStoreOutcome.ReplacementNotAllowed"/> it is the <em>replacement's</em> stored
 /// status instead, or <see langword="null"/> when the replacement is not in the record's scope at all.
-/// Otherwise <see langword="null"/>.
+/// <para>
+/// On <see cref="ExperienceStoreOutcome.Committed"/> it is set only when the commit did <em>not</em>
+/// move the record -- a confidence submission whose independence key was already taken, or an identical
+/// resubmission replaying an earlier one -- and then it is the status the record is in, read in the same
+/// breath as <see cref="Revision"/> so the two describe one moment. It is <see langword="null"/> for a
+/// commit that moved the record, whose new status the caller already knows: it is the one the event
+/// carried. Otherwise <see langword="null"/>.
+/// </para>
 /// </param>
 /// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+/// <param name="AppliedConfidence">
+/// The <see cref="LifecycleEvent.Confidence"/> payload <em>as the transaction stored it</em>, when the
+/// event carried one and the commit (or the replay of an earlier one) reported
+/// <see cref="ExperienceStoreOutcome.Committed"/>; otherwise <see langword="null"/>. It is the
+/// submitted payload when the independence key was free, and
+/// <see cref="ConfidenceUpdate.AsRecordedOnly"/> of it when the key was already taken -- which is the
+/// only thing a store may change about it, and is a refusal to apply Core's increment rather than a
+/// score of the store's own. Read <see cref="ConfidenceUpdate.Counted"/> on it to tell the two apart.
+/// </param>
 public sealed record ExperienceLifecycleCommitResult(
     ExperienceStoreOutcome Outcome,
     long Revision,
     ExperienceStatus? CurrentStatus,
-    IReadOnlyList<StoreValidationError> Errors);
+    IReadOnlyList<StoreValidationError> Errors,
+    ConfidenceUpdate? AppliedConfidence = null);
 
 /// <summary>
 /// One bounded page of a record's lifecycle history.
@@ -418,10 +452,18 @@ public sealed record ExperienceRecordHistoryQuery(
 /// <param name="Event">The transition, exactly as it was stamped and stored.</param>
 /// <param name="RecordedAt">When the store wrote the row, on the store's own clock, in UTC.</param>
 /// <param name="AppliedRevision">The <see cref="ExperienceRecord.Revision"/> this event moved the record to; always <see cref="LifecycleEvent.ExpectedRevision"/> + 1.</param>
+/// <param name="Actor">
+/// The host-established <see cref="AuthorizationContext.PrincipalId"/> the commit ran under, as the
+/// store recorded it. It is a store-known fact like <paramref name="RecordedAt"/>, not part of the
+/// event's stored identity: it is never compared when a replay is decided, and it is never taken from
+/// anything the caller put in the event. <see langword="null"/> only for a row written before the
+/// column existed.
+/// </param>
 public sealed record StoredLifecycleEvent(
     LifecycleEvent Event,
     DateTimeOffset RecordedAt,
-    long AppliedRevision);
+    long AppliedRevision,
+    string? Actor = null);
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.GetHistoryAsync"/>.

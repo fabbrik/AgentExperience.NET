@@ -197,6 +197,13 @@ rank score and every normalized component with the weight applied to it), **when
 the **environment** it came from, and an **evidence summary** — lesson, reuse guidance, preconditions, warnings,
 verification status, and how many evidence IDs back it.
 
+`Confidence:` is the record's stored reuse confidence, `(1 + S) / (2 + S + F)` over the independent supporting
+validations and contradictions that have been submitted against it. It is a **heuristic**, not a calibrated
+probability: it summarizes how often reuse held up, and the block never presents it as the chance this lesson will
+work again. It also decides nothing about eligibility — a record reaches this block because of its status, its
+scope, and the policy's floor, and no score moves a record into or out of that set. See
+[evidence-based confidence updates](../../README.md#updating-confidence-from-evidence).
+
 Two of those lines exist because the score alone does not say enough. `Recency` and `EnvironmentCompatibility` are
 decayed, normalized numbers: neither a model nor a human can read a date or a region out of them, so `Recorded:` and
 `Environment:` carry the facts. A value that is not a real number (a NaN or an infinity) is rendered as

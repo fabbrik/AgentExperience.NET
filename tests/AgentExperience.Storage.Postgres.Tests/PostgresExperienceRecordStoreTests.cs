@@ -524,7 +524,8 @@ public sealed class PostgresExperienceRecordStoreTests
         Assert.Equal("team-1", reader.GetString(1));
         Assert.True(reader.IsDBNull(2));
         Assert.Equal("Validated", reader.GetString(3));
-        Assert.Equal(2d / 3d, reader.GetDouble(4));
+        // The confidence Full()'s own counters explain: (1 + 4) / (2 + 4 + 1).
+        Assert.Equal(5d / 7d, reader.GetDouble(4));
         Assert.Equal(3L, reader.GetInt64(5));
         Assert.Equal(1, reader.GetInt32(6));
         Assert.True(reader.GetBoolean(7));

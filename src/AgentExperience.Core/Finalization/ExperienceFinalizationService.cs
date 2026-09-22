@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Reflections;
@@ -84,10 +85,25 @@ public sealed class ExperienceFinalizationService
     public const string ProducerIdentity = "AgentExperience.ExperienceFinalizationService/1.0.0";
 
     /// <summary>
-    /// The reuse confidence a freshly validated record starts at: two thirds. It is an initial,
-    /// evidence-gated value, not a score computed from evidence counts.
+    /// The reuse confidence a freshly validated record starts at: two thirds.
     /// </summary>
+    /// <remarks>
+    /// It is <see cref="ReuseConfidenceHeuristic"/> applied to the record's own starting counters -- one
+    /// supporting validation, no contradictions -- and a test pins it against
+    /// <see cref="ReuseConfidenceHeuristic.Score"/> so the two cannot drift: the initial validation is
+    /// counted once and never again, so any gap between them would surface as a jump on the first piece
+    /// of evidence a record received. It stays a <see langword="const"/> rather than becoming a computed
+    /// <see langword="static" /> <see langword="readonly"/>, because changing that is a binary break for
+    /// an out-of-tree consumer and this story promised none.
+    /// </remarks>
     public const double InitialValidatedReuseConfidence = 2d / 3d;
+
+    /// <summary>
+    /// The supporting-validation count a freshly validated record starts at. It is the initial
+    /// validation itself, which <see cref="ReuseConfidenceHeuristic"/> counts once and which later
+    /// evidence adds to rather than replaces.
+    /// </summary>
+    public const int InitialSupportingValidations = 1;
 
     /// <summary>The status every Experience Record is created in, before its initial lifecycle event moves it.</summary>
     public const ExperienceStatus CreatedStatus = ExperienceStatus.Candidate;
@@ -387,7 +403,7 @@ public sealed class ExperienceFinalizationService
             Provenance: run.Provenance,
             Status: CreatedStatus,
             ReuseConfidence: reflection is not null ? InitialValidatedReuseConfidence : 0d,
-            SupportingValidations: reflection is not null ? 1 : 0,
+            SupportingValidations: reflection is not null ? InitialSupportingValidations : 0,
             Contradictions: 0,
             Revision: 0,
             CreatedAt: finalizedAt,

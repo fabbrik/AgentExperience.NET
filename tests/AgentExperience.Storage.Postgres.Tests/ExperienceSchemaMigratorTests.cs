@@ -104,8 +104,10 @@ public sealed class ExperienceSchemaMigratorTests
         // A pre-0006 database: 0001-0005 only. The public port has always accepted a Superseded event,
         // because Core's transition table was never applied by the store, and such an event has no
         // replacement -- exactly the row a validating ADD CONSTRAINT would abort this script on.
+        // TakeWhile, not Where: everything numbered after 0006 builds on what it adds (0007's CHECKs name
+        // the replacement column), so "pre-0006" has to mean the prefix rather than "all but that one".
         foreach (var scriptName in PostgresExperienceRecordSchema.ScriptNames
-            .Where(name => !string.Equals(name, PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName, StringComparison.Ordinal)))
+            .TakeWhile(name => !string.Equals(name, PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName, StringComparison.Ordinal)))
         {
             await using var command = dataSource.CreateCommand(PostgresExperienceRecordSchema.GetScript(scriptName));
             await command.ExecuteNonQueryAsync();
