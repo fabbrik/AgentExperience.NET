@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 
 namespace AgentExperience.Core.Retrieval;
 
@@ -208,6 +209,38 @@ public sealed class ExperienceRetrievalService
     public async Task<ExperienceRetrievalResult> RetrieveAsync(
         RetrieveExperienceRequest request,
         CancellationToken cancellationToken = default)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Retrieve, cancellationToken);
+
+        ExperienceRetrievalResult result;
+        try
+        {
+            // Read from the request, not from the result, so it really is echoed on every outcome -- a
+            // timeout and a thrown retrieval included. A retrieval that threw is precisely the one an
+            // operator needs to tie back to the invocation that asked for it, and it has no result to
+            // read the identifier off. Omitted rather than written as an empty string when the host
+            // supplied none: an absent attribute and a blank one do not mean the same thing to a query.
+            ArgumentNullException.ThrowIfNull(request);
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.CorrelationIdAttribute, request.CorrelationId);
+
+            result = await RetrieveCoreAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Retrieve, ex);
+            throw;
+        }
+
+        // The task text this searched on, the records it ranked, and their lessons are never
+        // telemetry values -- only the bounded outcome is.
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Retrieve, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>The body of <see cref="RetrieveAsync"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
+    private async Task<ExperienceRetrievalResult> RetrieveCoreAsync(
+        RetrieveExperienceRequest request,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Authorization, $"{nameof(request)}.{nameof(request.Authorization)}");

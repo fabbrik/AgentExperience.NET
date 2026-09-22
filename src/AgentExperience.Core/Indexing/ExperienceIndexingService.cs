@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Retrieval;
 
 namespace AgentExperience.Core.Indexing;
@@ -170,6 +171,41 @@ public sealed class ExperienceIndexingService
         Guid experienceId,
         CancellationToken cancellationToken = default)
     {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Index, cancellationToken);
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ExperienceIdAttribute, experienceId.ToString("D"));
+
+        ExperienceIndexingResult result;
+        try
+        {
+            result = await IndexCoreAsync(authorization, scope, experienceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Index, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Index, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// The body of <see cref="IndexAsync"/>, unchanged by instrumentation: it neither reads nor writes
+    /// a span. It exists so that the wrapper's own tagging and metric writes sit outside the region that
+    /// guards the call, and it is <see langword="private"/> because every caller -- the finalization
+    /// service's post-commit hook included -- goes through the instrumented entry point.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The scope the record belongs to.</param>
+    /// <param name="experienceId">The record to index.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>What the one-record pass produced.</returns>
+    private async Task<ExperienceIndexingResult> IndexCoreAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(scope);
         if (experienceId == Guid.Empty)
@@ -177,6 +213,11 @@ public sealed class ExperienceIndexingService
             throw new ArgumentException("ExperienceId must not be an empty GUID.", nameof(experienceId));
         }
 
+        // The public, instrumented sibling: indexing a single record is implemented as a one-record
+        // pass, and that pass does the provider call and the conditional write that can fail. It is
+        // emitted as a `reindex` nested inside this `index`, so an operator who filters on
+        // `nested=false` sees one index per index and one pass per pass, while the unfiltered sum
+        // still accounts for every provider call the library made.
         var pass = await ReindexAsync(
             authorization,
             new ReindexExperienceRequest(scope, [experienceId], Limit: 1),
@@ -225,6 +266,44 @@ public sealed class ExperienceIndexingService
         Scope scope,
         Guid experienceId,
         CancellationToken cancellationToken = default)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Deindex, cancellationToken);
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ExperienceIdAttribute, experienceId.ToString("D"));
+
+        // Removal reports a cancellation rather than throwing it, so this span is Ok with outcome
+        // Failed where every other operation would be a faulted one. That is the method's contract,
+        // not a gap: by the time it runs the transition it follows is already durable.
+        ExperienceDeindexingResult result;
+        try
+        {
+            result = await RemoveCoreAsync(authorization, scope, experienceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Deindex, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Deindex, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// The body of <see cref="RemoveAsync"/>, unchanged by instrumentation: it neither reads nor writes
+    /// a span. It exists so that the wrapper's own tagging and metric writes sit outside the region that
+    /// guards the call, and it is <see langword="private"/> because every caller -- the lifecycle
+    /// service's post-commit de-indexing hook included -- goes through the instrumented entry point.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The scope the record belongs to.</param>
+    /// <param name="experienceId">The record whose vector is removed.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>What the removal produced.</returns>
+    private async Task<ExperienceDeindexingResult> RemoveCoreAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(scope);
@@ -297,6 +376,41 @@ public sealed class ExperienceIndexingService
         AuthorizationContext authorization,
         ReindexExperienceRequest request,
         CancellationToken cancellationToken = default)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Reindex, cancellationToken);
+
+        // No per-record identifiers on this span: a pass is bounded by its own limit, not by one,
+        // and a span attribute is not a place to put a list that grows with the scope.
+        ExperienceReindexResult result;
+        try
+        {
+            result = await ReindexCoreAsync(authorization, request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Reindex, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Reindex, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// The body of <see cref="ReindexAsync"/>, unchanged by instrumentation: it neither reads nor
+    /// writes a span. It exists so that the wrapper's own tagging and metric writes sit outside the
+    /// region that guards the call, and it is <see langword="private"/> because every caller --
+    /// <see cref="IndexCoreAsync"/>, which runs a one-record pass, included -- goes through the
+    /// instrumented entry point.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="request">The pass to run.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>What the pass produced.</returns>
+    private async Task<ExperienceReindexResult> ReindexCoreAsync(
+        AuthorizationContext authorization,
+        ReindexExperienceRequest request,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(request);

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
 using AgentExperience.Core.Confidence;
+using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Reflections;
@@ -224,6 +225,59 @@ public sealed class ExperienceFinalizationService
         FinalizeExperienceRequest request,
         CancellationToken cancellationToken = default)
     {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Finalize, cancellationToken);
+
+        // Where the body had got to. A finalization that threw -- which in practice means a caller who
+        // cancelled -- otherwise leaves an operator with a failing span that cannot say whether the
+        // record was written before it stopped.
+        var cursor = new StageCursor();
+
+        FinalizeExperienceResult result;
+        try
+        {
+            // Request-derived, so it is on the span before anything runs and survives a throw.
+            ArgumentNullException.ThrowIfNull(request);
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, request.RunId.ToString("D"));
+
+            result = await FinalizeCoreAsync(request, cursor, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.StageAttribute, cursor.Stage.ToString());
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Finalize, ex);
+            throw;
+        }
+
+        if (result.Record is { } finalized)
+        {
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ExperienceIdAttribute, finalized.ExperienceId.ToString("D"));
+        }
+
+        // The stage is on the span for every outcome, not only a failure: knowing that a refused
+        // finalization stopped at Authorize rather than at CommitInitialEvent is the whole point of
+        // the stage, and it is a bounded enum, so it costs no cardinality on the span.
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.StageAttribute, result.Stage.ToString());
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Finalize, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// Which stage of a finalization is in flight, so a span that records a throw can still say where
+    /// the run got to. It exists only for that: nothing reads it back, and no decision depends on it.
+    /// </summary>
+    private sealed class StageCursor
+    {
+        /// <summary>The stage currently in flight. Argument validation precedes stage 1, so it starts at <see cref="FinalizationStage.Load"/>.</summary>
+        internal FinalizationStage Stage { get; set; } = FinalizationStage.Load;
+    }
+
+    /// <summary>The body of <see cref="FinalizeAsync"/>, unchanged by instrumentation beyond marking which stage it has reached.</summary>
+    private async Task<FinalizeExperienceResult> FinalizeCoreAsync(
+        FinalizeExperienceRequest request,
+        StageCursor cursor,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Authorization, $"{nameof(request)}.{nameof(request.Authorization)}");
         ArgumentNullException.ThrowIfNull(request.RequiredChecks, $"{nameof(request)}.{nameof(request.RequiredChecks)}");
@@ -248,6 +302,8 @@ public sealed class ExperienceFinalizationService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        cursor.Stage = FinalizationStage.Load;
 
         // Stage 1 -- Load. An unknown or unfinished run is an expected condition, not an exception.
         ExperienceRun? run;
@@ -285,11 +341,15 @@ public sealed class ExperienceFinalizationService
         // re-derived event byte-for-byte identical to the stored one.
         var finalizedAt = TruncateToMicroseconds(request.FinalizedAt);
 
+        cursor.Stage = FinalizationStage.Evaluate;
+
         // Stage 2 -- Evaluate, against this run's own closed round and evidence. No caller-supplied
         // evaluation is accepted, so an evaluation from another run cannot be substituted.
         VerificationResult evaluation;
         try
         {
+            // The public, instrumented sibling: verifying is a real operation whichever caller asked
+            // for it, and a finalization that verifies is a `verify` span nested in a `finalize` one.
             evaluation = VerificationAggregator.Aggregate(
                 request.Evidence,
                 request.RequiredChecks,
@@ -316,6 +376,8 @@ public sealed class ExperienceFinalizationService
                 evaluation: null);
         }
 
+        cursor.Stage = FinalizationStage.Authorize;
+
         // Stage 3 -- Authorize, then read the host's storage decision. Both are decided before any
         // store call *and before the reflector is called*, so a refused run is never handed to the
         // model-backed reflection seam and nothing at all is written.
@@ -336,6 +398,8 @@ public sealed class ExperienceFinalizationService
                 request.StorageDecision.Reason ?? "The host's storage decision did not permit persisting this run; nothing was stored and the run was not reflected on.",
                 evaluation: evaluation);
         }
+
+        cursor.Stage = FinalizationStage.Reflect;
 
         // Stage 4 -- Reflect, but only on a verified run: a quarantined record must never carry an
         // unreflected lesson, so an unverified run is not reflected on at all.
@@ -386,6 +450,8 @@ public sealed class ExperienceFinalizationService
                 NoErrors,
                 Exception: null);
         }
+
+        cursor.Stage = FinalizationStage.CreateRecord;
 
         // Stage 5 -- Create the record, as a Candidate. Attempts are copied unchanged: capture already
         // rejected anything unsafe, and finalization never sanitizes.
@@ -464,6 +530,8 @@ public sealed class ExperienceFinalizationService
                         Exception: null),
                     evaluation);
         }
+
+        cursor.Stage = FinalizationStage.CommitInitialEvent;
 
         // Stage 6 -- Commit the record's initial lifecycle event, which performs the real transition.
         return await CommitInitialEventAsync(request, run, record, evaluation, failure, cancellationToken).ConfigureAwait(false);
@@ -558,6 +626,8 @@ public sealed class ExperienceFinalizationService
         CommitLifecycleTransitionResult commit;
         try
         {
+            // The public, instrumented sibling: this commit is the transition that makes the record
+            // durable, and it is counted, timed, and classified like any other -- as `nested`.
             commit = await _lifecycleService.CommitAsync(request.Authorization, transition, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -678,6 +748,12 @@ public sealed class ExperienceFinalizationService
 
         try
         {
+            // The public, instrumented sibling, handed this library's own budget rather than the
+            // caller's token. That is deliberate on both counts: a hung embedding provider here is
+            // exactly the failure an operator must be paged for, so it has to reach the failure
+            // counter -- and the wrapper classifies the budget expiring as a Timeout rather than as
+            // the caller cancelling, because it compares this token against the host's, not against
+            // whether any token was cancelled.
             return await _indexingService
                 .IndexAsync(request.Authorization, committed.Scope, committed.ExperienceId, indexing.Token)
                 .ConfigureAwait(false);

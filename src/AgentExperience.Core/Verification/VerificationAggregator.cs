@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 
 namespace AgentExperience.Core.Verification;
 
@@ -84,6 +85,47 @@ public static class VerificationAggregator
         string currentArtifactRevision,
         DateTimeOffset evaluatedAt,
         CancellationToken cancellationToken = default)
+    {
+        // A static ActivitySource instruments a static pure function without giving it a constructor,
+        // a container, or a seam -- emission is listener-driven, so nothing about calling Aggregate
+        // changes when nobody is subscribed.
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Verify, cancellationToken);
+
+        VerificationResult result;
+        try
+        {
+            result = AggregateCore(evidence, requiredChecks, closedRound, currentArtifactRevision, evaluatedAt, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Verify, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Verify, result.Outcome.Status.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// The body of <see cref="Aggregate"/>, unchanged by instrumentation: it neither reads nor writes
+    /// a span. It exists so that the wrapper's own tagging and metric writes sit outside the region
+    /// that guards the call, and it is <see langword="private"/> because every caller -- this library's
+    /// own finalization included -- goes through the instrumented entry point.
+    /// </summary>
+    /// <param name="evidence">The evidence to aggregate.</param>
+    /// <param name="requiredChecks">The checks the round must satisfy.</param>
+    /// <param name="closedRound">The host-closed verification round, if any.</param>
+    /// <param name="currentArtifactRevision">The artifact revision the evidence must match.</param>
+    /// <param name="evaluatedAt">When the aggregation was performed.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The verification verdict.</returns>
+    private static VerificationResult AggregateCore(
+        IReadOnlyList<Evidence> evidence,
+        IReadOnlyList<RequiredCheck> requiredChecks,
+        ClosedVerificationRound? closedRound,
+        string currentArtifactRevision,
+        DateTimeOffset evaluatedAt,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(evidence);
         ArgumentNullException.ThrowIfNull(requiredChecks);

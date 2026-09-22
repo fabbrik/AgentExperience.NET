@@ -1,5 +1,6 @@
 using System.Globalization;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 
 namespace AgentExperience.Core.Reflections;
 
@@ -43,10 +44,37 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
     /// <inheritdoc />
     public Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
     {
-        Validate(request);
-        cancellationToken.ThrowIfCancellationRequested();
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.Reflect, cancellationToken);
 
-        return Task.FromResult(Build(request, cancellationToken));
+        Reflection reflection;
+        try
+        {
+            Validate(request);
+
+            // Both identifiers are request-derived, so both are on the span before the work runs: a
+            // reflection that threw should still say which run it was reflecting on and which
+            // reflection ID the caller asked it to stamp. After Validate, so instrumentation is never
+            // the thing that rejects a malformed request.
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, request.Run.RunId.ToString("D"));
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ReflectionIdAttribute, request.ReflectionId.ToString("D"));
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            reflection = Build(request, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.Reflect, ex);
+            throw;
+        }
+
+        // Identifiers only. The lesson, the approaches, the warnings, and the reuse guidance are all
+        // built from captured text and none of them is ever a telemetry value.
+        //
+        // A reflector has no outcome enum of its own: the verification status it reflected on is
+        // the bounded decision this call reached, and it is what an operator slices reflections by.
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Reflect, reflection.VerificationStatus.ToString());
+        return Task.FromResult(reflection);
     }
 
     private static Reflection Build(ReflectionRequest request, CancellationToken cancellationToken)

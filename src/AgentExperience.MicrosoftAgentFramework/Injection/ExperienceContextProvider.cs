@@ -1,5 +1,6 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Retrieval;
+using AgentExperience.MicrosoftAgentFramework.Diagnostics;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -129,6 +130,47 @@ public sealed class ExperienceContextProvider : AIContextProvider
         InvokingContext context,
         CancellationToken cancellationToken = default)
     {
+        // The one span this adapter opens. It wraps the injection decision only -- never the agent's
+        // own RunAsync/RunStreamingAsync delegation, which MAF instruments itself and which this
+        // library deliberately adds nothing to.
+        var trace = InjectionDiagnostics.Start();
+        try
+        {
+            return await InjectAsync(context, trace, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Only the invocation's own cancellation escapes the body below; everything else is already
+            // a reported InjectionOutcome. Whatever arrives, it propagates unchanged.
+            InjectionDiagnostics.Faulted(trace, ex, cancellationToken);
+            throw;
+        }
+        finally
+        {
+            // "Report is the one place inject is counted" is enforced here rather than assumed. An exit
+            // that reported nothing -- a future early return added to the body below -- would otherwise
+            // leave a span with no outcome, no count, and no duration, which is a silent hole in the one
+            // operation an operator alerts on. Closing it is a no-op for every path that did report.
+            InjectionDiagnostics.Closed(trace);
+
+            // Restores the caller's Activity.Current exactly as it was, so the invocation MAF is about
+            // to run sees the parent it would have seen with no instrumentation at all.
+            trace.Activity?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The body of <see cref="ProvideAIContextAsync"/>, unchanged by instrumentation beyond threading
+    /// <paramref name="trace"/> to the single place every outcome is reported from.
+    /// </summary>
+    /// <param name="context">The invocation MAF is about to run.</param>
+    /// <param name="trace">This injection's span and start timestamp.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    private async ValueTask<AIContext> InjectAsync(
+        InvokingContext context,
+        InjectionTrace trace,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(context);
 
         RetrieveExperienceRequest? request;
@@ -142,6 +184,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         catch (Exception ex)
         {
             return Nothing(
+                trace,
                 InjectionOutcome.Failed,
                 NoOmissions,
                 retrieved: null,
@@ -152,8 +195,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
         if (request is null)
         {
             // The host opted this invocation out. Not a failure, and nothing to report beyond that.
-            return Nothing(InjectionOutcome.Skipped, NoOmissions, retrieved: null, correlationId: null, failure: null);
+            return Nothing(trace, InjectionOutcome.Skipped, NoOmissions, retrieved: null, correlationId: null, failure: null);
         }
+
+        // From the request, not from a result: the host's correlation identifier is then on the span for
+        // every outcome below -- a retrieval that timed out, one that was denied, one that threw -- and
+        // not only for the ones that produced a result to read it back off.
+        InjectionDiagnostics.Tag(trace, InjectionDiagnostics.CorrelationIdAttribute, request.CorrelationId);
 
         ExperienceRetrievalResult retrieved;
         try
@@ -169,6 +217,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         catch (Exception ex)
         {
             return Nothing(
+                trace,
                 InjectionOutcome.RetrievalFailed,
                 NoOmissions,
                 retrieved: null,
@@ -179,6 +228,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         if (retrieved.Outcome is not RetrievalOutcome.Completed)
         {
             return Nothing(
+                trace,
                 retrieved.Outcome switch
                 {
                     RetrievalOutcome.TimedOut => InjectionOutcome.RetrievalTimedOut,
@@ -195,7 +245,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var selected = Select(retrieved.Records, omitted);
         if (selected.Count == 0)
         {
-            return Nothing(InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
+            return Nothing(trace, InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
         }
 
         CheckOutcome recheck;
@@ -212,6 +262,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // Nothing below the per-record handling is expected to throw; if it somehow does, the
             // invocation still runs, with no context at all rather than a partly checked one.
             return Nothing(
+                trace,
                 InjectionOutcome.Failed,
                 omitted,
                 retrieved,
@@ -223,12 +274,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             // The check ran out of time. Nothing is injected rather than injecting the part of it that
             // had been re-checked before the bound was reached.
-            return Nothing(InjectionOutcome.Failed, omitted, retrieved, retrieved.CorrelationId, checkFailure);
+            return Nothing(trace, InjectionOutcome.Failed, omitted, retrieved, retrieved.CorrelationId, checkFailure);
         }
 
         if (recheck.Injectable.Count == 0)
         {
-            return Nothing(InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
+            return Nothing(trace, InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
         }
 
         HistoricalReferencePayload payload;
@@ -239,6 +290,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         catch (Exception ex)
         {
             return Nothing(
+                trace,
                 InjectionOutcome.Failed,
                 omitted,
                 retrieved,
@@ -250,24 +302,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         if (payload.IsEmpty)
         {
-            return Nothing(InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
+            return Nothing(trace, InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
         }
 
-        Report(new ExperienceInjectionResult(
-            InjectionOutcome.Injected,
-            payload.ExperienceIds,
-            omitted,
-            retrieved.Excluded,
-            retrieved.Truncated,
-            retrieved.EnvironmentUnrestricted,
-            payload.ByteCount,
-            retrieved.CorrelationId,
-            Failure: null,
-            retrieved.VectorFallback));
-
         // A user-role message, not a system one: the block is reference material the model may read,
-        // never an instruction from the host. MAF merges it with the invocation's own messages.
-        return new AIContext
+        // never an instruction from the host. MAF merges it with the invocation's own messages. Built
+        // before the report so that nothing which could throw remains after the span has been closed.
+        var injected = new AIContext
         {
             Messages =
             [
@@ -280,6 +321,20 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 },
             ],
         };
+
+        Report(trace, new ExperienceInjectionResult(
+            InjectionOutcome.Injected,
+            payload.ExperienceIds,
+            omitted,
+            retrieved.Excluded,
+            retrieved.Truncated,
+            retrieved.EnvironmentUnrestricted,
+            payload.ByteCount,
+            retrieved.CorrelationId,
+            Failure: null,
+            retrieved.VectorFallback));
+
+        return injected;
     }
 
     /// <summary>
@@ -515,13 +570,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
     /// <summary>Reports the attempt and returns an <see cref="AIContext"/> that adds nothing to the invocation.</summary>
     private AIContext Nothing(
+        InjectionTrace trace,
         InjectionOutcome outcome,
         IReadOnlyList<OmittedExperience> omitted,
         ExperienceRetrievalResult? retrieved,
         string? correlationId,
         InjectionFailure? failure)
     {
-        Report(new ExperienceInjectionResult(
+        Report(trace, new ExperienceInjectionResult(
             outcome,
             NoIds,
             omitted,
@@ -547,9 +603,32 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 Exception: null));
     }
 
-    /// <summary>Hands the result to the host. A callback that throws must not become the invocation's problem.</summary>
-    private void Report(ExperienceInjectionResult result)
+    /// <summary>
+    /// Closes this injection's span and hands the result to the host. Every non-throwing exit runs
+    /// through here exactly once, which is what makes it the one place the <c>inject</c> operation is
+    /// counted and timed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The span carries the bounded outcome, the host's own correlation identifier (omitted, never
+    /// blank, when the host supplied none), and how many ranked records were left out. It never
+    /// carries the injected block, a record's lesson, an omission's reason text, or the task text the
+    /// retrieval matched on.
+    /// </para>
+    /// <para>
+    /// <b>The duration is recorded after the host callback, not before it.</b> The span stops in
+    /// <c>ProvideAIContextAsync</c>'s <c>finally</c>, which is after the callback, so measuring before
+    /// it would leave span p99 and histogram p99 disagreeing by whatever the host's callback costs --
+    /// and Core, which has no callback, has no such gap. A callback that throws is caught, so it can
+    /// still never cost the operation its measurement.
+    /// </para>
+    /// </remarks>
+    /// <param name="trace">This injection's span and start timestamp.</param>
+    /// <param name="result">What the attempt ended as.</param>
+    private void Report(InjectionTrace trace, ExperienceInjectionResult result)
     {
+        InjectionDiagnostics.Tag(trace, InjectionDiagnostics.OmittedCountAttribute, result.Omitted.Count);
+
         try
         {
             _options.OnContextInjected?.Invoke(result);
@@ -557,6 +636,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
         catch (Exception)
         {
             // Reporting is diagnostics. It can never change what the caller of the agent observes.
+        }
+        finally
+        {
+            InjectionDiagnostics.Succeeded(trace, result.Outcome.ToString());
         }
     }
 }

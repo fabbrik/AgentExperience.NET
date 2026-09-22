@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 
 namespace AgentExperience.Core.Capture;
 
@@ -94,6 +95,39 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         Provenance provenance,
         DateTimeOffset startedAt)
     {
+        // The span wraps the whole call, argument validation included, so a malformed call is visible
+        // as a failure rather than as a missing operation. Nothing below it reads the span back, and
+        // the run's task description is never written to it.
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.CaptureStartRun, CancellationToken.None);
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, runId.ToString("D"));
+
+        // Only the call itself is guarded. Tagging and the metric writes happen outside it, so a
+        // throw from telemetry can never be mistaken for -- or turned into -- a failure of the run.
+        StartRunResult result;
+        try
+        {
+            result = StartRunCore(runId, taskId, taskDescription, scope, environment, provenance, startedAt);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.CaptureStartRun, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.CaptureStartRun, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>The body of <see cref="StartRun"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
+    private StartRunResult StartRunCore(
+        Guid runId,
+        string taskId,
+        string? taskDescription,
+        Scope scope,
+        EnvironmentFingerprint environment,
+        Provenance provenance,
+        DateTimeOffset startedAt)
+    {
         ArgumentNullException.ThrowIfNull(taskId);
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(environment);
@@ -141,6 +175,38 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         Guid runId,
         AppendAttemptRequest request,
         CancellationToken cancellationToken = default)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.CaptureAppendAttempt, cancellationToken);
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, runId.ToString("D"));
+
+        AppendAttemptResult result;
+        try
+        {
+            // Both identifiers come off the request, so both are on the span before the call: a span
+            // that records a failure is worth far less if it cannot say which attempt failed. The
+            // argument check is restated ahead of the tag so that a null request is still the
+            // ArgumentNullException the body would have thrown, never a NullReferenceException from
+            // instrumentation -- and is still recorded as this operation's failure.
+            ArgumentNullException.ThrowIfNull(request);
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.AttemptIdAttribute, request.AttemptId.ToString("D"));
+
+            result = await AppendAttemptCoreAsync(runId, request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.CaptureAppendAttempt, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.CaptureAppendAttempt, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>The body of <see cref="AppendAttemptAsync"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
+    private async Task<AppendAttemptResult> AppendAttemptCoreAsync(
+        Guid runId,
+        AppendAttemptRequest request,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.ToolCalls);
@@ -277,13 +343,40 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     }
 
     /// <inheritdoc />
-#pragma warning disable CS1998 // Deliberately async with no internal await: this captures a synchronous ThrowIfCancellationRequested() throw into the returned Task (matching AppendAttemptAsync's contract) instead of letting it escape synchronously at the call site.
     public async Task<CompleteRunResult> CompleteRunAsync(
         Guid runId,
         Guid completionEventId,
         RunExecutionStatus executionStatus,
         DateTimeOffset endedAt,
         CancellationToken cancellationToken = default)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.CaptureCompleteRun, cancellationToken);
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, runId.ToString("D"));
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.EventIdAttribute, completionEventId.ToString("D"));
+
+        CompleteRunResult result;
+        try
+        {
+            result = await CompleteRunCoreAsync(runId, completionEventId, executionStatus, endedAt, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.CaptureCompleteRun, ex);
+            throw;
+        }
+
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.CaptureCompleteRun, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>The body of <see cref="CompleteRunAsync"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
+#pragma warning disable CS1998 // Deliberately async with no internal await: this captures a synchronous ThrowIfCancellationRequested() throw into the returned Task (matching AppendAttemptAsync's contract) instead of letting it escape synchronously at the call site.
+    private async Task<CompleteRunResult> CompleteRunCoreAsync(
+        Guid runId,
+        Guid completionEventId,
+        RunExecutionStatus executionStatus,
+        DateTimeOffset endedAt,
+        CancellationToken cancellationToken)
 #pragma warning restore CS1998
     {
         cancellationToken.ThrowIfCancellationRequested();

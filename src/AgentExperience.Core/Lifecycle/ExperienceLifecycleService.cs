@@ -1,6 +1,7 @@
 using System.Globalization;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Confidence;
+using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Retrieval;
 
@@ -216,6 +217,51 @@ public sealed class ExperienceLifecycleService
         CommitLifecycleTransitionRequest request,
         CancellationToken cancellationToken)
     {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.LifecycleCommit, cancellationToken);
+
+        CommitLifecycleTransitionResult result;
+        try
+        {
+            // Both identifiers are in hand before the call, so a commit that threw still says which
+            // record and which event it was committing -- which is exactly the span an operator opens
+            // first. The argument check is restated ahead of the tag so that a null request is still
+            // the ArgumentNullException the body would have thrown.
+            ArgumentNullException.ThrowIfNull(request);
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ExperienceIdAttribute, request.ExperienceId.ToString("D"));
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.EventIdAttribute, request.EventId.ToString("D"));
+
+            result = await CommitCoreAsync(authorization, request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.LifecycleCommit, ex);
+            throw;
+        }
+
+        // Outside the guarded region on purpose. By this line the transition is durable, and frozen
+        // rule 6 says a throw from a tag expression or a metric write must never report it as failed.
+        // A refused transition is a decision, not a failure: the span stays Ok and only the outcome
+        // says the record did not move.
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.LifecycleCommit, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// The body of <see cref="CommitAsync"/>, unchanged by instrumentation: it neither reads nor writes
+    /// a span. It exists so that the wrapper's own tagging and metric writes sit outside the region that
+    /// guards the call, and it is <see langword="private"/> because every caller -- the finalization
+    /// service, which commits a record's initial lifecycle event, included -- goes through the
+    /// instrumented entry point and is counted there as a nested operation.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="request">The transition to commit.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The store's outcome, surfaced unchanged, or the refusal Core reached before calling it.</returns>
+    private async Task<CommitLifecycleTransitionResult> CommitCoreAsync(
+        AuthorizationContext authorization,
+        CommitLifecycleTransitionRequest request,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Scope, $"{nameof(request)}.{nameof(request.Scope)}");
@@ -331,6 +377,47 @@ public sealed class ExperienceLifecycleService
     /// <exception cref="ExperienceStoreException">Storage infrastructure failed. Lifecycle state and counters are unchanged.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public async Task<ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(
+        AuthorizationContext authorization,
+        ApplyConfidenceEvidenceRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var operation = ExperienceDiagnostics.Start(ExperienceOperationNames.ConfidenceApply, cancellationToken);
+
+        ApplyConfidenceEvidenceResult result;
+        try
+        {
+            // Request-derived, so tagged before the call and present on a faulted span too.
+            ArgumentNullException.ThrowIfNull(request);
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ExperienceIdAttribute, request.ExperienceId.ToString("D"));
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.EventIdAttribute, request.EventId.ToString("D"));
+
+            result = await ApplyEvidenceCoreAsync(authorization, request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ExperienceDiagnostics.Faulted(operation, ExperienceOperationNames.ConfidenceApply, ex);
+            throw;
+        }
+
+        // The evidence's own Detail is not written here: it is content-free by contract, but it is
+        // also of no use to an operator, and the fewer free-form values a span carries the less
+        // there is for a future change to get wrong.
+        ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.ConfidenceApply, result.Outcome.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// The body of <see cref="ApplyEvidenceAsync"/>, unchanged by instrumentation: it neither reads nor
+    /// writes a span. It exists so that the wrapper's own tagging and metric writes sit outside the
+    /// region that guards the call, and it is <see langword="private"/> because every caller -- the
+    /// reuse-feedback service, which applies one piece of evidence per exposed record, included --
+    /// goes through the instrumented entry point.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="request">The evidence to apply.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>What happened, and the confidence movement as the transaction stored it.</returns>
+    private async Task<ApplyConfidenceEvidenceResult> ApplyEvidenceCoreAsync(
         AuthorizationContext authorization,
         ApplyConfidenceEvidenceRequest request,
         CancellationToken cancellationToken)
@@ -708,6 +795,12 @@ public sealed class ExperienceLifecycleService
 
         try
         {
+            // The public, instrumented sibling, handed this library's own budget rather than the
+            // caller's token. A vector this hook fails to remove is a record that stays searchable
+            // after it stopped being eligible, so the hook has to be visible as a `deindex` of its own
+            // -- nested in the transition that asked for it -- rather than silently absorbed into it.
+            // The budget expiring classifies as a Timeout, not as the caller cancelling: the wrapper
+            // compares this token against the host's.
             return await _indexingService
                 .RemoveAsync(authorization, scope, experienceId, deindexing.Token)
                 .ConfigureAwait(false);
