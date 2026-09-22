@@ -73,11 +73,24 @@ public sealed record RankingComponent(RankingComponentKind Kind, double Value, d
 /// flag through unchanged -- it never decides sharing itself -- so a host's risk policy and anything
 /// that renders the record can tell borrowed experience from the requester's own.
 /// </param>
+/// <param name="PermittingGrantId">
+/// Which <see cref="ExperienceGrant"/> permitted this record to be <em>delivered</em>, when something
+/// on the path said so. Retrieval itself never sets it and it is <see langword="null"/> on everything
+/// this service returns: a candidate source reports that a search <em>matched</em> a shared record,
+/// and a match is not a delivery -- no grant has been used to hand anything over yet, so naming one
+/// here would claim an access that has not happened.
+/// <para>
+/// It is filled in by the final pre-injection re-read, which is a delivery and is the read an access
+/// row is written for. A host reading it therefore has the same grant ID that appears in the audit
+/// trail for that record.
+/// </para>
+/// </param>
 public sealed record RankedExperience(
     ExperienceRecord Record,
     double Score,
     IReadOnlyList<RankingComponent> Components,
-    bool SharedByGrant = false);
+    bool SharedByGrant = false,
+    Guid? PermittingGrantId = null);
 
 /// <summary>Why a candidate the search returned was not ranked.</summary>
 public enum RetrievalExclusionReason

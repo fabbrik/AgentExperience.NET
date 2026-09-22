@@ -299,8 +299,11 @@ public class ContractShapeTests
     {
         var methods = typeof(IExperienceRecordStore).GetMethods().OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
 
+        // Two GetAsync overloads: the plain read, and the one that also says what the caller will do
+        // with the record. Only auditing looks at the difference, so the second has a default
+        // implementation and an existing store keeps compiling.
         Assert.Equal(
-            ["CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetHistoryAsync", "QueryAsync"],
+            ["CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "QueryAsync"],
             methods.Select(m => m.Name));
         Assert.All(methods, method =>
         {
@@ -318,10 +321,21 @@ public class ContractShapeTests
         Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecord), typeof(CancellationToken)], methods[2].GetParameters().Select(p => p.ParameterType));
         Assert.Equal(typeof(Task<ExperienceRecordGetResult>), methods[3].ReturnType);
         Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(Guid), typeof(CancellationToken)], methods[3].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordHistoryResult>), methods[4].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordHistoryQuery), typeof(CancellationToken)], methods[4].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[5].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[5].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordGetResult>), methods[4].ReturnType);
+        Assert.Equal(
+            [typeof(AuthorizationContext), typeof(Scope), typeof(Guid), typeof(ExperienceReadOptions), typeof(CancellationToken)],
+            methods[4].GetParameters().Select(p => p.ParameterType));
+
+        // The plain read is the contract; the purpose-carrying one has a default implementation that
+        // forwards to it, so an existing store keeps compiling and only a store that writes access rows
+        // has any reason to override it.
+        Assert.True(methods[3].IsAbstract);
+        Assert.False(methods[4].IsAbstract);
+
+        Assert.Equal(typeof(Task<ExperienceRecordHistoryResult>), methods[5].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordHistoryQuery), typeof(CancellationToken)], methods[5].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[6].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[6].GetParameters().Select(p => p.ParameterType));
     }
 
     // Story 2.2: the retrieval candidate-source port.
@@ -624,5 +638,45 @@ public class ContractShapeTests
 
         Assert.True(grant.RecordScope.SharesGrantBoundary(grant.RecipientScope));
         Assert.Equal("administrator-1", grant.AdministratorPrincipalId);
+    }
+
+    [Fact]
+    public void Grant_auditing_cannot_be_constructed_or_copied_into_a_state_that_audits_nothing()
+    {
+        var log = new NullAccessLog();
+        Action<ExperienceGrantAccessFailure> report = _ => { };
+
+        // The whole point of the policy object is that a host cannot end up with a mode it did not
+        // choose, a missing ledger, or -- under best effort, where the read still returns -- nowhere for
+        // a missing row to be reported.
+        Assert.Throws<ArgumentNullException>(() => new ExperienceGrantAuditing(null!, report));
+        Assert.Throws<ArgumentNullException>(() => new ExperienceGrantAuditing(log, null!));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ExperienceGrantAuditing(log, report, (ExperienceGrantAuditingMode)99));
+
+        // And a `with` expression re-validates, so nothing can be copied over the guard afterwards.
+        var auditing = new ExperienceGrantAuditing(log, report, ExperienceGrantAuditingMode.Required);
+        Assert.Throws<ArgumentNullException>(() => auditing with { Log = null! });
+        Assert.Throws<ArgumentNullException>(() => auditing with { OnNotRecorded = null! });
+        Assert.Throws<ArgumentOutOfRangeException>(() => auditing with { Mode = (ExperienceGrantAuditingMode)99 });
+
+        Assert.Equal(ExperienceGrantAuditingMode.Required, auditing.Mode);
+        Assert.Same(TimeProvider.System, auditing.Clock);
+        Assert.Same(TimeProvider.System, (auditing with { Clock = null! }).Clock);
+
+        // Auditing is off by default, and that is expressible only by wiring nothing at all.
+        Assert.Equal(ExperienceGrantAuditingMode.BestEffort, new ExperienceGrantAuditing(log, report).Mode);
+    }
+
+    private sealed class NullAccessLog : IExperienceGrantAccessLog
+    {
+        public Task RecordAsync(IReadOnlyList<ExperienceGrantAccess> accesses, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<ExperienceGrantAccessQueryResult> QueryAsync(
+            AuthorizationContext authorization,
+            ExperienceGrantAccessQuery query,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ExperienceGrantAccessQueryResult(ExperienceStoreOutcome.Found, [], []));
     }
 }

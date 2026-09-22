@@ -260,7 +260,10 @@ public sealed class ExperienceRetrievalService
             request.TaskText,
             EligibleStatuses,
             _policy.MinimumConfidence,
-            _policy.CandidateLimit + 1);
+            _policy.CandidateLimit + 1,
+            // Carried only so a channel that audits what it discloses can tie a delivered record back
+            // to the invocation that asked for it. Nothing in retrieval reads it.
+            request.CorrelationId);
 
         // Cancelled only after a timeout has been reported (it carries no timer of its own), so a
         // token-honouring source can never race a cancellation failure ahead of the timeout report.

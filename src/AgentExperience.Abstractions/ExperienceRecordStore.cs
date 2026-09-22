@@ -5,7 +5,7 @@ namespace AgentExperience.Abstractions;
 /// operation takes a host-established <see cref="AuthorizationContext"/>; a request scope outside
 /// it is <see cref="ExperienceStoreOutcome.Denied"/> before any storage access, and scope matching
 /// is exact (ordinal, case-sensitive, <see langword="null"/> matches only <see langword="null"/>).
-/// The single, explicit exception is <see cref="GetAsync"/>, which also returns a record an active
+/// The single, explicit exception is <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>, which also returns a record an active
 /// <see cref="ExperienceGrant"/> permits this scope to read; every other operation here, writes and
 /// the lifecycle audit trail included, stays exact-scope whatever grants exist.
 /// Expected conditions return typed results; infrastructure failures throw
@@ -20,7 +20,7 @@ public interface IExperienceRecordStore
     /// unchanged; the result never reveals whether the existing record is in the caller's scope.
     /// A retried create whose earlier acknowledgement was lost (for example cancelled or timed out
     /// after the commit) also returns <see cref="ExperienceStoreOutcome.Conflict"/>; follow a
-    /// <see cref="ExperienceStoreOutcome.Conflict"/> with <see cref="GetAsync"/> in your own scope to
+    /// <see cref="ExperienceStoreOutcome.Conflict"/> with <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> in your own scope to
     /// check whether the stored record is yours.
     /// </summary>
     /// <param name="authorization">What the host has established the caller may do.</param>
@@ -55,6 +55,31 @@ public interface IExperienceRecordStore
         Scope scope,
         Guid experienceId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The same read, told what the caller is going to do with the record and which work caused it.
+    /// Only auditing depends on either: what the read returns is identical.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation forwards to the four-argument overload, so an existing
+    /// implementation keeps compiling and simply audits every grant-widened read as a delivery -- which
+    /// is the safe direction. An implementation that writes access rows should override it, because
+    /// <see cref="ExperienceReadPurpose.ScopeCheck"/> is the difference between a disclosure and a read
+    /// the caller is about to refuse.
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact request scope to read within.</param>
+    /// <param name="experienceId">The record to read. Must not be <see cref="Guid.Empty"/>.</param>
+    /// <param name="options">Why the read is being made, and the host's correlation identifier for it.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>Exactly what the four-argument overload returns.</returns>
+    Task<ExperienceRecordGetResult> GetAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        ExperienceReadOptions options,
+        CancellationToken cancellationToken) =>
+        GetAsync(authorization, scope, experienceId, cancellationToken);
 
     /// <summary>
     /// Lists records within exactly <see cref="ExperienceRecordQuery.Scope"/>, optionally filtered by
@@ -336,7 +361,41 @@ public sealed record ExperienceRecordCreateResult(
     IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>
-/// The result of <see cref="IExperienceRecordStore.GetAsync"/>.
+/// What a caller is going to do with the record it is asking for. It changes nothing about what the
+/// read returns; it decides only whether a grant-widened read counts as a delivery worth recording.
+/// </summary>
+public enum ExperienceReadPurpose
+{
+    /// <summary>
+    /// The caller keeps what it reads. A record only a grant made readable has therefore been handed
+    /// over, and an access row is written for it.
+    /// </summary>
+    Delivery,
+
+    /// <summary>
+    /// The caller is checking the record against its own scope and will refuse it outright if a grant
+    /// is what made it readable -- a confidence submission is the case in point, because a grant
+    /// confers reading and never writing. Nothing is handed over, so no access row is written, and the
+    /// caller keeps its own specific refusal instead of the audit turning a rejection into a recorded
+    /// disclosure.
+    /// </summary>
+    ScopeCheck,
+}
+
+/// <summary>
+/// The things a read can be told that only auditing looks at.
+/// </summary>
+/// <param name="Purpose">What the caller will do with the record. Defaults to <see cref="ExperienceReadPurpose.Delivery"/>, which is the safe direction.</param>
+/// <param name="CorrelationId">
+/// The host's identifier for the work causing this read, recorded on the access row so a delivery can
+/// be tied back to the invocation behind it. <see langword="null"/> when the caller has none.
+/// </param>
+public sealed record ExperienceReadOptions(
+    ExperienceReadPurpose Purpose = ExperienceReadPurpose.Delivery,
+    string? CorrelationId = null);
+
+/// <summary>
+/// The result of <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>.
 /// </summary>
 /// <param name="Outcome">What happened.</param>
 /// <param name="Record">The record when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Found"/>; otherwise <see langword="null"/>.</param>
@@ -348,11 +407,23 @@ public sealed record ExperienceRecordCreateResult(
 /// must treat an unset flag as "this record is the requester's own" rather than comparing scopes to
 /// decide.
 /// </param>
+/// <param name="PermittingGrantId">
+/// Which <see cref="ExperienceGrant"/> permitted the read, when <paramref name="SharedByGrant"/> is
+/// <see langword="true"/>: the one the implementation's own predicate used to decide readability, not
+/// merely one that could have. <see langword="null"/> for a record the requester owns, and
+/// <see langword="null"/> from an implementation that cannot say which grant applied -- so a consumer
+/// reads it as "this grant" or "not told", never as "no grant".
+/// <para>
+/// It is what the access row an <see cref="IExperienceGrantAccessLog"/> appends names, so a host
+/// handed this ID can find the delivery in the trail and the grant in its administration history.
+/// </para>
+/// </param>
 public sealed record ExperienceRecordGetResult(
     ExperienceStoreOutcome Outcome,
     ExperienceRecord? Record,
     IReadOnlyList<StoreValidationError> Errors,
-    bool SharedByGrant = false);
+    bool SharedByGrant = false,
+    Guid? PermittingGrantId = null);
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.QueryAsync"/>.

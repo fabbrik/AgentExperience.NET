@@ -264,6 +264,25 @@ are borrowed, on `ExperienceRecordGetResult.SharedByGrant`; that reaches the hos
 `ExperienceInjectionDecisionContext.SharedByGrant`, so a risk policy can treat another scope's lesson differently,
 and the block carries a `Shared:` line for the model to read. No scope identifier is ever written into the block.
 
+The store also says **which** grant permitted each one, on `ExperienceRecordGetResult.PermittingGrantId`, which the
+provider carries onto `RankedExperience.PermittingGrantId` and
+`ExperienceInjectionDecisionContext.PermittingGrantId`. A host can therefore deny one specific grant's records, or
+tie an injected lesson back to the sharing decision behind it. The grant ID is for the host, not for the model: it
+is never written into the block. Retrieval itself leaves it null — a search *matching* a shared record is not a
+delivery, and no grant has been used to hand anything over until the re-read.
+
+**That re-read is audited.** If the host wired an
+[access log](../AgentExperience.Storage.Postgres/README.md#recording-who-read-a-shared-record), each record the
+re-read delivers through a grant appends one access row naming that grant and the revision it disclosed, tagged
+with the request's `CorrelationId` — one row per delivered record, and none for the reader's own records. The row
+records that the store handed the record over, so a record the host's risk policy then denies still has one: the
+denial happens after the delivery. Under `Required` auditing a re-read whose row cannot be written returns nothing,
+and the record is dropped as `Unreadable` like any other read that came back empty.
+
+Retrieval's own search is audited as well, by the channels themselves rather than here — a candidate carries the
+record read back in full, so a search that returns a borrowed record has already disclosed it, whether or not it
+survives to injection.
+
 ### Injected blocks accumulate across a reused session
 
 A block injected on one turn can stay in an `AgentSession`'s conversation, so a later turn of the same session shows

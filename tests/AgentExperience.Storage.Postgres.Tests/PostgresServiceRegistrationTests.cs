@@ -42,6 +42,63 @@ public class PostgresServiceRegistrationTests
     }
 
     [Fact]
+    public void The_store_picks_up_a_registered_access_log_whichever_order_they_are_registered_in()
+    {
+        using var dataSource = TestRecords.Unreachable();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+
+        // Deliberately before the store: the store is built from the container when it is first
+        // resolved, so a host must not have to know which line comes first.
+        services.AddAgentExperiencePostgresGrantAccessLog(_ => { }, ExperienceGrantAuditingMode.Required);
+        services.AddAgentExperiencePostgresStore();
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType<PostgresExperienceGrantAccessLog>(provider.GetRequiredService<IExperienceGrantAccessLog>());
+
+        var auditing = provider.GetRequiredService<ExperienceGrantAuditing>();
+        Assert.Equal(ExperienceGrantAuditingMode.Required, auditing.Mode);
+        Assert.Same(provider.GetRequiredService<IExperienceGrantAccessLog>(), auditing.Log);
+        Assert.IsType<PostgresExperienceRecordStore>(provider.GetRequiredService<IExperienceRecordStore>());
+    }
+
+    [Fact]
+    public void Auditing_is_off_unless_a_host_wires_it()
+    {
+        using var dataSource = TestRecords.Unreachable();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddAgentExperiencePostgresStore();
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Null(provider.GetService<ExperienceGrantAuditing>());
+        Assert.Null(provider.GetService<IExperienceGrantAccessLog>());
+        Assert.IsType<PostgresExperienceRecordStore>(provider.GetRequiredService<IExperienceRecordStore>());
+    }
+
+    [Fact]
+    public void The_grant_store_takes_the_hosts_lifetime_policy_and_defaults_to_ninety_days()
+    {
+        using var dataSource = TestRecords.Unreachable();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddAgentExperiencePostgresGrantStore(new PostgresExperienceGrantPolicy(TimeSpan.FromDays(30)));
+
+        using var provider = services.BuildServiceProvider();
+
+        var grants = Assert.IsType<PostgresExperienceGrantStore>(provider.GetRequiredService<IExperienceGrantStore>());
+        Assert.Equal(TimeSpan.FromDays(30), grants.Policy.MaxLifetime);
+
+        // Registering nothing is still a policy: there is no unbounded option.
+        Assert.Equal(TimeSpan.FromDays(90), new PostgresExperienceGrantStore(dataSource).Policy.MaxLifetime);
+    }
+
+    [Fact]
     public void A_host_store_registered_first_wins()
     {
         using var dataSource = TestRecords.Unreachable();
@@ -171,6 +228,18 @@ public class PostgresServiceRegistrationTests
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresGrantStore(dataSource));
         Assert.Throws<ArgumentNullException>(() => new ServiceCollection().AddAgentExperiencePostgresGrantStore((NpgsqlDataSource)null!));
         Assert.Throws<ArgumentNullException>(() => new PostgresExperienceGrantStore(null!));
+
+        Assert.Throws<ArgumentNullException>(() =>
+            ((IServiceCollection)null!).AddAgentExperiencePostgresGrantAccessLog(_ => { }));
+        Assert.Throws<ArgumentNullException>(() =>
+            ((IServiceCollection)null!).AddAgentExperiencePostgresGrantAccessLog(dataSource, _ => { }));
+        Assert.Throws<ArgumentNullException>(() =>
+            new ServiceCollection().AddAgentExperiencePostgresGrantAccessLog(null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            new ServiceCollection().AddAgentExperiencePostgresGrantAccessLog(dataSource, null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            new ServiceCollection().AddAgentExperiencePostgresGrantAccessLog((NpgsqlDataSource)null!, _ => { }));
+        Assert.Throws<ArgumentNullException>(() => new PostgresExperienceGrantAccessLog(null!));
 
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresStore());
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresStore(dataSource));

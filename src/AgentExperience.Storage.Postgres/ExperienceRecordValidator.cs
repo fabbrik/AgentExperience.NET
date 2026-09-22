@@ -347,13 +347,28 @@ internal static class ExperienceRecordValidator
     /// caller learns which boundary it tried to cross without being told anything about the record.
     /// </summary>
     /// <remarks>
-    /// Expiry is deliberately not checked against the local clock. Whether a grant is still live is
-    /// decided by the database's clock in the read predicate, and rejecting an already-past expiry
-    /// here would put a second, disagreeing clock in charge of the same question. The
-    /// <c>experience_grants_expires_after_issue</c> constraint catches it against the clock that does
-    /// decide.
+    /// <para>
+    /// The <em>lower</em> bound on expiry is deliberately not checked against the local clock. Whether
+    /// a grant is still live is decided by the database's clock in the read predicate, and rejecting
+    /// an already-past expiry here would put a second, disagreeing clock in charge of the same
+    /// question. The <c>experience_grants_expires_after_issue</c> constraint catches it against the
+    /// clock that does decide.
+    /// </para>
+    /// <para>
+    /// The <em>upper</em> bound is checked here, and it has to be: it is a host-configured interval,
+    /// and a CHECK constraint cannot express one. A local clock is good enough for it because the
+    /// bound is generous and one-sided -- skew of seconds cannot turn a reasonable window into an
+    /// unreasonable one -- and because the database keeps its own fixed ceiling underneath
+    /// (<c>experience_grants_lifetime_bounded</c>), which no clock of ours is involved in.
+    /// </para>
     /// </remarks>
-    public static IReadOnlyList<StoreValidationError> ValidateGrantRequest(ExperienceGrantRequest request)
+    /// <param name="request">The grant to validate.</param>
+    /// <param name="policy">The bounds this adapter administers grants under.</param>
+    /// <param name="now">The moment to measure the maximum lifetime from.</param>
+    public static IReadOnlyList<StoreValidationError> ValidateGrantRequest(
+        ExperienceGrantRequest request,
+        PostgresExperienceGrantPolicy policy,
+        DateTimeOffset now)
     {
         var errors = new List<StoreValidationError>();
 
@@ -374,6 +389,14 @@ internal static class ExperienceRecordValidator
         if (request.ExpiresAt == default)
         {
             errors.Add(new("ExpiresAt", "must be set to when the grant stops permitting reads."));
+        }
+        else if (policy.ExceedsMaxLifetime(request.ExpiresAt, now))
+        {
+            // The message names the bound, not the offending value: a caller needs to know what it may
+            // ask for, and echoing back what it asked for tells it nothing it did not already have.
+            errors.Add(new(
+                "ExpiresAt",
+                $"must not be more than {policy.MaxLifetime} from now, which is the configured maximum grant lifetime."));
         }
 
         if (request.RecordScope is { } record && request.RecipientScope is { } recipient)
@@ -425,6 +448,37 @@ internal static class ExperienceRecordValidator
         }
 
         ValidateScope(recordScope, "RecordScope", errors);
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a query over the grant access trail: the owner scope it reads within, the optional
+    /// single record it narrows to, and the page bound.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateGrantAccessQuery(ExperienceGrantAccessQuery query)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (query.ExperienceId == Guid.Empty)
+        {
+            // Null narrows to nothing and is the "everything this scope disclosed" question; an empty
+            // GUID is a caller that meant to name a record and did not.
+            errors.Add(new("ExperienceId", "must not be an empty GUID; use null to read the whole scope."));
+        }
+
+        if (query.Limit is < ExperienceGrantAccessQuery.MinLimit or > ExperienceGrantAccessQuery.MaxLimit)
+        {
+            errors.Add(new(
+                "Limit",
+                $"must be between {ExperienceGrantAccessQuery.MinLimit} and {ExperienceGrantAccessQuery.MaxLimit}."));
+        }
+
+        if (query.StartAfter is { } cursor && cursor.AccessId == Guid.Empty)
+        {
+            errors.Add(new("StartAfter.AccessId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(query.RecordScope, "RecordScope", errors);
         return errors;
     }
 

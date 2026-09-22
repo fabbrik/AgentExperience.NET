@@ -10,12 +10,19 @@ namespace AgentExperience.Storage.Postgres;
 /// <see cref="IExperienceRecordStore"/> over PostgreSQL with plain Npgsql. Each operation validates
 /// the request, checks it against the host-established <see cref="AuthorizationContext"/>, and only
 /// then opens a connection and runs parameterized SQL whose predicates apply the exact scope -- or,
-/// for <see cref="GetAsync"/> alone, the exact scope or an active sharing grant. The
+/// for <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> alone, the exact scope or an active sharing grant. The
 /// schema must already exist: the host applies it once by calling
 /// <see cref="ExperienceSchemaMigrator.MigrateAsync(NpgsqlDataSource, CancellationToken)"/>. The store
 /// never migrates, on construction or otherwise.
 /// </summary>
 /// <remarks>
+/// <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> is also the one read that can be <em>audited</em>: when the host wires an
+/// <see cref="ExperienceGrantAuditing"/>, a record delivered through a grant appends one access row naming the
+/// grant the statement actually used. The append is a separate statement after the read, never part of it, so a
+/// read still takes no write lock and can still run on a replica. An owner's own record writes nothing, and nor
+/// does a read the caller declared an <see cref="ExperienceReadPurpose.ScopeCheck"/> -- it is about to refuse the
+/// record for being grant-readable, so nothing is handed over. The two search channels audit what they return
+/// through their own batched append.
 /// <see cref="CommitLifecycleEventAsync"/> is the only operation that changes a stored record: it appends
 /// the event and updates the record's projection in one transaction on one connection, keyed by
 /// <see cref="LifecycleEvent.EventId"/> for idempotency and by
@@ -61,17 +68,26 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// and permitting this scope. The table is aliased so the grant subquery's correlation is
     /// unambiguous -- an unqualified <c>experience_id</c> inside it would silently resolve to the
     /// grants table's own column and match every record.
+    /// <para>
+    /// This is the one grant-aware read that also has to <em>name</em> the grant, because it is the
+    /// one that delivers a record to a caller and therefore the one an access row is written for. The
+    /// lateral join both decides readability and produces the ID, so the row can never name a grant
+    /// other than the one the database used. See <see cref="PermittingGrantJoin"/>.
+    /// </para>
     /// </summary>
     private const string GetSql =
-        $"SELECT {SelectColumns}, {SharedByGrantColumn} FROM {Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {ReadableRecordScopePredicate}";
+        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn} FROM {Table} r " +
+        $"{PermittingGrantJoin} " +
+        $"WHERE r.experience_id = @experience_id AND {ReadableWithNamedGrantPredicate}";
 
     /// <summary>
     /// The same read with the grant branch removed, for a database that has no
     /// <c>experience_grants</c> table or a role that may not read it. See <see cref="PostgresGrantSupport"/>.
+    /// Nothing is shared on this path, so nothing is audited either: the read returns only records the
+    /// requesting scope already owns.
     /// </summary>
     private const string GetExactSql =
-        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias} FROM {Table} r " +
+        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias} FROM {Table} r " +
         $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate}";
 
     private const string QuerySql = $"SELECT {SelectColumns} FROM {Table} WHERE {ScopePredicate}";
@@ -264,7 +280,18 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// </remarks>
     internal const string ActiveGrantPredicate =
-        $"EXISTS (SELECT 1 FROM {GrantsTable} g WHERE g.experience_id = r.experience_id " +
+        $"EXISTS (SELECT 1 FROM {GrantsTable} g WHERE {ActiveGrantConditions})";
+
+    /// <summary>
+    /// The conditions that make a <c>g</c>-aliased grant row active for the <c>r</c>-aliased record and
+    /// the requesting scope, without the <c>EXISTS</c> wrapper around them. Factored out so
+    /// <see cref="ActiveGrantPredicate"/> and <see cref="PermittingGrantJoin"/> are the same rule
+    /// written once: the join that <em>names</em> the grant must not be able to drift from the
+    /// predicate that decides whether one exists, or an access row could name a grant that did not
+    /// permit the read.
+    /// </summary>
+    internal const string ActiveGrantConditions =
+        "g.experience_id = r.experience_id " +
         "AND g.revoked_at IS NULL AND g.expires_at > clock_timestamp() " +
         "AND g.tenant_id = r.tenant_id AND g.application_id = r.application_id AND g.project_id = r.project_id " +
         "AND g.team_id IS NOT DISTINCT FROM r.team_id AND g.agent_id IS NOT DISTINCT FROM r.agent_id " +
@@ -273,7 +300,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "AND g.recipient_project_id = @project_id " +
         "AND g.recipient_team_id IS NOT DISTINCT FROM @team_id " +
         "AND g.recipient_agent_id IS NOT DISTINCT FROM @agent_id " +
-        "AND g.recipient_user_id IS NOT DISTINCT FROM @user_id)";
+        "AND g.recipient_user_id IS NOT DISTINCT FROM @user_id";
 
     /// <summary>
     /// What a <em>read</em> may return: the record's own exact scope, or an active grant that names it
@@ -281,7 +308,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// so the database can never hand back a row the predicate did not permit and no application code
     /// is in a position to widen one.
     /// <para>
-    /// It is used by <see cref="GetAsync"/>, by the text channel, and by the vector channel -- the
+    /// It is used by <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>, by the text channel, and by the vector channel -- the
     /// three paths a grant covers. Writes, lifecycle commits, lifecycle history, and
     /// <see cref="QueryAsync"/>'s enumeration keep the exact-scope predicate: a grant confers reading
     /// one named record, never writing, never the audit trail of mutations, and never the right to
@@ -301,6 +328,57 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// record columns, so <see cref="ReadRecord"/>'s ordinals 0-17 are untouched.
     /// </summary>
     internal const string SharedByGrantColumn = "NOT (" + RecordScopePredicate + ") AS " + SharedByGrantAlias;
+
+    /// <summary>The alias the permitting grant's ID is selected under, read back by name, never by ordinal.</summary>
+    internal const string PermittingGrantAlias = "permitting_grant_id";
+
+    /// <summary>The name the lateral join is given, kept distinct from the <c>g</c> alias inside it.</summary>
+    private const string PermittingGrantSource = "permitting_grant";
+
+    /// <summary>
+    /// The one active grant the read actually used, as a lateral join rather than a second subquery.
+    /// <para>
+    /// <b>Why a join and not another <c>EXISTS</c>.</b> An access row has to name the grant that
+    /// permitted the read, not merely assert that one did. Deciding readability with
+    /// <see cref="ActiveGrantPredicate"/> and then looking the ID up separately would ask the same
+    /// question twice, and the two answers could differ -- a grant revoked in between, or simply a
+    /// different one picked -- leaving a row naming a grant that did not permit anything. Here the row
+    /// comes back from the same statement that admitted the record, so the two cannot disagree.
+    /// </para>
+    /// <para>
+    /// <b>Why it is ordered.</b> Two active grants may legitimately permit the same read -- different
+    /// administrators, different reasons, overlapping windows. <c>ORDER BY g.grant_id LIMIT 1</c>
+    /// makes which one the trail names a stable fact rather than whatever the planner happened to hand
+    /// back first; the choice is arbitrary but it is not arbitrary <em>per read</em>.
+    /// </para>
+    /// <para>
+    /// It is a <c>LEFT JOIN LATERAL ... ON true</c>, so a record the requester owns still comes back
+    /// with a null grant ID rather than being filtered away.
+    /// </para>
+    /// </summary>
+    internal const string PermittingGrantJoin =
+        $"LEFT JOIN LATERAL (SELECT g.grant_id FROM {GrantsTable} g WHERE {ActiveGrantConditions} " +
+        $"ORDER BY g.grant_id LIMIT 1) {PermittingGrantSource} ON true";
+
+    /// <summary>The permitting grant's ID, appended <em>after</em> the record columns and the shared flag.</summary>
+    internal const string PermittingGrantColumn = PermittingGrantSource + ".grant_id AS " + PermittingGrantAlias;
+
+    /// <summary>
+    /// <see cref="ReadableRecordScopePredicate"/> expressed against <see cref="PermittingGrantJoin"/>:
+    /// the requester's own record, or one the join found a live grant for. The two are the same rule --
+    /// the join's conditions are <see cref="ActiveGrantConditions"/> byte for byte -- but this form
+    /// reuses the row the join already produced instead of re-running the subquery as an
+    /// <c>EXISTS</c>.
+    /// </summary>
+    internal const string ReadableWithNamedGrantPredicate =
+        "((" + RecordScopePredicate + ") OR " + PermittingGrantFoundPredicate + ")";
+
+    /// <summary>
+    /// "the lateral join found a live grant", for a statement composing its own readable predicate --
+    /// the vectors channel, whose exact-scope branch spans two aliases. Shared so no channel retypes
+    /// the alias the join was given.
+    /// </summary>
+    internal const string PermittingGrantFoundPredicate = PermittingGrantSource + ".grant_id IS NOT NULL";
 
     /// <summary>
     /// One statement, so the revision and the events come from one snapshot however the server is
@@ -377,9 +455,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
+    /// <summary>What the four-argument <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> means: a caller that keeps what it reads.</summary>
+    private static readonly ExperienceReadOptions DeliveryRead = new();
+
     private readonly NpgsqlDataSource _dataSource;
 
     private readonly PostgresGrantSupport _grants;
+
+    private readonly ExperienceGrantAuditing? _auditing;
 
     /// <summary>Creates a store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
@@ -388,14 +471,21 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// or unreadable and falls back to the exact-scope predicate. Optional: the fallback happens either
     /// way, and it only ever narrows what a read returns.
     /// </param>
+    /// <param name="auditing">
+    /// Where to record reads that a grant delivered, and what a failed recording does to the read.
+    /// <see langword="null"/> -- the default -- switches auditing off entirely: no extra write, no
+    /// extra failure mode, and a deployment behaves exactly as it did before this was added.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceRecordStore(
         NpgsqlDataSource dataSource,
-        Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null)
+        Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
+        ExperienceGrantAuditing? auditing = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
+        _auditing = auditing;
     }
 
     /// <inheritdoc />
@@ -474,14 +564,24 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <inheritdoc />
+    public Task<ExperienceRecordGetResult> GetAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken) =>
+        GetAsync(authorization, scope, experienceId, DeliveryRead, cancellationToken);
+
+    /// <inheritdoc />
     public async Task<ExperienceRecordGetResult> GetAsync(
         AuthorizationContext authorization,
         Scope scope,
         Guid experienceId,
+        ExperienceReadOptions options,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(options);
 
         var errors = ExperienceRecordValidator.ValidateGet(scope, experienceId);
         if (errors.Count > 0)
@@ -496,24 +596,31 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        ExperienceRecordGetResult result;
         try
         {
             try
             {
-                return await ReadOneAsync(_grants.Available ? GetSql : GetExactSql, scope, experienceId, cancellationToken)
+                result = await ReadOneAsync(_grants.Available ? GetSql : GetExactSql, scope, experienceId, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "get", cancellationToken))
             {
                 // No grant table, or no permission to read it. Falling back narrows the read to the
                 // exact scope; it can never return a record this scope did not already own.
-                return await ReadOneAsync(GetExactSql, scope, experienceId, cancellationToken).ConfigureAwait(false);
+                result = await ReadOneAsync(GetExactSql, scope, experienceId, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
             throw Translate(ex, "get", cancellationToken);
         }
+
+        // Deliberately outside the read's own translation: an audit failure is the host's policy to
+        // decide, not a storage failure to raise, and it must never be reported as a failed read.
+        return _auditing is null || options.Purpose == ExperienceReadPurpose.ScopeCheck
+            ? result
+            : await RecordGrantAccessAsync(authorization, scope, options, result, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ExperienceRecordGetResult> ReadOneAsync(
@@ -532,7 +639,59 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
         }
 
-        return new(ExperienceStoreOutcome.Found, ReadRecord(reader), NoErrors, ReadSharedByGrant(reader));
+        return new(
+            ExperienceStoreOutcome.Found,
+            ReadRecord(reader),
+            NoErrors,
+            ReadSharedByGrant(reader),
+            ReadPermittingGrant(reader));
+    }
+
+    /// <summary>
+    /// Appends the access row for a record a grant just delivered, and decides what a failed append
+    /// does to the read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only a delivery is recorded.</b> A read that found nothing, and an owner reading its own
+    /// record, both write nothing: no grant permitted either, so there is no access to attribute to
+    /// one. This is also the only reason every stored row can carry a non-null grant.
+    /// </para>
+    /// <para>
+    /// <b>The failure path is the host's policy, not a storage error.</b> Under
+    /// <see cref="ExperienceGrantAuditingMode.BestEffort"/> the record is still returned and the
+    /// failure is reported; under <see cref="ExperienceGrantAuditingMode.Required"/> the read returns
+    /// <see cref="ExperienceStoreOutcome.NotFound"/> -- the same answer as a record no grant permitted,
+    /// so failing closed tells a caller nothing it would not otherwise have -- and the failure is
+    /// reported just the same. Caller cancellation is never an audit failure and propagates unwrapped.
+    /// </para>
+    /// <para>
+    /// A read that came back shared but unnamed cannot happen through this store's own SQL, because the
+    /// same lateral join decides both. If it ever did, the row is attempted anyway with an empty grant
+    /// ID, the database's own <c>experience_grant_access_grant_id_not_empty</c> refuses it, and the
+    /// configured mode decides the read -- which is the safe direction, rather than quietly delivering
+    /// a shared record with no trail.
+    /// </para>
+    /// </remarks>
+    private async Task<ExperienceRecordGetResult> RecordGrantAccessAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ExperienceReadOptions options,
+        ExperienceRecordGetResult result,
+        CancellationToken cancellationToken)
+    {
+        var auditing = _auditing!;
+
+        if (result is not { Outcome: ExperienceStoreOutcome.Found, Record: { } record, SharedByGrant: true })
+        {
+            return result;
+        }
+
+        var access = GrantAuditing.Access(auditing, authorization, scope, options.CorrelationId, record, result.PermittingGrantId);
+
+        return await GrantAuditing.RecordAsync(auditing, [access], cancellationToken).ConfigureAwait(false)
+            ? result
+            : new(ExperienceStoreOutcome.NotFound, null, NoErrors);
     }
 
     /// <inheritdoc />
@@ -1435,6 +1594,25 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         catch (IndexOutOfRangeException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads the permitting grant's ID by name. A reader that did not select it is treated as "not
+    /// told which grant", which is the safe direction: a consumer distinguishes that from "no grant"
+    /// by the shared flag, and an audited read that cannot name its grant fails rather than inventing
+    /// one.
+    /// </summary>
+    internal static Guid? ReadPermittingGrant(DbDataReader reader)
+    {
+        try
+        {
+            var ordinal = reader.GetOrdinal(PermittingGrantAlias);
+            return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
         }
     }
 

@@ -62,13 +62,24 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// scope, so nothing is written unless that record exists exactly there; the owner scope columns
     /// are copied from it rather than from caller input. <c>issued_at</c> is the database's own clock,
     /// which is the same clock the read predicate compares <c>expires_at</c> against.
+    /// <para>
+    /// <b>The maximum lifetime is enforced here too, against that same clock.</b> The client check in
+    /// <see cref="ExperienceRecordValidator.ValidateGrantRequest"/> produces the friendly message, but
+    /// it measures from the caller's clock; this statement measures from the one that actually stamps
+    /// <c>issued_at</c>, so a caller whose clock runs behind cannot buy itself a longer grant. An
+    /// over-long expiry is written as <c>NULL</c> into a <c>NOT NULL</c> column rather than filtered
+    /// out by the <c>WHERE</c>: filtering would make it indistinguishable from "no such record" and
+    /// report <see cref="ExperienceGrantOutcome.NotFound"/>, while the not-null violation names the
+    /// column and is reported on the field the caller got wrong. Nothing is written either way.
+    /// </para>
     /// </summary>
     private static readonly string InsertGrantSql =
         $"INSERT INTO {PostgresExperienceRecordStore.GrantsTable} ({GrantColumns}) " +
         "SELECT @grant_id, r.experience_id, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id, " +
         "@recipient_tenant_id, @recipient_application_id, @recipient_project_id, " +
         "@recipient_team_id, @recipient_agent_id, @recipient_user_id, " +
-        "@reason, @administrator_principal_id, now(), @expires_at, NULL, NULL " +
+        "@reason, @administrator_principal_id, now(), " +
+        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL " +
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
         $"RETURNING {GrantColumns}";
@@ -142,6 +153,14 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// <summary>The constraint an expiry that is not in the database's own future violates.</summary>
     private const string ExpiryConstraint = "experience_grants_expires_after_issue";
 
+    /// <summary>
+    /// The database's own fixed ceiling on a grant's lifetime, added by <c>0009</c>. Reaching it means
+    /// the host's configured maximum did not catch the request first -- a clock far enough behind the
+    /// database's, or a policy configured up against the ceiling -- so it is reported on the same
+    /// field, and nothing is written either way.
+    /// </summary>
+    private const string LifetimeConstraint = "experience_grants_lifetime_bounded";
+
     /// <summary>The constraint a recipient scope crossing tenant, application, or project violates.</summary>
     private const string BoundaryConstraint = "experience_grants_same_boundary";
 
@@ -163,14 +182,36 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
     private readonly NpgsqlDataSource _dataSource;
 
+    private readonly PostgresExperienceGrantPolicy _policy;
+
+    private readonly TimeProvider _timeProvider;
+
     /// <summary>Creates a grant store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
+    /// <param name="policy">
+    /// The bounds grants are administered under, chiefly the maximum lifetime a new grant may be
+    /// issued with. Defaults to <see cref="PostgresExperienceGrantPolicy.Default"/> -- a 90-day
+    /// maximum -- because there is no unbounded option: an expiry no policy bounds is what
+    /// <c>DateTimeOffset.MaxValue</c> used to buy.
+    /// </param>
+    /// <param name="timeProvider">
+    /// The clock the maximum lifetime is measured from. Defaults to <see cref="TimeProvider.System"/>.
+    /// It decides only the upper bound; whether a grant is still live is always the database's clock.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
-    public PostgresExperienceGrantStore(NpgsqlDataSource dataSource)
+    public PostgresExperienceGrantStore(
+        NpgsqlDataSource dataSource,
+        PostgresExperienceGrantPolicy? policy = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
+        _policy = policy ?? PostgresExperienceGrantPolicy.Default;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
+
+    /// <summary>The bounds this store administers grants under.</summary>
+    public PostgresExperienceGrantPolicy Policy => _policy;
 
     /// <inheritdoc />
     public async Task<ExperienceGrantResult> CreateAsync(
@@ -182,7 +223,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(request);
 
-        var errors = ExperienceRecordValidator.ValidateGrantRequest(request);
+        var errors = ExperienceRecordValidator.ValidateGrantRequest(request, _policy, _timeProvider.GetUtcNow());
         if (errors.Count > 0)
         {
             return new(ExperienceGrantOutcome.Invalid, null, errors);
@@ -234,6 +275,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 parameters.Add(new NpgsqlParameter<DateTimeOffset>(
                     "expires_at",
                     PostgresExperienceRecordStore.ToStoredTimestamp(request.ExpiresAt)));
+                parameters.Add(new NpgsqlParameter<TimeSpan>("max_lifetime", _policy.MaxLifetime));
 
                 grant = await ReadOneAsync(insert, cancellationToken).ConfigureAwait(false);
             }
@@ -252,6 +294,30 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                     ExperienceGrantOutcome.Invalid,
                     null,
                     [new StoreValidationError("ExpiresAt", "must be later than the moment the database issues the grant.")]);
+            }
+            catch (PostgresException ex) when (IsViolationOf(ex, PostgresErrorCodes.CheckViolation, LifetimeConstraint, cancellationToken))
+            {
+                // Past the database's own fixed ceiling, measured from the clock that issues the grant.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                return new(
+                    ExperienceGrantOutcome.Invalid,
+                    null,
+                    [new StoreValidationError("ExpiresAt", "must not be more than ten years after the moment the database issues the grant.")]);
+            }
+            catch (PostgresException ex) when (!cancellationToken.IsCancellationRequested
+                && ex.SqlState == PostgresErrorCodes.NotNullViolation
+                && string.Equals(ex.ColumnName, "expires_at", StringComparison.Ordinal))
+            {
+                // The statement's own maximum-lifetime guard, measured from the database's clock rather
+                // than the caller's. Reaching it means the client check passed on a clock that runs
+                // behind the database's; the answer is the same either way.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                return new(
+                    ExperienceGrantOutcome.Invalid,
+                    null,
+                    [new StoreValidationError(
+                        "ExpiresAt",
+                        $"must not be more than {_policy.MaxLifetime} after the moment the database issues the grant, which is the configured maximum grant lifetime.")]);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, PostgresErrorCodes.UniqueViolation, ActiveRecipientIndex, cancellationToken))
             {
@@ -340,14 +406,32 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
 
             ExperienceGrant? revoked;
-            await using (var update = new NpgsqlCommand(RevokeGrantSql, connection, transaction))
+            try
             {
+                await using var update = new NpgsqlCommand(RevokeGrantSql, connection, transaction);
                 var parameters = update.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("grant_id", revocation.GrantId));
                 parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text) { TypedValue = revocation.Reason });
                 PostgresExperienceRecordStore.AddScopeParameters(parameters, revocation.RecordScope);
 
                 revoked = await ReadOneAsync(update, cancellationToken).ConfigureAwait(false);
+            }
+            catch (PostgresException ex) when (IsViolationOf(ex, PostgresErrorCodes.CheckViolation, LifetimeConstraint, cancellationToken))
+            {
+                // Defensive. 0009 exempts a revoked row from the lifetime ceiling precisely so this
+                // cannot happen -- PostgreSQL re-checks a CHECK on every UPDATE, and without that
+                // exemption a grant stored before 0009 with an unbounded expiry could never be revoked,
+                // which is the one remedy the migration's runbook prescribes for it. If a deployment
+                // ever reinstates the constraint without the exemption, the answer is a typed refusal
+                // naming the problem rather than an infrastructure failure thrown at an administrator
+                // trying to end access.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                return new(
+                    ExperienceGrantOutcome.Invalid,
+                    null,
+                    [new StoreValidationError(
+                        "GrantId",
+                        "names a stored grant whose expiry is past the database's lifetime ceiling, and the ceiling refuses the update that would revoke it. See 0009_grant_access_log.sql.")]);
             }
 
             if (revoked is null)

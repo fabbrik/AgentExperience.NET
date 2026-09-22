@@ -92,6 +92,9 @@ services.AddAgentExperiencePostgresStore();             // or AddAgentExperience
 services.AddAgentExperiencePostgresCandidateSource();   // or ...CandidateSource(dataSource)
 services.AddAgentExperiencePostgresGrantStore();        // or ...GrantStore(dataSource) -- only if you share records
 services.AddAgentExperiencePostgresReuseFeedbackStore(); // or ...ReuseFeedbackStore(dataSource) -- only if you record feedback
+services.AddAgentExperiencePostgresGrantAccessLog(      // or ...GrantAccessLog(dataSource, ...) -- only if you want
+    onNotRecorded: failure => logger.LogError(          //    a trail of who READ shared records. Off unless wired.
+        failure.Failure, "grant access row not written"));
 
 // Core's own extensions then supply capture, reflection, lifecycle, finalization, and retrieval over them.
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
@@ -463,17 +466,147 @@ enumerate the grants over a record it can read, any more than it can issue one.
 `GetHistoryAsync` reads one grant's audit trail: the grant as it stands now plus every `Issued`/`Revoked` event,
 oldest first, each carrying the administrator, when the host established that administrator's authority, both
 scopes, the reason, and the expiry at the time. It mirrors `IExperienceRecordStore.GetHistoryAsync` and is likewise
-owner-scope only. **It is an administration trail, not an access log:** reads made through a grant are not recorded
-anywhere, so it answers "who permitted this?" and never "who read it?".
+owner-scope only. **It is an administration trail:** it answers "who permitted this?".
+"Who read it?" is the separate, optional access log below.
 
 A grant never changes the record it names: no status, confidence, counter, revision, or timestamp moves on this
 path, and nothing is promoted.
 
-**A borrowed record says so.** A read widened by a grant comes back with `SharedByGrant` set — on
-`ExperienceRecordGetResult` and on every `ExperienceCandidate` — because this adapter is the only layer that knows.
-Core passes it through on `RankedExperience`, and the MAF provider surfaces it to the host's risk policy and labels
-the injected block. Consumers keep a strict "this is my own record" check for anything not flagged, so a source that
-returns a foreign record without declaring a grant is still refused downstream.
+**A borrowed record says so, and says which grant.** A read widened by a grant comes back with `SharedByGrant` set
+— on `ExperienceRecordGetResult` and on every `ExperienceCandidate` — because this adapter is the only layer that
+knows. All three read paths additionally return `PermittingGrantId`: *which* grant permitted it, produced by the
+same `LEFT JOIN LATERAL` that decided readability, so it can never name a grant that did not permit the read. Where two
+active grants would both admit it, the join orders by `grant_id` and takes one, so the answer is stable per read
+rather than whatever the planner returned first. Core passes both through on `RankedExperience`, and the MAF
+provider surfaces them to the host's risk policy and labels the injected block. Consumers keep a strict "this is my
+own record" check for anything not flagged, so a source that returns a foreign record without declaring a grant is
+still refused downstream.
+
+### Bounding a grant's lifetime
+
+`PostgresExperienceGrantPolicy` is the policy this store administers grants under. Its one rule today is
+`MaxLifetime`, the longest a *new* grant may be issued for — 90 days by default:
+
+```csharp
+IExperienceGrantStore grants = new PostgresExperienceGrantStore(
+    dataSource,
+    new PostgresExperienceGrantPolicy(TimeSpan.FromDays(30)));
+// or services.AddAgentExperiencePostgresGrantStore(new PostgresExperienceGrantPolicy(TimeSpan.FromDays(30)));
+```
+
+An expiry further ahead than the maximum is `Invalid` on `ExpiresAt` with nothing written; one exactly at the
+maximum is accepted. There is no unbounded option — `TimeSpan.Zero`, `Timeout.InfiniteTimeSpan`, and anything past
+3650 days all throw at construction — so `DateTimeOffset.MaxValue`, which used to buy a permanent grant, is now
+refused like any other over-long expiry. A bound that would run off the end of `DateTimeOffset` is treated as
+*exceeded* rather than saturated, because saturating would make the comparison vacuously true and admit exactly
+the value the bound exists to refuse.
+
+**It is checked twice, against two clocks, on purpose.** The client check produces the message naming the bound,
+but it measures from the caller's clock. The insert statement carries the same bound as
+`expires_at <= now() + @max_lifetime`, measured from the clock that stamps `issued_at`, so a caller whose clock
+runs behind cannot buy itself a longer grant; it is reported on the same field, and nothing is written either way.
+
+The bound binds a grant when it is **created**, and never afterwards. Raising the maximum does not extend a grant
+already issued; lowering it does not shorten one. End an over-long grant by revoking it. The existing rule that an
+expiry may only ever shrink (`0006`'s `experience_grants_monotonic` trigger) is unchanged.
+
+Underneath the policy, `0009` adds `experience_grants_lifetime_bounded`:
+`CHECK (revoked_at IS NOT NULL OR expires_at <= issued_at + interval '10 years')`. A `CHECK` cannot express
+"whatever interval this deployment configured", so the two do different jobs: the policy is the deployment's rule,
+the constraint is a fixed, generous floor that binds even a writer bypassing this library. It is added `NOT VALID`;
+see the script's header for the confirm-then-`VALIDATE` step and what to do about a grant already issued beyond it.
+
+The **revoked exemption matters**: PostgreSQL re-checks a `CHECK` on every `UPDATE`, so without it, revoking a
+grant stored before `0009` with an unbounded expiry — the one remedy the runbook prescribes — would be refused by
+the very constraint that made it a problem, leaving it permanent forever. Because the ceiling is relative to
+`issued_at`, `0009` also adds a `BEFORE INSERT` trigger refusing a grant dated in the future: "ten years from 2126"
+outlives everyone the trail is for, and a `CHECK` cannot call `now()`.
+
+### Recording who read a shared record
+
+The grant trail answers "who permitted this?". `IExperienceGrantAccessLog` answers "who read it?", and it is a
+separate, optional ledger — a deployment can keep grants without paying for access rows:
+
+```csharp
+services.AddAgentExperiencePostgresGrantAccessLog(
+    onNotRecorded: failure => logger.LogError(failure.Failure, "grant access row not written"),
+    mode: ExperienceGrantAuditingMode.BestEffort);   // or Required
+
+// Outside a container:
+var store = new PostgresExperienceRecordStore(
+    dataSource,
+    onGrantsUnavailable: null,
+    auditing: new ExperienceGrantAuditing(
+        new PostgresExperienceGrantAccessLog(dataSource),
+        onNotRecorded: failure => logger.LogError(failure.Failure, "grant access row not written"),
+        ExperienceGrantAuditingMode.Required));
+```
+
+Each row names the grant, the record **and the revision that was disclosed**, the owner scope, the recipient
+scope, the reading principal (the host's `AuthorizationContext.PrincipalId`, never anything a caller passed as
+data), the host's correlation ID for the work that caused the read, and both `occurred_at` (the reader's clock,
+which is `ExperienceGrantAuditing.Clock`) and `recorded_at` (the database's `clock_timestamp()`). The revision and
+the correlation ID are on the row rather than joined in later because a record is a mutable projection and the
+table is append-only: neither can ever be backfilled.
+
+| Read | Recorded? | Why |
+| --- | --- | --- |
+| `GetAsync` widened by a grant | **Yes** | The record was handed to a caller who could only see it through that grant |
+| The MAF provider's pre-injection re-read | **Yes** | It is the same `GetAsync`, and it is a delivery |
+| A text or vector candidate a grant admitted | **Yes** | `ExperienceCandidate.Record` is the record read back *in full*, so returning one across a scope boundary is a disclosure, not a notice that something matched. A search's rows are written in **one** statement, so auditing costs one round trip per search rather than one per row |
+| An owner reading its own record | **No** | No grant permitted it, so there is no access to attribute to one |
+| A read that found nothing | **No** | Nothing was delivered |
+| A read the caller refuses *because* a grant is what made it readable | **No** | Nothing was handed over. Declare it with `ExperienceReadOptions(ExperienceReadPurpose.ScopeCheck)`; Core's confidence path does, because a grant never confers writing |
+
+**The rows are never written inside the read's own statement.** That would take a write lock on every read and stop
+reads running on a replica. The append is a separate statement afterwards, which is why what happens when it fails
+is a policy rather than an accident:
+
+- `BestEffort` (the default): the records are still returned and the failure goes to `onNotRecorded`, carrying
+  every row that did not land. That callback is **required**, not optional — under best effort it is the only place
+  a missing row is visible, and an audit that can fail silently is worse than none.
+- `Required`: the read returns nothing. A `GetAsync` returns `NotFound`, which is the same answer a record no grant
+  permitted would give, so failing closed tells a caller nothing it would not otherwise have; a search returns *no*
+  candidates rather than the subset that needed no grant, because a partly-returned page would quietly be a
+  different search than the caller asked for. The failure is still reported.
+- A blank `AuthorizationContext.PrincipalId` is itself an audit failure: a row that cannot say **who** read the
+  record does not answer the question the ledger exists for, so it is reported and, under `Required`, fails closed.
+  Establish a principal, or do not require auditing.
+- Cancellation arriving during the append is a failure like any other rather than an exception thrown over a
+  completed read — the records were already read, so the mode decides whether they may be returned.
+- A throwing `onNotRecorded` is swallowed: the host's own logging never changes what a read returns.
+
+**Reading the trail.** `IExperienceGrantAccessLog.QueryAsync` answers the question the ledger exists for, without
+hand-written SQL. It is owner-scope only and cursored, mirroring `IExperienceGrantStore.GetHistoryAsync`:
+
+```csharp
+var page = await accessLog.QueryAsync(
+    authorization,
+    new ExperienceGrantAccessQuery(ownerScope),            // or (ownerScope, recordId) for one record
+    cancellationToken);
+// page.Accesses — oldest first, bounded by Limit (1-500, default 100).
+// page.NextCursor — pass as StartAfter for the next page; the cursor is (occurred_at, access_id), so
+//                   several deliveries sharing an instant page correctly.
+```
+
+A recipient cannot enumerate who else read a record it can read, any more than it can list the grants over one.
+
+**What turning it on costs.** Every read that discloses something across a scope boundary now does a second,
+synchronous round trip on a pooled connection before it returns — one per `GetAsync`, one per search however many
+rows it disclosed. Under `Required`, read availability becomes a function of *write* availability: if the ledger is
+unreachable, grant-widened reads return nothing. That is the mode's promise, not a bug, but it is a real coupling.
+The `dataSource` overloads exist largely for this: pointing `PostgresExperienceGrantAccessLog` at its own
+`NpgsqlDataSource` keeps the audit writes off the read pool, so a slow ledger cannot exhaust the connections reads
+depend on.
+
+`experience_grant_access` is append-only in the database, like every other ledger here, so a delivery cannot be
+edited or deleted out of the trail afterwards. Wire nothing and auditing is off entirely: no extra write, no extra
+round trip, no extra failure mode, `0009`'s table simply stays empty, and reads behave exactly as they did before.
+
+**Auditing binds the implementation that was registered.** Every registration here uses `TryAdd`, so a host that
+registers its own `IExperienceRecordStore`, `IExperienceCandidateSource`, or `IExperienceEmbeddingIndex` *before*
+calling these extensions keeps its own — and takes on the obligation to honour a configured
+`ExperienceGrantAuditing` itself. Registering the access log does not make somebody else's store audit.
 
 ## Schema
 
@@ -667,6 +800,39 @@ its triggers as to `0006`'s: read them above before relying on them.
 - `BEFORE UPDATE OR DELETE` and `BEFORE TRUNCATE` triggers on both tables, reusing `0006`'s function. Promoting a
   recorded exposure into an attribution after the fact is exactly what they stop. The same limits apply as to
   `0006`'s: read them above before relying on them.
+
+`0009_grant_access_log.sql` adds the append-only grant access ledger and the database's own grant-lifetime ceiling:
+
+- `experience_grant_access`: `access_id` as the primary key, the `grant_id` the read predicate actually used, the
+  record and the `record_revision` that was disclosed, the record's owner scope, the recipient scope the read was
+  made in, the reading `principal_id` (**`NOT NULL`** — a row that cannot say who does not answer the question),
+  the optional `correlation_id`, and `occurred_at`/`recorded_at`. One row per record a grant **delivered** — see
+  the table above for exactly what is and is not recorded.
+- `CHECK`s mirroring `0005`'s: non-empty IDs, non-blank scope, and — restated on the row that claims a grant
+  carried a record across a boundary — `experience_grant_access_same_boundary` and
+  `experience_grant_access_recipient_differs`. A row saying a record left its tenant, application, or project is
+  unstorable here even if some other writer managed to store the grant that would have allowed it.
+- Indexes on `(grant_id, occurred_at)` — "who read anything through this grant" — and on
+  `(tenant_id, application_id, project_id, experience_id, occurred_at)` — "who saw our team's experience, and
+  when". The script's header carries the `CREATE INDEX CONCURRENTLY` runbook for a hand-applied database.
+- Deliberately **no** foreign key to `experience_grants` or `experience_records`, matching `0002`, `0007`, and
+  `0008`: the trail must outlive whatever it describes. `grant_id` joins to `experience_grants` and
+  `experience_grant_events` by hand, which is how an auditor moves from "who read it" to "who permitted it"; the
+  script's header carries that query.
+- `BEFORE UPDATE OR DELETE` and `BEFORE TRUNCATE` triggers, reusing `0006`'s function. Erasing that a record was
+  handed to someone is exactly what they stop, and the same limits apply as to `0006`'s.
+- `experience_grants_lifetime_bounded` on the **existing** grants table, added `ALTER TABLE … NOT VALID` because a
+  database issuing grants since `0005` may already hold an unbounded one. It exempts a revoked row
+  (`revoked_at IS NOT NULL OR …`), because PostgreSQL re-checks a `CHECK` on every `UPDATE` and revoking such a
+  grant is the one remedy the runbook prescribes — without the exemption it would be permanent and unrevocable.
+  The header carries the query that finds them and the `VALIDATE CONSTRAINT` statement; `0006`'s trigger still
+  refuses any `UPDATE` that moves `expires_at` outward, so they are ended by revoking rather than shortened.
+- `experience_grants_issued_not_future`, a `BEFORE INSERT` trigger refusing a grant dated more than a minute ahead.
+  The ceiling above is relative to `issued_at`, so without it a bypassing writer could store an effectively
+  permanent grant simply by dating it a century forward; a `CHECK` cannot say this, because it may not call
+  `now()`.
+- Retention is deferred to roadmap story 4.5 with the other ledgers'. This is the one most likely to grow without
+  bound in a deployment that shares heavily, so plan it before enabling auditing at scale.
 
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package

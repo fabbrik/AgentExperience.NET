@@ -377,6 +377,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
                 PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
                 PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
+                PostgresExperienceRecordSchema.GrantAccessLogScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -596,7 +597,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -658,7 +659,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
     }
 
     [Fact]
@@ -733,10 +734,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("experience_records", statements, StringComparison.OrdinalIgnoreCase);
 
-        // 0008 is applied last, which the migrator relies on for ordinal name ordering.
+        // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^1]);
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -803,6 +804,24 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
         Assert.StartsWith("NOT (", PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
         Assert.EndsWith(PostgresExperienceRecordStore.SharedByGrantAlias, PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
+
+        // The join that NAMES the permitting grant and the predicate that decides whether one exists are
+        // the same rule written once. If they could drift, an access row could name a grant that did not
+        // permit the read -- which is the one thing the trail must never say.
+        Assert.Contains(PostgresExperienceRecordStore.ActiveGrantConditions, PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains(PostgresExperienceRecordStore.ActiveGrantConditions, PostgresExperienceRecordStore.PermittingGrantJoin, StringComparison.Ordinal);
+
+        // One grant, chosen the same way every time, so the trail's answer is stable rather than
+        // whatever the planner returned first.
+        Assert.Contains("ORDER BY g.grant_id LIMIT 1", PostgresExperienceRecordStore.PermittingGrantJoin, StringComparison.Ordinal);
+
+        // LEFT, so a record the requester owns still comes back -- with no grant named.
+        Assert.StartsWith("LEFT JOIN LATERAL", PostgresExperienceRecordStore.PermittingGrantJoin, StringComparison.Ordinal);
+
+        // The readable predicate expressed against the join is the exact match or a named grant, and it
+        // still carries the exact-scope predicate byte for byte.
+        Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate, StringComparison.Ordinal);
+        Assert.EndsWith(PostgresExperienceRecordStore.PermittingGrantAlias, PostgresExperienceRecordStore.PermittingGrantColumn, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -492,13 +492,18 @@ public sealed record ExperienceIndexScanResult(
 /// <param name="EligibleStatuses">The statuses a record must be in to be returned. Must be non-empty and contain only defined values.</param>
 /// <param name="MinimumConfidence">The smallest <see cref="ExperienceRecord.ReuseConfidence"/> a record may have and still be returned, in [0, 1].</param>
 /// <param name="Limit">Maximum number of candidates to return, from <see cref="ExperienceCandidateQuery.MinLimit"/> to <see cref="ExperienceCandidateQuery.MaxLimit"/>. Defaults to <see cref="ExperienceCandidateQuery.DefaultLimit"/>.</param>
+/// <param name="CorrelationId">
+/// The host's identifier for the work causing this search, recorded on the access rows written for
+/// any grant-permitted records it returns. Nothing else reads it.
+/// </param>
 public sealed record ExperienceVectorQuery(
     Scope Scope,
     string ModelId,
     ReadOnlyMemory<float> Vector,
     IReadOnlyList<ExperienceStatus> EligibleStatuses,
     double MinimumConfidence,
-    int Limit = ExperienceCandidateQuery.DefaultLimit);
+    int Limit = ExperienceCandidateQuery.DefaultLimit,
+    string? CorrelationId = null);
 
 /// <summary>What a scoped vector search ended as.</summary>
 public enum ExperienceVectorSearchOutcome

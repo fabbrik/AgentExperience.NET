@@ -32,7 +32,7 @@ internal sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
 /// The world an injection test runs against: a search index and a record store that are
 /// deliberately <em>separate</em> collections, because that is the whole point of the final
 /// eligibility check. What <see cref="SearchAsync"/> returns is a snapshot taken when the record was
-/// indexed; what <see cref="GetAsync"/> returns is the record as it stands now. A test makes a
+/// indexed; what <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> returns is the record as it stands now. A test makes a
 /// record "revoked between retrieval and injection" simply by changing the stored one.
 /// </summary>
 internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperienceRecordStore
@@ -41,32 +41,33 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     private readonly Dictionary<Guid, ExperienceRecord> _stored = [];
     private readonly HashSet<Guid> _events = [];
     private readonly List<Guid> _reads = [];
+    private readonly List<ExperienceReadOptions> _readOptions = [];
 
     /// <summary>Thrown by <see cref="SearchAsync"/> when set, to exercise a failing retrieval.</summary>
     public Exception? SearchThrows { get; set; }
 
-    /// <summary>Thrown by <see cref="GetAsync"/> when set, to exercise a store that is down at re-check time.</summary>
+    /// <summary>Thrown by <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> when set, to exercise a store that is down at re-check time.</summary>
     public Exception? GetThrows { get; set; }
 
     /// <summary>Awaited inside <see cref="SearchAsync"/> when set, to exercise the retrieval timeout.</summary>
     public Func<CancellationToken, Task>? SearchDelay { get; set; }
 
-    /// <summary>Awaited inside <see cref="GetAsync"/> when set, to exercise the eligibility-check bound.</summary>
+    /// <summary>Awaited inside <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> when set, to exercise the eligibility-check bound.</summary>
     public Func<CancellationToken, Task>? GetDelay { get; set; }
 
-    /// <summary>Signalled the first time <see cref="SearchAsync"/> or <see cref="GetAsync"/> is entered.</summary>
+    /// <summary>Signalled the first time <see cref="SearchAsync"/> or <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> is entered.</summary>
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    /// <summary>Records <see cref="GetAsync"/> reports as <c>NotFound</c>, whatever is stored.</summary>
+    /// <summary>Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> reports as <c>NotFound</c>, whatever is stored.</summary>
     public HashSet<Guid> Unreadable { get; } = [];
 
-    /// <summary>Records <see cref="GetAsync"/> reports as <c>Denied</c>.</summary>
+    /// <summary>Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> reports as <c>Denied</c>.</summary>
     public HashSet<Guid> Denied { get; } = [];
 
-    /// <summary>Records <see cref="GetAsync"/> reports as <c>Invalid</c>.</summary>
+    /// <summary>Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> reports as <c>Invalid</c>.</summary>
     public HashSet<Guid> Invalid { get; } = [];
 
-    /// <summary>Records <see cref="GetAsync"/> answers with a record carrying a <em>different</em> ID.</summary>
+    /// <summary>Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> answers with a record carrying a <em>different</em> ID.</summary>
     public HashSet<Guid> Misidentified { get; } = [];
 
     /// <summary>
@@ -76,14 +77,52 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// </summary>
     public HashSet<(Guid ExperienceId, Scope Recipient)> Grants { get; } = [];
 
-    /// <summary>Shares one record with one recipient scope, the way an administrator's grant would.</summary>
-    public void Grant(Guid experienceId, Scope recipient) => Grants.Add((experienceId, recipient));
-
-    /// <summary>Withdraws a grant, the way a revocation or an expiry would between two reads.</summary>
-    public void Revoke(Guid experienceId, Scope recipient) => Grants.Remove((experienceId, recipient));
+    private readonly Dictionary<(Guid ExperienceId, Scope Recipient), Guid> _grantIds = [];
 
     /// <summary>
-    /// Records <see cref="GetAsync"/> answers <c>Found</c> for with a record from another tenant,
+    /// The host's auditing policy, when a test wires one. <see langword="null"/> -- the default -- is a
+    /// deployment with no access log: nothing is recorded and nothing else changes. The fake models
+    /// the whole contract the real adapter implements, failure callback and mode included, so a test
+    /// can exercise <see cref="ExperienceGrantAuditingMode.Required"/> here rather than inferring it
+    /// from a database test elsewhere.
+    /// </summary>
+    public ExperienceGrantAuditing? Auditing { get; set; }
+
+    /// <summary>Every read's options, in order, so a test can assert what the provider declared.</summary>
+    public IReadOnlyList<ExperienceReadOptions> ReadOptions
+    {
+        get
+        {
+            lock (_readOptions)
+            {
+                return _readOptions.ToList();
+            }
+        }
+    }
+
+    /// <summary>Shares one record with one recipient scope, the way an administrator's grant would.</summary>
+    /// <returns>The grant's ID, which a delivered read then names.</returns>
+    public Guid Grant(Guid experienceId, Scope recipient)
+    {
+        Grants.Add((experienceId, recipient));
+        var grantId = Guid.NewGuid();
+        _grantIds[(experienceId, recipient)] = grantId;
+        return grantId;
+    }
+
+    /// <summary>Withdraws a grant, the way a revocation or an expiry would between two reads.</summary>
+    public void Revoke(Guid experienceId, Scope recipient)
+    {
+        Grants.Remove((experienceId, recipient));
+        _grantIds.Remove((experienceId, recipient));
+    }
+
+    /// <summary>The grant a read through <paramref name="recipient"/> was permitted by, if this fake knows one.</summary>
+    private Guid? PermittingGrant(Guid experienceId, Scope recipient) =>
+        _grantIds.TryGetValue((experienceId, recipient), out var grantId) ? grantId : null;
+
+    /// <summary>
+    /// Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> answers <c>Found</c> for with a record from another tenant,
     /// without declaring any grant -- a store that hands back something it was never asked for.
     /// </summary>
     public HashSet<Guid> Foreign { get; } = [];
@@ -185,15 +224,28 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         return new ExperienceCandidateSearchResult(ExperienceStoreOutcome.Found, matches, []);
     }
 
+    public Task<ExperienceRecordGetResult> GetAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken) =>
+        GetAsync(authorization, scope, experienceId, new ExperienceReadOptions(), cancellationToken);
+
     public async Task<ExperienceRecordGetResult> GetAsync(
         AuthorizationContext authorization,
         Scope scope,
         Guid experienceId,
+        ExperienceReadOptions options,
         CancellationToken cancellationToken)
     {
         lock (_reads)
         {
             _reads.Add(experienceId);
+        }
+
+        lock (_readOptions)
+        {
+            _readOptions.Add(options);
         }
 
         Entered.TrySetResult();
@@ -218,6 +270,7 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             return new ExperienceRecordGetResult(ExperienceStoreOutcome.Invalid, null, [new StoreValidationError("ExperienceId", "malformed")]);
         }
 
+        ExperienceRecordGetResult result;
         lock (_stored)
         {
             if (Unreadable.Contains(experienceId)
@@ -237,9 +290,53 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             }
 
             // A store that answers Found with somebody else's record: the provider must not trust it.
-            return Misidentified.Contains(experienceId)
-                ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record with { ExperienceId = Guid.NewGuid() }, [])
-                : new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, [], SharedByGrant(record, scope));
+            if (Misidentified.Contains(experienceId))
+            {
+                return new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record with { ExperienceId = Guid.NewGuid() }, []);
+            }
+
+            var shared = SharedByGrant(record, scope);
+            result = new ExperienceRecordGetResult(
+                ExperienceStoreOutcome.Found,
+                record,
+                [],
+                shared,
+                shared ? PermittingGrant(record.ExperienceId, scope) : null);
+        }
+
+        // The adapter audits a DELIVERY, in a separate statement after the read, only when a grant is
+        // what made the delivery possible, and never when the caller declared a scope check. The fake
+        // mirrors all of that -- including the catch and the mode -- so an injection test can exercise
+        // fail-closed auditing without a database.
+        if (Auditing is not { } auditing
+            || options.Purpose == ExperienceReadPurpose.ScopeCheck
+            || result is not { SharedByGrant: true, Record: { } delivered, PermittingGrantId: { } grantId })
+        {
+            return result;
+        }
+
+        var access = new ExperienceGrantAccess(
+            Guid.NewGuid(),
+            grantId,
+            delivered.ExperienceId,
+            delivered.Revision,
+            delivered.Scope,
+            scope,
+            authorization.PrincipalId,
+            options.CorrelationId,
+            auditing.Clock.GetUtcNow());
+
+        try
+        {
+            await auditing.Log.RecordAsync([access], cancellationToken);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            auditing.OnNotRecorded(new ExperienceGrantAccessFailure([access], auditing.Mode, ex));
+            return auditing.Mode == ExperienceGrantAuditingMode.Required
+                ? new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, [])
+                : result;
         }
     }
 
@@ -303,6 +400,69 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
 
     public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Injection must not check supersession.");
+}
+
+/// <summary>
+/// An access ledger held in memory, so an injection test can count the rows a delivery produced
+/// without a database. It is append-only for the same reason the real table is: a test that could
+/// rewrite a row could not tell the difference between one read and two.
+/// </summary>
+internal sealed class InMemoryGrantAccessLog : IExperienceGrantAccessLog
+{
+    private readonly List<ExperienceGrantAccess> _rows = [];
+
+    /// <summary>Thrown by <see cref="RecordAsync"/> when set, to exercise a ledger that is down.</summary>
+    public Exception? Throws { get; set; }
+
+    /// <summary>Every access row appended, in order.</summary>
+    public IReadOnlyList<ExperienceGrantAccess> Rows
+    {
+        get
+        {
+            lock (_rows)
+            {
+                return _rows.ToList();
+            }
+        }
+    }
+
+    public Task RecordAsync(IReadOnlyList<ExperienceGrantAccess> accesses, CancellationToken cancellationToken)
+    {
+        if (Throws is { } failure)
+        {
+            return Task.FromException(failure);
+        }
+
+        lock (_rows)
+        {
+            _rows.AddRange(accesses);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<ExperienceGrantAccessQueryResult> QueryAsync(
+        AuthorizationContext authorization,
+        ExperienceGrantAccessQuery query,
+        CancellationToken cancellationToken)
+    {
+        lock (_rows)
+        {
+            var rows = _rows
+                .Where(row => row.RecordScope == query.RecordScope
+                    && (query.ExperienceId is not { } id || row.ExperienceId == id))
+                .OrderBy(row => row.OccurredAt)
+                .ThenBy(row => row.AccessId)
+                .Take(query.Limit)
+                .ToList();
+
+            return Task.FromResult(new ExperienceGrantAccessQueryResult(
+                ExperienceStoreOutcome.Found,
+                rows,
+                [],
+                rows.Count > 0 ? new ExperienceGrantAccessCursor(rows[^1].OccurredAt, rows[^1].AccessId) : null));
+        }
+    }
 }
 
 /// <summary>Builders for the Experience Records injection tests inject.</summary>
