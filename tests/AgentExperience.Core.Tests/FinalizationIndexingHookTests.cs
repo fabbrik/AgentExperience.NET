@@ -394,10 +394,17 @@ public class FinalizationIndexingHookTests
 
         public Task<ExperienceRecordHistoryResult> GetHistoryAsync(
             AuthorizationContext authorization,
-            Scope scope,
-            Guid experienceId,
+            ExperienceRecordHistoryQuery query,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExperienceRecordHistoryResult(ExperienceStoreOutcome.Found, 0, [], []));
+
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(
+            AuthorizationContext authorization,
+            Scope scope,
+            Guid experienceId,
+            Guid replacementExperienceId,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Finalization must not check supersession.");
 
         /// <summary>Mirrors a committed record into the index's view of the world, exactly as the real schema's join would see it.</summary>
         private void Publish(ExperienceRecord record) =>

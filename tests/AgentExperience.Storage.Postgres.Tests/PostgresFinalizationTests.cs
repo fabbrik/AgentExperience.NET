@@ -94,15 +94,19 @@ public sealed class PostgresFinalizationTests
         Assert.Equal("search", Assert.Single(attempt.ToolCalls).ToolName);
 
         // And so did the lifecycle history: exactly one initial event.
-        var history = await _store.GetHistoryAsync(auth, scope, stored.ExperienceId, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, scope, stored.ExperienceId, CancellationToken.None);
         Assert.Equal(ExperienceStoreOutcome.Found, history.Outcome);
         Assert.Equal(1, history.Revision);
-        var initial = Assert.Single(history.Events);
+        var stamped = Assert.Single(history.Events);
+        var initial = stamped.Event;
         Assert.Equal(ExperienceFinalizationService.InitialEventIdFor(runId), initial.EventId);
         Assert.Equal(ExperienceStatus.Candidate, initial.PriorStatus); // the record was created as a Candidate
         Assert.Equal(ExperienceStatus.Validated, initial.CurrentStatus);
         Assert.Equal(0, initial.ExpectedRevision);
+        Assert.Null(initial.ReplacementExperienceId);
         Assert.Equal(ExperienceFinalizationService.ProducerIdentity, initial.Producer);
+        Assert.Equal(1, stamped.AppliedRevision);
+        Assert.True(stamped.RecordedAt >= initial.OccurredAt);
     }
 
     [Fact]
@@ -127,7 +131,7 @@ public sealed class PostgresFinalizationTests
         var records = await _store.QueryAsync(auth, new ExperienceRecordQuery(scope), CancellationToken.None);
         Assert.Single(records.Records);
 
-        var history = await _store.GetHistoryAsync(auth, scope, first.ExperienceId!.Value, CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, scope, first.ExperienceId!.Value, CancellationToken.None);
         Assert.Equal(1, history.Revision);
         Assert.Single(history.Events);
     }
@@ -151,7 +155,7 @@ public sealed class PostgresFinalizationTests
         var records = await _store.QueryAsync(auth, new ExperienceRecordQuery(scope), CancellationToken.None);
         Assert.Empty(records.Records);
 
-        var history = await _store.GetHistoryAsync(auth, scope, ExperienceFinalizationService.ExperienceIdFor(runId), CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, scope, ExperienceFinalizationService.ExperienceIdFor(runId), CancellationToken.None);
         Assert.Equal(ExperienceStoreOutcome.NotFound, history.Outcome);
     }
 
@@ -174,7 +178,7 @@ public sealed class PostgresFinalizationTests
         Assert.Null(stored.Reflection);
         Assert.Equal(0d, stored.ReuseConfidence);
         Assert.Equal(TaskVerificationStatus.Failed, stored.Outcome.Status);
-        Assert.Equal(ExperienceStatus.Quarantined, Assert.Single((await _store.GetHistoryAsync(auth, scope, stored.ExperienceId, CancellationToken.None)).Events).CurrentStatus);
+        Assert.Equal(ExperienceStatus.Quarantined, Assert.Single((await _store.GetFirstHistoryPageAsync(auth, scope, stored.ExperienceId, CancellationToken.None)).Events).Event.CurrentStatus);
     }
 
     [Fact]
@@ -233,7 +237,7 @@ public sealed class PostgresFinalizationTests
         var unconfirmed = (await _store.GetAsync(auth, scope, experienceId, CancellationToken.None)).Record!;
         Assert.Equal(ExperienceStatus.Candidate, unconfirmed.Status);
         Assert.Equal(0, unconfirmed.Revision);
-        Assert.Empty((await _store.GetHistoryAsync(auth, scope, experienceId, CancellationToken.None)).Events);
+        Assert.Empty((await _store.GetFirstHistoryPageAsync(auth, scope, experienceId, CancellationToken.None)).Events);
 
         // The retry re-derives the very same initial event -- including its OccurredAt, which has been
         // through PostgreSQL's microsecond truncation on the way back out -- and finishes that commit.
@@ -249,7 +253,7 @@ public sealed class PostgresFinalizationTests
         Assert.Equal(1, confirmed.Revision);
         Assert.Equal(unconfirmed.CreatedAt, confirmed.CreatedAt); // the first call's timestamp, not the retry's
 
-        var only = Assert.Single((await _store.GetHistoryAsync(auth, scope, experienceId, CancellationToken.None)).Events);
+        var only = Assert.Single((await _store.GetFirstHistoryPageAsync(auth, scope, experienceId, CancellationToken.None)).Events).Event;
         Assert.Equal(ExperienceFinalizationService.InitialEventIdFor(runId), only.EventId);
         Assert.Equal(ExperienceStatus.Candidate, only.PriorStatus);
         Assert.Equal(ExperienceStatus.Validated, only.CurrentStatus);
@@ -258,7 +262,7 @@ public sealed class PostgresFinalizationTests
         // And finalizing once more is now the plain already-finalized replay.
         var again = await _finalization.FinalizeAsync(Request(runId, auth), CancellationToken.None);
         Assert.Equal(FinalizationOutcome.AlreadyFinalized, again.Outcome);
-        Assert.Single((await _store.GetHistoryAsync(auth, scope, experienceId, CancellationToken.None)).Events);
+        Assert.Single((await _store.GetFirstHistoryPageAsync(auth, scope, experienceId, CancellationToken.None)).Events);
     }
 
     private static Evidence Evidence(CheckResult result) => new(

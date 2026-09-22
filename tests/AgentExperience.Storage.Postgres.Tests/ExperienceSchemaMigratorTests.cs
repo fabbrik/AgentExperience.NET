@@ -97,6 +97,72 @@ public sealed class ExperienceSchemaMigratorTests
     }
 
     [Fact]
+    public async Task Upgrading_a_database_that_already_holds_a_Superseded_event_with_no_replacement_succeeds()
+    {
+        await using var dataSource = await _fixture.CreateDatabaseAsync("upgrade_0006");
+
+        // A pre-0006 database: 0001-0005 only. The public port has always accepted a Superseded event,
+        // because Core's transition table was never applied by the store, and such an event has no
+        // replacement -- exactly the row a validating ADD CONSTRAINT would abort this script on.
+        foreach (var scriptName in PostgresExperienceRecordSchema.ScriptNames
+            .Where(name => !string.Equals(name, PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName, StringComparison.Ordinal)))
+        {
+            await using var command = dataSource.CreateCommand(PostgresExperienceRecordSchema.GetScript(scriptName));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var store = new PostgresExperienceRecordStore(dataSource);
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var record = Minimal(scope);
+        await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+
+        await using (var legacy = dataSource.CreateCommand(
+            "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, " +
+            "project_id, prior_status, current_status, reason, producer, occurred_at, recorded_at, " +
+            "expected_revision, applied_revision) VALUES " +
+            "(gen_random_uuid(), @id, @tenant, @app, @project, 'Candidate', 'Validated', 'promoted', 'legacy', now(), now(), 0, 1), " +
+            "(gen_random_uuid(), @id, @tenant, @app, @project, 'Validated', 'Superseded', 'replaced', 'legacy', now(), now(), 1, 2)"))
+        {
+            legacy.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("tenant", tenant));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("app", scope.ApplicationId));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("project", scope.ProjectId));
+            Assert.Equal(2, await legacy.ExecuteNonQueryAsync());
+        }
+
+        // 0006 adds its CHECKs NOT VALID, so it does not scan those rows and the upgrade completes.
+        var result = await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
+
+        Assert.Equal(PostgresExperienceRecordSchema.ScriptNames, result.AppliedScripts);
+        Assert.Equal(PostgresExperienceRecordSchema.ScriptNames, await JournaledAsync(dataSource, ShippedPrefix));
+
+        // The legacy rows are intact and still readable, replacement column and all.
+        var history = await store.GetFirstHistoryPageAsync(Authorize(tenant), scope, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, history.Outcome);
+        Assert.Equal(2, history.Events.Count);
+        Assert.Equal(ExperienceStatus.Superseded, history.Events[^1].Event.CurrentStatus);
+        Assert.Null(history.Events[^1].Event.ReplacementExperienceId);
+
+        // NOT VALID still binds every new row, which is the whole point of deferring the scan.
+        await using var offending = dataSource.CreateCommand(
+            "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, " +
+            "project_id, prior_status, current_status, reason, producer, occurred_at, recorded_at, " +
+            "expected_revision, applied_revision) VALUES " +
+            "(gen_random_uuid(), gen_random_uuid(), 'tenant', 'app', 'proj', 'Validated', 'Superseded', 'r', 'p', now(), now(), 0, 1)");
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => offending.ExecuteNonQueryAsync());
+        Assert.Equal("lifecycle_events_replacement_only_when_superseded", refused.ConstraintName);
+
+        // And the documented VALIDATE step fails loudly while the legacy row is still there, which is
+        // what makes "reconcile, then validate" an instruction rather than a suggestion.
+        await using var validate = dataSource.CreateCommand(
+            "ALTER TABLE agent_experience.lifecycle_events VALIDATE CONSTRAINT lifecycle_events_replacement_only_when_superseded");
+        Assert.Equal(
+            PostgresErrorCodes.CheckViolation,
+            (await Assert.ThrowsAsync<PostgresException>(() => validate.ExecuteNonQueryAsync())).SqlState);
+    }
+
+    [Fact]
     public async Task Search_script_applied_by_hand_first_is_journaled_without_failing_on_the_existing_column()
     {
         await using var dataSource = await _fixture.CreateDatabaseAsync("search_manual");

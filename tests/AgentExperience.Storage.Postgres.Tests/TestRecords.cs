@@ -52,7 +52,8 @@ internal static class TestRecords
         long expectedRevision,
         Guid? eventId = null,
         string reason = "verified evidence",
-        string producer = "finalization") => new(
+        string producer = "finalization",
+        Guid? replacement = null) => new(
             EventId: eventId ?? Guid.NewGuid(),
             ExperienceRecordId: recordId,
             PriorStatus: prior,
@@ -60,7 +61,8 @@ internal static class TestRecords
             Reason: reason,
             Producer: producer,
             OccurredAt: PayloadTime,
-            ExpectedRevision: expectedRevision);
+            ExpectedRevision: expectedRevision,
+            ReplacementExperienceId: replacement);
 
     /// <summary>A record with every optional part populated, including nested tool-call argument shapes.</summary>
     public static ExperienceRecord Full(Scope scope)

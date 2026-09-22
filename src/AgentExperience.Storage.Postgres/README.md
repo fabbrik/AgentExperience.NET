@@ -55,8 +55,13 @@ var commit = await store.CommitLifecycleEventAsync(
     cancellationToken);
 // commit.Revision is record.Revision + 1 when commit.Outcome is Committed.
 
-var history = await store.GetHistoryAsync(authorization, record.Scope, record.ExperienceId, cancellationToken);
-// history.Events is every transition, oldest first; history.Revision is the record's current revision.
+var history = await store.GetHistoryAsync(
+    authorization,
+    new ExperienceRecordHistoryQuery(record.Scope, record.ExperienceId, Limit: 100),
+    cancellationToken);   // or GetFirstHistoryPageAsync(...) for the first page and nothing more
+// history.Events is one page of transitions, oldest first, each carrying the store's own RecordedAt and the
+// AppliedRevision it produced; history.Revision is the record's current revision; history.NextStartAfterRevision
+// is the cursor for the next page.
 
 // Finding records that could apply to a task. A separate, read-only port (see "Text search" below).
 IExperienceCandidateSource search = new PostgresExperienceCandidateSource(dataSource);
@@ -129,6 +134,9 @@ themselves.
 | Lifecycle event and projection committed together | `Committed` |
 | Lifecycle `ExpectedRevision` ≠ the record's current `Revision` | `StaleRevision` (nothing written) |
 | Lifecycle `PriorStatus` ≠ the record's stored `Status` | `StatusMismatch` with the stored status (nothing written) |
+| Supersession check ran | `Allowed` with the replacement's status, or `RecordNotFound` / `ReplacementNotFound` / `Cycle` (nothing written either way) |
+| Lifecycle event names a replacement the commit transaction will not accept | `ReplacementNotAllowed` with the replacement's stored status (nothing written) |
+| `UPDATE` or `DELETE` against a stored event row, or a grant revocation cleared or expiry extended | rejected by the database with SQLSTATE `42501`, surfaced as `ExperienceStoreException` |
 | Candidate search ran (no text match is still `Found`) | `Found` with the matching candidates, strongest match first |
 | Database or driver failure (`NpgsqlException`, `SocketException`, `TimeoutException`) | throws `ExperienceStoreException` with the original as `InnerException` |
 | Stored row with an unsupported `payload_version` or an unreadable payload | throws `ExperienceStoreException` |
@@ -160,21 +168,72 @@ the transaction opens, exactly as for the store's other operations, and the scop
   produced) and writes nothing. A stored `EventId` with *any* differing field is `Conflict`, whichever scope owns
   it, and writes nothing. So `EventId` and `OccurredAt` must be stable across retries; regenerating either turns a
   retry into a second transition.
-- **The prior-status guard.** When the event's `PriorStatus` is non-null it must also equal the record's stored
-  `Status`, matched in the same statement as the revision. That is what keeps Core's transition table enforced
+- **The prior-status guard.** The event's `PriorStatus` must equal the record's stored `Status`, matched in the same
+  statement as the revision. A null `PriorStatus` — a record's first event — does *not* skip the match: it falls
+  back to `CurrentStatus`, so a first event may only record the status the record is already in. Skipping it, which
+  this statement used to do, was a hole straight through Core's transition table: omit the prior status and a record
+  moved from anywhere to anywhere. That is what keeps Core's transition table enforced
   against real state rather than against what the caller asserted, and keeps a stored event from recording a prior
   status the record never had. A mismatch is `StatusMismatch`, writes nothing, and reports the record's stored
-  status as `result.CurrentStatus` so you can re-decide against it. A null `PriorStatus` — a record's first event —
-  skips the status match.
+  status as `result.CurrentStatus` so you can re-decide against it.
 - **Missing or foreign records.** A record that does not exist in the request scope is `NotFound`, indistinguishable
   from a missing one, and nothing is written.
 - **A lost acknowledgement.** A commit that was cancelled or timed out after PostgreSQL committed it is recovered by
   retrying the *identical* event: the replay path reports the original `Committed` and the revision that commit
   produced, without applying it twice. This is why `EventId` and `OccurredAt` must be stable across retries — unlike
   a create, where a lost acknowledgement surfaces as `Conflict` and has to be resolved with `GetAsync`.
-- **History.** `GetHistoryAsync` returns the record's current `Revision` plus every event, oldest first, in a single
-  statement, so the revision can never contradict the events even if a commit lands mid-read. Events are
-  append-only: nothing deletes or rewrites them. `GetAsync` and its result are unchanged by this operation.
+- **Supersession's replacement.** An event that moves a record to `Superseded` carries
+  `ReplacementExperienceId`, stored in its own column on the event row. The database states the rule as a `CHECK`,
+  so a superseding event with no replacement, a replacement on any other transition, and a row naming itself as its
+  own replacement are all unstorable however the write arrives. Which replacements are *acceptable* stays Core's
+  decision; the adapter answers the parts only a scoped query can (see below) and persists what Core decided.
+- **The supersession gate is inside the commit.** An event carrying `ReplacementExperienceId` is checked *within the
+  commit transaction*, after both record rows are locked `FOR UPDATE` in a deterministic order: the replacement must
+  exist in exactly this scope, be eligible for reuse, and not already sit on a chain of `replacement_experience_id`
+  links leading back to the record. Otherwise the commit is `ReplacementNotAllowed`, carrying the replacement's
+  stored status, and nothing is written. Checking it anywhere else would not hold: two supersessions naming each
+  other ("A by B" and "B by A") each pass a check taken outside a transaction and would both commit the cycle the
+  contract refuses. The gate also runs *after* replay detection, so retrying a committed supersession still reports
+  its original outcome even once the replacement has itself moved on — which is the retry a lost acknowledgement
+  calls for.
+- **`CheckSupersessionAsync`** asks the same question read-only, on its own connection, so a caller can find out
+  before it tries. Its answer is a prediction, not a guarantee; the commit decides. The chain walk is a recursive
+  CTE over `lifecycle_events`, scope-qualified like everything else and written with `UNION` rather than `UNION ALL`,
+  so it terminates even over a loop some earlier writer managed to store. A replacement outside the request scope is
+  `ReplacementNotFound`, identical to one that does not exist. Nothing is written, whatever it answers.
+- **History.** `GetHistoryAsync` returns the record's current `Revision` plus **one page** of events, oldest first,
+  in a single statement, so the revision can never contradict the events even if a commit lands mid-read. The page
+  is bounded by `Limit` (1–500, default 100) and started by the keyset cursor `StartAfterRevision`; pass the
+  previous page's `NextStartAfterRevision` to walk a longer history with no gap and no repetition, and stop when a
+  page comes back empty. The cursor is applied in the outer join's `ON` clause rather than in the `WHERE`, which is
+  what keeps a record whose history is exhausted `Found` with an empty page instead of collapsing into `NotFound`.
+  Each event comes back as a `StoredLifecycleEvent`: the `LifecycleEvent` exactly as it was stamped, plus
+  `RecordedAt` (when the *database* accepted the row, on its own clock) and `AppliedRevision` (the revision the
+  event produced). `GetAsync` and its result are unchanged by this operation.
+- **Append-only, enforced.** `0006` installs row-level `BEFORE UPDATE`/`DELETE` triggers on `lifecycle_events` and
+  `experience_grant_events`, statement-level `BEFORE TRUNCATE` triggers on those two and on `experience_grants`
+  (`TRUNCATE` fires no row triggers, so a row-level guard alone leaves a whole log erasable with no error), a
+  `BEFORE DELETE` guard refusing to delete any grant that has audit events (delete-and-reinsert would restore a
+  revoked grant unrevoked), and `BEFORE UPDATE` guards that pin a grant's identity and audit columns while keeping
+  its revocation permanent and its expiry non-extendable. `experience_records` gets one too: a revision only moves
+  forward and a status changes only with it, because an immutable log beside a freely rewritable projection proves
+  nothing. All of them raise SQLSTATE `42501`, which the store surfaces as an `ExperienceStoreException` — no
+  supported code path reaches them, so hitting one means something bypassed the store.
+  **What they bind:** ordinary writes from any role, superusers included, and — because every trigger is created
+  `ENABLE ALWAYS` — writes made under `session_replication_role = 'replica'`, which is how logical-replication
+  appliers and several restore and ETL tools run and where an ordinary trigger is skipped silently.
+  **What they do not bind:** anyone who can `ALTER TABLE` these tables — a superuser, or the tables' own owner,
+  which the application role is since it created them — because an owner can `DISABLE TRIGGER`, drop the trigger, or
+  drop a constraint first. Row-level security and column-privilege `REVOKE` are no stronger; neither binds an owner
+  either. Nor do they say anything about backups, a restore that recreates the tables without `0006`, or filesystem
+  access. Treat this as a guard against a bug, a careless script, a compromised application path, or a replication
+  apply — not as tamper-proofing against an administrator. A deployment that needs more should ship the log off-box,
+  or own these tables with a role the application does not have.
+- **Purging, until story 4.5.** Nothing can delete an event row now, and the logs carry free-text `reason` and
+  `producer` a host may have filled with personal data. The owner purges explicitly — `DISABLE TRIGGER`, a narrow
+  `DELETE`, `ENABLE ALWAYS TRIGGER`, all in one transaction so the guard is never off across a failure — and
+  reconciles `experience_records` afterwards, because deleting an event does not move the projection. `0006`'s
+  header carries the exact statements.
 
 ## Text search
 
@@ -396,6 +455,46 @@ window like any other rewriting migration.
 It is numbered `0005` because `0004` belongs to the companion vectors package. The two packages apply their own
 scripts but share one journal and one number sequence, so a gap in either package's list is expected.
 
+`0006_lifecycle_supersession_and_append_only.sql` records supersession's replacement and turns append-only from a
+convention into a rule:
+
+- `lifecycle_events.replacement_experience_id`, a nullable `uuid`, with two `CHECK` constraints:
+  `(replacement_experience_id IS NOT NULL) = (current_status = 'Superseded')`, so a superseding event always names a
+  replacement and no other event ever does; and `replacement_experience_id <> experience_id`, the one cycle a single
+  row can state on its own. It is a column rather than a payload field because the replacement chain has to be
+  walked in SQL to reject a cycle, and `payload_version` is still `1` with no multi-version read path.
+- Enumeration `CHECK`s on `prior_status` and `current_status`. The replacement rule compares `current_status`
+  against the literal `'Superseded'`, and before this the column was constrained only to be non-blank — so a row
+  storing `'superseded'` would have dodged the rule entirely.
+- A partial index on `(experience_id, replacement_experience_id)` over the superseding rows, which is what the
+  recursive chain walk follows.
+- `BEFORE UPDATE OR DELETE` triggers on `lifecycle_events` and `experience_grant_events` that raise SQLSTATE `42501`
+  on any attempt to rewrite or remove a stored event.
+- A `BEFORE UPDATE` trigger on `experience_grants` that refuses to clear or change `revoked_at`, to reword a stored
+  `revocation_reason`, or to move `expires_at` further out. Shortening an expiry and performing the revocation
+  itself are still ordinary updates: it is the direction of travel that is constrained.
+
+The script adds a nullable column and creates triggers, so it does not rewrite the table. It is written so a rerun
+does nothing: the column is `IF NOT EXISTS`, and each constraint and trigger is created only when `pg_constraint` or
+`pg_trigger` does not already have it — never dropped and recreated, which would leave a window in which the logs
+were unguarded.
+
+**Every `CHECK` is added `NOT VALID`, on purpose.** A database written through `0001`–`0005` can hold a `Superseded`
+lifecycle event with no replacement, because the public port has always accepted one — Core's transition table was
+never applied by the store. A plain `ADD CONSTRAINT` validates immediately, so the script would abort at startup on
+exactly the deployments that most need it. `NOT VALID` still binds every new and updated row; it only skips the scan
+of existing ones. `0006`'s header carries the reconciliation query and the `VALIDATE CONSTRAINT` statements to run
+once it comes back empty (`VALIDATE` takes only a `SHARE UPDATE EXCLUSIVE` lock, so it blocks neither reads nor
+writes).
+
+**Read the limits of those triggers before relying on them.** They bind every writer using the application role,
+including one that bypasses this library. They do not bind a superuser, and they do not bind the tables' own owner —
+which the application role is, because it created them — since an owner can disable or drop a trigger and then write
+freely. Row-level security and column-privilege `REVOKE` would be no stronger; neither binds an owner. This is a
+guard against a bug, a careless script, or a compromised application path, not tamper-proofing against an
+administrator. A deployment that needs more should ship the log off-box, or own these tables with a role the
+application does not have.
+
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package
 [`AgentExperience.Storage.Postgres.Vectors`](../AgentExperience.Storage.Postgres.Vectors/README.md) and is applied
@@ -424,7 +523,9 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
 - **Serialized across processes.** The whole run holds a PostgreSQL session advisory lock on its own connection, so
   two hosts starting at once cannot apply the same script twice. The lock is always released.
 - **Permissions.** The migrating role needs `CREATE` on the database (for the `agent_experience` schema) and on that
-  schema (for its tables). It does **not** need to be a superuser: no script here creates an extension. The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
+  schema (for its tables), and has to *own* `lifecycle_events`, `experience_grants`, and `experience_grant_events`
+  to create `0006`'s triggers and functions on them — which it does when it created them. It does **not** need to be
+  a superuser: no script here creates an extension. The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
   `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`; the
   candidate source needs only `SELECT` on `agent_experience.experience_records`. To honour sharing grants, both also
   need `SELECT` on `agent_experience.experience_grants` -- optional, because a role without it falls back to the

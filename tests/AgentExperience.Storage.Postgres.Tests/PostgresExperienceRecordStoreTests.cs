@@ -296,8 +296,10 @@ public sealed class PostgresExperienceRecordStoreTests
     [Theory]
     [InlineData("payload = '{}'::jsonb")]
     [InlineData("payload = jsonb_set(payload, '{attempts}', '[null]'::jsonb)")]
-    [InlineData("status = '1'")]
-    [InlineData("status = 'validated'")]
+    // 0006 guards the projection, so a status change carries the revision it belongs to -- which is
+    // what the store's own commit does. The corruption is the status text, not the shape of the write.
+    [InlineData("status = '1', revision = revision + 1")]
+    [InlineData("status = 'validated', revision = revision + 1")]
     public async Task Corrupt_stored_row_throws_ExperienceStoreException_on_get_and_query(string corruption)
     {
         var tenant = NewTenant();

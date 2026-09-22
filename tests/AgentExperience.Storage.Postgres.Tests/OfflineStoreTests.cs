@@ -319,6 +319,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.LifecycleEventsScriptName,
                 PostgresExperienceRecordSchema.SearchScriptName,
                 PostgresExperienceRecordSchema.GrantsScriptName,
+                PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -439,10 +440,140 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // The vector extension belongs to the vectors package's 0004 and must not leak into this one.
         Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
 
-        // 0005 is applied last, which the migrator relies on for ordinal name ordering.
+        // 0005 is applied before 0006, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Append_only_script_adds_the_replacement_column_and_the_triggers_that_enforce_the_logs()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(
+            PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName);
+
+        // The replacement is a column on the event, not a payload field: the cycle check walks it in SQL.
+        Assert.Contains("ADD COLUMN IF NOT EXISTS replacement_experience_id uuid", script, StringComparison.Ordinal);
+        Assert.Contains("lifecycle_events_replacement_only_when_superseded", script, StringComparison.Ordinal);
+        Assert.Contains("(replacement_experience_id IS NOT NULL) = (current_status = 'Superseded')", script, StringComparison.Ordinal);
+        // The one cycle a single row can state on its own.
+        Assert.Contains("lifecycle_events_replacement_is_another_record", script, StringComparison.Ordinal);
+        // The index the recursive chain walk follows.
+        Assert.Contains("CREATE INDEX IF NOT EXISTS ix_lifecycle_events_replacement", script, StringComparison.Ordinal);
+
+        // Append-only stops being a convention: both event logs refuse UPDATE and DELETE outright.
+        Assert.Contains("CREATE TRIGGER lifecycle_events_append_only", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE TRIGGER experience_grant_events_append_only", script, StringComparison.Ordinal);
+        Assert.Contains("BEFORE UPDATE OR DELETE ON agent_experience.lifecycle_events", script, StringComparison.Ordinal);
+        Assert.Contains("BEFORE UPDATE OR DELETE ON agent_experience.experience_grant_events", script, StringComparison.Ordinal);
+
+        // A grant's revocation is permanent and its expiry only ever moves closer.
+        Assert.Contains("CREATE TRIGGER experience_grants_monotonic", script, StringComparison.Ordinal);
+        Assert.Contains("BEFORE UPDATE ON agent_experience.experience_grants", script, StringComparison.Ordinal);
+        Assert.Contains("NEW.expires_at > OLD.expires_at", script, StringComparison.Ordinal);
+
+        // A tamperer is told it is a permission failure, not an incidental constraint.
+        Assert.Contains("ERRCODE = 'insufficient_privilege'", script, StringComparison.Ordinal);
+
+        // TRUNCATE does not fire FOR EACH ROW triggers, so a row-level guard alone leaves the whole log
+        // erasable with no error. Statement-level triggers are the only thing that catches it.
+        Assert.Contains("BEFORE TRUNCATE ON agent_experience.lifecycle_events", script, StringComparison.Ordinal);
+        Assert.Contains("BEFORE TRUNCATE ON agent_experience.experience_grant_events", script, StringComparison.Ordinal);
+        Assert.Contains("BEFORE TRUNCATE ON agent_experience.experience_grants", script, StringComparison.Ordinal);
+        Assert.Contains("FOR EACH STATEMENT", script, StringComparison.Ordinal);
+
+        // Deleting a revoked grant and inserting it again would restore access the trail says ended.
+        Assert.Contains("BEFORE DELETE ON agent_experience.experience_grants", script, StringComparison.Ordinal);
+
+        // An immutable log beside a freely rewritable projection proves nothing.
+        Assert.Contains("BEFORE UPDATE ON agent_experience.experience_records", script, StringComparison.Ordinal);
+        Assert.Contains("NEW.revision < OLD.revision", script, StringComparison.Ordinal);
+
+        // A grant's identity is pinned, so a live grant cannot be re-pointed at another record.
+        Assert.Contains("NEW.experience_id IS DISTINCT FROM OLD.experience_id", script, StringComparison.Ordinal);
+        Assert.Contains("NEW.recipient_team_id IS DISTINCT FROM OLD.recipient_team_id", script, StringComparison.Ordinal);
+
+        // ENABLE ALWAYS, or session_replication_role = 'replica' skips every one of them silently.
+        foreach (var trigger in new[]
+        {
+            "lifecycle_events_append_only", "lifecycle_events_no_truncate",
+            "experience_grant_events_append_only", "experience_grant_events_no_truncate",
+            "experience_grants_monotonic", "experience_grants_audited_delete", "experience_grants_no_truncate",
+            "experience_records_projection_guard",
+        })
+        {
+            Assert.Contains($"ENABLE ALWAYS TRIGGER {trigger}", script, StringComparison.Ordinal);
+        }
+
+        // The status CHECK the replacement rule compares against; without it 'Superseded' is one string
+        // among infinitely many a non-blank column would accept.
+        Assert.Contains("lifecycle_events_current_status_known", script, StringComparison.Ordinal);
+        Assert.Contains("lifecycle_events_prior_status_known", script, StringComparison.Ordinal);
+
+        // Every CHECK is deferred, so a database holding a pre-0006 Superseded event still upgrades.
+        Assert.Equal(4, CountOccurrences(script, "NOT VALID;"));
+        Assert.Contains("VALIDATE CONSTRAINT lifecycle_events_replacement_only_when_superseded", script, StringComparison.Ordinal);
+
+        // The header has to say what replaces DELETE now that nothing can delete, and point at 4.5.
+        Assert.Contains("DELETION AND RETENTION", script, StringComparison.Ordinal);
+        Assert.Contains("DISABLE TRIGGER lifecycle_events_append_only", script, StringComparison.Ordinal);
+        Assert.Contains("session_replication_role", script, StringComparison.Ordinal);
+
+        // The header must say plainly what the triggers do not bind, because a reader who assumes
+        // otherwise would treat this as tamper-proofing it is not.
+        Assert.Contains("superuser", script, StringComparison.Ordinal);
+        Assert.Contains("owner", script, StringComparison.Ordinal);
+
+        var statements = string.Join(
+            '\n',
+            script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // What the script *executes* adds a nullable column, deferred CHECKs, an index and triggers.
+        // Nothing is dropped, nothing is retyped, and no trigger is recreated through a window in which
+        // the log would be unguarded.
+        Assert.DoesNotContain("DROP", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ALTER COLUMN", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
+
+        // 0006 is applied last, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Fact]
+    public void Scope_predicates_stay_in_step_across_aliases()
+    {
+        // The e-aliased predicate used to be derived from the r-aliased one by replacing "r." with "e.",
+        // which would also rewrite any future parameter or column name containing those two characters --
+        // and the failure would be a silently wrong scope filter inside the recursive chain walk rather
+        // than a syntax error. They are written out separately now, so this keeps them equivalent.
+        Assert.Equal(
+            PostgresExperienceRecordStore.RecordScopePredicate,
+            PostgresExperienceRecordStore.EventScopePredicate.Replace("e.", "r.", StringComparison.Ordinal));
+
+        // Both bind exactly the six scope parameters every statement already adds, and no others.
+        foreach (var parameter in new[] { "@tenant_id", "@application_id", "@project_id", "@team_id", "@agent_id", "@user_id" })
+        {
+            Assert.Contains(parameter, PostgresExperienceRecordStore.EventScopePredicate, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(6, CountOccurrences(PostgresExperienceRecordStore.EventScopePredicate, "e."));
     }
 
     [Fact]
@@ -625,7 +756,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     {
         var tenant = NewTenant();
 
-        var result = await Store.GetHistoryAsync(Authorize(tenant), new Scope(tenant, "", "project-1"), Guid.Empty, CancellationToken.None);
+        var result = await Store.GetFirstHistoryPageAsync(Authorize(tenant), new Scope(tenant, "", "project-1"), Guid.Empty, CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
         Assert.Equal(["ExperienceId", "Scope.ApplicationId"], result.Errors.Select(e => e.Path).Order(StringComparer.Ordinal));
@@ -641,7 +772,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         var commit = await Store.CommitLifecycleEventAsync(
             auth, scope, Event(Guid.NewGuid(), ExperienceStatus.Candidate, ExperienceStatus.Validated, 0), CancellationToken.None);
-        var history = await Store.GetHistoryAsync(auth, scope, Guid.NewGuid(), CancellationToken.None);
+        var history = await Store.GetFirstHistoryPageAsync(auth, scope, Guid.NewGuid(), CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Denied, commit.Outcome);
         Assert.Empty(commit.Errors);
@@ -660,7 +791,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         var commit = await Assert.ThrowsAsync<ExperienceStoreException>(
             () => Store.CommitLifecycleEventAsync(auth, scope, lifecycleEvent, CancellationToken.None));
         var history = await Assert.ThrowsAsync<ExperienceStoreException>(
-            () => Store.GetHistoryAsync(auth, scope, lifecycleEvent.ExperienceRecordId, CancellationToken.None));
+            () => Store.GetFirstHistoryPageAsync(auth, scope, lifecycleEvent.ExperienceRecordId, CancellationToken.None));
         Assert.All([commit, history], ex => Assert.IsAssignableFrom<Npgsql.NpgsqlException>(ex.InnerException));
 
         using var cts = new CancellationTokenSource();
@@ -680,7 +811,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentNullException>(() => Store.CommitLifecycleEventAsync(null!, scope, lifecycleEvent, CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentNullException>(() => Store.CommitLifecycleEventAsync(Authorize(tenant), null!, lifecycleEvent, CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentNullException>(() => Store.CommitLifecycleEventAsync(Authorize(tenant), scope, null!, CancellationToken.None));
-        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.GetHistoryAsync(null!, scope, Guid.NewGuid(), CancellationToken.None));
-        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.GetHistoryAsync(Authorize(tenant), null!, Guid.NewGuid(), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.GetFirstHistoryPageAsync(null!, scope, Guid.NewGuid(), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Store.GetFirstHistoryPageAsync(Authorize(tenant), null!, Guid.NewGuid(), CancellationToken.None));
     }
 }

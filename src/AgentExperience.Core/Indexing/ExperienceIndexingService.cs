@@ -197,6 +197,92 @@ public sealed class ExperienceIndexingService
     }
 
     /// <summary>
+    /// Removes one record's stored vector, so a record that has left eligibility stops being
+    /// returnable through the vector channel.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the mirror of <see cref="IndexAsync"/> and obeys the same rule: embeddings are derived
+    /// data, so nothing here touches the canonical record, its status, its revision, or its history. It
+    /// is called <em>after</em> a lifecycle transition has already committed, and it reports every
+    /// failure -- including a cancellation -- as a structured result rather than throwing, because by
+    /// then the transition is a fact and denying it would be the larger error.
+    /// </para>
+    /// <para>
+    /// Removal is idempotent: a record that was never embedded is
+    /// <see cref="ExperienceDeindexingOutcome.NotIndexed"/>, not a failure.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the record must lie in. Never treated as authority.</param>
+    /// <param name="experienceId">The record whose vector to remove.</param>
+    /// <param name="cancellationToken">Cancels the operation. Cancellation is reported, never thrown.</param>
+    /// <returns>A structured result; never an exception.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="experienceId"/> is <see cref="Guid.Empty"/>.</exception>
+    public async Task<ExperienceDeindexingResult> RemoveAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+        if (experienceId == Guid.Empty)
+        {
+            throw new ArgumentException("ExperienceId must not be an empty GUID.", nameof(experienceId));
+        }
+
+        ExperienceIndexRemoveResult? removal;
+        try
+        {
+            removal = await _index.RemoveAsync(authorization, scope, experienceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Including cancellation: the transition that asked for this has already committed, so the
+            // only honest answer is "the vector may still be there, try again".
+            return new(
+                ExperienceDeindexingOutcome.Failed,
+                experienceId,
+                new ExperienceIndexingFailure(
+                    $"The embedding index threw {ex.GetType().FullName} while removing the record's vector; " +
+                    "the vector may still be stored and can be removed by a later pass.",
+                    NoErrors,
+                    ex));
+        }
+
+        return removal?.Outcome switch
+        {
+            ExperienceIndexRemoveOutcome.Removed => new(ExperienceDeindexingOutcome.Removed, experienceId, null),
+            ExperienceIndexRemoveOutcome.NotIndexed => new(ExperienceDeindexingOutcome.NotIndexed, experienceId, null),
+            ExperienceIndexRemoveOutcome.Denied => new(
+                ExperienceDeindexingOutcome.Denied,
+                experienceId,
+                new ExperienceIndexingFailure(
+                    "The embedding index refused the record's scope as outside the host-established authorization; nothing was removed.",
+                    NoErrors,
+                    Exception: null)),
+            ExperienceIndexRemoveOutcome.Invalid => new(
+                ExperienceDeindexingOutcome.Failed,
+                experienceId,
+                new ExperienceIndexingFailure(
+                    "The embedding index rejected the removal as malformed. See the validation errors.",
+                    removal.Errors ?? NoErrors,
+                    Exception: null)),
+            _ => new(
+                ExperienceDeindexingOutcome.Failed,
+                experienceId,
+                new ExperienceIndexingFailure(
+                    removal is null
+                        ? "The embedding index returned no removal result at all."
+                        : $"The embedding index returned '{removal.Outcome}', which is not a removal outcome.",
+                    NoErrors,
+                    Exception: null)),
+        };
+    }
+
+    /// <summary>
     /// Runs one scoped, explicit re-index pass: lists what the scope holds, and for each record either
     /// skips it (this model already embedded exactly that text) or re-embeds and rewrites it.
     /// Re-running the same pass over unchanged records calls no provider and writes nothing.

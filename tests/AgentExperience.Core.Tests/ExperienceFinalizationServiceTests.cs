@@ -987,7 +987,10 @@ public class ExperienceFinalizationServiceTests
         public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Finalization must not query records.");
 
-        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Finalization must not read history.");
+
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Finalization must not check supersession.");
     }
 }

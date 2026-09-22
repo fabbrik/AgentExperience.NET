@@ -31,6 +31,7 @@
     <!-- 0004 is owned by AgentExperience.Storage.Postgres.Vectors, which applies it separately: it needs
          CREATE EXTENSION vector and must not become a startup requirement for text-only hosts. -->
     <EmbeddedResource Include="Migrations\0005_create_experience_grants.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0005_create_experience_grants.sql" />
+    <EmbeddedResource Include="Migrations\0006_lifecycle_supersession_and_append_only.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0006_lifecycle_supersession_and_append_only.sql" />
   </ItemGroup>
 
   <ItemGroup>

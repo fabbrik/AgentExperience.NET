@@ -131,6 +131,40 @@ The vector write is **never** inside the canonical transaction. It runs on its o
 lifecycle commit has landed. That is the whole point: embeddings are derived data, and the canonical write must not
 depend on a provider being up.
 
+## Removing a vector when a record leaves eligibility
+
+`RemoveAsync` deletes one record's stored vector within exactly one scope. It is the mirror of the conditional
+write, and it is what keeps the vector channel honest when a record stops being reusable: only `Validated` and
+`Reinforced` records may be returned, so a record that is contested, made stale, superseded or revoked must not
+keep a row a search could match.
+
+| Situation | Outcome |
+| --- | --- |
+| A vector was stored in this scope | `Removed` |
+| Never indexed, already removed, or in another scope | `NotIndexed` — one outcome for all three, so removal is idempotent and a foreign-scope attempt reveals nothing |
+| Scope outside the authorization | `Denied`, before any statement is issued |
+| Malformed request | `Invalid`, with the field path |
+
+The `DELETE` matches the embedding row's **own** scope columns, which were copied from the record when the vector
+was written, so removal never depends on joining back to the record.
+
+`ExperienceLifecycleService` calls this through `ExperienceIndexingService.RemoveAsync` as a post-commit hook, after
+a transition that left eligibility has already landed, on its own budget.
+
+**What removal actually buys is storage and index maintenance cost, not reachability.** The search above joins the
+canonical record and filters on `r.status`, so a vector left behind by a record that is now contested, stale,
+superseded or revoked is *already* unmatchable — and the text channel excludes it by status too. That is why removal
+can never fail the transition that asked for it.
+
+**Nothing retries a removal that did not happen.** `ScanAsync` lists only records a search *could* return, so a
+re-index pass never sees an ineligible record and never removes anything: there is no sweep. A `Deindexing` outcome
+other than `Removed` or `NotIndexed` is a work item for the host — record the experience ID and scope and call
+`RemoveAsync` again later. That includes `Denied`, which reports `IsRetryable: false` because repeating the *same*
+call changes nothing; it needs a different authorization, not another attempt.
+
+Deleting the record itself needs no removal at all — `0004`'s `ON DELETE CASCADE` means an embedding can never
+outlive the record it describes.
+
 ## Re-indexing
 
 `ScanAsync` lists, for one scope (optionally narrowed to specific IDs, always bounded), each record's current

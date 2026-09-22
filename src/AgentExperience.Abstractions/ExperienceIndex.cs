@@ -308,7 +308,59 @@ public interface IExperienceEmbeddingIndex
         AuthorizationContext authorization,
         ExperienceVectorQuery query,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes one record's stored vector within exactly <paramref name="scope"/>. A record that was
+    /// never indexed, or whose vector is in another scope, is
+    /// <see cref="ExperienceIndexRemoveOutcome.NotIndexed"/> rather than an error, so removal is
+    /// idempotent and repeating it is free.
+    /// </summary>
+    /// <remarks>
+    /// This exists because leaving eligibility has to take the vector with it: a record that a search
+    /// may no longer return must not keep a row a search could match. It removes <em>derived</em> data
+    /// only -- the canonical record, its status, and its lifecycle history are untouched, and a later
+    /// index pass can re-embed the record if it becomes eligible again.
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the vector must lie in. Never treated as authority.</param>
+    /// <param name="experienceId">The record whose vector to remove. Must not be <see cref="Guid.Empty"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>A result naming what happened.</returns>
+    Task<ExperienceIndexRemoveResult> RemoveAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>What removing one record's vector ended as.</summary>
+public enum ExperienceIndexRemoveOutcome
+{
+    /// <summary>The stored vector was deleted. A search can no longer return this record through the vector channel.</summary>
+    Removed,
+
+    /// <summary>
+    /// There was no vector to remove within the requested scope -- the record was never indexed, its
+    /// vector was already removed, or it lies in another scope. Nothing was written, and the outcome is
+    /// deliberately the same in all three cases.
+    /// </summary>
+    NotIndexed,
+
+    /// <summary>The request scope lies outside the host-established authorization. No storage was accessed.</summary>
+    Denied,
+
+    /// <summary>The request was malformed. See the result's validation errors. No storage was accessed.</summary>
+    Invalid,
+}
+
+/// <summary>
+/// The result of <see cref="IExperienceEmbeddingIndex.RemoveAsync"/>.
+/// </summary>
+/// <param name="Outcome">What happened.</param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceIndexRemoveOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceIndexRemoveResult(
+    ExperienceIndexRemoveOutcome Outcome,
+    IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>
 /// One conditional index write: a record's vector, what it is, and the scope and revision it is only

@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Indexing;
 
 namespace AgentExperience.Core.Lifecycle;
 
@@ -25,6 +26,15 @@ namespace AgentExperience.Core.Lifecycle;
 /// <param name="Producer">Identity of whatever produced this transition (a policy, an evaluator, or a human principal identifier). Must be non-blank.</param>
 /// <param name="OccurredAt">When this transition was decided.</param>
 /// <param name="ExpectedRevision">The record's revision this transition was decided against. Must equal the stored revision or the commit is refused as stale.</param>
+/// <param name="ReplacementExperienceId">
+/// The record that replaces this one. Required when <paramref name="CurrentStatus"/> is
+/// <see cref="ExperienceStatus.Superseded"/>, and rejected for every other status -- a transition that
+/// is not a supersession has no replacement to name. The replacement must be a different record, in
+/// exactly <paramref name="Scope"/>, currently eligible
+/// (<see cref="ExperienceStatus.Validated"/> or <see cref="ExperienceStatus.Reinforced"/>), and not one
+/// this record already replaces directly or transitively. All four rules are checked before anything
+/// is written; see <see cref="LifecycleTransitionOutcome.ReplacementNotAllowed"/>.
+/// </param>
 public sealed record CommitLifecycleTransitionRequest(
     Guid EventId,
     Guid ExperienceId,
@@ -34,14 +44,14 @@ public sealed record CommitLifecycleTransitionRequest(
     string Reason,
     string Producer,
     DateTimeOffset OccurredAt,
-    long ExpectedRevision);
+    long ExpectedRevision,
+    Guid? ReplacementExperienceId = null);
 
 /// <summary>
 /// The disposition a <see cref="ExperienceLifecycleService.CommitAsync"/> call reached. Every member
-/// except <see cref="TransitionNotAllowed"/> is the store port's own
-/// <see cref="ExperienceStoreOutcome"/>, surfaced one-to-one and never reinterpreted;
-/// <see cref="TransitionNotAllowed"/> is the one decision Core makes on its own, before the port is
-/// called at all.
+/// except <see cref="TransitionNotAllowed"/> and <see cref="ReplacementNotAllowed"/> is the store
+/// port's own <see cref="ExperienceStoreOutcome"/>, surfaced one-to-one and never reinterpreted; those
+/// two are the decisions Core makes on its own, before any event is written.
 /// </summary>
 public enum LifecycleTransitionOutcome
 {
@@ -53,10 +63,18 @@ public enum LifecycleTransitionOutcome
 
     /// <summary>
     /// Core refused: the requested <see cref="CommitLifecycleTransitionRequest.PriorStatus"/> to
-    /// <see cref="CommitLifecycleTransitionRequest.CurrentStatus"/> move is not one this version
-    /// allows. No store call was made and nothing was written.
+    /// <see cref="CommitLifecycleTransitionRequest.CurrentStatus"/> move is not in the transition
+    /// table -- which includes a move to the status the record is already in. No event was written.
     /// </summary>
     TransitionNotAllowed,
+
+    /// <summary>
+    /// Core refused a supersession because of the replacement it named: it was missing when one was
+    /// required, present when none may be, the record itself, outside the record's exact scope, not
+    /// currently eligible, or already replaced by this record directly or transitively. Nothing was
+    /// written; <c>Reason</c> says which rule it broke.
+    /// </summary>
+    ReplacementNotAllowed,
 
     /// <summary>
     /// The record's revision had already moved past
@@ -101,10 +119,20 @@ public enum LifecycleTransitionOutcome
 /// <param name="CurrentStatus">The record's stored status on <see cref="LifecycleTransitionOutcome.StatusMismatch"/>, to re-decide the transition against; otherwise <see langword="null"/>.</param>
 /// <param name="Errors">Every store validation error when <see cref="Outcome"/> is <see cref="LifecycleTransitionOutcome.Invalid"/>; otherwise empty.</param>
 /// <param name="Reason">Optional, auditable, content-free explanation, e.g. why Core refused the transition.</param>
+/// <param name="Deindexing">
+/// What became of the record's embedding, when this commit moved it out of eligibility and a
+/// de-indexing hook is wired in; otherwise <see langword="null"/>. It can never change
+/// <see cref="Outcome"/>: the transition is already committed by the time it runs, and a vector search
+/// filters on the record's status anyway, so a surviving vector is unreachable either way. Anything
+/// other than <see cref="ExperienceDeindexingOutcome.Removed"/> or
+/// <see cref="ExperienceDeindexingOutcome.NotIndexed"/> leaves storage to reclaim, and nothing in this
+/// library retries it -- see <see cref="ExperienceLifecycleService"/> for what a host should do with it.
+/// </param>
 public sealed record CommitLifecycleTransitionResult(
     LifecycleTransitionOutcome Outcome,
     LifecycleEvent? Event,
     long Revision,
     ExperienceStatus? CurrentStatus,
     IReadOnlyList<StoreValidationError> Errors,
-    string? Reason);
+    string? Reason,
+    ExperienceDeindexingResult? Deindexing = null);

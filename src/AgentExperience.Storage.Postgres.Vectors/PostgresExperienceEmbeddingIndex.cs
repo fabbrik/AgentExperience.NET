@@ -127,6 +127,15 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         "WHERE t.source_revision <= EXCLUDED.source_revision";
 
     /// <summary>
+    /// Removal, matched on the embedding row's own scope columns rather than through a join to the
+    /// record. That matters: a record can leave eligibility and later be removed entirely, and the
+    /// vector must still be removable either way. Those columns were copied from the record row when
+    /// the vector was written, so they cannot disagree with the record they describe.
+    /// </summary>
+    private static readonly string RemoveSql =
+        $"DELETE FROM {Table} e WHERE e.experience_id = @experience_id AND {EmbeddingScopePredicate}";
+
+    /// <summary>
     /// Reports a rejected write: the record's current revision, or nothing at all when it is not in
     /// this scope. Identical whichever scope actually owns the record, so it reveals nothing.
     /// </summary>
@@ -389,6 +398,50 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
         {
             throw PostgresExperienceRecordStore.Translate(ex, "vector search", cancellationToken);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<ExperienceIndexRemoveResult> RemoveAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateIndexRemove(scope, experienceId);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceIndexRemoveOutcome.Invalid, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            // Fail-closed, and before any connection opens.
+            return new(ExperienceIndexRemoveOutcome.Denied, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            await using var command = _dataSource.CreateCommand(RemoveSql);
+            command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
+
+            var removed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            // Never indexed, already removed, or in another scope: one outcome for all three, so a
+            // repeated removal is free and a foreign-scope attempt reveals nothing.
+            return new(
+                removed > 0 ? ExperienceIndexRemoveOutcome.Removed : ExperienceIndexRemoveOutcome.NotIndexed,
+                NoErrors);
+        }
+        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw PostgresExperienceRecordStore.Translate(ex, "embedding removal", cancellationToken);
         }
     }
 

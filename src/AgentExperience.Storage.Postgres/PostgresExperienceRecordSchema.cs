@@ -40,6 +40,19 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string GrantsScriptName = "0005_create_experience_grants.sql";
 
+    /// <summary>
+    /// The script that adds a superseding event's <c>replacement_experience_id</c> and makes both event
+    /// logs append-only in the database: <c>BEFORE UPDATE</c>/<c>DELETE</c> triggers that reject
+    /// rewriting or removing a stored event, and a trigger that keeps a grant's revocation permanent and
+    /// its expiry from being extended.
+    /// </summary>
+    /// <remarks>
+    /// Those triggers bind every writer using the application role, including one that bypasses this
+    /// package entirely. They do <em>not</em> bind a superuser, nor the tables' own owner, which can
+    /// disable or drop a trigger before writing; see the script's own header and the package README.
+    /// </remarks>
+    public const string SupersessionAndAppendOnlyScriptName = "0006_lifecycle_supersession_and_append_only.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -50,7 +63,7 @@ public static class PostgresExperienceRecordSchema
     /// why <c>0004</c> is absent from this list while <c>0005</c> is present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
-        [InitialScriptName, LifecycleEventsScriptName, SearchScriptName, GrantsScriptName];
+        [InitialScriptName, LifecycleEventsScriptName, SearchScriptName, GrantsScriptName, SupersessionAndAppendOnlyScriptName];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>

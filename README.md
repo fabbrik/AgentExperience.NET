@@ -31,7 +31,8 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Auditable, template-based reflections traceable to evidence IDs | `AgentExperience.Core` |
 | MAF adapter: captures ordinary, streaming, failed, and cancelled runs plus tool calls, without altering results | `AgentExperience.MicrosoftAgentFramework` |
 | PostgreSQL Experience Record store: create, get, and scoped query; host authorization checked before database access; exact scope matching in SQL | `AgentExperience.Storage.Postgres` |
-| Atomic audited lifecycle commits: the event and the record's projection in one transaction, idempotent by event ID, revision-checked, with append-only history | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| Atomic audited lifecycle commits: the event and the record's projection in one transaction, idempotent by event ID, revision-checked, with bounded, cursored history | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| The full MVP transition table — reinforce, contest, stale, supersede, revoke — with supersession recording its replacement and refusing cycles, event logs made append-only by database triggers, and a record's embedding dropped when it leaves eligibility | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 | Journaled schema migrations: embedded scripts applied once, one transaction per script, serialized across processes by an advisory lock | `AgentExperience.Storage.Postgres` |
 | One finalization call: evaluate, gate on authorization and the host's storage decision, reflect, create the record as a `Candidate`, commit the initial event that promotes it — replay-safe and structured at every stage | `AgentExperience.Core` |
 | Text retrieval of applicable experience: eligibility decided before ranking, every ranking component and effective weight exposed, bounded by a timeout that is never an exception | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
@@ -128,6 +129,162 @@ reaches an Experience Record, and never becomes something a grant could later sh
 If an indexing hook is registered, one more thing happens *after* those six stages: the committed record is embedded
 and its vector stored. That step is outside the canonical write and can never change the outcome above — see
 [Indexing experience for semantic reuse](#indexing-experience-for-semantic-reuse).
+
+## Moving a record through its lifecycle
+
+Finalization is only a record's first transition. After it, `ExperienceLifecycleService` is the only way a stored
+record's status changes, and it accepts exactly this table:
+
+| From | To | What it means |
+| --- | --- | --- |
+| `Candidate` | `Validated`, `Quarantined` | Finalization's own two outcomes |
+| `Validated` | `Reinforced` | Reuse was observed to succeed again — **once**; `Reinforced → Reinforced` is refused |
+| `Validated`, `Reinforced` | `Contested` | Later evidence contradicts the lesson. Exits only to `Revoked` |
+| `Validated`, `Reinforced` | `Stale` | The lesson is no longer current. Exits only to `Revoked` |
+| `Validated`, `Reinforced` | `Superseded` | A better record replaces it — and names which. Exits only to `Revoked` |
+| anything except `Revoked` | `Revoked` | Withdrawn by an authorized action. Terminal |
+
+Everything else is `TransitionNotAllowed`, refused by Core before the store is called. That includes an event whose
+prior and current status are the same: it would consume a revision and sit in the audit trail claiming a transition
+that did not happen. It also includes a *first* event — one with no prior status — that records anything but
+`Candidate`: a null prior status is how a record's creation is logged, never a way to move a record without saying
+what it moved from.
+
+Three consequences are worth stating outright rather than leaving to be discovered:
+
+- **Quarantine is now a capture-time decision only.** Earlier versions accepted `Validated → Quarantined` (and
+  `Contested`/`Stale`/`Superseded`/`Reinforced → Quarantined`). Those are refused now, at runtime, with no
+  compile-time signal — the enum and the request type are unchanged. A host that quarantined a live record must
+  `Revoke` it instead, or contest it.
+- **A record can be reinforced once.** `Reinforced → Reinforced` records no transition and is refused, so the table
+  as it stands cannot express repeated reinforcement. Story 3.4 (evidence-based confidence updates) will need either
+  a self-transition carved out for this pair or a counter that moves without a status change; it is a known limit of
+  this table, not an oversight.
+- **`Contested` and `Stale` are one-way.** Nothing resolves a contest or refreshes a stale record back into
+  eligibility in this version; both exit only to `Revoked`.
+
+**Port changes in this version.** Nothing is published to NuGet yet, but anyone implementing the ports out of tree
+has four breaks to absorb: `IExperienceRecordStore` gained `CheckSupersessionAsync`;
+`IExperienceRecordStore.GetHistoryAsync` now takes an `ExperienceRecordHistoryQuery` and returns
+`StoredLifecycleEvent`s rather than bare `LifecycleEvent`s (`GetFirstHistoryPageAsync` is the convenience for the
+old four-argument shape); `IExperienceEmbeddingIndex` gained `RemoveAsync`; and `ExperienceStoreOutcome` gained
+`ReplacementNotAllowed`, which a commit can now return. All four fail at compile time.
+
+Only `Validated` and `Reinforced` are **eligible**. A record in any other status is never retrieved, never injected,
+and never indexed — so contesting, staling, superseding, or revoking a record takes it out of reuse immediately,
+through both channels, without deleting anything.
+
+```csharp
+var result = await lifecycle.CommitAsync(
+    hostAuthorization,
+    new CommitLifecycleTransitionRequest(
+        EventId: Guid.NewGuid(),          // the idempotency key; reuse it verbatim on a retry
+        ExperienceId: supersededId,
+        Scope: recordScope,
+        PriorStatus: ExperienceStatus.Validated,
+        CurrentStatus: ExperienceStatus.Superseded,
+        Reason: "replaced by the parallel-warmup lesson",
+        Producer: "governance-review/1.0",
+        OccurredAt: DateTimeOffset.UtcNow,
+        ExpectedRevision: stored.Revision,
+        ReplacementExperienceId: replacementId),
+    cancellationToken);
+```
+
+**Supersession names a replacement.** A move to `Superseded` must carry `ReplacementExperienceId`, and every other
+move must not. The replacement has to be a different record, in the record's exact scope, currently eligible, and
+not one this record already replaces directly or transitively. The last of those is a walk over the stored
+replacement chain, done in SQL in one round trip, so a cycle is refused (`ReplacementNotAllowed`) with nothing
+written. A replacement in another scope is reported exactly like one that does not exist, so a cross-scope attempt
+reveals nothing. The replacement ID is stored on the event itself, which is what makes the chain auditable.
+
+**Leaving eligibility drops the embedding — as hygiene, not as a boundary.** When an `ExperienceIndexingService` is
+wired into the lifecycle service, a commit that moves a record out of `Validated`/`Reinforced` removes its stored
+vector afterwards, outside the transaction and on its own budget. What that buys is storage and index maintenance
+cost, not correctness: a vector search joins the canonical record and filters on its status, so a surviving vector is
+*already* unreachable the moment the transition commits. That is why it is reported on `result.Deindexing` and can
+never fail the transition.
+
+Nothing retries it. `ReindexAsync` lists only records a search could return and never removes anything, so there is
+no sweep — a `Deindexing` outcome other than `Removed` or `NotIndexed` is a work item for the host: record the
+experience ID and scope, and call `ExperienceIndexingService.RemoveAsync` again later. That includes `Denied`, which
+reports `IsRetryable: false` because repeating the *same* call changes nothing; it needs a different authorization.
+
+**Reading the trail.** `IExperienceRecordStore.GetHistoryAsync` returns one bounded page of a record's events,
+oldest first, plus the record's current revision — from a single snapshot, so the two can never disagree. Each
+stored event carries the store's own `RecordedAt` (the database's clock, not the caller's) and the `AppliedRevision`
+it produced. Page with the keyset cursor:
+
+```csharp
+long? cursor = null;
+do
+{
+    var page = await store.GetHistoryAsync(
+        hostAuthorization,
+        new ExperienceRecordHistoryQuery(recordScope, experienceId, Limit: 100, StartAfterRevision: cursor),
+        cancellationToken);
+
+    if (page.Outcome != ExperienceStoreOutcome.Found)
+    {
+        // NotFound, Denied or Invalid. Never treat one as an empty history: they mean the record is not
+        // readable here, not that it has no trail.
+        throw new InvalidOperationException($"History unavailable: {page.Outcome}.");
+    }
+
+    foreach (var stored in page.Events)
+    {
+        Console.WriteLine($"r{stored.AppliedRevision} {stored.Event.PriorStatus} -> {stored.Event.CurrentStatus}");
+    }
+
+    cursor = page.NextStartAfterRevision;   // null once the page came back empty
+}
+while (cursor is not null);
+```
+
+A record whose cursor has walked past its last event still reports `Found` with its revision and an empty page, so
+"nothing left to show" stays distinguishable from `NotFound`. `GetFirstHistoryPageAsync(authorization, scope, id, ct)`
+is the one-line convenience for the common case, and is named for what it does: it returns the first page only, and
+a record with a longer trail has more.
+
+**Append-only is enforced by the database, not by convention.** Migration `0006` installs triggers that reject every
+way a stored event could stop being what it was:
+
+| Attempt | What stops it |
+| --- | --- |
+| `UPDATE` or `DELETE` on `lifecycle_events` / `experience_grant_events` | row-level `BEFORE UPDATE OR DELETE` triggers |
+| `TRUNCATE` on either log, or on `experience_grants` | statement-level `BEFORE TRUNCATE` triggers — `TRUNCATE` does not fire row triggers at all, so a row-level guard alone would let it erase the whole log with no error |
+| Clearing a grant's `revoked_at`, rewording its `revocation_reason`, extending its `expires_at` | `BEFORE UPDATE` trigger on `experience_grants` |
+| Deleting a revoked grant and inserting it again unrevoked | `BEFORE DELETE` trigger refusing any grant that has audit events |
+| Re-pointing a live grant at another record or recipient | the same `BEFORE UPDATE` trigger, which pins the grant's identity and audit columns |
+| Winding a record's `revision` back, or moving its `status` without the revision its event produced | `BEFORE UPDATE` trigger on `experience_records` — an immutable log beside a freely rewritable projection proves nothing |
+
+A tamperer gets SQLSTATE `42501`. Be precise about what that buys:
+
+- It binds ordinary writes **from any role, superusers included**, as long as the triggers are enabled. They are
+  created `ENABLE ALWAYS`, so they also fire under `session_replication_role = 'replica'` — the mode logical
+  replication appliers and several restore and ETL tools run in, and the mode in which an ordinary trigger is
+  skipped silently.
+- It does **not** bind anyone who can `ALTER TABLE` these tables: a superuser, or the tables' owner, which the
+  application role is because it created them. An owner can `DISABLE TRIGGER`, `DROP TRIGGER`, or drop a constraint
+  and then write freely. Row-level security and column-privilege `REVOKE` are no stronger — neither binds an owner.
+- It says nothing about backups, about a restore that recreates the tables without `0006`, or about filesystem
+  access to the data directory.
+
+So it is a guard against a bug, a careless script, a compromised application path, or a replication apply that would
+otherwise rewrite history — not against an administrator who has decided to tamper. A deployment that needs
+tamper-evidence beyond this should ship the log off-box, or own these tables with a role the application does not
+have.
+
+**Because nothing can delete, purging is an explicit operator action.** The logs carry free-text `reason` and
+`producer` that a host may have filled with personal data, and roadmap story 4.5 ("delete and expire library-owned
+data") has not landed. Until it does, the tables' owner purges in one transaction — disable the trigger, delete
+narrowly, re-enable it — as documented in `0006`'s own header, and reconciles `experience_records` afterwards,
+because deleting an event does not move the projection.
+
+**Upgrading an existing database.** `0006` adds every `CHECK` as `NOT VALID`, so it does not scan existing rows and
+cannot abort on a pre-`0006` `Superseded` event that has no replacement — one the public port accepted, because the
+store never applied Core's table. New and updated rows are checked from that moment on. The script's header carries
+the reconciliation query and the `VALIDATE CONSTRAINT` statements to run once it comes back empty.
 
 ## Indexing experience for semantic reuse
 
@@ -596,7 +753,7 @@ dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!
 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
 2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
-3. **Govern experience safely:** explicit sharing grants ✅; the remaining lifecycle transitions and evidence-based confidence updates are next
+3. **Govern experience safely:** explicit sharing grants ✅, the full audited lifecycle transition table with supersession and database-enforced append-only logs ✅; evidence-based confidence updates are next
 4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
 
 Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).

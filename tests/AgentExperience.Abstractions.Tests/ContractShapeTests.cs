@@ -299,7 +299,9 @@ public class ContractShapeTests
     {
         var methods = typeof(IExperienceRecordStore).GetMethods().OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
 
-        Assert.Equal(["CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetHistoryAsync", "QueryAsync"], methods.Select(m => m.Name));
+        Assert.Equal(
+            ["CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetHistoryAsync", "QueryAsync"],
+            methods.Select(m => m.Name));
         Assert.All(methods, method =>
         {
             var parameters = method.GetParameters();
@@ -308,16 +310,18 @@ public class ContractShapeTests
             Assert.False(parameters[^1].HasDefaultValue);
         });
 
-        Assert.Equal(typeof(Task<ExperienceLifecycleCommitResult>), methods[0].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(LifecycleEvent), typeof(CancellationToken)], methods[0].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordCreateResult>), methods[1].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecord), typeof(CancellationToken)], methods[1].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordGetResult>), methods[2].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(Guid), typeof(CancellationToken)], methods[2].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordHistoryResult>), methods[3].ReturnType);
+        Assert.Equal(typeof(Task<ExperienceSupersessionCheckResult>), methods[0].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(Guid), typeof(Guid), typeof(CancellationToken)], methods[0].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceLifecycleCommitResult>), methods[1].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(LifecycleEvent), typeof(CancellationToken)], methods[1].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordCreateResult>), methods[2].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecord), typeof(CancellationToken)], methods[2].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordGetResult>), methods[3].ReturnType);
         Assert.Equal([typeof(AuthorizationContext), typeof(Scope), typeof(Guid), typeof(CancellationToken)], methods[3].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[4].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[4].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordHistoryResult>), methods[4].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordHistoryQuery), typeof(CancellationToken)], methods[4].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[5].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[5].GetParameters().Select(p => p.ParameterType));
     }
 
     // Story 2.2: the retrieval candidate-source port.
@@ -397,14 +401,26 @@ public class ContractShapeTests
 
         var first = new LifecycleEvent(Guid.NewGuid(), Guid.NewGuid(), null, ExperienceStatus.Candidate, "captured", "capture", Now, 0);
         var second = first with { EventId = Guid.NewGuid(), PriorStatus = ExperienceStatus.Candidate, CurrentStatus = ExperienceStatus.Validated, ExpectedRevision = 1 };
-        var history = new ExperienceRecordHistoryResult(ExperienceStoreOutcome.Found, 2, [first, second], []);
+        var history = new ExperienceRecordHistoryResult(
+            ExperienceStoreOutcome.Found,
+            2,
+            [new StoredLifecycleEvent(first, Now, 1), new StoredLifecycleEvent(second, Now, 2)],
+            [],
+            NextStartAfterRevision: 2);
 
         Assert.Equal(2, history.Revision);
-        Assert.Equal([0L, 1L], history.Events.Select(e => e.ExpectedRevision));
-        Assert.Equal(ExperienceStatus.Validated, history.Events[^1].CurrentStatus);
+        Assert.Equal([0L, 1L], history.Events.Select(e => e.Event.ExpectedRevision));
+        Assert.Equal([1L, 2L], history.Events.Select(e => e.AppliedRevision));
+        Assert.Equal(ExperienceStatus.Validated, history.Events[^1].Event.CurrentStatus);
 
+        // The store's own facts live on the projection, never on the event Core stamped.
+        Assert.DoesNotContain(typeof(LifecycleEvent).GetProperties(), p => p.Name is "RecordedAt" or "AppliedRevision");
+        Assert.Equal(2, history.NextStartAfterRevision);
+
+        // A page that returned nothing carries no cursor, which is how paging ends.
         var notFound = new ExperienceRecordHistoryResult(ExperienceStoreOutcome.NotFound, 0, [], []);
         Assert.Empty(notFound.Events);
+        Assert.Null(notFound.NextStartAfterRevision);
     }
 
     [Fact]
@@ -443,10 +459,25 @@ public class ContractShapeTests
     }
 
     [Fact]
+    public void Eligibility_for_reuse_is_stated_once_and_matches_the_status_doc()
+    {
+        // Retrieval, indexing, the lifecycle service's de-index decision and the storage adapter's
+        // in-transaction supersession gate all read this one list. Duplicating it is how the four drift.
+        Assert.Equal(
+            [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
+            ExperienceStatuses.EligibleForReuse);
+
+        foreach (var status in Enum.GetValues<ExperienceStatus>())
+        {
+            Assert.Equal(ExperienceStatuses.EligibleForReuse.Contains(status), ExperienceStatuses.IsEligibleForReuse(status));
+        }
+    }
+
+    [Fact]
     public void Store_outcomes_results_and_exception_have_the_expected_shape()
     {
         Assert.Equal(
-            ["Created", "Found", "NotFound", "Denied", "Invalid", "Conflict", "Committed", "StaleRevision", "StatusMismatch"],
+            ["Created", "Found", "NotFound", "Denied", "Invalid", "Conflict", "Committed", "StaleRevision", "StatusMismatch", "ReplacementNotAllowed"],
             Enum.GetNames<ExperienceStoreOutcome>());
 
         var error = new StoreValidationError("Scope.TenantId", "must not be empty or whitespace.");
