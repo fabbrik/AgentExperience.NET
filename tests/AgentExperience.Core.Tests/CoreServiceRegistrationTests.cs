@@ -1,4 +1,5 @@
 using AgentExperience.Core.DependencyInjection;
+using AgentExperience.Core.Feedback;
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Retrieval;
@@ -157,8 +158,39 @@ public class CoreServiceRegistrationTests
     }
 
     [Fact]
+    public void AddAgentExperienceReuseFeedback_registers_the_feedback_service_over_a_ledger_and_the_lifecycle_service()
+    {
+        var services = new ServiceCollection();
+        services.AddAgentExperienceCore(CallerOptions, CallerLimits);
+        services.AddAgentExperienceReuseFeedback();
+        services.AddSingleton<IExperienceRecordStore>(new StubRecordStore());
+        services.AddSingleton<IExperienceReuseFeedbackStore>(new StubFeedbackLedger());
+
+        using var provider = services.BuildServiceProvider();
+
+        var feedback = provider.GetRequiredService<ExperienceReuseFeedbackService>();
+        Assert.Same(feedback, provider.GetRequiredService<ExperienceReuseFeedbackService>()); // singleton
+    }
+
+    [Fact]
+    public void Feedback_without_a_ledger_fails_to_resolve_rather_than_recording_nothing()
+    {
+        // Silently dropping the exposure would be the worst failure mode this story has: the host would
+        // believe reuse was being measured while nothing was written anywhere.
+        var services = new ServiceCollection();
+        services.AddAgentExperienceCore(CallerOptions, CallerLimits);
+        services.AddAgentExperienceReuseFeedback();
+        services.AddSingleton<IExperienceRecordStore>(new StubRecordStore());
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Throws<InvalidOperationException>(() => provider.GetRequiredService<ExperienceReuseFeedbackService>());
+    }
+
+    [Fact]
     public void Null_arguments_throw()
     {
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperienceReuseFeedback());
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperienceRetrieval());
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperienceCore(CallerOptions, CallerLimits));
         Assert.Throws<ArgumentNullException>(() => new ServiceCollection().AddAgentExperienceCore(null!, CallerLimits));
@@ -362,6 +394,35 @@ public class CoreServiceRegistrationTests
             throw new NotSupportedException();
 
         public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>Stands in for a storage adapter's record store; nothing here ever calls it.</summary>
+    private sealed class StubRecordStore : IExperienceRecordStore
+    {
+        public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AuthorizationContext authorization, Scope scope, LifecycleEvent lifecycleEvent, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>Stands in for a storage adapter's feedback ledger registration.</summary>
+    private sealed class StubFeedbackLedger : IExperienceReuseFeedbackStore
+    {
+        public Task<ExperienceReuseFeedbackStoreResult> RecordAsync(AuthorizationContext authorization, RecordedExperienceReuseFeedback feedback, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

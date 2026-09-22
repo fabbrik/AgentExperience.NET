@@ -376,6 +376,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.GrantsScriptName,
                 PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
                 PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
+                PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -595,7 +596,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -654,10 +655,91 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
 
-        // 0007 is applied last, which the migrator relies on for ordinal name ordering.
+        // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    [Fact]
+    public void Reuse_feedback_script_creates_an_append_only_ledger_that_cannot_claim_unattributed_benefit()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ReuseFeedbackScriptName);
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.reuse_feedback", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.reuse_feedback_exposures", script, StringComparison.Ordinal);
+
+        // The whole story, in one CHECK: "no attribution" and "benefit Unknown" are one fact, so a row
+        // can never claim an improvement nothing attributed.
+        Assert.Contains("(attribution_source = 'None') = (benefit = 'Unknown')", script, StringComparison.Ordinal);
+
+        // Exactly the attributed exposures carry the derived evidence ID that produced a confidence
+        // submission, so the two ledgers can be joined and neither can invent a row in the other.
+        Assert.Contains("(evidence_id IS NOT NULL) = attributed", script, StringComparison.Ordinal);
+
+        // Each attribution shape carries exactly the identifiers its evidence is keyed on. Without this a
+        // machine row with no round -- or a human row with no reviewer -- would key under nothing.
+        Assert.Contains("reuse_feedback_human_names_its_reviewer", script, StringComparison.Ordinal);
+        Assert.Contains("reuse_feedback_comparative_names_its_round", script, StringComparison.Ordinal);
+
+        // The header has to say what a caller's own claim is worth, and what the run and round are.
+        Assert.Contains("EXPOSURE IS NOT ATTRIBUTION", script, StringComparison.Ordinal);
+        Assert.Contains("HOST TRUST BOUNDARY", script, StringComparison.Ordinal);
+        Assert.Contains("claimed_benefit IS RECORDED AND NEVER ACTED ON", script, StringComparison.Ordinal);
+
+        // The human shape is the weakest boundary here, so the header has to say so as loudly as it says
+        // it for the run and the round -- a reader must not come away believing a human assessment is
+        // checked by anything.
+        Assert.Contains("A HUMAN ASSESSMENT IS THE WEAKEST BOUNDARY HERE", script, StringComparison.Ordinal);
+        Assert.Contains("assessment_id IS NOT NULL", script, StringComparison.Ordinal);
+
+        // An attributed exposure's evidence ID says which ID, not that it landed, and an auditor who
+        // inner-joins on it silently drops exactly the rows worth looking at.
+        Assert.Contains("evidence_id SAYS WHICH ID, NOT THAT IT LANDED", script, StringComparison.Ordinal);
+        Assert.Contains("LEFT JOIN agent_experience.confidence_evidence", script, StringComparison.Ordinal);
+
+        // The comparative shape has to carry the evidence it concluded from, and the ordinal bound is
+        // the schema's mirror of Core's cap on a submission's fan-out.
+        Assert.Contains("array_length(evidence_ids, 1) >= 1", script, StringComparison.Ordinal);
+        Assert.Contains($"ordinal < {ExperienceReuseFeedback.MaxExposedRecords}", script, StringComparison.Ordinal);
+
+        // The deferred constraint and the out-of-band index build both have to be documented, exactly as
+        // 0007 documents its own.
+        Assert.Equal(1, CountOccurrences(script, "NOT VALID;"));
+        Assert.Contains("VALIDATE CONSTRAINT reuse_feedback_exposures_submission_fkey", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE UNIQUE INDEX CONCURRENTLY", script, StringComparison.Ordinal);
+
+        // Append-only for the same reason the event logs are: an editable row could rewrite what a run
+        // was exposed to, or free a derived evidence ID for a second submission.
+        foreach (var trigger in new[]
+        {
+            "reuse_feedback_append_only",
+            "reuse_feedback_no_truncate",
+            "reuse_feedback_exposures_append_only",
+            "reuse_feedback_exposures_no_truncate",
+        })
+        {
+            Assert.Contains($"ENABLE ALWAYS TRIGGER {trigger}", script, StringComparison.Ordinal);
+        }
+
+        var statements = string.Join(
+            '\n',
+            script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Additive only, like every script before it, and it touches no existing table.
+        Assert.DoesNotContain("DROP", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ALTER COLUMN", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("experience_records", statements, StringComparison.OrdinalIgnoreCase);
+
+        // 0008 is applied last, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
     }
 
     private static int CountOccurrences(string text, string value)

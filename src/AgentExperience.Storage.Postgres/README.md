@@ -1,8 +1,9 @@
 # AgentExperience.Storage.Postgres
 
 Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port, searches
-them by task text through the `IExperienceCandidateSource` port, and administers explicit sharing grants through the
-`IExperienceGrantStore` port, using plain Npgsql.
+them by task text through the `IExperienceCandidateSource` port, administers explicit sharing grants through the
+`IExperienceGrantStore` port, and records reuse feedback through the `IExperienceReuseFeedbackStore` port, using
+plain Npgsql.
 
 Pinned to `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
 `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.11** (all exact; the DI package is abstractions only —
@@ -90,17 +91,20 @@ services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 services.AddAgentExperiencePostgresStore();             // or AddAgentExperiencePostgresStore(dataSource)
 services.AddAgentExperiencePostgresCandidateSource();   // or ...CandidateSource(dataSource)
 services.AddAgentExperiencePostgresGrantStore();        // or ...GrantStore(dataSource) -- only if you share records
+services.AddAgentExperiencePostgresReuseFeedbackStore(); // or ...ReuseFeedbackStore(dataSource) -- only if you record feedback
 
 // Core's own extensions then supply capture, reflection, lifecycle, finalization, and retrieval over them.
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
 services.AddAgentExperienceRetrieval();
+services.AddAgentExperienceReuseFeedback();             // needs the feedback ledger above
 ```
 
 The ports are registered independently: a host that only writes experience never has to register the search, one
 that only reads never has to register the store, and one that never shares a record across scopes never has to
-register the grant store — the reads that honour grants do so in SQL either way. Every registration is
-`TryAdd`-based, so a host that has already registered its own `IExperienceRecordStore`,
-`IExperienceCandidateSource`, or `IExperienceGrantStore` keeps it.
+register the grant store — the reads that honour grants do so in SQL either way — and one that never records
+reuse feedback never has to register its ledger. Every registration is `TryAdd`-based, so a host that has already
+registered its own `IExperienceRecordStore`, `IExperienceCandidateSource`, `IExperienceGrantStore`, or
+`IExperienceReuseFeedbackStore` keeps it.
 It does **not** apply the schema: call `ExperienceSchemaMigrator.MigrateAsync` once at startup (see
 [Schema](#schema)).
 
@@ -287,6 +291,48 @@ enforceable at all.
 
 Ordering inside the transaction is not incidental: the evidence goes in **before** the event, because whether its
 key was free decides which numbers the event must record, and an event is append-only the moment it is written.
+
+## Reuse feedback
+
+`PostgresExperienceReuseFeedbackStore` answers one question — *what did a run that saw these records actually come
+to?* — and writes it down. It is a separate port from the record store on purpose: recording feedback is opt-in, and
+a host that never does it needs neither table.
+
+It runs in the same order as every other operation here: validate the submission, check its scope against the
+host-established `AuthorizationContext`, and only then open a connection. A scope outside the context is `Denied`
+before any connection opens.
+
+- **The submission and its exposures commit together.** One transaction on one connection inserts the
+  `reuse_feedback` row and every `reuse_feedback_exposures` row, so a run's feedback is never half recorded. Core
+  writes this ledger **before** submitting any confidence evidence, so what the run saw is durable even if every
+  score submission then fails.
+- **This store decides nothing about benefit.** It writes the attribution decision Core made. It never promotes
+  `Unknown`, never derives an evidence ID, and never reads `claimed_benefit` as attribution. The database enforces
+  the same rule from its own side, so a writer bypassing this package is refused too.
+- **A human assessment is the weakest trust boundary here.** Nothing in this schema or in Core can check that a
+  human made one. `reviewer_identity` is the host's `AuthorizationContext.PrincipalId` rather than anything on the
+  submission, and `assessment_id` names a review the host established — which makes a moved score traceable, and
+  nothing more. The caller supplies `run_id`, so a host that lets agent output populate `run_id` or `assessment_id`
+  has handed the agent a fresh independence key on every call. See the script's own header.
+- **Idempotency is the feedback ID.** The insert is `ON CONFLICT (feedback_id) DO NOTHING`, so the primary key is
+  the arbiter and two hosts submitting at once cannot both decide they were first. A collision is then read back
+  inside the same transaction and compared field by field — every stored column, and the exposures in order.
+  Identical is `AlreadyRecorded` with nothing written; anything else is `Conflict`, again with nothing written.
+  `recorded_at` is excluded from the comparison, because it is this store's own clock reading and comparing it
+  would make every replay a conflict. The stored timestamps are compared against the truncated values that were
+  actually written, so a sub-microsecond original does not report itself as a conflict.
+- **The exposures compare as a set, not as typing order.** Core orders the records by experience ID before deriving
+  ordinals, so the positional comparison here is a comparison of record *sets*. Without that, a host that crashed
+  mid-submission and retried with its records in a different order would get a permanent `Conflict` — and, since
+  retrying is the only way to finish an interrupted fan-out, would be locked out of ever completing it.
+- **A conflict reveals nothing it should not.** The lookup is by primary key with no scope predicate — it has to
+  be, or the same ID could be recorded once per scope and a retry would not know which one it was replaying. The
+  stored submission therefore comes back only when the caller's `AuthorizationContext` permits *its* scope, so a
+  host whose retry was refused can still see which records the stored submission named, and a guessed ID from
+  another scope still reveals nothing.
+- **This store never reads an Experience Record.** There is no join to `experience_records` and no foreign key to
+  it. Whether an exposed ID resolves to anything is decided afterwards, by the confidence path, against the record
+  itself.
 
 ## Text search
 
@@ -582,6 +628,46 @@ deployment asked for. The script's header carries the confirmation query and the
 The new table's own constraints are plain — it starts empty, so there is nothing to scan. The same limits apply to
 its triggers as to `0006`'s: read them above before relying on them.
 
+`0008_reuse_feedback.sql` adds the append-only reuse feedback ledger:
+
+- `reuse_feedback`: `feedback_id` as the primary key (the submission's idempotency key), the run, the same scope
+  columns as `experience_records`, the run's outcome, `claimed_benefit` and `benefit`, `attribution_source`, the
+  reviewer identity *or* the evaluator and verification round, the rationale, the measure's kind and value, the
+  trial label, and `observed_at`/`recorded_at`.
+- The `CHECK` that carries the whole story: `(attribution_source = 'None') = (benefit = 'Unknown')`. "Nothing
+  attributed this" and "benefit unknown" are one fact, so they cannot drift into a row claiming an improvement
+  nothing evidenced. `claimed_benefit` sits beside it, recorded and never promoted: what a caller believes is data
+  about the caller, not evidence about a record.
+- Further `CHECK`s making each attribution shape carry exactly what it must: a human row a reviewer, an
+  `assessment_id` naming the host-established review it came out of, and no evaluator or evidence list; a
+  comparative row an evaluator, a round, and a non-empty `evidence_ids`, and no reviewer or assessment. Both carry
+  `attributed_at`. The round is the machine independence key's second half for a comparative row and **audit only**
+  for a human one, whose evidence is keyed on the reviewer and the run instead.
+- `evidence_ids` is stored so an auditor sees what a moved score rested on rather than only the evaluator's own
+  summary of it — Core cross-checks each piece against the round the result names before it is accepted.
+- `reuse_feedback_exposures`: one row per record the run saw, keyed `(feedback_id, experience_id)`, carrying
+  `ordinal` and `attributed`, plus the `evidence_id` derived from `(feedback_id, experience_id)` — present exactly
+  when `attributed`. `ordinal` is the *normalized* order (by experience ID), not the caller's, and is bounded by
+  `CHECK (ordinal >= 0 AND ordinal < 64)`, which mirrors `ExperienceReuseFeedback.MaxExposedRecords` and is the
+  schema's half of the only bound on a submission's fan-out.
+- **`evidence_id` says which ID, not that it landed.** It is written with the exposure, before any confidence
+  submission is attempted, because the exposure must be durable first. An attributed exposure whose record turned
+  out ineligible or unresolved, or whose commit failed, therefore has an `evidence_id` with no row in
+  `confidence_evidence`. That is the outstanding work, not a dangling reference: read it with a `LEFT JOIN` — the
+  script's header carries the query — and an inner join would silently drop exactly the rows worth looking at.
+- Unique indexes on `evidence_id` (partial, where present) and on `(feedback_id, ordinal)`. The derivation is a
+  pure function of the feedback and the record, so a collision on the first means it was bypassed rather than that
+  two observations coincided. The script's header carries the `CREATE UNIQUE INDEX CONCURRENTLY` runbook for both,
+  for a database whose schema was applied by hand and may already hold rows.
+- The exposures-to-submissions foreign key is added `ALTER TABLE … NOT VALID`, with the confirmation query and the
+  `VALIDATE CONSTRAINT` statement in the script's header — for the same hand-applied case. Everything else is a
+  constraint on a table this script creates, so it starts empty and there is nothing to scan.
+- Deliberately **no** foreign key to `experience_records`, matching `0007`: a run that saw an ID resolving to
+  nothing in its scope must still be recordable, and a foreign key would turn that fact into a write failure.
+- `BEFORE UPDATE OR DELETE` and `BEFORE TRUNCATE` triggers on both tables, reusing `0006`'s function. Promoting a
+  recorded exposure into an attribution after the fact is exactly what they stop. The same limits apply as to
+  `0006`'s: read them above before relying on them.
+
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package
 [`AgentExperience.Storage.Postgres.Vectors`](../AgentExperience.Storage.Postgres.Vectors/README.md) and is applied
@@ -618,6 +704,8 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
   need `SELECT` on `agent_experience.experience_grants` -- optional, because a role without it falls back to the
   exact-scope predicate (see [Sharing grants](#sharing-grants)). Administering grants additionally needs `INSERT`
   and `UPDATE` on `agent_experience.experience_grants` and `INSERT` on `agent_experience.experience_grant_events`.
+  Recording reuse feedback needs `SELECT` and `INSERT` on `agent_experience.reuse_feedback` and
+  `agent_experience.reuse_feedback_exposures`, and ownership of both to create `0008`'s triggers.
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one
   for the scripts. A multiplexing data source (`NpgsqlDataSourceBuilder.EnableMultiplexing`) cannot hold a session
   advisory lock, because its commands do not stay on one physical connection, so it is not supported for migration.

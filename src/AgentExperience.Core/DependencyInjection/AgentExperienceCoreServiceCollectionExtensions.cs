@@ -1,5 +1,6 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
+using AgentExperience.Core.Feedback;
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
@@ -86,6 +87,38 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<IExperienceRecordStore>(),
             provider.GetRequiredService<ExperienceLifecycleService>(),
             provider.GetService<ExperienceIndexingService>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="ExperienceReuseFeedbackService"/> as a singleton, so a host can record what
+    /// happened in a run that stored experience was injected into.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Registered separately from <see cref="AddAgentExperienceCore"/> because it needs an
+    /// <see cref="IExperienceReuseFeedbackStore"/>, which Core does not implement: register a storage
+    /// adapter's ledger as well (for example <c>AddAgentExperiencePostgresReuseFeedbackStore</c>), or
+    /// resolving the service fails. It also needs the <see cref="ExperienceLifecycleService"/> that
+    /// <see cref="AddAgentExperienceCore"/> registers, which is the one path any score moves through.
+    /// </para>
+    /// <para>
+    /// Recording feedback is optional and additive: a host that never calls it simply never moves a
+    /// score from reuse, and a host that calls it with no attribution evidence records the exposure and
+    /// still moves nothing.
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperienceReuseFeedback(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton(provider => new ExperienceReuseFeedbackService(
+            provider.GetRequiredService<IExperienceReuseFeedbackStore>(),
+            provider.GetRequiredService<ExperienceLifecycleService>()));
 
         return services;
     }
