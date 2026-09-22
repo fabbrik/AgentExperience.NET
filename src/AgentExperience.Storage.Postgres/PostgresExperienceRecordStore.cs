@@ -32,14 +32,20 @@ namespace AgentExperience.Storage.Postgres;
 /// </remarks>
 public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 {
-    private const string Table = "agent_experience.experience_records";
+    /// <summary>The canonical record table. Shared with <see cref="PostgresExperienceCandidateSource"/>, which reads from it.</summary>
+    internal const string Table = "agent_experience.experience_records";
 
-    private const string SelectColumns =
+    /// <summary>
+    /// The record columns every read selects, in the order <see cref="DecodeRecord"/> expects (ordinals 0-17).
+    /// A reader that selects more must append its extra columns <em>after</em> these, never before.
+    /// </summary>
+    internal const string SelectColumns =
         "experience_id, source_run_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, task_id, " +
         "status, reuse_confidence, supporting_validations, contradictions, revision, created_at, updated_at, " +
         "payload_version, payload";
 
-    private const string ScopePredicate =
+    /// <summary>The exact-scope predicate every statement applies, shared with <see cref="PostgresExperienceCandidateSource"/>.</summary>
+    internal const string ScopePredicate =
         "tenant_id = @tenant_id AND application_id = @application_id AND project_id = @project_id " +
         "AND team_id IS NOT DISTINCT FROM @team_id AND agent_id IS NOT DISTINCT FROM @agent_id " +
         "AND user_id IS NOT DISTINCT FROM @user_id";
@@ -575,7 +581,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(new NpgsqlParameter<long>("applied_revision", appliedRevision));
     }
 
-    private static void AddScopeParameters(NpgsqlParameterCollection parameters, Scope scope)
+    internal static void AddScopeParameters(NpgsqlParameterCollection parameters, Scope scope)
     {
         parameters.Add(new NpgsqlParameter<string>("tenant_id", NpgsqlDbType.Text) { TypedValue = scope.TenantId });
         parameters.Add(new NpgsqlParameter<string>("application_id", NpgsqlDbType.Text) { TypedValue = scope.ApplicationId });
@@ -617,7 +623,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         return false;
     }
 
-    private static ExperienceRecord ReadRecord(DbDataReader reader)
+    internal static ExperienceRecord ReadRecord(DbDataReader reader)
     {
         try
         {
@@ -732,14 +738,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// Driver, socket, and timeout failures are translated. An <see cref="OperationCanceledException"/>
     /// caused by the caller's own token is not matched, so it propagates unwrapped with its stack.
     /// </summary>
-    private static bool IsInfrastructureFailure(Exception ex, CancellationToken cancellationToken) => ex switch
+    internal static bool IsInfrastructureFailure(Exception ex, CancellationToken cancellationToken) => ex switch
     {
         OperationCanceledException => !cancellationToken.IsCancellationRequested,
         NpgsqlException or SocketException or TimeoutException => true,
         _ => false,
     };
 
-    private static Exception Translate(Exception ex, string operation, CancellationToken cancellationToken)
+    internal static Exception Translate(Exception ex, string operation, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
         {

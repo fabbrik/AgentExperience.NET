@@ -57,6 +57,39 @@ public class PostgresServiceRegistrationTests
     }
 
     [Fact]
+    public void The_candidate_source_is_resolved_independently_of_the_store()
+    {
+        using var dataSource = TestRecords.Unreachable();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddAgentExperiencePostgresCandidateSource();
+
+        using var provider = services.BuildServiceProvider();
+
+        // Two independent ports: a host that only searches never has to register the writer.
+        var source = provider.GetRequiredService<IExperienceCandidateSource>();
+        Assert.IsType<PostgresExperienceCandidateSource>(source);
+        Assert.Same(source, provider.GetRequiredService<IExperienceCandidateSource>()); // singleton
+        Assert.Null(provider.GetService<IExperienceRecordStore>());
+    }
+
+    [Fact]
+    public void The_candidate_source_overload_taking_a_data_source_needs_nothing_else_in_the_container()
+    {
+        using var dataSource = TestRecords.Unreachable();
+        var hostSource = new PostgresExperienceCandidateSource(dataSource);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IExperienceCandidateSource>(hostSource);
+        services.AddAgentExperiencePostgresCandidateSource(dataSource);
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Same(hostSource, provider.GetRequiredService<IExperienceCandidateSource>()); // registered first, so TryAdd keeps it
+    }
+
+    [Fact]
     public void Null_arguments_throw()
     {
         using var dataSource = TestRecords.Unreachable();
@@ -64,5 +97,8 @@ public class PostgresServiceRegistrationTests
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresStore());
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresStore(dataSource));
         Assert.Throws<ArgumentNullException>(() => new ServiceCollection().AddAgentExperiencePostgresStore((NpgsqlDataSource)null!));
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresCandidateSource());
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAgentExperiencePostgresCandidateSource(dataSource));
+        Assert.Throws<ArgumentNullException>(() => new ServiceCollection().AddAgentExperiencePostgresCandidateSource((NpgsqlDataSource)null!));
     }
 }

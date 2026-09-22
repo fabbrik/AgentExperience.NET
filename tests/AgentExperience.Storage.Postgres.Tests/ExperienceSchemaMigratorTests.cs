@@ -97,6 +97,75 @@ public sealed class ExperienceSchemaMigratorTests
     }
 
     [Fact]
+    public async Task Search_script_applied_by_hand_first_is_journaled_without_failing_on_the_existing_column()
+    {
+        await using var dataSource = await _fixture.CreateDatabaseAsync("search_manual");
+
+        // The whole shipped schema applied the pre-migrator way, 0003 included, so the generated column
+        // and both indexes already exist when the runner re-runs the script over them.
+        foreach (var scriptName in PostgresExperienceRecordSchema.ScriptNames)
+        {
+            await using var command = dataSource.CreateCommand(PostgresExperienceRecordSchema.GetScript(scriptName));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var store = new PostgresExperienceRecordStore(dataSource);
+        var tenant = NewTenant();
+        var record = Full(Scope(tenant));
+        await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+
+        // Every statement in 0003 is IF NOT EXISTS, so this is a no-op rather than a duplicate-column error.
+        var result = await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
+
+        Assert.Equal(PostgresExperienceRecordSchema.ScriptNames, result.AppliedScripts);
+        Assert.Equal(PostgresExperienceRecordSchema.ScriptNames, await JournaledAsync(dataSource, ShippedPrefix));
+
+        // And the hand-applied column still indexes the row that was written through it.
+        var search = new PostgresExperienceCandidateSource(dataSource);
+        var found = await search.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(record.Scope, "refund ticket", [ExperienceStatus.Validated], 0d),
+            CancellationToken.None);
+        Assert.Equal(record.ExperienceId, Assert.Single(found.Candidates).Record.ExperienceId);
+    }
+
+    [Fact]
+    public async Task A_record_written_before_the_search_script_is_indexed_when_it_is_applied()
+    {
+        await using var dataSource = await _fixture.CreateDatabaseAsync("search_backfill");
+
+        // The state an existing deployment is in: 0001 and 0002 applied, rows written, 0003 not yet run.
+        foreach (var scriptName in new[]
+        {
+            PostgresExperienceRecordSchema.InitialScriptName,
+            PostgresExperienceRecordSchema.LifecycleEventsScriptName,
+        })
+        {
+            await using var command = dataSource.CreateCommand(PostgresExperienceRecordSchema.GetScript(scriptName));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var store = new PostgresExperienceRecordStore(dataSource);
+        var tenant = NewTenant();
+        var record = Full(Scope(tenant));
+        Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
+
+        await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
+
+        // The generated column is computed for every existing row as the table is rewritten, so records
+        // that predate the search are searchable without a backfill step of their own.
+        var search = new PostgresExperienceCandidateSource(dataSource);
+        var found = await search.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(record.Scope, "refund ticket", [ExperienceStatus.Validated], 0d),
+            CancellationToken.None);
+
+        var candidate = Assert.Single(found.Candidates);
+        Assert.Equal(record.ExperienceId, candidate.Record.ExperienceId);
+        Assert.Equal(Canonical(record), Canonical(candidate.Record));
+    }
+
+    [Fact]
     public async Task Concurrent_runs_both_succeed_and_journal_each_script_exactly_once()
     {
         await using var dataSource = await _fixture.CreateDatabaseAsync("concurrent");

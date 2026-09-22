@@ -3,6 +3,7 @@ using AgentExperience.Core.Capture;
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Reflections;
+using AgentExperience.Core.Retrieval;
 using AgentExperience.Core.Sanitization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -64,6 +65,61 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
         services.TryAddSingleton<ExperienceLifecycleService>();
         services.TryAddSingleton<ExperienceFinalizationService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="ExperienceRetrievalService"/> as a singleton, together with the
+    /// <see cref="RetrievalPolicy"/> and <see cref="RankingWeights"/> it runs under.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Retrieval is registered separately from <see cref="AddAgentExperienceCore"/> because it needs
+    /// an <see cref="IExperienceCandidateSource"/>, which Core does not implement: register a storage
+    /// adapter's search as well (for example <c>AddAgentExperiencePostgresCandidateSource</c>), or
+    /// resolving the service fails.
+    /// </para>
+    /// <para>
+    /// Unlike sanitization policy and capture limits, retrieval has documented defaults
+    /// (<see cref="RetrievalPolicy.Default"/> and <see cref="RankingWeights.Default"/>), so both
+    /// arguments are optional. Passing an invalid policy or weighting is impossible: both throw at
+    /// construction, before this call. The <see cref="TimeProvider"/> the timeout, expiry, and recency
+    /// are measured with is <see cref="TimeProvider.System"/> unless the host registered its own
+    /// first.
+    /// </para>
+    /// <para>
+    /// Every registration uses <c>TryAdd</c>, so a host that registered its own policy, weights,
+    /// clock, or service keeps it.
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <param name="policy">The retrieval bounds and thresholds. Defaults to <see cref="RetrievalPolicy.Default"/>.</param>
+    /// <param name="weights">The ranking weights. Defaults to <see cref="RankingWeights.Default"/>.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperienceRetrieval(
+        this IServiceCollection services,
+        RetrievalPolicy? policy = null,
+        RankingWeights? weights = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        var effectivePolicy = policy ?? RetrievalPolicy.Default;
+        var effectiveWeights = weights ?? RankingWeights.Default;
+
+        services.TryAddSingleton(effectivePolicy);
+        services.TryAddSingleton(effectiveWeights);
+        services.TryAddSingleton(TimeProvider.System);
+
+        // The caller's own policy and weights are captured rather than resolved back out of the
+        // container, for the same reason the sanitizer's options are: a RetrievalPolicy the host
+        // registered earlier must not silently replace the one passed here.
+        services.TryAddSingleton(provider => new ExperienceRetrievalService(
+            provider.GetRequiredService<IExperienceCandidateSource>(),
+            effectivePolicy,
+            effectiveWeights,
+            provider.GetRequiredService<TimeProvider>()));
 
         return services;
     }

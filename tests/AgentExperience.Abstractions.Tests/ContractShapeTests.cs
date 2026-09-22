@@ -320,6 +320,55 @@ public class ContractShapeTests
         Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[4].GetParameters().Select(p => p.ParameterType));
     }
 
+    // Story 2.2: the retrieval candidate-source port.
+    [Fact]
+    public void Candidate_source_port_mirrors_the_store_port_and_stays_separate_from_it()
+    {
+        var method = Assert.Single(typeof(IExperienceCandidateSource).GetMethods());
+
+        Assert.Equal("SearchAsync", method.Name);
+        Assert.Equal(typeof(Task<ExperienceCandidateSearchResult>), method.ReturnType);
+        Assert.Equal(
+            [typeof(AuthorizationContext), typeof(ExperienceCandidateQuery), typeof(CancellationToken)],
+            method.GetParameters().Select(p => p.ParameterType));
+        Assert.False(method.GetParameters()[^1].HasDefaultValue);
+
+        // A new port, not an extension of the store: retrieval must not change what a writer implements.
+        Assert.DoesNotContain(
+            typeof(IExperienceRecordStore).GetMethods(),
+            m => m.Name.Contains("Search", StringComparison.Ordinal));
+        Assert.False(typeof(IExperienceCandidateSource).IsAssignableFrom(typeof(IExperienceRecordStore)));
+    }
+
+    [Fact]
+    public void Candidate_query_defaults_to_a_limit_of_50_within_1_to_200_and_a_candidate_carries_a_normalized_relevance()
+    {
+        var query = new ExperienceCandidateQuery(new Scope("t", "a", "p"), "refund", [ExperienceStatus.Validated], 0.5);
+
+        Assert.Equal(50, query.Limit);
+        Assert.Equal(50, ExperienceCandidateQuery.DefaultLimit);
+        Assert.Equal(1, ExperienceCandidateQuery.MinLimit);
+        Assert.Equal(200, ExperienceCandidateQuery.MaxLimit);
+
+        var record = new ExperienceRecord(
+            Guid.NewGuid(), Guid.NewGuid(), query.Scope, "task", null, [],
+            new Outcome(TaskVerificationStatus.Verified, [], null, Now), 1, null,
+            new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
+            new Provenance("tests", null, Now, null),
+            ExperienceStatus.Validated, 0.8, 1, 0, 1, Now, Now);
+
+        var found = new ExperienceCandidateSearchResult(
+            ExperienceStoreOutcome.Found, [new ExperienceCandidate(record, 0.42)], []);
+
+        Assert.Equal(0.42, Assert.Single(found.Candidates).Relevance);
+        Assert.Same(record, found.Candidates[0].Record);
+
+        // The result reuses the store's outcome enum, which has no timeout member: a retrieval timeout
+        // is Core's own result type, never a storage outcome.
+        Assert.DoesNotContain("Timeout", Enum.GetNames<ExperienceStoreOutcome>());
+        Assert.Empty(new ExperienceCandidateSearchResult(ExperienceStoreOutcome.Denied, [], []).Candidates);
+    }
+
     // Story 2.4: the lifecycle commit and history contracts.
     [Fact]
     public void Lifecycle_commit_and_history_results_carry_a_revision_and_ordered_events()

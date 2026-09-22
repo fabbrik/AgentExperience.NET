@@ -150,6 +150,49 @@ internal static class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>
+    /// Validates a candidate search: the scope, the task text to match, the caller's eligible status
+    /// set, the confidence floor, and the bound on how many candidates may come back. An empty status
+    /// set is rejected rather than widened to "every status", so a caller can never accidentally ask
+    /// for records it considers ineligible.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateCandidateQuery(ExperienceCandidateQuery query)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScope(query.Scope, "Scope", errors);
+        RequireNotBlank(query.TaskText, "TaskText", errors);
+
+        if (query.TaskText is { Length: > ExperienceCandidateQuery.MaxTaskTextLength })
+        {
+            errors.Add(new("TaskText", $"must be at most {ExperienceCandidateQuery.MaxTaskTextLength} characters."));
+        }
+
+        if (query.EligibleStatuses is null)
+        {
+            errors.Add(new("EligibleStatuses", Required));
+        }
+        else if (query.EligibleStatuses.Count == 0)
+        {
+            errors.Add(new("EligibleStatuses", "must contain at least one status."));
+        }
+        else
+        {
+            for (var i = 0; i < query.EligibleStatuses.Count; i++)
+            {
+                RequireDefined(query.EligibleStatuses[i], $"EligibleStatuses[{i}]", errors);
+            }
+        }
+
+        RequireUnitInterval(query.MinimumConfidence, "MinimumConfidence", errors);
+
+        if (query.Limit is < ExperienceCandidateQuery.MinLimit or > ExperienceCandidateQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ExperienceCandidateQuery.MinLimit} and {ExperienceCandidateQuery.MaxLimit}."));
+        }
+
+        return errors;
+    }
+
     private static void ValidateScope(Scope? scope, string path, List<StoreValidationError> errors)
     {
         if (scope is null)

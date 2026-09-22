@@ -22,10 +22,16 @@ public static class PostgresExperienceRecordSchema
     /// <summary>The script that creates the append-only <c>lifecycle_events</c> table.</summary>
     public const string LifecycleEventsScriptName = "0002_create_lifecycle_events.sql";
 
+    /// <summary>
+    /// The script that adds the generated <c>search_vector</c> column and its GIN index, which
+    /// <see cref="PostgresExperienceCandidateSource"/> matches task text against.
+    /// </summary>
+    public const string SearchScriptName = "0003_add_experience_search.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>Every embedded script name, in the order they must be applied.</summary>
-    public static IReadOnlyList<string> ScriptNames { get; } = [InitialScriptName, LifecycleEventsScriptName];
+    public static IReadOnlyList<string> ScriptNames { get; } = [InitialScriptName, LifecycleEventsScriptName, SearchScriptName];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>
