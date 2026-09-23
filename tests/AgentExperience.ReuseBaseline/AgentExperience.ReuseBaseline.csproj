@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AgentExperience.ReuseBaseline</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Directory.Build.props turns on GenerateDocumentationFile with TreatWarningsAsErrors, which
+         would make every undocumented public member a build error. The harness documents the types a
+         reader has to follow to check a number, not every [Fact] method. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[17.14.1]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.4]" />
+    <!-- The container, so each trial is composed the way a host composes one. Same pin the 4.2
+         sample uses. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.11]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Microsoft.Extensions.AI.Evaluation 10.9.0 arrives transitively through Microsoft.Agents.AI
+         1.20.0, which this project reaches through the MAF adapter's project reference. It is used
+         for the per-trial task check only (IEvaluator/EvaluationResult/BooleanMetric, with no model
+         and no ChatConfiguration, exactly as tests/AgentExperience.CompatibilityProof proves). No
+         ReportingConfiguration and no ScenarioRun: reuse-boundaries.md forbids an evaluation
+         reporting platform by name. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <!-- The 4.2 sample's three in-memory port doubles and its tool recorder, reused rather than
+         copied. What is deliberately NOT reused is named in ReuseBaselineExperiment's remarks. -->
+    <ProjectReference Include="..\..\samples\AgentExperience.Sample.EndToEnd\AgentExperience.Sample.EndToEnd.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The checked-in report the reference experiment's deterministic body is compared against,
+         byte for byte. Embedded so the comparison does not depend on where the repository root is
+         at test time, exactly as the 4.2 sample's golden transcript is. -->
+    <EmbeddedResource Include="GoldenReport.txt" LogicalName="AgentExperience.ReuseBaseline.GoldenReport.txt" />
+    <!-- The negative control's report is checked in for the same reason, and it is the more
+         important of the two: it is the run in which the honest answer is no. -->
+    <EmbeddedResource Include="GoldenNegativeControlReport.txt" LogicalName="AgentExperience.ReuseBaseline.GoldenNegativeControlReport.txt" />
+    <!-- A run in which five of the six memory-enabled trials were deliberately faulted, so that the
+         rendering of errors, timeouts, retrieval failures, '-' placeholders and an undefined
+         statistic is golden-filed rather than only substring-checked. Neither of the other two
+         goldens contains a trial that is not Completed or an n below six. -->
+    <EmbeddedResource Include="GoldenFailedTrialReport.txt" LogicalName="AgentExperience.ReuseBaseline.GoldenFailedTrialReport.txt" />
+  </ItemGroup>
+
+</Project>

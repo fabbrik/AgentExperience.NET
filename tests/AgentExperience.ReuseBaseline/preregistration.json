@@ -1,0 +1,76 @@
+{
+  "preregistrationVersion": "2",
+  "registeredFor": "AgentExperience.NET story 4.4 -- measure reuse against a controlled baseline",
+  "registeredAgainstCommit": "1d65808",
+  "measures": "the harness, not a model: there is no model credential in this repository and every IChatClient in it is a fake, so the magnitude of any difference below is a property of the fixture that produced it",
+  "trialCount": 12,
+  "conditions": {
+    "memoryEnabled": "memory-enabled",
+    "memoryDisabled": "memory-disabled",
+    "startingCondition": "memory-disabled"
+  },
+  "primaryMetric": "failed_attempts",
+  "secondaryMetrics": [
+    "tool_calls",
+    "elapsed_ms"
+  ],
+  "guardrailMetrics": [
+    "verified_success_rate",
+    "unauthorized_tool_executions"
+  ],
+  "metricsExcludedFromGate": [
+    "elapsed_ms"
+  ],
+  "metricsExcludedFromGateReason": "Two known asymmetries are charged only to the memory-enabled condition: the embedding port takes one string at a time (ExperienceIndex.cs:231, serial at ExperienceIndexingService.cs:502-511), and injection re-reads each candidate serially on the critical path (ExperienceContextProvider.cs:404-422). A measure that is biased by construction must not be allowed to decide the verdict.",
+  "gateExpression": "mean(failed_attempts | memory-enabled) < mean(failed_attempts | memory-disabled) AND verified_success_rate(memory-enabled) >= verified_success_rate(memory-disabled) AND mean(unauthorized_tool_executions | memory-enabled) <= mean(unauthorized_tool_executions | memory-disabled)",
+  "gateEvaluatedOnce": true,
+  "gateFailureVerdict": "NoDemonstratedBenefit",
+  "thresholds": {
+    "kind": "direction-only",
+    "provisional": true,
+    "note": "docs/AgentExperience_NET_MAF_Production_Architecture.md:1848 says the exact thresholds should be derived experimentally, not invented in advance; the acceptance criteria require a predeclared gate. Both hold for a direction gate -- a strictly lower mean on the primary metric, no loss of verified success, no rise in denied tool invocations -- and a direction cannot be tuned after the fact the way a significance level on a chosen subset can. Magnitudes are to be derived when real-model data exists, and are deliberately absent here."
+  },
+  "conditionAssignment": "derived: condition(index) = index is even ? conditions.startingCondition : the other condition. No human chose which task ran under which condition, and the assignment is reproducible from the index alone.",
+  "taskAssignment": "derived: task(index) = evaluationTasks[index / 2], so each evaluation task is run once under each condition. trialCount must equal 2 x evaluationTasks.length and the harness refuses the run otherwise; there is no modulo, so a task set of another size is a refusal rather than a silently reweighted plan.",
+  "attribution": "Every arm submits reuse feedback as exposure only: TrialLabel carries the condition, ClaimedBenefit stays Unknown, and no ComparativeEvaluationResult and no HumanReuseAssessment is constructed from a scripted run. Fabricating a comparative result from a fixture would move a real confidence score on the strength of a script.",
+  "arms": [
+    {
+      "id": "reference",
+      "taskSetVersion": "reuse-baseline-incidents@2",
+      "purpose": "The reference experiment. The injected records name working approaches the exploring agent would not have reached first. Its evaluation tasks describe the learning tasks' two failure modes in a different system and a different vocabulary, and the harness refuses a task set whose evaluation tasks repeat a learning task's wording."
+    },
+    {
+      "id": "negative-control",
+      "taskSetVersion": "reuse-baseline-incidents-negative-control@2",
+      "purpose": "Required deliverable. Same evaluation tasks, same agent policy, same gate; only the learning tasks differ, so the injected records name approaches the exploring agent would have tried first anyway. The injected experience therefore carries no usable advantage and the honest answer is NoDemonstratedBenefit. A harness that has never been observed to say no is not evidence when it says yes."
+    },
+    {
+      "id": "wrong-strategy",
+      "taskSetVersion": "reuse-baseline-incidents-wrong-strategy@1",
+      "purpose": "Required deliverable. The one injected record names an approach that resolves none of this arm's evaluation tasks and sits last in the exploration order, so reading the block must cost exactly one more failed attempt than ignoring it. An agent that was handed the answer by any route other than the block cannot produce that number, which is what makes the memory-enabled arm's advantage attributable to the block rather than assumed to be."
+    }
+  ],
+  "amendments": [
+    {
+      "date": "2026-09-22",
+      "change": "The evaluation task set was rewritten and the reference and negative-control task set versions bumped from @1 to @2. The six evaluation tasks now describe the learning tasks' two failure modes in a different system and a different vocabulary, sharing no content word with them; Validate() refuses any task set whose evaluation tasks repeat a learning task's wording.",
+      "why": "Review found the previous evaluation tasks were the learning tasks reworded -- 'A settlement batch has stalled because the ledger row it writes is held by a stale session' against 'A settlement batch has stalled: the ledger row it writes is still held by a stale session'. Retrieval here is word overlap, so the headline measured a near-verbatim lookup rather than reuse.",
+      "resultsExisted": true,
+      "resultsChanged": "The reference arm's primary means moved from 0.000 against 2.500 to 0.500 against 2.500. The verdict did not change."
+    },
+    {
+      "date": "2026-09-22",
+      "change": "A third arm, wrong-strategy, was added, with its own task set version reuse-baseline-incidents-wrong-strategy@1.",
+      "why": "Review showed that a harness which fed the agent the task's ground-truth strategy directly -- while still retrieving, injecting and recording the block, and merely ignoring its content -- passed every test with both golden reports byte-identical. Every arm that existed either rewarded reading the block or was indifferent to it, so none of them could distinguish reuse from a planted answer. This arm can: reading the block must cost exactly one extra failed attempt.",
+      "resultsExisted": true,
+      "resultsChanged": "None. This arm is a control added to make an existing measurement checkable. It reports its own verdict and changes no number in the reference arm or the negative control."
+    },
+    {
+      "date": "2026-09-22",
+      "change": "taskAssignment was extended to state that trialCount must equal 2 x evaluationTasks.length and that the harness refuses the run otherwise. Nothing about which metric is gated on, which arm runs, or how the gate is evaluated was changed.",
+      "why": "Review found the assignment was implemented with a silent modulo while this field declared evaluationTasks[index / 2], and nothing checked the two agreed. The field now says what the harness enforces.",
+      "resultsExisted": true,
+      "resultsChanged": "None. The reference arm already ran six evaluation tasks over twelve trials."
+    }
+  ]
+}

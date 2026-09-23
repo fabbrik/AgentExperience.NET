@@ -1,0 +1,10 @@
+# The golden reports are compared against the harness's own output byte for byte, and the report
+# writes '\n' explicitly on every platform. Never let a checkout rewrite their line endings.
+GoldenReport.txt -text
+GoldenNegativeControlReport.txt -text
+GoldenFailedTrialReport.txt -text
+
+# The pre-registration is identified by the git blob id of its exact bytes, which the reports print
+# and the tamper check compares against. A checkout that rewrote its line endings would change that
+# identity and the reports would refuse to render.
+preregistration.json -text

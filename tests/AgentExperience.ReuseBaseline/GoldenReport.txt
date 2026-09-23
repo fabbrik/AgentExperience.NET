@@ -1,0 +1,353 @@
+AgentExperience.NET -- reuse measured against a controlled baseline (story 4.4)
+
+WHAT THIS MEASURES: the harness, not a model. There is no model credential anywhere in this
+repository and every IChatClient in it is a fake, so the size of any difference between the two
+conditions below is a property of the fixture that produced it -- the declared agent policy and
+the task set -- and not of any model. Quoting it as a quality finding would be circular.
+
+What a real result would require, none of which exists here: a model credential and a provider
+wiring -- every shipping project carries a dependency-boundary assertion that forbids the provider
+packages by name; an agent that is not a deterministic policy written by the same author as this
+report; a task set of real tasks rather than a scripted incident with a known resolving strategy;
+and enough trials for a dispersion estimate to mean something. What IS measured here is
+mechanical and worth measuring: whether an injected Historical Reference reaches the agent's
+context and changes the action it takes, whether the authorization boundary still holds when it
+does, and whether the gate says no.
+
+  arm               reference -- the reference experiment: injected records name approaches the exploring agent would not have reached first
+  pre-registration  preregistration.json @ git blob a7694ce4ba2eab2c570138c36af9bd93934d645f (7240 bytes)
+                    check it with: git hash-object tests/AgentExperience.ReuseBaseline/preregistration.json
+                    a commit SHA is deliberately not used: the file is introduced by the same commit this
+                    report is checked in under, so a report naming its own commit could never be reproduced.
+                    registered against commit 1d65808
+  amendments        3 recorded, 3 of them made after results already existed.
+                    THIS PRE-REGISTRATION HAS BEEN AMENDED, AND ONE OR MORE AMENDMENTS WERE MADE AFTER RESULTS EXISTED.
+                    Adding a control after seeing results is legitimate -- a control makes an
+                    existing measurement checkable rather than manufacturing a result. Choosing a
+                    metric, a subset or a threshold after seeing results is not. A reader can only
+                    tell those apart if the file says which happened, so every entry below states
+                    whether results existed at the time and which published numbers moved.
+
+                    [1] 2026-09-22 -- MADE AFTER RESULTS EXISTED
+                        The evaluation task set was rewritten and the reference and negative-control
+                        task set versions bumped from @1 to @2. The six evaluation tasks now
+                        describe the learning tasks' two failure modes in a different system and a
+                        different vocabulary, sharing no content word with them; Validate() refuses
+                        any task set whose evaluation tasks repeat a learning task's wording.
+                        why: Review found the previous evaluation tasks were the learning tasks
+                        reworded -- 'A settlement batch has stalled because the ledger row it writes
+                        is held by a stale session' against 'A settlement batch has stalled: the
+                        ledger row it writes is still held by a stale session'. Retrieval here is
+                        word overlap, so the headline measured a near-verbatim lookup rather than
+                        reuse.
+                        effect on published numbers: The reference arm's primary means moved from
+                        0.000 against 2.500 to 0.500 against 2.500. The verdict did not change.
+
+                    [2] 2026-09-22 -- MADE AFTER RESULTS EXISTED
+                        A third arm, wrong-strategy, was added, with its own task set version
+                        reuse-baseline-incidents-wrong-strategy@1.
+                        why: Review showed that a harness which fed the agent the task's
+                        ground-truth strategy directly -- while still retrieving, injecting and
+                        recording the block, and merely ignoring its content -- passed every test
+                        with both golden reports byte-identical. Every arm that existed either
+                        rewarded reading the block or was indifferent to it, so none of them could
+                        distinguish reuse from a planted answer. This arm can: reading the block
+                        must cost exactly one extra failed attempt.
+                        effect on published numbers: None. This arm is a control added to make an
+                        existing measurement checkable. It reports its own verdict and changes no
+                        number in the reference arm or the negative control.
+
+                    [3] 2026-09-22 -- MADE AFTER RESULTS EXISTED
+                        taskAssignment was extended to state that trialCount must equal 2 x
+                        evaluationTasks.length and that the harness refuses the run otherwise.
+                        Nothing about which metric is gated on, which arm runs, or how the gate is
+                        evaluated was changed.
+                        why: Review found the assignment was implemented with a silent modulo while
+                        this field declared evaluationTasks[index / 2], and nothing checked the two
+                        agreed. The field now says what the harness enforces.
+                        effect on published numbers: None. The reference arm already ran six
+                        evaluation tasks over twelve trials.
+
+  task set          reuse-baseline-incidents@2 -- 2 learning task(s), 6 evaluation task(s), asserted disjoint
+  trials            12, the pre-registered count; condition derived from the index, starting at memory-disabled
+  primary           failed_attempts
+  secondary         tool_calls, elapsed_ms
+  guardrails        verified_success_rate, unauthorized_tool_executions
+  not gated         elapsed_ms
+  thresholds        direction-only, provisional=true
+                    docs/AgentExperience_NET_MAF_Production_Architecture.md:1848 says the exact
+                    thresholds should be derived experimentally, not invented in advance; the
+                    acceptance criteria require a predeclared gate. Both hold for a direction gate
+                    -- a strictly lower mean on the primary metric, no loss of verified success, no
+                    rise in denied tool invocations -- and a direction cannot be tuned after the
+                    fact the way a significance level on a chosen subset can. Magnitudes are to be
+                    derived when real-model data exists, and are deliberately absent here.
+
+GATE -- one predeclared expression, evaluated once, read from the pre-registration:
+  mean(failed_attempts | memory-enabled) < mean(failed_attempts | memory-disabled) AND
+  verified_success_rate(memory-enabled) >= verified_success_rate(memory-disabled) AND
+  mean(unauthorized_tool_executions | memory-enabled) <= mean(unauthorized_tool_executions |
+  memory-disabled)
+
+VERDICT: BenefitDemonstrated (harness-level, simulated agent)
+
+  [1] mean(failed_attempts | memory-enabled) < mean(failed_attempts | memory-disabled)
+      holds: 0.500 against 2.500 (failed_attempts), a difference of -2.000. Required: a strictly
+      lower mean under the memory-enabled condition.
+  [2] verified_success_rate(memory-enabled) >= verified_success_rate(memory-disabled)
+      holds: 1.000 against 1.000 (verified_success_rate), a difference of 0.000. Required: verified
+      success must not decrease.
+  [3] mean(unauthorized_tool_executions | memory-enabled) <= mean(unauthorized_tool_executions | memory-disabled)
+      holds: 0.000 against 0.000 (unauthorized_tool_executions), a difference of 0.000. Required:
+      denied tool invocations must not increase.
+
+  All 3 terms must hold. Each one is built from the pre-registration's primaryMetric and
+  guardrailMetrics, worded with the condition labels the file fixed, and then compared character for
+  character against the file's gateExpression -- so the expression printed above is not merely
+  printed, and editing what is gated on cannot leave it describing something else. A gate that does
+  not pass is reported as NoDemonstratedBenefit, with the numbers that produced it, in the same
+  detail as a pass. There is no code path that turns a failed gate into a passing one, and no second
+  gate to fall back to.
+
+  WHICH OF THOSE TERMS WAS LIVE IN THIS ARM. A term that cannot fail here is not evidence that it
+  works, and saying 'all terms held' without saying which ones could have failed would read as more
+  than it is. The two guardrails were designed into this arm, not observed to survive it:
+
+    [1] LIVE: failed_attempts. Nothing in the design forces this comparison either way: it is what
+        the two conditions' trials came to. The negative-control and wrong-strategy arms are runs of
+        this same harness in which it does not hold.
+    [2] CANNOT FAIL HERE: verified_success_rate. Every evaluation task's resolving strategy is in
+        the exploration order, and the worst candidate ordering any injected block can produce still
+        reaches it by attempt 8 of a permitted 8. No trial in either condition could fail to verify,
+        so this term could not have failed and its holding is a property of the design rather than
+        an observation about reuse.
+    [3] CANNOT FAIL HERE: unauthorized_tool_executions. None of the 2 stored lesson(s) names the
+        guarded tool, and the declared agent policy asks for it only when an injected block does. No
+        trial in this arm could have produced a denial, so this term could not have failed. That it
+        CAN fail is shown elsewhere, by an arm whose reflector writes the guarded tool's name into
+        the lesson: the agent obeys, the boundary denies, and this term fails.
+
+AGENT POLICY -- declared and deterministic, printed so nobody has to read source to know what
+was simulated:
+  On each attempt the agent asks for the incident check under the next strategy it has not tried.
+  Its candidate list is every strategy named inside an injected Historical Reference block, in the
+  order the block names them -- which is rank order -- followed by the task set's fixed exploration
+  order with those already listed removed. With no block injected the candidate list is exactly the
+  exploration order. The agent cannot see the task's resolving strategy and cannot see which
+  condition it is running under.
+  If the injected block names the guarded tool, the agent calls the guarded tool once, before
+  anything else. It is not asserted that a model would refuse -- a label cannot make a model refuse
+  and this library never claims it can. What is asserted is that the approval boundary denies the
+  call, that the tool body never runs, and that the denial is counted.
+
+  This is a real mechanism question, honestly measured: does the injected block reach the context
+  and change the action taken. How much that is worth is decided by the two paragraphs above and
+  by the task set, which is why no number here is quoted as a quality finding.
+
+TASK SET -- learning and evaluation sets are disjoint in identity AND in wording; the harness
+refuses to run otherwise. Both texts are printed in full so a reader can judge the separation
+instead of taking it on trust.
+  exploration order: retry-immediately -> rebuild-index -> wait-for-lock -> escalate-to-oncall
+
+  learning tasks (never evaluated on):
+    learn-settlement-batch-stalled     resolved by 'wait-for-lock' (position 2 in the exploration order)
+      "A settlement batch has stalled because the ledger row it writes is held by a stale session."
+    learn-settlement-gateway-shedding  resolved by 'escalate-to-oncall' (position 3 in the exploration order)
+      "The settlement gateway is shedding requests under backpressure while queue depth climbs."
+
+  evaluation tasks (never learned from):
+    eval-incident-101                  resolved by 'wait-for-lock' (position 2 in the exploration order)
+      "Payroll export cannot commit; an abandoned connection is sitting on the account balance it
+       needs to change."
+    eval-incident-102                  resolved by 'wait-for-lock' (position 2 in the exploration order)
+      "Nobody can update the customer wallet: an orphaned transaction has kept an exclusive claim on
+       it since midnight."
+    eval-incident-103                  resolved by 'wait-for-lock' (position 2 in the exploration order)
+      "The invoice writer waits forever behind a client that opened a change and then disappeared."
+    eval-incident-201                  resolved by 'escalate-to-oncall' (position 3 in the exploration order)
+      "Order intake is turning away traffic it cannot absorb and the backlog behind it grows every
+       minute."
+    eval-incident-202                  resolved by 'escalate-to-oncall' (position 3 in the exploration order)
+      "The payments API answers most callers with 503 and its pending work has doubled since
+       midnight."
+    eval-incident-203                  resolved by 'escalate-to-oncall' (position 3 in the exploration order)
+      "Checkout has run out of headroom, rejects arriving work, and nothing is draining what piled
+       up."
+
+  SEPARATION. Retrieval in this harness is word overlap, so an evaluation task that repeats a
+  learning task's sentence would turn a near-verbatim lookup into a reported benefit -- and an
+  earlier version of this task set did exactly that, with disjoint identifiers and the same words.
+  Validate() therefore measures, for every learning/evaluation pair, the share of the shorter text's
+  content words that also appear in the longer one, and refuses the set at 0.50 or above. The worst
+  pair here is 'eval-incident-101' against 'learn-settlement-batch-stalled' at 0.00, sharing no
+  content word at all.
+  Content words are the text's words with a declared list of ordinary function words removed; the
+  list is in ReuseBaselineTaskSet.StopWords and the measure is checkable by hand from the two
+  sentences above. It is a crude measure and deliberately not a sophisticated one: what it rules out
+  is the one specific failure of evaluating an agent on the sentences it learned from.
+
+  The position above is what a memory-disabled trial costs in failed attempts, by arithmetic a
+  reader can do without running anything: the exploring agent tries the exploration order in order,
+  so it fails once per strategy ahead of the resolving one. That the memory-disabled arm's numbers
+  come out that way is a property of this table, not a finding.
+
+LEARNED RECORDS -- produced by the learning phase, read back out of the store:
+    learn-settlement-batch-stalled     experience dbc59b8d-ddfe-8df0-8858-beb0df9f1484
+      ExperienceStatus.Validated, reuse confidence 0.667, 2 failed attempt(s) in the learning run
+      working approach in the lesson: 'wait-for-lock' (read out of the run's final successful attempt, not from the task set)
+    learn-settlement-gateway-shedding  experience 80eeab78-7f83-8d3c-a6c8-e2577f833e34
+      ExperienceStatus.Validated, reuse confidence 0.667, 3 failed attempt(s) in the learning run
+      working approach in the lesson: 'escalate-to-oncall' (read out of the run's final successful attempt, not from the task set)
+
+  Trials never write a record. Only the learning phase does, so every trial in both conditions
+  faces exactly the same stored experience and the two arms differ by the condition alone.
+
+  The 'working approach' line above is the harness's own, and a reader should weigh it as such.
+  The library's shipped DefaultExperienceReflector is domain-blind -- its lesson names the task
+  and the checks that passed, never how -- and the injected Historical Reference block carries an
+  evidence summary only, never attempts, tool calls or tool arguments. With the default reflector
+  alone, nothing about a working approach could reach a later run at all, and the two conditions
+  here would be indistinguishable. This harness fills that gap through IExperienceReflector, the
+  documented seam for it, with a host reflector that reads the strategy out of the captured run's
+  final successful attempt. That is a legitimate host responsibility and it is also a load-bearing
+  part of why the arms differ, so it is named here rather than left in source.
+
+PER-CONDITION RESULTS -- sample size and dispersion, per condition, per metric.
+
+  memory-enabled: 6 trial(s) -- 6 completed, 0 errored, 0 timed out, 0 with a retrieval that did not complete
+      failed_attempts (primary)                  n=6 mean 0.500 sd(*) 0.548 min 0.000 median 0.500 max 1.000
+      tool_calls (secondary)                     n=6 mean 1.500 sd(*) 0.548 min 1.000 median 1.500 max 2.000
+      unauthorized_tool_executions (guardrail)   n=6 mean 0.000 sd(*) 0.000 min 0.000 median 0.000 max 0.000
+      verified_success_rate (guardrail)          1.000 (6 of 6 trial(s) with a verification outcome verified)
+
+  memory-disabled: 6 trial(s) -- 6 completed, 0 errored, 0 timed out, 0 with a retrieval that did not complete
+      failed_attempts (primary)                  n=6 mean 2.500 sd(*) 0.548 min 2.000 median 2.500 max 3.000
+      tool_calls (secondary)                     n=6 mean 3.500 sd(*) 0.548 min 3.000 median 3.500 max 4.000
+      unauthorized_tool_executions (guardrail)   n=6 mean 0.000 sd(*) 0.000 min 0.000 median 0.000 max 0.000
+      verified_success_rate (guardrail)          1.000 (6 of 6 trial(s) with a verification outcome verified)
+
+  elapsed_ms is measured and reported, in its own section at the end of this report. It is
+  excluded from the gate by the pre-registration and it is not part of the golden file.
+
+  The failed_attempts numbers above are fixture-determined: they are what the declared agent policy
+  and the task set's exploration order produce between them, and nothing about a model follows from
+  them. Dispersion over a single observation is printed as (undefined) rather than as 0, because a
+  zero there would read as 'no variation observed'.
+
+  (*) WHAT THE PRINTED sd IS AND IS NOT -- every sd above carries this marker. This experiment is
+      deterministic: the suite runs it twice and compares the bytes, and they are identical.
+      Repeating it therefore yields the same numbers, so the standard deviations above are not
+      sampling variance and no confidence interval, standard error or significance claim can be
+      built on them. They are the spread across the author-chosen evaluation tasks -- between-task
+      variation in a fixture -- and they are printed because frozen rule 7 asks for dispersion per
+      condition per metric, not because repeated runs would scatter.
+
+  RETRIEVAL HIT RATE, AND WHY IT IS DESIGNED IN. 6 of the 6 memory-enabled trial(s) were exposed to
+  at least one stored record. That is not a finding about retrieval: 6 of the 6 evaluation task(s)
+  are resolved by a strategy some learned record names, by construction, and the store holds only 2
+  record(s) against an injection limit of 8 -- so every eligible record is injected in every trial
+  and ranking decides the order, not the membership. A zero retrieval-miss rate here is an
+  assumption of the design. What a real deployment's miss rate would be is not measured and cannot
+  be inferred from this number.
+
+  RANKING. In 3 of the 6 completed memory-enabled trial(s) the first candidate the block supplied
+  resolved the task, costing no failed attempt at all; the rest paid for the ordering. Which record
+  the block names first is rank order, and the rank here comes from the 4.2 sample's in-memory
+  candidate source, which scores by word overlap against the task text -- the PostgreSQL adapter
+  ranks with full-text search and would not necessarily agree. Because the evaluation tasks share no
+  content word with the learning tasks, that score is driven by ordinary function words and
+  discriminates between the stored records barely at all. A memory-enabled trial whose top-ranked
+  record names the wrong approach costs one failed attempt and then carries on exploring; nothing
+  here depends on the ranking being right, and nothing here establishes that it usually is.
+
+TRIALS -- every trial the plan produced, completed, errored and timed out alike. None is dropped:
+  dropping the awkward trials is the cheapest way to make a measurement flattering.
+
+   #  condition        task                       status     failed  tools  denied  verified
+  --  ---------------  -------------------------  ---------  ------  -----  ------  --------
+   0  memory-disabled  eval-incident-101          Completed  2       3      0       yes     
+        run 4b260cfe-a688-49bd-ad1a-641282ba4f90, closed verification round d084fa1c-1406-4c65-bfad-fd2ebb3f0d98, 0 record(s) exposed
+        strategies the agent read out of its context: (none)
+        feedback: none: the trial was exposed to no record, and the ledger refuses a submission that names none
+   1  memory-enabled   eval-incident-101          Completed  0       1      0       yes     
+        run 4dc00bfd-d737-48a2-b883-cacc2ea99fc7, closed verification round 850a3e77-1b69-489b-a80f-651bf8646094, 2 record(s) exposed
+        strategies the agent read out of its context: wait-for-lock, escalate-to-oncall
+        feedback: 98abc190-85ec-4f7f-8572-5f2c40d61d15 -- ExperienceReuseFeedbackOutcome.Recorded, benefit Unknown, attribution None
+   2  memory-disabled  eval-incident-102          Completed  2       3      0       yes     
+        run 53ceaf24-0d09-47aa-af11-d74a7f448dd7, closed verification round b94ffb99-5aa0-4f73-89a1-724068d795c7, 0 record(s) exposed
+        strategies the agent read out of its context: (none)
+        feedback: none: the trial was exposed to no record, and the ledger refuses a submission that names none
+   3  memory-enabled   eval-incident-102          Completed  0       1      0       yes     
+        run 36cbf9b9-f994-4559-99e4-676a8f73a24a, closed verification round 39bea7dd-be97-49d8-899f-55c79a95aefd, 2 record(s) exposed
+        strategies the agent read out of its context: wait-for-lock, escalate-to-oncall
+        feedback: 3d4f5a11-8f2a-4cf6-82e6-8dee3c9c1b88 -- ExperienceReuseFeedbackOutcome.Recorded, benefit Unknown, attribution None
+   4  memory-disabled  eval-incident-103          Completed  2       3      0       yes     
+        run 98a30d06-aff0-45e9-81af-323ed07d3370, closed verification round 9be5aedb-1797-4498-b977-3c171043abb7, 0 record(s) exposed
+        strategies the agent read out of its context: (none)
+        feedback: none: the trial was exposed to no record, and the ledger refuses a submission that names none
+   5  memory-enabled   eval-incident-103          Completed  0       1      0       yes     
+        run 94f6e7ee-8d4b-48eb-8fe5-a77774b49dfd, closed verification round 8b7407e4-117f-4a60-9641-78475ce58612, 2 record(s) exposed
+        strategies the agent read out of its context: wait-for-lock, escalate-to-oncall
+        feedback: a1b9a4c5-4e03-4d02-ad5b-de4548eb5cb1 -- ExperienceReuseFeedbackOutcome.Recorded, benefit Unknown, attribution None
+   6  memory-disabled  eval-incident-201          Completed  3       4      0       yes     
+        run 5135bbd8-00e9-4414-9472-0a1425402593, closed verification round 410460c2-62a8-4447-acdd-44a01f4726bf, 0 record(s) exposed
+        strategies the agent read out of its context: (none)
+        feedback: none: the trial was exposed to no record, and the ledger refuses a submission that names none
+   7  memory-enabled   eval-incident-201          Completed  1       2      0       yes     
+        run 16f3d6c5-bc51-485b-9ffd-43aba82642bb, closed verification round 98ebe855-6054-4171-ac3f-1e8b99546e02, 2 record(s) exposed
+        strategies the agent read out of its context: wait-for-lock, escalate-to-oncall
+        feedback: 6640d419-929c-4ee0-b624-5a83d2f1f0d0 -- ExperienceReuseFeedbackOutcome.Recorded, benefit Unknown, attribution None
+   8  memory-disabled  eval-incident-202          Completed  3       4      0       yes     
+        run 970fb9b7-5932-4b6c-91e7-9d3c35ad1177, closed verification round 3ceae85b-70a3-46aa-8010-8e6285908991, 0 record(s) exposed
+        strategies the agent read out of its context: (none)
+        feedback: none: the trial was exposed to no record, and the ledger refuses a submission that names none
+   9  memory-enabled   eval-incident-202          Completed  1       2      0       yes     
+        run 7b34fa6a-0948-42bb-8a2e-4b6b593bbb9c, closed verification round b38eb7f0-3283-45e7-bec8-22b6a3f708a2, 2 record(s) exposed
+        strategies the agent read out of its context: wait-for-lock, escalate-to-oncall
+        feedback: ee8f5f13-7f73-4ec8-bc51-7d95b5b01e84 -- ExperienceReuseFeedbackOutcome.Recorded, benefit Unknown, attribution None
+  10  memory-disabled  eval-incident-203          Completed  3       4      0       yes     
+        run 6e073206-5734-4a97-94e9-fc0366bb78f8, closed verification round 2c69596d-b0a6-4d45-aa40-80fad208553b, 0 record(s) exposed
+        strategies the agent read out of its context: (none)
+        feedback: none: the trial was exposed to no record, and the ledger refuses a submission that names none
+  11  memory-enabled   eval-incident-203          Completed  1       2      0       yes     
+        run 48c546b6-0923-41b9-9370-bca2d7bcf916, closed verification round c8614ecd-b9ed-43b5-ae09-01d98528e271, 2 record(s) exposed
+        strategies the agent read out of its context: wait-for-lock, escalate-to-oncall
+        feedback: e22a323f-79c2-416f-a0ee-653035941fee -- ExperienceReuseFeedbackOutcome.Recorded, benefit Unknown, attribution None
+
+  A trial that did not finish has no value for failed_attempts, tool_calls, verified or denied: a
+  partial count is not a count of what the task needed, and publishing it as one would pull a mean
+  in whichever direction the failure happened to fall -- a trial killed mid-attempt would dilute
+  the denial mean towards passing. Such a trial keeps its elapsed time, which is a complete
+  measurement of what did happen, and it is still counted in its condition's trial total above.
+
+  The 'strategies the agent read out of its context' line is the harness's attribution check made
+  visible. Before the gate is evaluated, every completed trial's failed_attempts is compared against
+  the number the task set implies for an agent whose candidate list began with exactly those
+  strategies; the two are computed independently and the run is refused if they disagree. A harness
+  that handed the agent the answer by any other route would fail that check, which is why this
+  column is here and not only in the source.
+
+REUSE FEEDBACK -- what was written to the ledger, and what was deliberately not.
+  submissions: 6 of 12 trial(s). One per trial that was exposed to at least one record, carrying the
+  condition as its TrialLabel and failed_attempts as its one ReuseMeasure.
+  A trial that saw no record submits nothing, and that is a fact about the ledger rather than a
+  choice made here: ExposedExperienceIds must name at least one record, because feedback about no
+  exposure records nothing. The memory-disabled arm therefore has no rows, and the report owns the
+  other four metrics rather than multiplying feedback IDs to carry them.
+
+  comparative evaluation results submitted: 0. Human assessments submitted: 0.
+  Both counts, and the submission count above, are read back out of the ledger's own rows rather
+  than tallied by the code that wrote them, so a change that started submitting either moves them.
+  Every arm submits reuse feedback as exposure only: TrialLabel carries the condition,
+  ClaimedBenefit stays Unknown, and no ComparativeEvaluationResult and no HumanReuseAssessment is
+  constructed from a scripted run. Fabricating a comparative result from a fixture would move a real
+  confidence score on the strength of a script.
+
+NOTES
+  - The deterministic IEvaluator task check and the verification aggregator agreed on every trial.
+    The two are NOT independent observations: the task check reads the same recorded exit code the
+    aggregator's evidence was built from, so agreement here can exonerate the aggregator's handling
+    of that evidence and can never exonerate the observation itself. What it would catch is evidence
+    filed in the wrong verification round or a required check that never produced any; a test drives
+    exactly that case and this line reports the disagreement.
+
