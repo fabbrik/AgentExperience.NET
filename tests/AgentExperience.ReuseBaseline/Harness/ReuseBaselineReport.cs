@@ -515,13 +515,15 @@ public static class ReuseBaselineReport
         Line(text, string.Empty);
         Line(text, "  The 'working approach' line above is the harness's own, and a reader should weigh it as such.");
         Line(text, "  The library's shipped DefaultExperienceReflector is domain-blind -- its lesson names the task");
-        Line(text, "  and the checks that passed, never how -- and the injected Historical Reference block carries an");
-        Line(text, "  evidence summary only, never attempts, tool calls or tool arguments. With the default reflector");
-        Line(text, "  alone, nothing about a working approach could reach a later run at all, and the two conditions");
-        Line(text, "  here would be indistinguishable. This harness fills that gap through IExperienceReflector, the");
-        Line(text, "  documented seam for it, with a host reflector that reads the strategy out of the captured run's");
-        Line(text, "  final successful attempt. That is a legitimate host responsibility and it is also a load-bearing");
-        Line(text, "  part of why the arms differ, so it is named here rather than left in source.");
+        Line(text, "  and the checks that passed, never how. The injected Historical Reference block does now carry the");
+        Line(text, "  ordered tool NAMES of a verified run's final attempt, but never a tool's arguments -- and in this");
+        Line(text, "  experiment every strategy is the same single tool, distinguished only by its 'strategy' argument.");
+        Line(text, "  So the block's own approach line cannot tell the conditions apart here, and with the default");
+        Line(text, "  reflector alone nothing about a working approach would reach a later run. This harness fills that");
+        Line(text, "  gap through IExperienceReflector, the documented seam for it, with a host reflector that reads the");
+        Line(text, "  strategy out of the captured run's final successful attempt. That is a legitimate host");
+        Line(text, "  responsibility and it is also a load-bearing part of why the arms differ, so it is named here");
+        Line(text, "  rather than left in source.");
         Line(text, string.Empty);
     }
 

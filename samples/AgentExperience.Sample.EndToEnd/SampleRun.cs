@@ -120,8 +120,11 @@ public sealed class SampleRun
 
         // ---- Stages 1 and 2: one Experience Run, two attempts. --------------------------------
         // The capture contract models a second try at the same task as a second AppendAttemptAsync
-        // on the same run, so the host opens the run and drives it. UseExperienceCapture -- which
-        // the second run below uses in the ordinary way -- captures one invocation as one attempt.
+        // on the same run, and the host drives it directly here so the contract underneath the
+        // adapter is visible. Since story 4.6 the adapter can do the same thing: an invocation whose
+        // ExperienceRunDescriptor carries ContinuesRunId appends its attempt to that run, and
+        // ShouldCompleteRun decides which invocation closes it. Run B below uses
+        // UseExperienceCapture in its ordinary, single-invocation form.
         var runAId = _ids.Next();
         var runStartedAt = _clock.GetUtcNow();
         var started = _capture.StartRun(
@@ -417,7 +420,9 @@ public sealed class SampleRun
         Require(blockShape.NamesSource, 6, "the injected block does not name the record it came from.");
         Require(blockShape.NamesConfidence, 6, "the injected block does not state the record's confidence.");
         Require(blockShape.NamesApplicability, 6, "the injected block does not state how it was ranked.");
+        Require(blockShape.NamesApproach, 6, "the injected block does not name the tools the verified attempt used.");
         Require(!blockShape.RepeatsCapturedResult, 6, "the injected block repeats a raw captured result, which it must never do.");
+        Require(!blockShape.RepeatsToolArguments, 6, "the injected block repeats a captured tool argument, which it must never do.");
 
         if (!session.StateBag.TryGetValue<string>(ExperienceCaptureAgentBuilderExtensions.RunIdStateKey, out var runBText)
             || !Guid.TryParse(runBText, out var runBId))
@@ -434,7 +439,8 @@ public sealed class SampleRun
             [
                 $"byte budget used: {injection.PayloadBytes.ToString(CultureInfo.InvariantCulture)} of {injectionLimits.MaxBytes.ToString(CultureInfo.InvariantCulture)}; record limit {injectionLimits.MaxRecords.ToString(CultureInfo.InvariantCulture)}",
                 $"omitted: {injection.Omitted.Count.ToString(CultureInfo.InvariantCulture)}; excluded before ranking: {injection.Excluded.Count.ToString(CultureInfo.InvariantCulture)}; truncated search: {injection.Truncated.ToString().ToLowerInvariant()}",
-                $"read out of the {Utf8Length(block!).ToString(CultureInfo.InvariantCulture)} bytes run B's model was handed: lesson {Present(blockShape.CarriesLesson)}, source {Named(blockShape.NamesSource)}, confidence {Named(blockShape.NamesConfidence)}, applicability {Named(blockShape.NamesApplicability)}, raw captured result {Present(blockShape.RepeatsCapturedResult)}",
+                $"read out of the {Utf8Length(block!).ToString(CultureInfo.InvariantCulture)} bytes run B's model was handed: lesson {Present(blockShape.CarriesLesson)}, source {Named(blockShape.NamesSource)}, confidence {Named(blockShape.NamesConfidence)}, applicability {Named(blockShape.NamesApplicability)}, approach {Named(blockShape.NamesApproach)}",
+                $"the approach is the verified attempt's tool names in order and nothing else: raw captured result {Present(blockShape.RepeatsCapturedResult)}, captured tool argument {Present(blockShape.RepeatsToolArguments)}",
                 $"run B's own Experience Run is {runBId:D}, read from the session state key '{ExperienceCaptureAgentBuilderExtensions.RunIdStateKey}'",
             ]));
 
@@ -485,7 +491,9 @@ public sealed class SampleRun
         bool NamesSource,
         bool NamesConfidence,
         bool NamesApplicability,
-        bool RepeatsCapturedResult);
+        bool NamesApproach,
+        bool RepeatsCapturedResult,
+        bool RepeatsToolArguments);
 
     /// <summary>
     /// Runs one attempt: a real <see cref="ChatClientAgent"/> over the scripted model client, with
@@ -560,8 +568,24 @@ public sealed class SampleRun
         NamesSource: block.Contains($"Source: experience {record.ExperienceId:D}", StringComparison.Ordinal),
         NamesConfidence: block.Contains("Confidence: ", StringComparison.Ordinal),
         NamesApplicability: block.Contains("Applicability (as ranked at retrieval)", StringComparison.Ordinal),
+        NamesApproach: record.Attempts
+            .OrderBy(attempt => attempt.SequenceNumber)
+            .LastOrDefault() is { Error: null } winning
+            && winning.ToolCalls.Count > 0
+            && block.Contains(
+                "Approach: " + HistoricalReferenceWriter.ApproachPrefix
+                    + string.Join(HistoricalReferenceWriter.ApproachSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName)) + ".",
+                StringComparison.Ordinal),
         RepeatsCapturedResult: record.Attempts.Any(attempt =>
-            attempt.Result is { Length: > 0 } result && block.Contains(result, StringComparison.Ordinal)));
+            attempt.Result is { Length: > 0 } result && block.Contains(result, StringComparison.Ordinal)),
+
+        // The approach carries names. An argument value -- the free-form half of a tool call, and the
+        // half a secret lives in -- must not ride along with them.
+        RepeatsToolArguments: record.Attempts
+            .SelectMany(attempt => attempt.ToolCalls)
+            .SelectMany(call => call.Arguments.Values)
+            .OfType<string>()
+            .Any(value => value.Length > 0 && block.Contains(value, StringComparison.Ordinal)));
 
     private static int FailedAttemptCount(ExperienceRun run) => run.Attempts.Count(attempt => attempt.Error is not null);
 

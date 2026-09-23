@@ -46,9 +46,10 @@ clock:  a stepping fixture; identifiers: a counter. Two runs print the same byte
 [6] inject   The record is injected into run B as a labelled Historical Reference.
              -> InjectionOutcome.Injected
              -> injected: 0daf4d74-d8a8-8597-a512-ae7a6c3f1068
-                byte budget used: 2059 of 16384; record limit 8
+                byte budget used: 2210 of 16384; record limit 8
                 omitted: 0; excluded before ranking: 0; truncated search: false
-                read out of the 2059 bytes run B's model was handed: lesson present, source named, confidence named, applicability named, raw captured result absent
+                read out of the 2210 bytes run B's model was handed: lesson present, source named, confidence named, applicability named, approach named
+                the approach is the verified attempt's tool names in order and nothing else: raw captured result absent, captured tool argument absent
                 run B's own Experience Run is ae000000-0000-4000-8000-000000000007, read from the session state key 'AgentExperience.RunId'
 
 [7] feedback The exposure is recorded against run B, and nothing is claimed about it.

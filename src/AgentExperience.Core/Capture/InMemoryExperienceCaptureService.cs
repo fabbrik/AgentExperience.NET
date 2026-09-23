@@ -148,10 +148,48 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
 
         if (!_runs.TryAdd(runId, new RunState(run)))
         {
-            return new StartRunResult(StartRunOutcome.Conflict, null, $"A run with RunId '{runId}' already exists.");
+            return Continue(runId, taskId, scope);
         }
 
         return new StartRunResult(StartRunOutcome.Started, run, null);
+    }
+
+    /// <summary>
+    /// Decides what an existing <c>RunId</c> means: a continuation of the same, still-open run, or a
+    /// collision. Nothing is written here -- a continuation returns the run exactly as it stands, so
+    /// a second <c>StartRun</c> can never overwrite a task description, a scope, an environment, a
+    /// provenance or a start time the first one recorded.
+    /// </summary>
+    /// <remarks>
+    /// The finalized check comes first and is the same invariant <see cref="TryShortCircuit"/>
+    /// enforces one level down: a run completes exactly once and is never reopened. Refusing here as
+    /// well means a caller that meant to continue a run learns so before it captures anything,
+    /// instead of discovering it when its attempt is rejected.
+    /// </remarks>
+    private StartRunResult Continue(Guid runId, string taskId, Scope scope)
+    {
+        // Nothing ever removes a run from the dictionary, so the only way this misses is a future
+        // change that adds removal; refusing is then still the safe answer.
+        if (!_runs.TryGetValue(runId, out var state))
+        {
+            return new StartRunResult(StartRunOutcome.Conflict, null, $"A run with RunId '{runId}' already exists.");
+        }
+
+        lock (state.Gate)
+        {
+            if (state.Completion is not null)
+            {
+                return new StartRunResult(StartRunOutcome.Conflict, null, $"Run '{runId}' is already finalized and cannot be continued.");
+            }
+
+            var existing = state.Run;
+            if (!string.Equals(existing.TaskId, taskId, StringComparison.Ordinal) || existing.Scope != scope)
+            {
+                return new StartRunResult(StartRunOutcome.Conflict, null, $"A different run already exists under RunId '{runId}'; its TaskId or Scope does not match this call's.");
+            }
+
+            return new StartRunResult(StartRunOutcome.Continued, existing, null);
+        }
     }
 
     /// <inheritdoc />

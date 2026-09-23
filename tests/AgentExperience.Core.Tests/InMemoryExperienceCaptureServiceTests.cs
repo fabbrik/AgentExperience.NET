@@ -42,15 +42,21 @@ public class InMemoryExperienceCaptureServiceTests
     private static InMemoryExperienceCaptureService CreateService(CaptureLimits? limits = null, ISanitizer? sanitizer = null) =>
         new(sanitizer ?? new DefaultSanitizer(PermissiveOptions), limits ?? GenerousLimits());
 
-    private static StartRunResult StartTestRunResult(InMemoryExperienceCaptureService service, Guid? runId = null) =>
+    private static StartRunResult StartTestRunResult(
+        InMemoryExperienceCaptureService service,
+        Guid? runId = null,
+        string taskId = "task-1",
+        Scope? scope = null,
+        string? taskDescription = "a test task",
+        DateTimeOffset? startedAt = null) =>
         service.StartRun(
             runId ?? Guid.NewGuid(),
-            taskId: "task-1",
-            taskDescription: "a test task",
-            scope: new Scope("tenant-1", "app-1", "project-1"),
+            taskId: taskId,
+            taskDescription: taskDescription,
+            scope: scope ?? new Scope("tenant-1", "app-1", "project-1"),
             environment: new EnvironmentFingerprint("host-1", "net10.0", "test-os", null, new Dictionary<string, string>()),
             provenance: new Provenance("unit-tests", "1.0.0", DateTimeOffset.UtcNow, null),
-            startedAt: DateTimeOffset.UtcNow);
+            startedAt: startedAt ?? DateTimeOffset.UtcNow);
 
     private static ExperienceRun StartTestRun(InMemoryExperienceCaptureService service, Guid? runId = null)
     {
@@ -649,16 +655,174 @@ public class InMemoryExperienceCaptureServiceTests
     }
 
     [Fact]
-    public void StartRun_with_a_duplicate_run_id_returns_conflict_instead_of_throwing()
+    public void StartRun_on_the_same_still_open_run_continues_it_and_overwrites_nothing()
+    {
+        // Story 4.6: one task retried across two framework invocations is one run with two attempts,
+        // not two runs -- so a second StartRun naming the same still-open run, for the same task in
+        // the same scope, is a continuation rather than a collision.
+        var service = CreateService();
+        var runId = Guid.NewGuid();
+        var openedAt = DateTimeOffset.UtcNow.AddMinutes(-3);
+        var first = StartTestRunResult(service, runId, startedAt: openedAt);
+        Assert.Equal(StartRunOutcome.Started, first.Outcome);
+
+        var second = StartTestRunResult(service, runId, taskDescription: "a different description", startedAt: DateTimeOffset.UtcNow);
+
+        Assert.Equal(StartRunOutcome.Continued, second.Outcome);
+        Assert.NotNull(second.Run);
+
+        // A continuation reads; it never writes. The run keeps the description and the start time the
+        // first call opened it with, so continuing cannot quietly rewrite a run's own history.
+        Assert.Equal("a test task", second.Run!.TaskDescription);
+        Assert.Equal(openedAt, second.Run.StartedAt);
+        Assert.Empty(second.Run.Attempts);
+    }
+
+    [Fact]
+    public async Task A_continued_run_keeps_accumulating_attempts_with_the_next_sequence_number()
+    {
+        var service = CreateService();
+        var runId = Guid.NewGuid();
+        StartTestRun(service, runId);
+        await service.AppendAttemptAsync(runId, MakeAttemptRequest(result: null, error: "System.TimeoutException"));
+
+        Assert.Equal(StartRunOutcome.Continued, StartTestRunResult(service, runId).Outcome);
+        var second = await service.AppendAttemptAsync(runId, MakeAttemptRequest(result: "worked"));
+
+        Assert.Equal(AppendAttemptOutcome.Recorded, second.Outcome);
+        var run = MustGetRun(service, runId);
+        Assert.Equal([0, 1], run.Attempts.Select(attempt => attempt.SequenceNumber).ToArray());
+        Assert.Equal("System.TimeoutException", run.Attempts[0].Error);
+        Assert.Equal("worked", run.Attempts[1].Result);
+    }
+
+    [Fact]
+    public void StartRun_with_a_duplicate_run_id_for_a_different_task_returns_conflict_instead_of_throwing()
     {
         var service = CreateService();
         var runId = Guid.NewGuid();
         StartTestRun(service, runId);
 
-        var second = StartTestRunResult(service, runId);
+        var second = StartTestRunResult(service, runId, taskId: "task-2");
 
         Assert.Equal(StartRunOutcome.Conflict, second.Outcome);
         Assert.Null(second.Run);
+    }
+
+    [Fact]
+    public void StartRun_with_a_duplicate_run_id_in_a_different_scope_returns_conflict()
+    {
+        // Matching on the task alone would let one tenant continue another tenant's run.
+        var service = CreateService();
+        var runId = Guid.NewGuid();
+        StartTestRun(service, runId);
+
+        var second = StartTestRunResult(service, runId, scope: new Scope("tenant-2", "app-1", "project-1"));
+
+        Assert.Equal(StartRunOutcome.Conflict, second.Outcome);
+        Assert.Null(second.Run);
+    }
+
+    /// <summary>
+    /// A continuation must match the run's task id ordinally and every one of its six scope fields.
+    /// Each case below differs from the open run in exactly one of them -- including a task id that
+    /// differs only by case -- and each is a collision, never a continuation.
+    /// </summary>
+    [Theory]
+    [InlineData("task-case")]
+    [InlineData("tenant")]
+    [InlineData("application")]
+    [InlineData("project")]
+    [InlineData("team")]
+    [InlineData("agent")]
+    [InlineData("user")]
+    public async Task StartRun_differing_from_the_open_run_in_any_one_identity_field_is_a_conflict_that_writes_nothing(string field)
+    {
+        var service = CreateService();
+        var runId = Guid.NewGuid();
+        var scope = new Scope("tenant-1", "app-1", "project-1", "team-1", "agent-1", "user-1");
+        Assert.Equal(StartRunOutcome.Started, StartTestRunResult(service, runId, taskId: "task-1", scope: scope).Outcome);
+        await service.AppendAttemptAsync(runId, MakeAttemptRequest());
+
+        var (taskId, otherScope) = field switch
+        {
+            "task-case" => ("TASK-1", scope),
+            "tenant" => ("task-1", scope with { TenantId = "tenant-2" }),
+            "application" => ("task-1", scope with { ApplicationId = "app-2" }),
+            "project" => ("task-1", scope with { ProjectId = "project-2" }),
+            "team" => ("task-1", scope with { TeamId = "team-2" }),
+            "agent" => ("task-1", scope with { AgentId = "agent-2" }),
+            _ => ("task-1", scope with { UserId = "user-2" }),
+        };
+
+        var second = StartTestRunResult(service, runId, taskId: taskId, scope: otherScope);
+
+        Assert.Equal(StartRunOutcome.Conflict, second.Outcome);
+        Assert.Null(second.Run);
+        var run = MustGetRun(service, runId);
+        Assert.Equal("task-1", run.TaskId);
+        Assert.Equal(scope, run.Scope);
+        Assert.Single(run.Attempts);
+
+        // The exact identity still continues, so the refusals above are about the one field changed.
+        Assert.Equal(StartRunOutcome.Continued, StartTestRunResult(service, runId, taskId: "task-1", scope: scope).Outcome);
+    }
+
+    /// <summary>
+    /// A continuation reads the run and writes nothing: the environment and provenance the run was
+    /// opened with -- its correlation id included -- survive a later StartRun that carries different
+    /// ones, both in what the continuation returns and in what is stored.
+    /// </summary>
+    [Fact]
+    public void Continuing_a_run_keeps_its_original_environment_and_provenance_including_the_correlation_id()
+    {
+        var service = CreateService();
+        var runId = Guid.NewGuid();
+        var scope = new Scope("tenant-1", "app-1", "project-1");
+        var openedEnvironment = new EnvironmentFingerprint("host-1", "net10.0", "os-1", "1.0.0", new Dictionary<string, string> { ["region"] = "eu" });
+        var openedProvenance = new Provenance("opener", "1.0.0", DateTimeOffset.UtcNow.AddMinutes(-2), "0af7651916cd43dd8448eb211c80319c");
+
+        var first = service.StartRun(runId, "task-1", "a test task", scope, openedEnvironment, openedProvenance, DateTimeOffset.UtcNow.AddMinutes(-2));
+        Assert.Equal(StartRunOutcome.Started, first.Outcome);
+
+        var second = service.StartRun(
+            runId,
+            "task-1",
+            "a test task",
+            scope,
+            new EnvironmentFingerprint("host-2", "net11.0", "os-2", "2.0.0", new Dictionary<string, string> { ["region"] = "us" }),
+            new Provenance("continuer", "2.0.0", DateTimeOffset.UtcNow, "4bf92f3577b34da6a3ce929d0e0e4736"),
+            DateTimeOffset.UtcNow);
+
+        Assert.Equal(StartRunOutcome.Continued, second.Outcome);
+        foreach (var run in new[] { second.Run!, MustGetRun(service, runId) })
+        {
+            Assert.Same(openedEnvironment, run.Environment);
+            Assert.Equal(openedProvenance, run.Provenance);
+            Assert.Equal("0af7651916cd43dd8448eb211c80319c", run.Provenance.CorrelationId);
+        }
+    }
+
+    [Fact]
+    public async Task StartRun_on_an_already_completed_run_returns_conflict_and_the_run_stays_finalized()
+    {
+        // A run finalizes exactly once and is never reopened. Refusing here means a caller that meant
+        // to continue learns so before it captures anything -- and the deeper invariant, that
+        // AppendAttemptAsync refuses a finalized run whatever it is handed, still holds underneath.
+        var service = CreateService();
+        var runId = Guid.NewGuid();
+        StartTestRun(service, runId);
+        await service.AppendAttemptAsync(runId, MakeAttemptRequest());
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, DateTimeOffset.UtcNow)).Outcome);
+
+        var continued = StartTestRunResult(service, runId);
+
+        Assert.Equal(StartRunOutcome.Conflict, continued.Outcome);
+        Assert.Null(continued.Run);
+
+        var appended = await service.AppendAttemptAsync(runId, MakeAttemptRequest());
+        Assert.Equal(AppendAttemptOutcome.Conflict, appended.Outcome);
+        Assert.Single(MustGetRun(service, runId).Attempts);
     }
 
     private sealed class AlwaysRejectSanitizer : ISanitizer

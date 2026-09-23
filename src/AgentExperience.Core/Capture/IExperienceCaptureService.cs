@@ -5,14 +5,24 @@ namespace AgentExperience.Core.Capture;
 
 /// <summary>
 /// Raw (unsanitized) data describing one observable tool invocation, submitted as part of an
-/// <see cref="AppendAttemptRequest"/>. Every field here passes through the composed
-/// <see cref="ISanitizer"/> before it is ever stored as part of a
+/// <see cref="AppendAttemptRequest"/>. The <em>content</em> fields pass through the composed
+/// <see cref="ISanitizer"/> before they are ever stored as part of a
 /// <see cref="AgentExperience.Abstractions.ToolCallRecord"/>: <see cref="Arguments"/> as
 /// <c>RawPayload</c> <c>Kind</c> <c>"ToolArguments"</c>, <see cref="Result"/>/<see cref="Error"/>
 /// each as <c>Kind</c> <c>"ToolResult"</c>.
 /// </summary>
+/// <remarks>
+/// <b><see cref="ToolName"/> is the exception, and it is the one field a host's sanitizer never
+/// sees.</b> It is stored verbatim: no sanitization policy applies to it, no
+/// <c>MaxValueLength</c> truncates it, and <see cref="CaptureLimits"/> carries no bound for it. It
+/// is treated that way because of its <em>provenance</em>, not its shape: it identifies a tool the
+/// caller's inventory had already resolved when the call was made, so it is fixed before the run
+/// starts and is not derived from the run's own data flow. It is not, however, guaranteed short or
+/// structured -- an MCP or OpenAPI inventory takes its names from a remote server or a specification
+/// -- so a caller that needs a bound on it must apply one before submitting.
+/// </remarks>
 /// <param name="ToolCallId">Unique identifier for this tool call.</param>
-/// <param name="ToolName">The name of the invoked tool.</param>
+/// <param name="ToolName">The name of the invoked tool. Stored verbatim: this is the one field on this type the sanitizer never sees.</param>
 /// <param name="Arguments">The raw, unsanitized arguments passed to the tool.</param>
 /// <param name="StartedAt">When the tool call started.</param>
 /// <param name="Duration">How long the tool call took to complete.</param>
@@ -50,7 +60,9 @@ public sealed record AppendAttemptRequest(
 
 /// <summary>
 /// Thread-safe, in-memory accumulation and finalization of one <see cref="ExperienceRun"/>'s
-/// attempts. <see cref="StartRun"/> opens a run; <see cref="AppendAttemptAsync"/> records one
+/// attempts. <see cref="StartRun"/> opens a run -- or, on a <c>RunId</c> that names a still-open run
+/// with the same task and scope, continues it, so one task's repeated tries accumulate as attempts
+/// of one run instead of becoming unrelated runs; <see cref="AppendAttemptAsync"/> records one
 /// sanitized attempt at a time, assigning <c>SequenceNumber</c> itself, by append order, so
 /// ordering is correct by construction; <see cref="CompleteRunAsync"/> finalizes the run's
 /// <see cref="RunExecutionStatus"/>. <see cref="ExperienceRun.Outcome"/> (task verification) is
@@ -72,9 +84,14 @@ public interface IExperienceCaptureService
     /// <param name="runId">
     /// Caller-supplied so it is available for correlation before any attempt is captured, per the
     /// epic's requirement that a run's identity precede the first observable action. A run with
-    /// this <paramref name="runId"/> already existing is an expected condition, not an error: it
-    /// returns <see cref="StartRunOutcome.Conflict"/> rather than throwing, mirroring
-    /// <see cref="AppendAttemptAsync"/>/<see cref="CompleteRunAsync"/>.
+    /// this <paramref name="runId"/> already existing is an expected condition, not an error, and it
+    /// returns a typed outcome rather than throwing, mirroring
+    /// <see cref="AppendAttemptAsync"/>/<see cref="CompleteRunAsync"/>: a still-open run whose
+    /// <paramref name="taskId"/> and <paramref name="scope"/> both match is
+    /// <see cref="StartRunOutcome.Continued"/> -- the caller is continuing that same run and may
+    /// append a further attempt to it -- and anything else, including an already-finalized run, is
+    /// <see cref="StartRunOutcome.Conflict"/>. A continuation never writes: the existing run's task
+    /// description, scope, environment, provenance and start time all stand.
     /// </param>
     /// <param name="taskId">Identifies which task this run is attempting.</param>
     /// <param name="taskDescription">Optional human-readable description of the task. Not sanitized by this service (Story 1.2 scopes sanitization to tool-call/attempt content only).</param>
@@ -106,6 +123,13 @@ public interface IExperienceCaptureService
     /// result); a run already at its attempt-count capacity rejects a genuinely new attempt outright
     /// (<see cref="AppendAttemptOutcome.CapacityExceeded"/>).
     /// </summary>
+    /// <remarks>
+    /// <b><see cref="RawToolCall.ToolName"/> is not sanitized and is not length-bounded.</b> It is
+    /// the one field of a submitted attempt that is stored exactly as it was passed: no sanitization
+    /// policy is applied to it and no <see cref="CaptureLimits"/> entry bounds it. A caller
+    /// submitting names from an inventory it does not control -- an MCP server's, or an OpenAPI
+    /// specification's -- owns clamping them.
+    /// </remarks>
     Task<AppendAttemptResult> AppendAttemptAsync(
         Guid runId,
         AppendAttemptRequest request,

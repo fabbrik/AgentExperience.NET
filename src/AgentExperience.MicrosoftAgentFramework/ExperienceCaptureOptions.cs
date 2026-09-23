@@ -28,10 +28,92 @@ public sealed record ExperienceRunContext(
 /// <param name="TaskId">Identifies which task the invocation is attempting.</param>
 /// <param name="Scope">The tenancy/ownership scope the run belongs to. Host-established, never taken from model output.</param>
 /// <param name="TaskDescription">Optional human-readable description of the task.</param>
+/// <param name="ContinuesRunId">
+/// Optional. The run this invocation is a further <see cref="Attempt"/> of, rather than a run of its
+/// own. Leave it <see langword="null"/> -- the default -- and the invocation opens a brand-new run
+/// under a freshly minted identifier, which is the behaviour every host had before this field
+/// existed.
+/// </param>
+/// <remarks>
+/// <para>
+/// <b>What <see cref="ContinuesRunId"/> is for.</b> One MAF invocation is one attempt. A host that
+/// retries a task -- the whole point of learning from failure -- would otherwise produce two
+/// unrelated runs: the failed one finalizes on its own and the successful one is reflected on as if
+/// the failure never happened. Naming the first run's identifier here makes the retry a second
+/// attempt <em>of that run</em>, with the next <see cref="Attempt.SequenceNumber"/>, so the
+/// reflection sees the failure and the success together.
+/// </para>
+/// <para>
+/// <b>It is an explicit identifier, not session identity.</b> Keying continuation on
+/// <see cref="AgentSession"/> would silently group two unrelated tasks that happened to share a
+/// session -- and injection already documents that blocks accumulate in a reused session, so a
+/// session is not a task. The host says what it means instead. The identifier of the run an
+/// invocation opened is readable afterwards from
+/// <see cref="ExperienceCaptureAgentBuilderExtensions.RunIdStateKey"/> when a session was supplied.
+/// </para>
+/// <para>
+/// <b>It is refused when it is not the same run.</b> An identifier naming a run with a different
+/// task or scope, or a run that has already been completed, is a conflict: the invocation runs
+/// uncaptured and the refusal is reported through <see cref="ExperienceCaptureOptions.OnCaptureFailure"/>,
+/// exactly as a colliding identifier is today. An identifier naming no run at all simply opens a new
+/// run under it. An all-zeros identifier -- a default-valued field rather than a run -- is refused
+/// outright, so a forgotten assignment cannot quietly accumulate every invocation onto one run. Two
+/// invocations racing on the same identifier are serialized by the adapter: one captures and the
+/// other is refused, so a run never accumulates two half-recorded attempts at once.
+/// </para>
+/// <para>
+/// <b>What a continuation discards, and why that is the price of reusing an identifier.</b> A
+/// continuation never writes to the run it joins: the run keeps the <see cref="TaskDescription"/>,
+/// <see cref="EnvironmentFingerprint"/>, <see cref="Provenance"/> -- including its
+/// <see cref="Provenance.CorrelationId"/> -- and start time it was <em>opened</em> with, and this
+/// invocation's own are silently dropped. That is deliberate: a continuation that overwrote them
+/// would rewrite the history of a run already holding attempts. It also means an identifier reused
+/// by accident is merged rather than refused, and the two invocations are reflected on as one run.
+/// Match on task and scope is all that stands between the two cases, and the in-memory capture
+/// service keeps every run it has seen for the process lifetime, so an accidental reuse of an
+/// identifier whose run is still open is merged for as long as that run stays open, and one whose
+/// run has closed is refused for as long as the process runs. Mint the identifier per retry cycle, and start the next cycle with a new one.
+/// </para>
+/// </remarks>
 public sealed record ExperienceRunDescriptor(
     string TaskId,
     Scope Scope,
-    string? TaskDescription = null);
+    string? TaskDescription = null,
+    Guid? ContinuesRunId = null);
+
+/// <summary>
+/// What the host sees when it is asked whether this invocation is the last attempt of its run -- so
+/// the run should be completed now -- or whether the run should stay open for a further attempt.
+/// </summary>
+/// <param name="RunId">The run this invocation captured an attempt on.</param>
+/// <param name="TaskId">The run's task identifier, as this invocation's descriptor gave it.</param>
+/// <param name="Scope">The run's scope, as this invocation's descriptor gave it.</param>
+/// <param name="ExecutionStatus">
+/// How this invocation finished mechanically. It is not a verdict on the task: a run that completed
+/// without throwing may still have failed at what it was asked to do.
+/// </param>
+/// <param name="AttemptCount">
+/// How many attempts the run holds, this invocation's included, as the capture service reports it.
+/// </param>
+/// <param name="OpenFor">How long the run has been open, measured from when it was first started.</param>
+/// <param name="Result">
+/// The sanitized text this invocation produced, as it was recorded on the attempt, or
+/// <see langword="null"/> when the invocation did not complete. This is what lets a host decide
+/// "good enough" in the same step rather than having to declare its intention in advance.
+/// </param>
+/// <param name="Error">
+/// The failure recorded on the attempt -- an exception's type name, never its message -- or
+/// <see langword="null"/> when the invocation did not fail.
+/// </param>
+public sealed record ExperienceRunCompletionContext(
+    Guid RunId,
+    string TaskId,
+    Scope Scope,
+    RunExecutionStatus ExecutionStatus,
+    int AttemptCount,
+    TimeSpan OpenFor,
+    string? Result,
+    string? Error);
 
 /// <summary>
 /// What the host sees when it is asked how a completed, captured run should be finalized into a
@@ -83,7 +165,7 @@ public sealed record ExperienceCaptureFailure(
     Exception? Exception);
 
 /// <summary>
-/// Host configuration for <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture"/>.
+/// Host configuration for <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/>.
 /// </summary>
 public sealed class ExperienceCaptureOptions
 {
@@ -93,6 +175,64 @@ public sealed class ExperienceCaptureOptions
     /// and the failure is reported through <see cref="OnCaptureFailure"/>.
     /// </summary>
     public required Func<ExperienceRunContext, ExperienceRunDescriptor> ResolveRun { get; init; }
+
+    /// <summary>
+    /// Decides whether this invocation's run is finished. Called once per captured invocation, after
+    /// its attempt was recorded and before the run would be completed. Returning
+    /// <see langword="true"/> -- the default, and what every host got before this existed -- completes
+    /// the run, which is final: no further attempt can ever be appended to it. Returning
+    /// <see langword="false"/> leaves the run open so a later invocation naming it through
+    /// <see cref="ExperienceRunDescriptor.ContinuesRunId"/> becomes its next attempt.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>An open run is bounded, always.</b> It holds this run's captured payload in memory, so
+    /// "keep it open" is never open-ended: the run is completed anyway, and the reason reported
+    /// through <see cref="OnCaptureFailure"/>, when it reaches <see cref="MaxAttemptsPerOpenRun"/>
+    /// attempts, when it has been open for <see cref="MaxOpenRunDuration"/>, when this invocation's
+    /// attempt could not be recorded at all, or when this predicate itself throws. A host that
+    /// forgets to close a run cannot leave one open.
+    /// </para>
+    /// <para>
+    /// <b>Leaving a run open defers finalization with it.</b> An open run is not handed to
+    /// <see cref="FinalizationService"/> -- only a completed run can become a durable Experience
+    /// Record -- so nothing is finalized until the invocation that closes it.
+    /// </para>
+    /// <para>
+    /// Exceptions are never thrown into MAF or the caller: a throwing predicate completes the run and
+    /// is reported through <see cref="OnCaptureFailure"/>, because failing closed here is the option
+    /// that cannot retain payload.
+    /// </para>
+    /// </remarks>
+    public Func<ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; init; } = static _ => true;
+
+    /// <summary>
+    /// The upper bound on how long a run may stay open across invocations before the adapter
+    /// completes it itself and reports through <see cref="OnCaptureFailure"/>. Default 5 minutes.
+    /// Must be positive and at most <see cref="uint.MaxValue"/> - 1 milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Enforced two ways, so neither a host that keeps invoking nor a host that walks away can defeat
+    /// it: it is checked when each invocation finishes, and a timer armed on
+    /// <see cref="TimeProvider"/> closes a run that no further invocation ever arrives for. It has no
+    /// effect at all on the default behaviour, where every invocation completes its own run and no
+    /// run is ever left open.
+    /// </remarks>
+    public TimeSpan MaxOpenRunDuration { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The most attempts a run may accumulate before the adapter completes it itself and reports
+    /// through <see cref="OnCaptureFailure"/>, whatever <see cref="ShouldCompleteRun"/> says.
+    /// Default 8. Must be positive.
+    /// </summary>
+    /// <remarks>
+    /// This is the adapter's own bound on a run it is keeping open, and it is separate from the
+    /// capture service's <see cref="AgentExperience.Core.Capture.CaptureLimits.MaxAttemptsPerRun"/>,
+    /// which bounds what the service will store at all. Whichever is reached first ends the run:
+    /// hitting the service's limit means the attempt was not recorded, and an unrecordable attempt
+    /// also completes the run rather than leaving it open to collect more of them.
+    /// </remarks>
+    public int MaxAttemptsPerOpenRun { get; init; } = 8;
 
     /// <summary>
     /// The environment fingerprint recorded on every run. Defaults to the current machine name plus
@@ -128,6 +268,16 @@ public sealed class ExperienceCaptureOptions
     /// exception, or finalization timeout), at most once per <see cref="ExperienceCaptureFailureStage"/>
     /// per run. Exceptions thrown by the callback are swallowed.
     /// </summary>
+    /// <remarks>
+    /// <b>The thread contract.</b> Most calls arrive on the invocation's own thread, before
+    /// <c>RunAsync</c> returns. A run closed by <see cref="MaxOpenRunDuration"/> is the exception:
+    /// that close runs from a <see cref="TimeProvider"/> timer callback on a thread-pool thread,
+    /// after the invocation that opened the run has returned and after any number of later
+    /// invocations. The callback must therefore be thread-safe and must tolerate being called when no
+    /// invocation is in flight. Dispose the <c>captureLifetime</c> handle
+    /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions, out IDisposable)"/>
+    /// hands back to stop those late calls before tearing down whatever the callback writes to.
+    /// </remarks>
     public Action<ExperienceCaptureFailure>? OnCaptureFailure { get; init; }
 
     /// <summary>
@@ -162,6 +312,11 @@ public sealed class ExperienceCaptureOptions
     /// finalization already overran <see cref="FinalizationTimeout"/>. Exceptions thrown by the
     /// callback are swallowed.
     /// </summary>
+    /// <remarks>
+    /// It carries the same thread contract as <see cref="OnCaptureFailure"/>: a run completed at its
+    /// <see cref="MaxOpenRunDuration"/> bound is finalized from a <see cref="TimeProvider"/> timer
+    /// callback on a thread-pool thread, with no invocation in flight.
+    /// </remarks>
     public Action<FinalizeExperienceResult>? OnRunFinalized { get; init; }
 
     /// <summary>The clock used for run, attempt, and tool-call timestamps, durations, and the finalization timeout.</summary>

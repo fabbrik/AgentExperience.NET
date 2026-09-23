@@ -222,7 +222,7 @@ public sealed class ExperienceInjectionOptions
 
     /// <summary>
     /// Validates this instance, in the same style as
-    /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture"/>: a misconfigured
+    /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/>: a misconfigured
     /// provider fails when it is constructed, not on the first invocation it silently does nothing on.
     /// </summary>
     /// <param name="paramName">The parameter name to report on a validation failure.</param>

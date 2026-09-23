@@ -229,6 +229,37 @@ public class ExperienceFinalizationWiringTests
         StorageDecision: StorageDecision.Permit,
         FinalizedAt: DateTimeOffset.UnixEpoch.AddDays(1));
 
+    /// <summary>
+    /// VG-15. A run the adapter closes at its open-run bound -- from a timer callback, long after the
+    /// invocation that left it open returned -- is still handed to the host's finalization, exactly as
+    /// a run its own invocation completed would be.
+    /// </summary>
+    [Fact]
+    public async Task A_run_closed_at_its_open_run_bound_is_still_finalized()
+    {
+        var clock = new ManualBoundTimeProvider();
+        var runId = Guid.NewGuid();
+        var harness = new Harness { ContinuesRunId = runId, ShouldComplete = _ => false, Clock = clock };
+
+        await harness.Capture(new ScriptedChatClient()).RunAsync("task-left-open");
+        Assert.Empty(harness.Finalized);
+
+        Assert.Single(clock.Bounds).Fire();
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (harness.Finalized.Count == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The bound's close never reached finalization.");
+            await Task.Delay(10);
+        }
+
+        var result = Assert.Single(harness.Finalized);
+        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(runId, TestScope), result.ExperienceId);
+        Assert.True(harness.Service.TryGetRun(runId, out var run));
+        Assert.Equal(RunExecutionStatus.Cancelled, run.ExecutionStatus);
+        Assert.Contains(harness.Failures, failure => failure.Reason.Contains("still open at its", StringComparison.Ordinal));
+    }
+
     private sealed class Harness
     {
         private readonly List<ExperienceCaptureFailure> _failures = [];
@@ -260,6 +291,13 @@ public class ExperienceFinalizationWiringTests
         public Func<ExperienceFinalizationContext, FinalizeExperienceRequest?>? Resolve { get; init; }
 
         public bool ThrowFromOnRunFinalized { get; init; }
+
+        /// <summary>When set, every invocation continues this run rather than opening its own.</summary>
+        public Guid? ContinuesRunId { get; init; }
+
+        public Func<ExperienceRunCompletionContext, bool> ShouldComplete { get; init; } = static _ => true;
+
+        public TimeProvider Clock { get; init; } = TimeProvider.System;
 
         public FinalizeExperienceRequest RequestFor(Guid runId) => new(
             RunId: runId,
@@ -301,7 +339,9 @@ public class ExperienceFinalizationWiringTests
 
         private ExperienceCaptureOptions Options() => new()
         {
-            ResolveRun = context => new ExperienceRunDescriptor(context.Messages.Last().Text, TestScope),
+            ResolveRun = context => new ExperienceRunDescriptor(context.Messages.Last().Text, TestScope, ContinuesRunId: ContinuesRunId),
+            ShouldCompleteRun = ShouldComplete,
+            TimeProvider = Clock,
             CaptureToolCalls = false,
             FinalizationService = Finalization,
             ResolveFinalization = Resolve ?? (context => RequestFor(context.Run.RunId)),

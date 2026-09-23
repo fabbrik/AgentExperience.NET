@@ -10,13 +10,18 @@ namespace AgentExperience.ReuseBaseline.Experiment;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why a host reflector at all.</b> <c>DefaultExperienceReflector</c> is deliberately domain-blind
-/// -- it cannot know what a tool's arguments mean, so its lesson names the task and the checks that
-/// passed and nothing about how. The injected Historical Reference block carries an evidence
-/// <em>summary</em> (lesson, reuse guidance, preconditions, warnings) and never attempts, tool calls,
-/// or tool arguments, so with the default reflector nothing about the working approach can reach a
-/// later run at all. <see cref="IExperienceReflector"/> is the documented seam for exactly this, and
-/// a host that knows its own tool schema is the thing that can fill it.
+/// <b>Why a host reflector at all, still, after story 4.6.</b> <c>DefaultExperienceReflector</c> is
+/// deliberately domain-blind -- it cannot know what a tool's arguments mean, so its lesson names the
+/// task and the checks that passed and nothing about how. Story 4.6 gave the injected Historical
+/// Reference block an <c>Approach:</c> line carrying the ordered tool <em>names</em> of a verified
+/// run's final attempt, which closes that gap for a task whose approaches are <em>different tools</em>.
+/// This experiment's are not: every strategy is the same single tool,
+/// <see cref="IncidentCheckTool.ToolName"/>, distinguished only by its <c>strategy</c> argument -- and
+/// arguments are exactly what the block still never carries, deliberately, because an argument is
+/// free-form payload and a tool name is not. So the shipped default still cannot express which
+/// strategy worked here, and this reflector still has to.
+/// <see cref="IExperienceReflector"/> is the documented seam for exactly this, and a host that knows
+/// its own tool schema is the thing that can fill it.
 /// </para>
 /// <para>
 /// <b>The sentence is derived, not asserted.</b> It is read out of the captured run's own final

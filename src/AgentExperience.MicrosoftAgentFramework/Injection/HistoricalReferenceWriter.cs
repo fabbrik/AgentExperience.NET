@@ -39,10 +39,44 @@ public sealed record HistoricalReferencePayload(
 /// <para>
 /// <b>What a record carries.</b> Per record: its source (experience ID, source run ID, task ID), its
 /// reuse confidence, its applicability (the rank score and every normalized component with the
-/// weight applied to it), and an evidence <em>summary</em> -- lesson, reuse guidance, preconditions,
-/// warnings, verification status, and how many evidence IDs back it. Nothing else. Attempts, tool
-/// calls, tool arguments, tool results, errors, and evidence detail are never serialized here, so a
-/// raw captured payload cannot reach a model through injection.
+/// weight applied to it), an evidence <em>summary</em> -- lesson, reuse guidance, preconditions,
+/// warnings, verification status, and how many evidence IDs back it -- and, for a verified record,
+/// the ordered tool <em>names</em> of its verified approach. Nothing else.
+/// </para>
+/// <para>
+/// <b>What a record never carries, and what changed.</b> Tool <em>arguments</em>, tool
+/// <em>results</em>, attempt <em>results</em>, attempt <em>errors</em> and evidence <em>detail</em>
+/// are never serialized here, so a raw captured payload cannot reach a model through injection. The
+/// ordered tool <em>names</em> of the verified approach are -- that is the one thing this writer
+/// deliberately carries out of <see cref="ExperienceRecord.Attempts"/>, and it was added in story
+/// 4.6 because a lesson that cannot say <em>what was done</em> teaches a later agent nothing. The
+/// earlier wording of this paragraph promised that attempts and tool calls were never serialized at
+/// all; it is amended here rather than quietly dropped.
+/// </para>
+/// <para>
+/// <b>Why the widening stops at names: provenance, not shape.</b> A tool name is fixed when the tool
+/// is <em>registered</em> and is not derived from the captured run's own data flow. The framework
+/// resolves the name a model emitted against the caller's tool inventory and refuses one that does
+/// not resolve before any capture happens, so what is recorded is an identifier that already existed
+/// before the run started. That -- and only that -- is the property this writer relies on. It is
+/// <em>not</em> true that a tool name is short, structured, host-chosen, or incapable of carrying
+/// text: <c>AIFunctionFactory.Create</c> accepts a multi-line name containing this block's own end
+/// marker, and an MCP or OpenAPI inventory takes its names from a remote server or a specification
+/// rather than from the host. Nothing bounds or sanitizes the name anywhere else in the pipeline
+/// either -- <see cref="AgentExperience.Core.Capture.RawToolCall.ToolName"/> is the one captured
+/// field a host's sanitizer never sees -- so <see cref="Approach"/> does the bounding itself, here,
+/// where the name is about to enter a model's context.
+/// </para>
+/// <para>
+/// <b>The sequence is derived from the record, never from the reflection.</b>
+/// <see cref="AgentExperience.Core.Reflections.IExperienceReflector"/> is an unconstrained port and a
+/// host reflector may write anything at all into
+/// <see cref="Reflection.SuccessfulApproaches"/>/<see cref="Reflection.FailedApproaches"/> -- the
+/// shipped default already embeds an attempt's result and error text there. Those strings are
+/// <em>not</em> what this writer emits: the tool-name sequence is read off
+/// <see cref="ExperienceRecord.Attempts"/> directly, so what the block can carry is bounded by this
+/// writer and not by whichever reflector produced the record. That is the difference between a
+/// boundary and a convention.
 /// </para>
 /// <para>
 /// <b>The byte budget drops whole records; the record limit is the caller's.</b> Records are
@@ -76,6 +110,51 @@ public static class HistoricalReferenceWriter
 
     /// <summary>The label written when an optional evidence-summary field carries nothing.</summary>
     public const string NoValue = "(none recorded)";
+
+    /// <summary>
+    /// What the <c>Approach:</c> line says when the verified run's final attempt called no tool at
+    /// all. An empty list would read as "unknown"; this says which of the two it is.
+    /// </summary>
+    public const string NoToolsUsed = "the verified run's final attempt completed without calling any tool.";
+
+    /// <summary>What separates two tool names in the <c>Approach:</c> line, in call order.</summary>
+    public const string ApproachSeparator = " -> ";
+
+    /// <summary>
+    /// The sentence the <c>Approach:</c> line's tool-name sequence is introduced by. It states what
+    /// the sequence is and, just as importantly, what it is not.
+    /// </summary>
+    public const string ApproachPrefix = "the verified run's final attempt called these tools, in order: ";
+
+    /// <summary>The standing qualifier closing an <c>Approach:</c> line that names tools.</summary>
+    public const string ApproachSuffix = " Tool names only -- no arguments, no results, no error text.";
+
+    /// <summary>
+    /// The most characters one tool name contributes to an <c>Approach:</c> line. A longer name is
+    /// cut to it and marked with <see cref="ClampedName"/>.
+    /// </summary>
+    /// <remarks>
+    /// A tool name is the one captured field no sanitizer sees and no capture limit bounds, and this
+    /// line is where it enters a model's context. Left unbounded it is an availability problem, not a
+    /// disclosure one: the byte budget drops whole records from the <em>tail</em>, so one record
+    /// whose approach line alone exceeds the budget takes every lower-ranked record with it and the
+    /// block goes out empty. The clamp is generous enough for the long names real inventories
+    /// produce -- MCP servers routinely emit 60 to 100 characters -- and small enough that no single
+    /// record can empty the block.
+    /// </remarks>
+    public const int MaxToolNameLength = 96;
+
+    /// <summary>
+    /// The most tool names one <c>Approach:</c> line carries. A longer sequence is cut to it and the
+    /// line ends with <see cref="ApproachClamped"/> instead of a full stop.
+    /// </summary>
+    public const int MaxApproachToolNames = 20;
+
+    /// <summary>What marks a tool name this writer cut to <see cref="MaxToolNameLength"/>.</summary>
+    public const string ClampedName = "[...]";
+
+    /// <summary>What closes an <c>Approach:</c> line whose sequence was cut to <see cref="MaxApproachToolNames"/>.</summary>
+    public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
 
     /// <summary>
     /// What is written in place of a number that is not a real number (a NaN or an infinity). It is
@@ -122,6 +201,7 @@ public static class HistoricalReferenceWriter
         "Verification:",
         "Evidence:",
         "Lesson:",
+        "Approach:",
         "Reuse guidance:",
         "Preconditions:",
         "Warnings:",
@@ -262,6 +342,14 @@ public static class HistoricalReferenceWriter
         text.Append("Evidence: ").Append(EvidenceCount(record)).Append(" evidence ID(s); no evidence detail is included.\n");
 
         text.Append("Lesson: ").Append(Clean(reflection?.Lesson)).Append('\n');
+
+        // Derived from the record's own attempts, never from the reflection's prose -- see the type's
+        // remarks. Absent entirely when there is no verified approach to describe.
+        if (Approach(record) is { } approach)
+        {
+            text.Append("Approach: ").Append(approach).Append('\n');
+        }
+
         text.Append("Reuse guidance: ").Append(Clean(reflection?.ReuseGuidance)).Append('\n');
         Bullets(text, "Preconditions", reflection?.Preconditions);
         Bullets(text, "Warnings", reflection?.Warnings);
@@ -309,6 +397,195 @@ public static class HistoricalReferenceWriter
             text.Append(component.Kind).Append(' ').Append(Number(component.Value))
                 .Append(" x ").Append(Number(component.Weight))
                 .Append(" = ").Append(Number(component.Contribution));
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// The verified approach, as the ordered tool <em>names</em> of the record's final attempt, or
+    /// <see langword="null"/> when there is no verified approach to describe and no line is written.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only a verified, unquarantined record, and only its final attempt.</b> A record whose
+    /// outcome is not <see cref="TaskVerificationStatus.Verified"/> has no approach that was shown to
+    /// work, and a record whose own status is <see cref="ExperienceStatus.Quarantined"/> is withheld
+    /// from reuse whatever its outcome says -- a record quarantined <em>after</em> a verified run, the
+    /// suspected-sanitization-gap case, is exactly the one that must not describe what it did. The
+    /// two are different fields and both are checked. Within an eligible record only the
+    /// <em>final</em> attempt is read, and only when it carries no error. This is deliberately the
+    /// same classification <see cref="AgentExperience.Core.Reflections.DefaultExperienceReflector"/>
+    /// uses: attempts are not linked to verification rounds, so presenting an earlier error-free
+    /// attempt as "the approach that worked" would be causal invention. A verified record whose final
+    /// attempt errored therefore yields no approach line either.
+    /// </para>
+    /// <para>
+    /// <b>Which attempt is "final", and what a tie means.</b> The final attempt is the one with the
+    /// greatest <see cref="Attempt.SequenceNumber"/>, read from the numbers themselves rather than
+    /// from list order, because a store is free to return attempts in any order.
+    /// <see cref="AgentExperience.Core.Reflections.DefaultExperienceReflector"/> refuses a run whose
+    /// attempt sequence numbers are not unique -- <em>any</em> two, not only the last two -- outright;
+    /// this writer cannot throw, so it applies the same rule the only way it can: a record with any
+    /// duplicated attempt sequence number gets no approach line. Two attempts sharing the greatest
+    /// number would leave the record unable to say which one was last, and picking either would be
+    /// inventing the answer; a duplicate lower down is a record the reflector would never have
+    /// produced, and the two components must not disagree about which records are well-formed.
+    /// </para>
+    /// <para>
+    /// <b>Names, in call order, and nothing else.</b> Every tool call of that attempt contributes its
+    /// <see cref="ToolCallRecord.ToolName"/> in <see cref="ToolCallRecord.SequenceNumber"/> order,
+    /// repeats included, because the repetition is part of the sequence. A call that itself errored
+    /// contributes its name like any other and nothing says so: whether a call failed is one more
+    /// thing out of the captured run, and the widening stops at names.
+    /// </para>
+    /// <para>
+    /// <b>Each name is bounded here, because nothing else bounds it.</b> A name's whitespace is
+    /// collapsed to single spaces first -- so a name cannot add lines to the block or forge a bullet,
+    /// which <c>"  - "</c> is not a field label and would otherwise allow -- then it goes through
+    /// <see cref="Clean"/> like every other stored string, so a tool named after one of this block's
+    /// own markers cannot forge structure with it, and then it is cut to
+    /// <see cref="MaxToolNameLength"/> characters. The sequence itself is cut to
+    /// <see cref="MaxApproachToolNames"/> names. Both cuts are marked in the text rather than silent.
+    /// </para>
+    /// </remarks>
+    private static string? Approach(ExperienceRecord record)
+    {
+        // Two different fields, deliberately both checked: Outcome.Status is the verification the run
+        // reached, record.Status is where the record's lifecycle has since put it.
+        if (record.Outcome.Status != TaskVerificationStatus.Verified || record.Status == ExperienceStatus.Quarantined)
+        {
+            return null;
+        }
+
+        var attempts = record.Attempts;
+        if (attempts is null or { Count: 0 })
+        {
+            return null;
+        }
+
+        Attempt? final = null;
+        var atGreatest = 0;
+        var seen = new HashSet<int>();
+        foreach (var attempt in attempts)
+        {
+            if (attempt is null)
+            {
+                continue;
+            }
+
+            // The same well-formedness rule DefaultExperienceReflector enforces: unique sequence
+            // numbers, or no claim about which attempt was final.
+            if (!seen.Add(attempt.SequenceNumber))
+            {
+                return null;
+            }
+
+            if (final is null || attempt.SequenceNumber > final.SequenceNumber)
+            {
+                final = attempt;
+                atGreatest = 1;
+            }
+            else if (attempt.SequenceNumber == final.SequenceNumber)
+            {
+                atGreatest++;
+            }
+        }
+
+        // More than one attempt at the greatest sequence number: the record cannot say which of them
+        // was last, so it says nothing rather than picking one.
+        if (final is null || atGreatest > 1 || final.Error is not null)
+        {
+            return null;
+        }
+
+        var calls = final.ToolCalls;
+        if (calls is null or { Count: 0 })
+        {
+            return NoToolsUsed;
+        }
+
+        var names = calls
+            .Where(call => call is not null)
+            .OrderBy(call => call.SequenceNumber)
+            .Take(MaxApproachToolNames + 1)
+            .Select(call => Name(call.ToolName))
+            .ToList();
+
+        if (names.Count == 0)
+        {
+            return NoToolsUsed;
+        }
+
+        // One more than the cap was taken, purely to tell "exactly at the cap" from "over it".
+        var clamped = names.Count > MaxApproachToolNames;
+        if (clamped)
+        {
+            names.RemoveAt(names.Count - 1);
+        }
+
+        return ApproachPrefix
+            + string.Join(ApproachSeparator, names)
+            + (clamped ? ApproachClamped : ".")
+            + ApproachSuffix;
+    }
+
+    /// <summary>
+    /// One tool name as the <c>Approach:</c> line carries it: whitespace collapsed to single spaces,
+    /// the block's markers and labels neutralized, and the result cut to
+    /// <see cref="MaxToolNameLength"/> characters with <see cref="ClampedName"/> marking the cut.
+    /// </summary>
+    /// <remarks>
+    /// Collapsing runs <em>before</em> <see cref="Clean"/>, not after: a name written as
+    /// <c>"===  END  HISTORICAL REFERENCE"</c> becomes a real marker when its whitespace is collapsed,
+    /// so collapsing after neutralizing would hand the block back the forgery it had just removed.
+    /// Cutting afterwards is safe in the other direction -- a cut only removes characters from the
+    /// end, and a prefix of a string containing no marker contains none either.
+    /// </remarks>
+    private static string Name(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return NoValue;
+        }
+
+        var cleaned = Clean(CollapseWhitespace(value));
+        if (cleaned.Length <= MaxToolNameLength)
+        {
+            return cleaned;
+        }
+
+        // Never between a surrogate pair: half of one is not a character and would be written as a
+        // replacement character in the block's UTF-8.
+        var cut = MaxToolNameLength;
+        if (char.IsHighSurrogate(cleaned[cut - 1]))
+        {
+            cut--;
+        }
+
+        return cleaned[..cut] + ClampedName;
+    }
+
+    /// <summary>Every run of whitespace -- newlines included -- as one space, with the ends trimmed.</summary>
+    private static string CollapseWhitespace(string value)
+    {
+        var text = new StringBuilder(value.Length);
+        var pendingSpace = false;
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = text.Length > 0;
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                text.Append(' ');
+                pendingSpace = false;
+            }
+
+            text.Append(character);
         }
 
         return text.ToString();

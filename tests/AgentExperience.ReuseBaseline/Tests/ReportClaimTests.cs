@@ -106,11 +106,16 @@ public class ReportClaimTests
         Assert.Contains("AGENT POLICY", text, StringComparison.Ordinal);
         Assert.Contains("exploration order", text, StringComparison.Ordinal);
 
-        // And the report says that the shipped default reflector could not have carried the working
-        // approach at all, so a reader knows which part of the difference the harness itself supplied.
-        Assert.Contains("DefaultExperienceReflector is domain-blind", text, StringComparison.Ordinal);
-        Assert.Contains("the two conditions", text, StringComparison.Ordinal);
-        Assert.Contains("here would be indistinguishable", text, StringComparison.Ordinal);
+        // And the report says that the shipped library could not have carried the working approach on
+        // its own, so a reader knows which part of the difference the harness itself supplied. Story
+        // 4.6 gave the injected block an ordered tool-name approach line, so the report now has to say
+        // why that still is not enough here -- every strategy is the same tool under a different
+        // argument, and arguments are exactly what the block still never carries.
+        var normalized = Normalize(text);
+        Assert.Contains("DefaultExperienceReflector is domain-blind", normalized, StringComparison.Ordinal);
+        Assert.Contains("ordered tool NAMES of a verified run's final attempt, but never a tool's arguments", normalized, StringComparison.Ordinal);
+        Assert.Contains("the block's own approach line cannot tell the conditions apart here", normalized, StringComparison.Ordinal);
+        Assert.Contains("nothing about a working approach would reach a later run", normalized, StringComparison.Ordinal);
     }
 
     [Fact]

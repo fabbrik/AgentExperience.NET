@@ -72,9 +72,11 @@ internal sealed class AttemptToolRecorder(TimeProvider clock, Func<Guid> newId)
         }
         finally
         {
+            // The resolved function's registered name, never the model's CallContent.Name: MAF refuses
+            // an unresolved name before middleware runs, and this is the field injection later renders.
             _calls.Add(new RawToolCall(
                 ToolCallId: toolCallId,
-                ToolName: context.Function?.Name ?? context.CallContent?.Name ?? string.Empty,
+                ToolName: context.Function?.Name ?? string.Empty,
                 Arguments: arguments,
                 StartedAt: startedAt,
                 Duration: clock.GetElapsedTime(startTimestamp),
