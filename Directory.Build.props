@@ -11,14 +11,52 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
-  <!-- Package metadata: applies to every packable project (Abstractions today; Core and adapters as they are added). -->
+  <!-- Versioning. Set here, once, for all five packages. This is a PREVIEW: the version is deliberately
+       not 1.0.0, because 1.0.0 is a stability promise this codebase declines to make while the Known
+       limits table in the root README is non-empty (see RELEASING.md). Bump the suffix (preview.2, ...)
+       for each preview; only a release that satisfies RELEASING.md's production-readiness gate may drop
+       it. Without this property `dotnet pack` would silently emit 1.0.0. -->
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>preview.1</VersionSuffix>
+  </PropertyGroup>
+
+  <!-- Package metadata: applies to every packable project (the five under src/). -->
   <PropertyGroup>
     <Authors>AgentExperience.NET Contributors</Authors>
     <Company>AgentExperience.NET</Company>
+    <Copyright>Copyright (c) AgentExperience.NET Contributors</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/fabbrik/AgentExperience.NET</RepositoryUrl>
     <PackageProjectUrl>https://github.com/fabbrik/AgentExperience.NET</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
+    <PackageTags>agents;ai;agent-memory;experience;microsoft-agent-framework;maf;postgresql;pgvector;preview</PackageTags>
+    <PackageReleaseNotes>Preview release. Not production ready: the Known limits table in the repository README lists every unresolved item, and any unresolved item blocks a production-readiness claim. Public APIs may change between previews. See https://github.com/fabbrik/AgentExperience.NET#known-limits</PackageReleaseNotes>
+  </PropertyGroup>
+
+  <!-- Symbols, SourceLink, and deterministic builds. The .NET 8+ SDK ships SourceLink for GitHub
+       built in, so no package reference is needed: PublishRepositoryUrl stamps the repository URL and
+       commit into the nuspec, EmbedUntrackedSources embeds generated sources in the PDB, and the PDB
+       ships in a .snupkg next to each .nupkg with the same version. -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <DebugType>portable</DebugType>
+    <!-- The five shipping projects are exactly the ones under src/. -->
+    <AgentExperienceShippingProject Condition="$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/').StartsWith('src/'))">true</AgentExperienceShippingProject>
+  </PropertyGroup>
+
+  <!-- ContinuousIntegrationBuild maps source paths to /_/ so the shipped assemblies and PDBs do not depend
+       on where the repository was cloned. It is applied to the SHIPPING projects only, and never passed as
+       a global -p:ContinuousIntegrationBuild=true: test projects locate checked-in files through
+       [CallerFilePath], which the same mapping would turn into /_/... paths that do not exist. It is on in
+       GitHub Actions, and a local release build turns it on with -p:AgentExperienceReleaseBuild=true
+       (RELEASING.md), a property only this condition reads. -->
+  <PropertyGroup Condition="'$(AgentExperienceShippingProject)' == 'true' And ('$(GITHUB_ACTIONS)' == 'true' Or '$(AgentExperienceReleaseBuild)' == 'true')">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
 </Project>

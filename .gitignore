@@ -40,3 +40,5 @@ _sdlc/implementation-artifacts/
 _sdlc/test-artifacts/
 **/.agents/
 **/.claude/
+# Release artifacts (dotnet pack --output artifacts/packages)
+artifacts/

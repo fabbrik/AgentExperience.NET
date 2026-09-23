@@ -1,5 +1,9 @@
 # AgentExperience.MicrosoftAgentFramework
 
+> **Preview — not production ready.** This is a `0.1.0-preview` package. Public APIs may change between previews,
+> and the [Known limits](https://github.com/fabbrik/AgentExperience.NET#known-limits) table in the repository README
+> lists every unresolved item. Any unresolved item blocks a production-readiness claim.
+
 Records Microsoft Agent Framework (MAF) invocations and their tool calls as AgentExperience.NET Experience Runs,
 and injects applicable past experience back into later invocations as a labeled Historical Reference.
 Capture covers ordinary, streaming, failed, and cancelled invocations, plus streams the consumer stops reading early.
@@ -338,6 +342,13 @@ each name is cut to `HistoricalReferenceWriter.MaxToolNameLength` characters and
 `MaxApproachToolNames` names, and both cuts are marked in the text. Until story 4.6 this
 paragraph promised that attempts and tool calls were never serialized at all; it is amended here rather than quietly
 dropped, because a lesson that cannot say *what was done* teaches a later agent nothing.
+
+**Known limit: an approach is its tool names, and nothing else.** Two approaches that call the same tools in the same
+order but with different arguments — `retry_refund(delay: 0)` failing and `retry_refund(delay: 30)` succeeding —
+render as the same `Approach:` line, so the block cannot tell a later agent which arguments worked. A host whose
+lessons turn on arguments needs its own `IExperienceReflector` to say so in the reflection's lesson text, which the
+block does carry; what that reflector writes there is the host's to keep free of secrets, because the lesson is
+emitted as written.
 
 A host reflector may write anything at all into a reflection's `SuccessfulApproaches`/`FailedApproaches` — the shipped
 default already embeds an attempt's own result and error text there — so the writer never reads them. Deriving the

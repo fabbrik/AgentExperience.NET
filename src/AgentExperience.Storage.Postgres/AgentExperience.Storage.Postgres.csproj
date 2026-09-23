@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>PostgreSQL adapter for AgentExperience.NET: persists canonical, scoped Experience Records through the IExperienceRecordStore port with plain Npgsql, host-authorization checks before any database access, exact scope predicates applied in SQL, and a journaled schema migration runner over embedded, versioned scripts. Pinned to Npgsql 10.0.3, dbup-postgresql 7.0.1, and dbup-core 6.1.1.</Description>
+    <Description>Preview, not production ready. PostgreSQL adapter for AgentExperience.NET: persists canonical, scoped Experience Records through the IExperienceRecordStore port with plain Npgsql, host-authorization checks before any database access, exact scope predicates applied in SQL, and a journaled schema migration runner over embedded, versioned scripts. Pinned to Npgsql 10.0.3, dbup-postgresql 7.0.1, and dbup-core 6.1.1.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>

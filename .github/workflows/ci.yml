@@ -4,7 +4,14 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # Weekly, so the MAF compatibility probe notices a new Microsoft.Agents.AI release even in a quiet week.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
+# Read-only, everywhere. Nothing in this workflow publishes a package, pushes a tag, or creates a release:
+# publishing is the maintainer's manual step in RELEASING.md. AgentExperience.Release.Tests' WorkflowTests
+# fail if a publish step, a NuGet API key, or a write permission ever appears in a workflow.
 permissions:
   contents: read
 
@@ -22,14 +29,37 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
+      # global.json rolls forward to a later feature band when one is installed; CI must build with exactly
+      # the pinned SDK, so a newer band on the runner fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
         run: dotnet test --no-build --configuration Release
+
+      # Already part of the run above; repeated as a named step so a reviewer sees these three gates by name:
+      # the public API baseline (a changed surface fails with a diff), the compatibility proof's agreement
+      # with the shipping pins, and the consolidated security-suite map.
+      - name: Release gates (public API baseline, pin agreement, security-suite map)
+        run: dotnet test tests/AgentExperience.Release.Tests --no-build --configuration Release
+
+      - name: Upload the public API diff
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-api-received
+          path: tests/AgentExperience.Release.Tests/PublicApi/*.received.txt
+          if-no-files-found: ignore
 
       # The sample's whole promise is that a stranger can clone the repository, run one command with
       # no Docker, no database and no credentials, and get the same seven stages every time. Running
@@ -46,3 +76,84 @@ jobs:
           dotnet run --project samples/AgentExperience.Sample.EndToEnd --configuration Release --no-build > "$out/run-2.txt"
           diff -u "$out/run-1.txt" "$out/run-2.txt"
           diff -u tests/AgentExperience.Sample.EndToEnd.Tests/GoldenTranscript.txt "$out/run-1.txt"
+
+  # Packs the five packages and asserts, from the built .nupkg and .snupkg files rather than from the csproj
+  # files: ten artifacts at 0.1.0-preview.N, license/readme/tags/repository metadata, the exact dependency set
+  # of each package (so Abstractions and Core carry no adapter dependency), and SourceLink-carrying,
+  # deterministic symbols. The packages are uploaded as a workflow artifact for inspection. NOT published.
+  pack:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # global.json rolls forward to a later feature band when one is installed; CI must build with exactly
+      # the pinned SDK, so a newer band on the runner fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Restore
+        run: dotnet restore --locked-mode
+
+      # ContinuousIntegrationBuild is already on for the shipping projects under GitHub Actions
+      # (Directory.Build.props); the release switch is passed explicitly so this is the same command
+      # RELEASING.md runs locally.
+      - name: Pack
+        run: dotnet pack --no-restore --configuration Release --output artifacts/packages -p:AgentExperienceReleaseBuild=true
+
+      - name: Verify the packages
+        run: dotnet run eng/verify-packages.cs -- artifacts/packages
+
+      - name: Upload the packages (inspection only, never published from here)
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages/
+          retention-days: 14
+
+  # The MAF compatibility matrix (story 4.3, AD-F). The pinned leg is the supported version and gates the
+  # build. The latest leg probes the newest stable Microsoft.Agents.AI on nuget.org and reports PASSED or
+  # FAILED in the job summary, but never fails the workflow: a gate that went red whenever Microsoft shipped
+  # a release would make this repository's health a function of someone else's release calendar.
+  maf-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [pinned, latest]
+    continue-on-error: ${{ matrix.leg == 'latest' }}
+    name: maf-compatibility (${{ matrix.leg }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # global.json rolls forward to a later feature band when one is installed; CI must build with exactly
+      # the pinned SDK, so a newer band on the runner fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Probe Microsoft.Agents.AI (${{ matrix.leg }})
+        run: eng/probe-maf-version.sh ${{ matrix.leg == 'pinned' && 'pinned' || '' }}

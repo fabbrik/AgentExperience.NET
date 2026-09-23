@@ -76,7 +76,11 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// underscores. The bound keeps the generated identifier inside PostgreSQL's 63-byte limit, so two
     /// tests can never be truncated onto the same database.
     /// </param>
-    public async Task<NpgsqlDataSource> CreateDatabaseAsync(string purpose)
+    /// <param name="configure">
+    /// Optional: adjusts the data source builder before it is built -- for example to give it a host's
+    /// logger factory.
+    /// </param>
+    public async Task<NpgsqlDataSource> CreateDatabaseAsync(string purpose, Action<NpgsqlDataSourceBuilder>? configure = null)
     {
         Assert.InRange(purpose.Length, 1, 20);
         Assert.All(purpose, c => Assert.True(c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_', $"Invalid purpose character '{c}'."));
@@ -92,7 +96,9 @@ public sealed class PostgresFixture : IAsyncLifetime
         }
 
         var builder = new NpgsqlConnectionStringBuilder(_container!.GetConnectionString()) { Database = name };
-        return NpgsqlDataSource.Create(builder.ConnectionString);
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(builder.ConnectionString);
+        configure?.Invoke(dataSourceBuilder);
+        return dataSourceBuilder.Build();
     }
 
     public async Task DisposeAsync()
