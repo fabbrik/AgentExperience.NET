@@ -82,6 +82,14 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL " +
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        // An erased record is not a record a grant can name: there is nothing left to share, and a grant
+        // over a tombstone would be a live permission over an ID the erasure spent. experience_grants has
+        // no foreign key to experience_records (0005), so nothing parks this statement against a
+        // concurrent erasure by itself -- without the lock it would decide against a snapshot taken
+        // before the purge committed and issue a 90-day permission over a record that is already gone.
+        // See PostgresExperienceRecordStore.RecordKeyShareLock.
+        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        $"{PostgresExperienceRecordStore.RecordKeyShareLock} " +
         $"RETURNING {GrantColumns}";
 
     /// <summary>
@@ -115,6 +123,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"LEFT JOIN {PostgresExperienceRecordStore.GrantsTable} g ON g.experience_id = r.experience_id " +
         $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "ORDER BY g.issued_at, g.grant_id LIMIT @limit";
 
     /// <summary>One grant's trail, oldest first, alongside the grant as it stands now.</summary>
@@ -146,6 +155,15 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "g.recipient_team_id, g.recipient_agent_id, g.recipient_user_id, " +
         "@reason, @administrator_principal_id, @administrator_authorized_at, g.expires_at, now(), now() " +
         $"FROM {PostgresExperienceRecordStore.GrantsTable} g WHERE g.grant_id = @grant_id";
+
+    /// <summary>
+    /// The expired-grant purge, created by <c>0010</c>. Bounded, scoped, and through the same
+    /// transaction-scoped marker the record erasure uses, so the append-only guard over
+    /// <c>experience_grant_events</c> is never switched off and never widened for another session.
+    /// </summary>
+    private const string PurgeExpiredGrantsSql =
+        "SELECT agent_experience.purge_expired_grants(" +
+        "@tenant_id, @application_id, @project_id, @team_id, @agent_id, @user_id, @now, @limit)";
 
     /// <summary>The primary key a re-issued <see cref="ExperienceGrant.GrantId"/> violates.</summary>
     private const string GrantPrimaryKey = "experience_grants_pkey";
@@ -456,6 +474,105 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
         {
             throw PostgresExperienceRecordStore.Translate(ex, "grant revoke", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Removes the grants in one owner scope that have expired, together with their audit events, in one
+    /// bounded batch.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why an expired grant is deleted rather than kept.</b> It permits nothing -- the read predicate
+    /// stopped admitting it the moment it expired -- and its row and trail are the only place its
+    /// recipient scope, its stated reason, and the administrator who issued it are still written down.
+    /// Keeping them forever is keeping personal data for a permission that no longer exists. What a
+    /// delivery actually happened under is kept separately and is not touched here:
+    /// <c>experience_grant_access</c> is retained by design.
+    /// </para>
+    /// <para>
+    /// <b>A revoked grant that has not expired yet is left alone.</b> Its revocation is a fact about a
+    /// window that is still open, and <c>0006</c> makes that revocation permanent on purpose; it is
+    /// collected once it expires like any other. Grants naming a record that is already a tombstone are
+    /// collected too -- the record erasure removes them in its own transaction, so one can only survive
+    /// if it was written outside this library.
+    /// </para>
+    /// <para>
+    /// Like the record sweep, this runs only when a host calls it: there is no timer here, no background
+    /// service, and no default schedule.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="administration">The host-constructed administrator authority. A purge is a grant mutation and needs one, exactly as issuing and revoking do.</param>
+    /// <param name="recordScope">The exact owner scope to purge within. Never treated as authority.</param>
+    /// <param name="batchSize">The most grants this call may remove, from <see cref="PostgresExperienceRecordStore.MinSweepBatchSize"/> to <see cref="PostgresExperienceRecordStore.MaxSweepBatchSize"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Deleted"/> when the purge ran (possibly removing nothing),
+    /// <see cref="ExperienceStoreOutcome.Denied"/>, or <see cref="ExperienceStoreOutcome.Invalid"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="recordScope"/> is <see langword="null"/>.</exception>
+    public async Task<ExperienceGrantPurgeResult> PurgeExpiredAsync(
+        AuthorizationContext authorization,
+        GrantAdministration? administration,
+        Scope recordScope,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(recordScope);
+
+        var errors = ExperienceRecordValidator.ValidateGrantPurge(recordScope, batchSize);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, 0, false, errors);
+        }
+
+        if (Administrator(administration) is null)
+        {
+            return new(ExperienceStoreOutcome.Denied, 0, false, NoErrors);
+        }
+
+        if (!authorization.Permits(recordScope))
+        {
+            return new(ExperienceStoreOutcome.Denied, 0, false, NoErrors);
+        }
+
+        var administrationErrors = ExperienceRecordValidator.ValidateAdministration(administration!);
+        if (administrationErrors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, 0, false, administrationErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = new NpgsqlCommand(PurgeExpiredGrantsSql, connection);
+            var parameters = command.Parameters;
+            PostgresExperienceRecordStore.AddScopeParameters(parameters, recordScope);
+
+            // This store's own clock decides which grants are past their expiry, the same way it decides
+            // the maximum lifetime a new grant may be issued with. Whether a grant still *permits* a read
+            // is always the database's clock_timestamp(), which no host can wind.
+            parameters.Add(new NpgsqlParameter<DateTimeOffset>(
+                "now",
+                PostgresExperienceRecordStore.ToStoredTimestamp(_timeProvider.GetUtcNow())));
+            parameters.Add(new NpgsqlParameter<int>("limit", batchSize));
+
+            var purged = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is long count
+                ? (int)count
+                : 0;
+
+            // A full batch is the only evidence this call has that more may be waiting: the purge
+            // function reports what it removed, and asking a second question would answer about a
+            // different moment.
+            return new(ExperienceStoreOutcome.Deleted, purged, purged >= batchSize, NoErrors);
+        }
+        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw PostgresExperienceRecordStore.Translate(ex, "grant purge", cancellationToken);
         }
     }
 

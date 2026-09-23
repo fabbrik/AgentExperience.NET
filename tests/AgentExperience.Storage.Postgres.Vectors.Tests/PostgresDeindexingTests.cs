@@ -192,6 +192,121 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
             (await world.Indexing.RemoveAsync(world.Authorization, world.Scope, id, CancellationToken.None)).Outcome);
     }
 
+    [Fact]
+    public async Task Erasing_a_record_removes_its_embedding_and_the_tombstone_can_never_be_indexed_again()
+    {
+        // Story 4.5's eighth erasure step, which lives in the base package's purge function and has to
+        // reach a table the base package must not depend on. Here the vectors schema *is* applied, so
+        // the to_regclass guard finds it and the embedding goes with the record's payload.
+        var world = await TestWorld.CreateAsync(DataSource);
+
+        var erased = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
+        var kept = await world.AddRecordAsync("cache-stampede", "Avoid a cache stampede", "Lock the refill.");
+
+        Assert.Equal(ExperienceIndexingOutcome.Indexed, (await world.Indexing.IndexAsync(world.Authorization, world.Scope, erased)).Outcome);
+        Assert.Equal(ExperienceIndexingOutcome.Indexed, (await world.Indexing.IndexAsync(world.Authorization, world.Scope, kept)).Outcome);
+
+        var deleted = await world.Store.DeleteAsync(world.Authorization, world.Scope, erased, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, deleted.Outcome);
+        Assert.Equal(0L, await world.CountEmbeddingsAsync(erased));
+        Assert.Equal(1L, await world.CountEmbeddingsAsync(kept));
+
+        // A write that was already in flight when the erasure landed is Missing, never Stale: there is
+        // no revision of an erased record that could ever be indexed, so there is nothing to retry.
+        var late = await world.Indexing.IndexAsync(world.Authorization, world.Scope, erased);
+        Assert.Equal(ExperienceIndexingOutcome.Missing, late.Outcome);
+        Assert.Equal(0L, await world.CountEmbeddingsAsync(erased));
+
+        // A re-index pass does not offer it either: the scan reads the summary and the lesson, and a
+        // tombstone has neither.
+        var reindexed = await world.Indexing.ReindexAsync(
+            world.Authorization, new ReindexExperienceRequest(world.Scope, null, Limit: 50), CancellationToken.None);
+        Assert.DoesNotContain(erased, reindexed.Records.Select(result => result.ExperienceId));
+        Assert.Contains(kept, reindexed.Records.Select(result => result.ExperienceId));
+
+        // And neither retrieval channel returns it.
+        var retrieved = await world.Retrieval().RetrieveAsync(
+            new RetrieveExperienceRequest(world.Authorization, world.Scope, "Refresh an expired token"),
+            CancellationToken.None);
+        Assert.DoesNotContain(retrieved.Records, r => r.Record.ExperienceId == erased);
+    }
+
+    [Fact]
+    public async Task A_write_naming_the_tombstone_s_own_revision_is_missing_rather_than_stale()
+    {
+        // The eligibility filters this table's reads already carry would hide a tombstone whatever the
+        // erasure predicates said -- a tombstone's status is a literal no ExperienceStatus names -- so a
+        // test that only searched would pass with the tombstone checks removed entirely. This one goes
+        // through the two statements that have no status filter at all: the conditional write, and the
+        // probe that explains why it wrote nothing. A write at the tombstone's *own* revision is the one
+        // a stale-revision guard cannot refuse on its own.
+        var world = await TestWorld.CreateAsync(DataSource);
+
+        var id = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
+        var deleted = await world.Store.DeleteAsync(world.Authorization, world.Scope, id, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, deleted.Outcome);
+
+        var written = await world.Index.WriteAsync(
+            world.Authorization,
+            new ExperienceIndexWrite(
+                world.Scope,
+                id,
+                new ExperienceEmbeddingDescriptor("topic-embed-v1", 4, "hash", deleted.Revision),
+                TopicEmbeddingGenerator.VectorFor("Refresh an expired token")),
+            CancellationToken.None);
+
+        // Missing, and specifically not Stale: Stale would name a revision to retry against, and there is
+        // no revision of an erased record that could ever be indexed.
+        Assert.Equal(ExperienceIndexOutcome.Missing, written.Outcome);
+        Assert.Equal(0, written.CurrentRevision);
+        Assert.Equal(0L, await world.CountEmbeddingsAsync(id));
+    }
+
+    [Fact]
+    public async Task An_embedding_written_while_a_record_is_being_erased_loses_instead_of_surviving_the_purge()
+    {
+        // The worst of the three concurrent-writer paths, because the row that survived would be a
+        // searchable derivative of exactly the summary and lesson the erasure was asked to destroy. The
+        // foreign key's own FOR KEY SHARE parks this writer against the purge and then releases it
+        // straight onto the tombstone; only a locking clause in the write's own SELECT makes it re-check.
+        var world = await TestWorld.CreateAsync(DataSource);
+
+        var id = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
+
+        await using var purging = await DataSource.OpenConnectionAsync();
+        await using var transaction = await purging.BeginTransactionAsync();
+
+        await using (var purge = new NpgsqlCommand(
+            "SELECT purge_outcome FROM agent_experience.purge_experience_record(" +
+            "@id, @tenant, 'app-1', 'project-1', NULL, NULL, NULL, NULL, now())",
+            purging,
+            transaction))
+        {
+            purge.Parameters.Add(new NpgsqlParameter<Guid>("id", id));
+            purge.Parameters.Add(new NpgsqlParameter("tenant", world.Scope.TenantId));
+            Assert.Equal("Deleted", await purge.ExecuteScalarAsync());
+        }
+
+        // Issued while the purge holds the record row, so it parks rather than deciding against a
+        // snapshot the purge is about to invalidate.
+        var writing = world.Index.WriteAsync(
+            world.Authorization,
+            new ExperienceIndexWrite(
+                world.Scope,
+                id,
+                new ExperienceEmbeddingDescriptor("topic-embed-v1", 4, "hash", 0),
+                TopicEmbeddingGenerator.VectorFor("Refresh an expired token")),
+            CancellationToken.None);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceIndexOutcome.Missing, (await writing).Outcome);
+        Assert.Equal(0L, await world.CountEmbeddingsAsync(id));
+    }
+
     private static CommitLifecycleTransitionRequest Transition(
         TestWorld world,
         Guid experienceId,

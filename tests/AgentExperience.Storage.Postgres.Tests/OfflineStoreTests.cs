@@ -378,6 +378,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
                 PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
                 PostgresExperienceRecordSchema.GrantAccessLogScriptName,
+                PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -597,7 +598,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^4]);
+            PostgresExperienceRecordSchema.ScriptNames[^5]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -659,7 +660,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     [Fact]
@@ -737,10 +738,250 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Delete_script_adds_one_erasure_path_and_leaves_every_guard_armed()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.DeleteAndExpireScriptName);
+
+        // The tombstone column, and the CHECK that makes "erased" one shape rather than a flag a writer
+        // could set over a payload that is still there. Deferred like every CHECK on an existing table,
+        // with the documented confirm-then-VALIDATE step.
+        Assert.Contains("ADD COLUMN IF NOT EXISTS deleted_at timestamptz NULL", script, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(script, "NOT VALID;"));
+        Assert.Contains("VALIDATE CONSTRAINT experience_records_tombstone_shape", script, StringComparison.Ordinal);
+
+        // The retained list is stated in the script itself, not only in the README.
+        Assert.Contains("WHAT IS RETAINED AFTER A DELETE, EXHAUSTIVELY", script, StringComparison.Ordinal);
+
+        // The honesty statement 0006's header demands of anything that touches these guards: this is a
+        // single code path, not a privilege boundary, and the script has to say so in as many words.
+        Assert.Contains("NOT A PRIVILEGE BOUNDARY", script, StringComparison.Ordinal);
+        Assert.Contains("settable by any session", script, StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE", script, StringComparison.Ordinal);
+
+        // And what erasure does not reach, stated rather than left to be assumed.
+        Assert.Contains("WHAT DELETION DOES NOT REACH", script, StringComparison.Ordinal);
+        Assert.Contains("VACUUM", script, StringComparison.Ordinal);
+
+        var statements = string.Join(
+            '\n',
+            script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // 0006 is journaled and must never be edited, so its guards are replaced in place: every
+        // ENABLE ALWAYS binding survives, and no trigger is ever dropped, disabled, or recreated through
+        // a window in which a log would be unguarded. Nothing this script ships is dropped either.
+        foreach (var destructive in new[] { "DROP TRIGGER", "DROP FUNCTION", "DROP TABLE", "DROP INDEX", "DROP CONSTRAINT" })
+        {
+            Assert.DoesNotContain(destructive, statements, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ALTER COLUMN", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CREATE EXTENSION", statements, StringComparison.OrdinalIgnoreCase);
+
+        // The only triggers this script creates are the two new ones over experience_records -- the
+        // guard that makes "no path removes a record row" a property of the schema. Every trigger 0006
+        // created is left exactly where it is, guarded by the function bodies replaced above.
+        var createdTriggers = statements
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("CREATE TRIGGER ", StringComparison.Ordinal))
+            .Select(line => line["CREATE TRIGGER ".Length..])
+            .ToArray();
+
+        Assert.Equal(["experience_records_no_delete", "experience_records_no_truncate"], createdTriggers);
+
+        // ...and both are ENABLE ALWAYS, so they survive session_replication_role = 'replica' exactly as
+        // 0006's do. A guard a replica connection could step around would not be one.
+        foreach (var trigger in createdTriggers)
+        {
+            Assert.Contains(
+                $"ALTER TABLE agent_experience.experience_records ENABLE ALWAYS TRIGGER {trigger};",
+                statements,
+                StringComparison.Ordinal);
+        }
+
+        // The bare DELETE the guard closes: the one statement that frees an experience_id, so that a
+        // record recreated under it inherits every grant issued over the old content.
+        Assert.Contains("CREATE OR REPLACE FUNCTION agent_experience.reject_record_removal()", statements, StringComparison.Ordinal);
+        Assert.Contains("BEFORE DELETE ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+        Assert.Contains("BEFORE TRUNCATE ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+
+        // It takes no marker and has no exception, because the erasure never deletes that row: it
+        // updates it into a tombstone. A marker clause here would be a bypass with nothing to justify it.
+        Assert.DoesNotContain("purge_authorized", RejectRecordRemovalBody(statements), StringComparison.Ordinal);
+
+        foreach (var guard in new[]
+        {
+            "agent_experience.reject_event_log_mutation",
+            "agent_experience.reject_audited_grant_delete",
+            "agent_experience.enforce_record_projection",
+        })
+        {
+            Assert.Contains($"CREATE OR REPLACE FUNCTION {guard}()", statements, StringComparison.Ordinal);
+        }
+
+        // The marker is transaction-scoped and set only inside the two purge functions. Anywhere else it
+        // would be a switch a caller could leave on.
+        Assert.Equal(2, CountOccurrences(statements, "SET LOCAL agent_experience.purge_authorized = 'on';"));
+        Assert.Equal(2, CountOccurrences(statements, "SET agent_experience.purge_authorized = 'off'"));
+
+        // The exception is a DELETE on the five tables an erasure sweeps, and nothing else: UPDATE and
+        // TRUNCATE stay refused in every session, marked or not.
+        Assert.Contains("IF TG_OP = 'DELETE'", statements, StringComparison.Ordinal);
+        foreach (var table in new[]
+        {
+            "'lifecycle_events'",
+            "'experience_grant_events'",
+            "'confidence_evidence'",
+            "'reuse_feedback'",
+            "'reuse_feedback_exposures'",
+        })
+        {
+            Assert.Contains(table, statements, StringComparison.Ordinal);
+        }
+
+        // Who read a record before it was deleted outlives the record: the access log is not a table the
+        // marker admits a delete on, and nothing in this script removes a row from it.
+        Assert.DoesNotContain("'experience_grant_access'", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("DELETE FROM agent_experience.experience_grant_access", statements, StringComparison.Ordinal);
+
+        // The erasure order is the frozen one. Evidence before the tombstone, because it has no scope
+        // columns of its own; children before parents; grant events before grants; the record last.
+        var order = new[]
+        {
+            "DELETE FROM agent_experience.confidence_evidence",
+            "DELETE FROM agent_experience.reuse_feedback_exposures",
+            "DELETE FROM agent_experience.reuse_feedback f",
+            "DELETE FROM agent_experience.experience_grant_events",
+            "DELETE FROM agent_experience.experience_grants WHERE experience_id",
+            "DELETE FROM agent_experience.lifecycle_events",
+            "DELETE FROM agent_experience.experience_embeddings",
+            "UPDATE agent_experience.experience_records r",
+        };
+
+        var previous = -1;
+        foreach (var step in order)
+        {
+            var at = statements.IndexOf(step, StringComparison.Ordinal);
+            Assert.True(at > previous, $"Erasure step out of order: {step}");
+            previous = at;
+        }
+
+        // The embeddings table belongs to the vectors package, so the base purge tolerates its absence:
+        // the step is guarded by to_regclass and issued through EXECUTE, which is what keeps a base-only
+        // database from ever parsing a reference to a table it does not have.
+        Assert.Contains("to_regclass('agent_experience.experience_embeddings') IS NOT NULL", statements, StringComparison.Ordinal);
+        Assert.Contains("EXECUTE 'DELETE FROM agent_experience.experience_embeddings", statements, StringComparison.Ordinal);
+
+        // The tombstone writes a fixed value into every column that is not on the retained list.
+        Assert.Contains("payload = '{}'::jsonb", statements, StringComparison.Ordinal);
+        Assert.Contains("task_id = '(deleted)'", statements, StringComparison.Ordinal);
+        Assert.Contains("created_at = p_deleted_at", statements, StringComparison.Ordinal);
+        Assert.Contains("revision = r.revision + 1", statements, StringComparison.Ordinal);
+
+        // Two submissions sharing one record cannot be left orphaned by two purges racing: the
+        // submissions are locked before the exposures are deleted, so the second purge's "are there any
+        // exposures left?" runs after the first has committed rather than against its own stale snapshot.
+        Assert.True(
+            statements.IndexOf("FROM agent_experience.reuse_feedback f", StringComparison.Ordinal)
+                < statements.IndexOf("DELETE FROM agent_experience.reuse_feedback_exposures", StringComparison.Ordinal),
+            "The shared submissions must be locked FOR UPDATE before their exposures are deleted.");
+        Assert.Contains("ORDER BY f.feedback_id\n        FOR UPDATE;", statements, StringComparison.Ordinal);
+
+        // The marked exception is shape-checked for the scope, the timestamps and the envelope version,
+        // not only for the payload columns -- otherwise one marked UPDATE could tombstone a record into
+        // another tenant's scope, where the owner would see NotFound for its own erased record.
+        foreach (var pinned in new[]
+        {
+            "NEW.payload_version = OLD.payload_version",
+            "NEW.created_at = NEW.deleted_at",
+            "NEW.updated_at = NEW.deleted_at",
+            "NEW.tenant_id = OLD.tenant_id",
+            "NEW.application_id = OLD.application_id",
+            "NEW.project_id = OLD.project_id",
+            "NEW.team_id IS NOT DISTINCT FROM OLD.team_id",
+            "NEW.agent_id IS NOT DISTINCT FROM OLD.agent_id",
+            "NEW.user_id IS NOT DISTINCT FROM OLD.user_id",
+        })
+        {
+            Assert.Contains(pinned, statements, StringComparison.Ordinal);
+        }
+
+        // The grant purge bounds its own batch: LIMIT NULL means "no limit" in PostgreSQL, so a bound
+        // that lived only in the C# validator was no bound at all for a hand-caller.
+        Assert.Contains(
+            $"least(greatest(coalesce(p_limit, {PostgresExperienceRecordStore.MaxSweepBatchSize}), "
+                + $"{PostgresExperienceRecordStore.MinSweepBatchSize}), {PostgresExperienceRecordStore.MaxSweepBatchSize})",
+            statements,
+            StringComparison.Ordinal);
+        Assert.Contains("LIMIT v_limit", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("LIMIT p_limit", statements, StringComparison.Ordinal);
+
+        // ...and it never destroys more than the database itself considers expired, however the host's
+        // clock is set. Every read of a grant already uses clock_timestamp() for the same reason.
+        Assert.Contains("least(p_now, pg_catalog.clock_timestamp())", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("g.expires_at <= p_now", statements, StringComparison.Ordinal);
+
+        // Step 8's guard checks the embedding table's shape, not only its existence: a divergent table
+        // would otherwise abort the whole erasure with a bare undefined_column.
+        Assert.Contains("a.attname = 'experience_id'", statements, StringComparison.Ordinal);
+        Assert.Contains("ERRCODE = 'undefined_column'", statements, StringComparison.Ordinal);
+
+        // The most severe thing this script could have shipped: two SECURITY DEFINER functions with
+        // PostgreSQL's default EXECUTE grant to PUBLIC, which would let any role that can connect erase
+        // any tenant's record. Revoked, and granted back only to the role applying the migration.
+        Assert.Equal(2, CountOccurrences(statements, "SECURITY DEFINER"));
+        Assert.Equal(2, CountOccurrences(statements, "FROM PUBLIC;"));
+        Assert.Equal(2, CountOccurrences(statements, "TO CURRENT_USER;"));
+        foreach (var purge in new[]
+        {
+            "agent_experience.purge_experience_record(\n    uuid, text, text, text, text, text, text, bigint, timestamptz)",
+            "agent_experience.purge_expired_grants(\n    text, text, text, text, text, text, timestamptz, integer)",
+        })
+        {
+            Assert.Contains($"REVOKE ALL ON FUNCTION {purge} FROM PUBLIC;", statements, StringComparison.Ordinal);
+            Assert.Contains($"GRANT EXECUTE ON FUNCTION {purge} TO CURRENT_USER;", statements, StringComparison.Ordinal);
+        }
+
+        // The documentation fixes this story's reviewers asked for, pinned so they cannot quietly go
+        // back to reassuring: the dead heap tuple still holds the erased text, the index builds are not
+        // free, and payload_version is on the retained list rather than an exception to it.
+        Assert.Contains("STILL CARRIES THE ERASED TEXT", script, StringComparison.Ordinal);
+        Assert.Contains("VACUUM (VERBOSE) agent_experience.experience_records;", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_live_by_age", script, StringComparison.Ordinal);
+        Assert.Contains("     payload_version.", script, StringComparison.Ordinal);
+        Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
+        Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
+
+        // 0010 is applied last, which the migrator relies on for ordinal name ordering.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    /// <summary>
+    /// The body of <c>reject_record_removal</c> alone, so "it takes no marker" is asserted about that
+    /// function rather than about a script that mentions the marker several times elsewhere.
+    /// </summary>
+    private static string RejectRecordRemovalBody(string statements)
+    {
+        const string Start = "CREATE OR REPLACE FUNCTION agent_experience.reject_record_removal()";
+        var from = statements.IndexOf(Start, StringComparison.Ordinal);
+        Assert.True(from >= 0, "0010 no longer defines agent_experience.reject_record_removal().");
+
+        var to = statements.IndexOf("$body$ LANGUAGE plpgsql;", from, StringComparison.Ordinal);
+        Assert.True(to > from, "agent_experience.reject_record_removal() has no terminated body.");
+        return statements[from..to];
     }
 
     private static int CountOccurrences(string text, string value)

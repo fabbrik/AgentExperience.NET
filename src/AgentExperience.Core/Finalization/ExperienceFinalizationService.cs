@@ -1,5 +1,8 @@
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
 using AgentExperience.Core.Confidence;
@@ -123,6 +126,9 @@ public sealed class ExperienceFinalizationService
     /// </summary>
     private static readonly Guid DerivationNamespace = new("0b6a8a3f-1c2d-4f5e-9a70-3d1c9f2b8e41");
 
+    /// <summary>The fixed namespace, the run, and the purpose tag: the whole of the pre-scope derivation.</summary>
+    private const int PrefixLength = 33;
+
     private const byte ExperienceIdTag = 1;
     private const byte InitialEventIdTag = 2;
     private const byte ReflectionIdTag = 3;
@@ -199,9 +205,57 @@ public sealed class ExperienceFinalizationService
     /// <summary>The budget this service gives the post-commit indexing hook.</summary>
     public TimeSpan IndexingTimeout { get; }
 
-    /// <summary>The <see cref="ExperienceRecord.ExperienceId"/> finalizing <paramref name="runId"/> issues, derived from the run so a retry re-derives the same ID.</summary>
+    /// <summary>
+    /// The <see cref="ExperienceRecord.ExperienceId"/> finalizing <paramref name="runId"/> in
+    /// <paramref name="scope"/> issues, derived from both so a retry re-derives the same ID and no other
+    /// scope can derive it at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the scope is mixed in.</b> An <see cref="ExperienceRecord.ExperienceId"/> is unique across
+    /// every scope -- it is the table's primary key -- while
+    /// <see cref="IExperienceRecordStore.CreateAsync"/>'s conflict is deliberately scope-blind, so that a
+    /// taken ID reveals nothing about the scope that holds it. Derived from the run alone, the ID a run
+    /// will finalize under was predictable by anyone who knew the run ID, in any scope: writing a record
+    /// under it first left the real run unable to finalize, permanently and undiagnosably. Mixing the
+    /// scope in means a squatter must already be inside the scope it is blocking, where it could simply
+    /// write the record anyway.
+    /// </para>
+    /// <para>
+    /// Every scope field takes part, each length-prefixed, so no two different scopes can hash to the
+    /// same input by rearranging where one field ends and the next begins -- ("a", "bc") and ("ab", "c")
+    /// are different scopes and derive different IDs.
+    /// </para>
+    /// <para>
+    /// <b>This replaces a one-argument <c>ExperienceIdFor(Guid)</c>, with no compatible overload.</b> The
+    /// library is pre-1.0 and unpublished, so the break costs nothing externally, and an
+    /// <c>[Obsolete]</c> overload could not have been kept honestly: it would have to derive the old,
+    /// squattable ID, which is the defect. A caller that had one updates it by passing the same
+    /// <see cref="Scope"/> it finalizes the run under. Nothing persisted needs migrating either, because
+    /// a record's ID is stored, never re-derived from a run.
+    /// </para>
+    /// <para>
+    /// <b>An erased record's run can never be finalized again.</b> The derivation is deterministic, so a
+    /// re-run of finalization for the same run in the same scope derives the same ID, collides with the
+    /// tombstone that erasure left under it, and stops -- permanently. That is deliberate: a record was
+    /// deleted, and re-finalizing the run it came from would recreate exactly what the deletion removed.
+    /// It is worth naming that this is the same *shape* of dead end that mixing the scope in just closed,
+    /// and worth naming what makes it different: the squat was reachable from any scope and
+    /// undiagnosable, because <see cref="IExperienceRecordStore.CreateAsync"/>'s conflict is deliberately
+    /// scope-blind. This one is reachable only by the scope that owns the record, and that scope can see
+    /// exactly why -- <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>
+    /// answers <see cref="ExperienceStoreOutcome.Deleted"/> for its own tombstone. A permanent dead end its owner
+    /// can diagnose is a different thing from a permanent dead end nobody can.
+    /// </para>
+    /// </remarks>
     /// <param name="runId">The captured run.</param>
-    public static Guid ExperienceIdFor(Guid runId) => Derive(runId, ExperienceIdTag);
+    /// <param name="scope">The scope the record will be created in.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="scope"/> is <see langword="null"/>.</exception>
+    public static Guid ExperienceIdFor(Guid runId, Scope scope)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        return Derive(runId, ExperienceIdTag, scope);
+    }
 
     /// <summary>The <see cref="LifecycleEvent.EventId"/> of the record's initial event, derived from the run so a retry cannot commit a second initial confirmation.</summary>
     /// <param name="runId">The captured run.</param>
@@ -456,7 +510,7 @@ public sealed class ExperienceFinalizationService
         // Stage 5 -- Create the record, as a Candidate. Attempts are copied unchanged: capture already
         // rejected anything unsafe, and finalization never sanitizes.
         var record = new ExperienceRecord(
-            ExperienceId: ExperienceIdFor(run.RunId),
+            ExperienceId: ExperienceIdFor(run.RunId, run.Scope),
             SourceRunId: run.RunId,
             Scope: run.Scope,
             TaskId: run.TaskId,
@@ -922,23 +976,79 @@ public sealed class ExperienceFinalizationService
     }
 
     /// <summary>
-    /// Derives a stable identifier from a run ID and a per-purpose tag: SHA-256 over a fixed
-    /// namespace, the run ID, and the tag, stamped with the RFC 9562 custom version (8) and variant.
-    /// Same run in, same identifiers out -- which is what makes replaying finalization safe.
+    /// Derives a stable identifier from a run ID, a per-purpose tag, and -- for a record ID -- the scope
+    /// the record will live in: SHA-256 over a fixed namespace, the run ID, the tag, and each scope field
+    /// length-prefixed, stamped with the RFC 9562 custom version (8) and variant. Same inputs in, same
+    /// identifier out, which is what makes replaying finalization safe.
+    /// <para>
+    /// The scope takes part for the <em>record</em> ID only. The reflection ID is carried inside the
+    /// record's own payload and is unique by construction once the record ID is. The initial event ID is
+    /// the one remaining run-derived identifier that is globally unique across scopes: a writer in
+    /// another scope that commits an event under it first makes this run's initial commit a
+    /// <see cref="ExperienceStoreOutcome.Conflict"/>, which is the same shape of dead end mixing the
+    /// scope into the record ID just closed. It is left as it is deliberately rather than by oversight --
+    /// the story that changed this derivation changed exactly what it set out to -- and is recorded as
+    /// open work rather than described here as solved.
+    /// </para>
     /// </summary>
-    private static Guid Derive(Guid runId, byte tag)
+    private static Guid Derive(Guid runId, byte tag, Scope? scope = null)
     {
-        Span<byte> input = stackalloc byte[33];
-        DerivationNamespace.TryWriteBytes(input[..16], bigEndian: true, out _);
-        runId.TryWriteBytes(input.Slice(16, 16), bigEndian: true, out _);
-        input[32] = tag;
-
         Span<byte> hash = stackalloc byte[32];
-        SHA256.HashData(input, hash);
+
+        if (scope is null)
+        {
+            Span<byte> input = stackalloc byte[PrefixLength];
+            WritePrefix(input, runId, tag);
+            SHA256.HashData(input, hash);
+        }
+        else
+        {
+            var input = new ArrayBufferWriter<byte>(PrefixLength + 96);
+            WritePrefix(input.GetSpan(PrefixLength), runId, tag);
+            input.Advance(PrefixLength);
+
+            AppendScopeField(input, scope.TenantId);
+            AppendScopeField(input, scope.ApplicationId);
+            AppendScopeField(input, scope.ProjectId);
+            AppendScopeField(input, scope.TeamId);
+            AppendScopeField(input, scope.AgentId);
+            AppendScopeField(input, scope.UserId);
+
+            SHA256.HashData(input.WrittenSpan, hash);
+        }
 
         var id = hash[..16];
         id[6] = (byte)((id[6] & 0x0F) | 0x80);
         id[8] = (byte)((id[8] & 0x3F) | 0x80);
         return new Guid(id, bigEndian: true);
+    }
+
+    private static void WritePrefix(Span<byte> input, Guid runId, byte tag)
+    {
+        DerivationNamespace.TryWriteBytes(input[..16], bigEndian: true, out _);
+        runId.TryWriteBytes(input.Slice(16, 16), bigEndian: true, out _);
+        input[32] = tag;
+    }
+
+    /// <summary>
+    /// One scope field, tagged present or absent and length-prefixed when present. An absent optional
+    /// field is deliberately not the empty string, and the length keeps two adjacent fields from being
+    /// re-divided: ("a", "bc") and ("ab", "c") are different scopes and must derive different IDs.
+    /// </summary>
+    private static void AppendScopeField(ArrayBufferWriter<byte> input, string? field)
+    {
+        if (field is null)
+        {
+            input.GetSpan(1)[0] = 0;
+            input.Advance(1);
+            return;
+        }
+
+        var byteCount = Encoding.UTF8.GetByteCount(field);
+        var span = input.GetSpan(5 + byteCount);
+        span[0] = 1;
+        BinaryPrimitives.WriteInt32BigEndian(span[1..5], byteCount);
+        Encoding.UTF8.GetBytes(field, span[5..]);
+        input.Advance(5 + byteCount);
     }
 }

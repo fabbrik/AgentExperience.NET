@@ -99,6 +99,41 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
 
+    /// <summary>
+    /// The script that adds <c>experience_records.deleted_at</c> and the one erasure path:
+    /// <c>agent_experience.purge_experience_record</c>, which removes every payload-bearing row that
+    /// names one record and leaves a payload-free tombstone behind, plus
+    /// <c>agent_experience.purge_expired_grants</c> for grants that have expired or that name a
+    /// tombstone.
+    /// </summary>
+    /// <remarks>
+    /// It replaces <c>0006</c>'s and <c>0007</c>'s trigger functions in place, so every
+    /// <c>ENABLE ALWAYS</c> binding survives and no table is unguarded for an instant. The guards keep
+    /// refusing <c>UPDATE</c> and <c>TRUNCATE</c> unconditionally and admit a <c>DELETE</c> only while
+    /// the purge function's transaction-scoped marker is set -- which is an auditability mechanism, not
+    /// a privilege boundary: a custom GUC is settable by any session, and the guards still do not bind a
+    /// role that can <c>ALTER TABLE</c>.
+    /// <para>
+    /// It also creates the only two triggers it adds, <c>experience_records_no_delete</c> and
+    /// <c>experience_records_no_truncate</c>, which refuse removing a record row from every session with
+    /// no marker exception at all -- the erasure never deletes that row, and a freed
+    /// <c>experience_id</c> would let a recreated record inherit the old content's sharing grants.
+    /// </para>
+    /// <para>
+    /// The two purge functions are <c>SECURITY DEFINER</c>, so the script revokes <c>EXECUTE</c> on them
+    /// from <c>PUBLIC</c> -- PostgreSQL's default would otherwise make erasure reachable by every role
+    /// that can connect -- and grants it to the migrating role. An application role that is not the
+    /// migrating role needs an explicit grant.
+    /// </para>
+    /// <para>
+    /// Its three indexes are built with plain <c>CREATE INDEX</c> inside the migrator's per-script
+    /// transaction; the script's header carries the <c>CONCURRENTLY</c> runbook for building them out of
+    /// band first, the confirm-then-<c>VALIDATE</c> step, and the note that the erased text survives in
+    /// dead heap tuples until <c>VACUUM</c>. See the script's own header and the package README.
+    /// </para>
+    /// </remarks>
+    public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -118,6 +153,7 @@ public static class PostgresExperienceRecordSchema
         ConfidenceEvidenceScriptName,
         ReuseFeedbackScriptName,
         GrantAccessLogScriptName,
+        DeleteAndExpireScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

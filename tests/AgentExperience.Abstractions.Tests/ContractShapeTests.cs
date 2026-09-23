@@ -491,7 +491,10 @@ public class ContractShapeTests
     public void Store_outcomes_results_and_exception_have_the_expected_shape()
     {
         Assert.Equal(
-            ["Created", "Found", "NotFound", "Denied", "Invalid", "Conflict", "Committed", "StaleRevision", "StatusMismatch", "ReplacementNotAllowed"],
+            [
+                "Created", "Found", "NotFound", "Denied", "Invalid", "Conflict", "Committed", "StaleRevision",
+                "StatusMismatch", "ReplacementNotAllowed", "Deleted",
+            ],
             Enum.GetNames<ExperienceStoreOutcome>());
 
         var error = new StoreValidationError("Scope.TenantId", "must not be empty or whitespace.");

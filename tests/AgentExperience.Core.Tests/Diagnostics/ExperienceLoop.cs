@@ -164,7 +164,7 @@ internal sealed class ExperienceLoop
             Now,
             cancellationToken);
 
-        var experienceId = ExperienceFinalizationService.ExperienceIdFor(runId);
+        var experienceId = ExperienceFinalizationService.ExperienceIdFor(runId, Scope);
 
         // Seeded at the revision the initial lifecycle event will leave the record at, with a summary
         // that carries the marker: the post-commit indexing hook then really embeds poisoned text.

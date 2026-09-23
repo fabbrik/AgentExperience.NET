@@ -192,10 +192,10 @@ instead of taking it on trust.
   come out that way is a property of this table, not a finding.
 
 LEARNED RECORDS -- produced by the learning phase, read back out of the store:
-    learn-settlement-batch-stalled     experience dbc59b8d-ddfe-8df0-8858-beb0df9f1484
+    learn-settlement-batch-stalled     experience 05cfee0f-f21f-853d-beaf-0f5c49c0e2f1
       ExperienceStatus.Validated, reuse confidence 0.667, 2 failed attempt(s) in the learning run
       working approach in the lesson: 'wait-for-lock' (read out of the run's final successful attempt, not from the task set)
-    learn-settlement-gateway-shedding  experience 80eeab78-7f83-8d3c-a6c8-e2577f833e34
+    learn-settlement-gateway-shedding  experience 3308130e-1e7a-8c8d-a04b-ae736bfb0828
       ExperienceStatus.Validated, reuse confidence 0.667, 3 failed attempt(s) in the learning run
       working approach in the lesson: 'escalate-to-oncall' (read out of the run's final successful attempt, not from the task set)
 

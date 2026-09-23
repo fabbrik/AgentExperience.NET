@@ -155,7 +155,7 @@ public sealed class PostgresFinalizationTests
         var records = await _store.QueryAsync(auth, new ExperienceRecordQuery(scope), CancellationToken.None);
         Assert.Empty(records.Records);
 
-        var history = await _store.GetFirstHistoryPageAsync(auth, scope, ExperienceFinalizationService.ExperienceIdFor(runId), CancellationToken.None);
+        var history = await _store.GetFirstHistoryPageAsync(auth, scope, ExperienceFinalizationService.ExperienceIdFor(runId, scope), CancellationToken.None);
         Assert.Equal(ExperienceStoreOutcome.NotFound, history.Outcome);
     }
 
@@ -233,7 +233,7 @@ public sealed class PostgresFinalizationTests
         Assert.False(interrupted.IsDurable);
 
         // What is stored is a Candidate at revision 0 with no history -- never a reusable record.
-        var experienceId = ExperienceFinalizationService.ExperienceIdFor(runId);
+        var experienceId = ExperienceFinalizationService.ExperienceIdFor(runId, scope);
         var unconfirmed = (await _store.GetAsync(auth, scope, experienceId, CancellationToken.None)).Record!;
         Assert.Equal(ExperienceStatus.Candidate, unconfirmed.Status);
         Assert.Equal(0, unconfirmed.Revision);

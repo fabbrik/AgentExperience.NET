@@ -49,7 +49,12 @@ public interface IExperienceRecordStore
     /// <param name="scope">The exact request scope to read within.</param>
     /// <param name="experienceId">The record to read. Must not be <see cref="Guid.Empty"/>.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
-    /// <returns><see cref="ExperienceStoreOutcome.Found"/>, <see cref="ExperienceStoreOutcome.NotFound"/>, <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.</returns>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Found"/>, <see cref="ExperienceStoreOutcome.NotFound"/>,
+    /// <see cref="ExperienceStoreOutcome.Deleted"/> (from an implementation that supports erasure, when the
+    /// record was erased and the request scope is the one that owned it),
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
     Task<ExperienceRecordGetResult> GetAsync(
         AuthorizationContext authorization,
         Scope scope,
@@ -165,8 +170,9 @@ public interface IExperienceRecordStore
     /// <see cref="ExperienceStoreOutcome.StatusMismatch"/>,
     /// <see cref="ExperienceStoreOutcome.ReplacementNotAllowed"/>,
     /// <see cref="ExperienceStoreOutcome.NotFound"/> (missing, or in another scope),
-    /// <see cref="ExperienceStoreOutcome.Conflict"/>, <see cref="ExperienceStoreOutcome.Invalid"/>, or
-    /// <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// <see cref="ExperienceStoreOutcome.Deleted"/> (the record was erased; a tombstone is terminal and nothing
+    /// is appended against one), <see cref="ExperienceStoreOutcome.Conflict"/>,
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.
     /// </returns>
     Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
         AuthorizationContext authorization,
@@ -191,7 +197,12 @@ public interface IExperienceRecordStore
     /// <param name="authorization">What the host has established the caller may do.</param>
     /// <param name="query">The record whose history to read, the scope to read it within, the page bound, and the optional cursor.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
-    /// <returns><see cref="ExperienceStoreOutcome.Found"/> (possibly with no events), <see cref="ExperienceStoreOutcome.NotFound"/>, <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.</returns>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Found"/> (possibly with no events),
+    /// <see cref="ExperienceStoreOutcome.NotFound"/>, <see cref="ExperienceStoreOutcome.Deleted"/> (an erased
+    /// record has no history left to page), <see cref="ExperienceStoreOutcome.Invalid"/>, or
+    /// <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
     Task<ExperienceRecordHistoryResult> GetHistoryAsync(
         AuthorizationContext authorization,
         ExperienceRecordHistoryQuery query,
@@ -342,6 +353,19 @@ public enum ExperienceStoreOutcome
     /// when it had one, so the caller can tell "gone or not mine" from "no longer eligible".
     /// </summary>
     ReplacementNotAllowed,
+
+    /// <summary>
+    /// The record named by this operation has been erased: its payload and every trace that named it
+    /// are gone, and a payload-free tombstone is all that remains under its ID. Nothing was written.
+    /// <para>
+    /// It is distinct from <see cref="NotFound"/> so a host can tell "erased" from "never existed"
+    /// <em>within its own scope</em>. Across scopes the two collapse: a record in another scope is
+    /// <see cref="NotFound"/> whether or not it was ever erased, so this outcome reveals nothing the
+    /// caller did not already have authority over. A delete that erased a record and a delete naming
+    /// a record already erased both report it -- deleting twice is a success that touches nothing.
+    /// </para>
+    /// </summary>
+    Deleted,
 }
 
 /// <summary>

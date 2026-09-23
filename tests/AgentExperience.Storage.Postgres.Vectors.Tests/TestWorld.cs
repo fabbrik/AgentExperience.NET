@@ -170,9 +170,43 @@ internal sealed class TestWorld
     public Task BumpRevisionAsync(Guid experienceId, long revision) =>
         ExecuteAsync("UPDATE agent_experience.experience_records SET revision = @revision WHERE experience_id = @id", experienceId, ("revision", revision));
 
-    /// <summary>Deletes a record, to stage a write that lands after the record is gone.</summary>
-    public Task DeleteRecordAsync(Guid experienceId) =>
-        ExecuteAsync("DELETE FROM agent_experience.experience_records WHERE experience_id = @id", experienceId);
+    /// <summary>
+    /// Makes a record row vanish outright, to stage a write that lands after the record is gone.
+    /// <para>
+    /// Since <c>0010</c> this is not reachable by any supported path: the erasure leaves a tombstone
+    /// rather than removing the row, and <c>experience_records_no_delete</c> refuses a bare
+    /// <c>DELETE</c> from every session, marker or not, precisely because a freed <c>experience_id</c>
+    /// could be re-created with the old grants still applying to the new content. The table's owner can
+    /// still disable the guard, which is the escape hatch every guard in this schema has, and that is
+    /// what this helper does -- deliberately and visibly, so the tests that stage a vanished row are
+    /// staging something the schema now says should not happen, rather than something it permits.
+    /// </para>
+    /// </summary>
+    public async Task DeleteRecordAsync(Guid experienceId)
+    {
+        await using var connection = await DataSource.OpenConnectionAsync();
+        await using (var disable = new NpgsqlCommand(
+            "ALTER TABLE agent_experience.experience_records DISABLE TRIGGER experience_records_no_delete",
+            connection))
+        {
+            await disable.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await using var delete = new NpgsqlCommand(
+                "DELETE FROM agent_experience.experience_records WHERE experience_id = @id", connection);
+            delete.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+            await delete.ExecuteNonQueryAsync();
+        }
+        finally
+        {
+            await using var enable = new NpgsqlCommand(
+                "ALTER TABLE agent_experience.experience_records ENABLE ALWAYS TRIGGER experience_records_no_delete",
+                connection);
+            await enable.ExecuteNonQueryAsync();
+        }
+    }
 
     /// <summary>Rewrites the reflection's lesson in place, which is a content change the re-index has to notice.</summary>
     public Task RewriteLessonAsync(Guid experienceId, string lesson) =>

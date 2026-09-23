@@ -192,10 +192,10 @@ instead of taking it on trust.
   come out that way is a property of this table, not a finding.
 
 LEARNED RECORDS -- produced by the learning phase, read back out of the store:
-    learn-settlement-batch-connector-flap experience e6796bc8-8d90-8e66-91fd-0ef572f9b922
+    learn-settlement-batch-connector-flap experience 5bdcb457-859f-8c23-b438-9c338d01a0b1
       ExperienceStatus.Validated, reuse confidence 0.667, 0 failed attempt(s) in the learning run
       working approach in the lesson: 'retry-immediately' (read out of the run's final successful attempt, not from the task set)
-    learn-settlement-gateway-projection-drift experience c91e18b8-7ac3-87dd-9e16-14d3661f4396
+    learn-settlement-gateway-projection-drift experience 148e9569-f6c8-8e02-b778-b8f3bd4325be
       ExperienceStatus.Validated, reuse confidence 0.667, 1 failed attempt(s) in the learning run
       working approach in the lesson: 'rebuild-index' (read out of the run's final successful attempt, not from the task set)
 

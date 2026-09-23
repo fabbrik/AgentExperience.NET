@@ -31,7 +31,7 @@ clock:  a stepping fixture; identifiers: a counter. Two runs print the same byte
 [4] finalize The verified run is reflected on and persisted as one Experience Record.
              -> FinalizationOutcome.Validated
              -> IsDurable=true
-                experience 219b3e10-e601-833a-bd12-e137df161b37, ExperienceStatus.Validated, revision 1 (read back from the store)
+                experience 0daf4d74-d8a8-8597-a512-ae7a6c3f1068, ExperienceStatus.Validated, revision 1 (read back from the store)
                 reuse confidence 0.667, 2 attempts kept: #0 failed, #1 succeeded
                 lesson: Task 'refund-ticket-triage' verified: required checks [refund-check] passed (evidence: 44444444-4444-4444-8444-444444444444).
                 failed approaches recorded: 1; successful: 1
@@ -40,12 +40,12 @@ clock:  a stepping fixture; identifiers: a counter. Two runs print the same byte
              -> RetrievalOutcome.Completed
              -> candidates ranked: 1
                 eligible statuses: Validated, Reinforced; confidence floor 0.50
-                top candidate: experience 219b3e10-e601-833a-bd12-e137df161b37, ExperienceStatus.Validated
+                top candidate: experience 0daf4d74-d8a8-8597-a512-ae7a6c3f1068, ExperienceStatus.Validated
                 text-only retrieval: no vector channel is configured, which is a supported deployment
 
 [6] inject   The record is injected into run B as a labelled Historical Reference.
              -> InjectionOutcome.Injected
-             -> injected: 219b3e10-e601-833a-bd12-e137df161b37
+             -> injected: 0daf4d74-d8a8-8597-a512-ae7a6c3f1068
                 byte budget used: 2059 of 16384; record limit 8
                 omitted: 0; excluded before ranking: 0; truncated search: false
                 read out of the 2059 bytes run B's model was handed: lesson present, source named, confidence named, applicability named, raw captured result absent
@@ -55,7 +55,7 @@ clock:  a stepping fixture; identifiers: a counter. Two runs print the same byte
              -> ExperienceReuseFeedbackOutcome.Recorded
              -> Outcome: Recorded | Benefit: Unknown | nothing moved
                 feedback 55555555-5555-4555-8555-555555555555 against run ae000000-0000-4000-8000-000000000007
-                ReuseAttributionSource.None; experience 219b3e10-e601-833a-bd12-e137df161b37: ExperienceExposureDisposition.ExposureOnly, counted=false
+                ReuseAttributionSource.None; experience 0daf4d74-d8a8-8597-a512-ae7a6c3f1068: ExperienceExposureDisposition.ExposureOnly, counted=false
                 exposure is not attribution: the run saw the record and the run ended, and nothing in those two facts
                 attributes one to the other. Moving a confidence score needs a human assessment or a comparative
                 evaluation, and the sample performed neither, so it submits neither.
