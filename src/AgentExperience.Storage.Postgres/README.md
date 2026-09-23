@@ -238,11 +238,13 @@ the transaction opens, exactly as for the store's other operations, and the scop
   access. Treat this as a guard against a bug, a careless script, a compromised application path, or a replication
   apply — not as tamper-proofing against an administrator. A deployment that needs more should ship the log off-box,
   or own these tables with a role the application does not have.
-- **Purging, until story 4.5.** Nothing can delete an event row now, and the logs carry free-text `reason` and
-  `producer` a host may have filled with personal data. The owner purges explicitly — `DISABLE TRIGGER`, a narrow
-  `DELETE`, `ENABLE ALWAYS TRIGGER`, all in one transaction so the guard is never off across a failure — and
-  reconciles `experience_records` afterwards, because deleting an event does not move the projection. `0006`'s
-  header carries the exact statements.
+- **Purging is the one exception, and it never disables anything.** The logs carry free-text `reason` and
+  `producer` a host may have filled with personal data, so `0010` replaced `0006`'s manual
+  `DISABLE TRIGGER` runbook with a single purge function whose transaction-scoped marker the guards themselves
+  recognise: `UPDATE` and `TRUNCATE` stay refused in every session, `DELETE` is admitted only inside that one
+  function, and no other connection's window is widened for an instant. What that does and does not buy is stated
+  in full under [Deleting and expiring data](#deleting-and-expiring-data) — it is a single code path, not a
+  privilege boundary.
 
 ## Confidence evidence
 
@@ -608,6 +610,271 @@ registers its own `IExperienceRecordStore`, `IExperienceCandidateSource`, or `IE
 calling these extensions keeps its own — and takes on the obligation to honour a configured
 `ExperienceGrantAuditing` itself. Registering the access log does not make somebody else's store audit.
 
+## Deleting and expiring data
+
+Revocation stops reads. **Deletion removes payload.** `DeleteAsync` is the only destructive operation this library
+has, and every choice in it is resolved towards "a wrong delete is refused" rather than "a right delete is
+convenient".
+
+```csharp
+var store = new PostgresExperienceRecordStore(dataSource);
+
+// Erase one record, in exactly this scope.
+var deleted = await store.DeleteAsync(hostAuthorization, scope, experienceId, cancellationToken);
+// deleted.Outcome is Deleted, NotFound, Invalid, or Denied. Deleting again is Deleted, and writes nothing.
+
+// Or erase it only while it is still at the revision you read.
+var guarded = await store.DeleteAsync(hostAuthorization, scope, experienceId, expectedRevision: 4, cancellationToken);
+// StaleRevision, carrying the record's current revision, when it has moved on.
+```
+
+**Deletion is payload erasure plus a tombstone, never a row vanishing.** The `experience_records` row survives with
+its payload emptied; everything else that named the record is removed. That is what makes the ID unusable
+afterwards rather than free to be written again.
+
+### What is retained after a delete, exhaustively
+
+| Column | Why it stays |
+| --- | --- |
+| `experience_id` | The tombstone itself: an opaque ID nothing can re-create a record under |
+| `tenant_id`, `application_id`, `project_id`, `team_id`, `agent_id`, `user_id` | The scope, so the tombstone stays answerable to — and only to — the scope that owned it |
+| `revision` | Erasure advances it once, like any other change, so a stale write still loses |
+| `deleted_at` | When it was erased |
+| `status` | The fixed literal `'Deleted'`. No `ExperienceStatus` member names it, and no read decodes it |
+| `task_id` | The fixed literal `'(deleted)'`. The column is `NOT NULL` with a non-blank `CHECK`, so it cannot be emptied |
+| `payload_version` | Unchanged. It describes the (now empty) payload envelope's shape and says nothing about the record — but it *does* survive, so it belongs on a list that calls itself exhaustive |
+
+**Nothing else.** `payload` becomes `'{}'`, `source_run_id` becomes the empty UUID, `reuse_confidence`,
+`supporting_validations` and `contradictions` become `0`, and `created_at` and `updated_at` are set to `deleted_at`
+— a tombstone's only timestamp is the moment it was erased, so it cannot say when the work happened.
+`search_vector` is `GENERATED ALWAYS` from `task_id` and two payload fields, so it regenerates from the
+placeholder alone and the record's searchable text is gone without any separate index maintenance.
+
+That last sentence is a property of `purge_experience_record` and of every tombstone this library made — not
+something the schema can prove about a row somebody else inserted. The tombstone-shape `CHECK` constrains an
+existing row's *shape*; a row INSERTed directly as a tombstone can carry any `created_at` it likes, because there
+is no `UPDATE` for the projection guard to refuse. The same goes for its revision.
+
+### What one delete removes
+
+One transaction, this order, all inside `0010`'s `agent_experience.purge_experience_record`:
+
+| # | Table | Why here |
+| --- | --- | --- |
+| 1 | `experience_records` | `SELECT … FOR UPDATE` with the scope and revision guards. Authorization, and the row pinned for the rest |
+| 2 | `confidence_evidence` | **Before the tombstone.** It has no scope columns and no foreign key, so the record row's scope is the only thing that makes it reachable by scope at all |
+| 3 | `reuse_feedback_exposures` | Children before parents: the foreign key to `reuse_feedback` is `NO ACTION` |
+| 4 | `reuse_feedback` | Only the submissions step 3 emptied. One that also named other records keeps its row and loses only this exposure |
+| 5 | `experience_grant_events` | Before the grants: the audited-delete guard refuses a grant that still has events |
+| 6 | `experience_grants` | Purged with the record, because `experience_grants` has no foreign key to it and a re-appearing ID would otherwise re-apply them |
+| 7 | `lifecycle_events` | The record's own history |
+| 8 | `experience_embeddings` | Guarded by `to_regclass`: the table belongs to the vectors package, and a text-only deployment simply skips the step |
+| 9 | `experience_records` | The tombstone, last, so every scope-dependent sweep above still had its scope |
+
+**`experience_grant_access` rows are deliberately kept.** They name a grant and a principal, carry no record
+payload, and are the answer to "who read this before it was deleted" — which is exactly the question a deletion
+makes urgent.
+
+**Authorization is decided once, at step 1, and every step below it follows the record's ID rather than the
+caller's scope.** That is not an oversight, and it is true of *all* of steps 2–8, not only the ones without scope
+columns:
+
+- `confidence_evidence` and `reuse_feedback_exposures` carry no scope columns at all (by design — see `0007` and
+  `0008`), so "every row that named this record" is the only thing an erasure could mean for them.
+- `experience_grants`, `experience_grant_events` and `experience_embeddings` *do* carry the six owner-scope
+  columns, copied from the record row when they were written, and are still matched on the record's ID alone.
+  That is a choice. In practice the predicates coincide, because every grant and every vector this library writes
+  copies its scope from the record; a row that disagrees was written outside this library, over an ID whose
+  content is now gone, and is exactly the row nothing else would ever collect.
+
+One consequence is worth stating plainly: if another scope recorded feedback naming this record's ID — which
+`0008` deliberately allows, because a run that saw an ID resolving to nothing must still be recordable — that
+exposure row goes with the erasure, and its submission goes too if this record was the only one it named. Erasing
+a record's traces is what was asked for; it just is not confined to the scope that asked.
+
+**Two purges sharing one feedback submission cannot orphan it.** A submission may name several records; erasing
+two of them at once used to leave the parent row behind with zero exposures, because each purge's "are there any
+exposures left?" still saw the other's uncommitted delete. Step 3 now locks the submissions `FOR UPDATE`, in
+`feedback_id` order, *before* deleting any exposure, so the second purge asks its question after the first has
+committed. That row carries a run ID, a scope, an outcome, a measure and — for a human assessment — a reviewer
+identity and a free-text rationale, so an orphan is not a tidiness problem.
+
+### A tombstone is terminal
+
+| A late… | Answer | Enforced by |
+| --- | --- | --- |
+| `CreateAsync` under the erased ID | `Conflict`, as for any taken ID, revealing nothing about which scope holds it | **Schema** — the primary key collides with the surviving tombstone row |
+| `CommitLifecycleEventAsync` | `Deleted`. Nothing is appended | **Both** — the adapter's predicate, and `0010`'s projection guard, which refuses any `UPDATE` of a tombstone from the database's own side |
+| confidence submission | `Deleted`, with no ledger row: an erased record's ID must not go back into a table the erasure emptied | Adapter |
+| reuse-feedback write naming it | `Invalid`, naming the exposure by position. Only tombstones in the submission's own scope are visible to that check | Adapter |
+| embedding write | `Missing`, never `Stale`: no revision of an erased record can ever be indexed | Adapter |
+| grant over it | `NotFound`: there is nothing left to share | Adapter |
+| any `UPDATE` of the tombstone row, marker or not | Refused, `42501` | **Schema** |
+| any `DELETE` or `TRUNCATE` of the record row, marker or not | Refused, `42501` | **Schema** |
+| `GetAsync` / `GetHistoryAsync` in the owning scope | `Deleted`, with no record and no events | Adapter |
+| `QueryAsync`, text search, vector search | The tombstone is simply absent | Adapter |
+| anything at all from another scope | `NotFound`, exactly as for an ID that never existed | Adapter |
+
+**The distinction in that last column matters, so read it rather than the summary.** Four of the write refusals
+are *adapter*-enforced: they are predicates this library puts in its own statements, and raw SQL from another
+tool can still `INSERT` a lifecycle event, a confidence-evidence row, an exposure, an embedding or a grant
+against a tombstoned ID. None of those tables has a foreign key to `experience_records`, deliberately (`0002`,
+`0005`, `0007`, `0008`), and adding one now would rewrite four journaled tables' shapes for this one rule. What
+*is* schema-enforced is the part that cannot be worked around: the ID can never be re-created, the tombstone can
+never be moved, and the record row can never be removed — which together mean an ID, once spent, is spent.
+
+**Those adapter predicates are locked, not merely read.** Every write that gates on "this record is not a
+tombstone" takes `FOR KEY SHARE` on the record row in the same statement, so a writer that started before an
+erasure committed is parked against the purge's own `FOR UPDATE` and re-checks when it is released, instead of
+deciding against a snapshot the purge has already invalidated. Without that, a write issued a moment after a
+`DeleteAsync` returned `Deleted` could still land: a stored vector derived from the erased summary and lesson, a
+live 90-day grant over a spent ID, or a reviewer's identity and free-text rationale about the erased record,
+permanently, in an append-only table. `FOR KEY SHARE` rather than `FOR SHARE` on purpose — it is the weakest mode
+that still conflicts with the purge, and it does not block an ordinary lifecycle commit.
+
+### Retention
+
+There is **no default retention and no timer**. Nothing expires unless a host asks for it, and this library ships no
+scheduler, no background service and no hosted service: when a sweep runs is the host's decision, because only the
+host knows its obligations.
+
+```csharp
+// Erase this scope's records older than 90 days, at most 200 at a time.
+var sweep = await store.SweepExpiredAsync(hostAuthorization, scope, TimeSpan.FromDays(90), batchSize: 200, cancellationToken);
+// sweep.DeletedCount, and sweep.MoreRemain when another pass would find more.
+
+// Expired sharing grants, with their audit events. Administrator authority, like every other grant mutation.
+var grants = new PostgresExperienceGrantStore(dataSource);
+var purged = await grants.PurgeExpiredAsync(hostAuthorization, administration, scope, batchSize: 200, cancellationToken);
+```
+
+Age is measured from `CreatedAt` on the store's own `TimeProvider`, never from `UpdatedAt`: age is how long this
+library has held the data, and a record that is read, ranked, or re-scored does not thereby become younger. Each
+record in a batch is erased in its own transaction, so an interrupted sweep leaves every record it reached wholly
+erased and every record it did not reach wholly untouched. A non-positive age is `Invalid` — there is no retention
+age that means "delete everything" — and so is a batch outside 1…500.
+
+#### A sweep reaches one scope, exactly, and says nothing about the scopes beneath it
+
+This is the one operation here whose failure mode is **a missed retention obligation reported as success**, so it
+gets its own heading rather than a clause.
+
+`SweepExpiredAsync` matches `scope` field for field, exactly as every other operation in this library matches it.
+A sweep of `new Scope(tenant, app, project)` — team, agent and user all null — reaches only the records stored
+with all three of those fields null. Every record the same tenant holds under a team, an agent or a user is a
+**different scope**: it is not swept, it is not counted, and the call comes back
+`Outcome: Deleted, DeletedCount: 0, MoreRemain: false` — which reads exactly like "there was nothing to delete".
+
+```csharp
+// WRONG, if this tenant ever wrote records under a team, an agent, or a user.
+await store.SweepExpiredAsync(auth, new Scope(tenant, app, project), TimeSpan.FromDays(90), 200, ct);
+
+// Right: the host enumerates every leaf scope it has written under, and sweeps each one.
+foreach (var leaf in hostOwnedScopes)   // only the host knows which of these exist
+{
+    var sweep = await store.SweepExpiredAsync(auth, leaf, TimeSpan.FromDays(90), 200, ct);
+    while (sweep.MoreRemain) { sweep = await store.SweepExpiredAsync(auth, leaf, TimeSpan.FromDays(90), 200, ct); }
+}
+```
+
+The library cannot enumerate those scopes for you. A scope is the host's own partitioning; nothing here knows
+which team, agent or user values exist, and inventing a prefix match would silently widen a *destructive*
+operation, which is the one direction this library never widens anything. A host with a tenant-wide retention
+policy has to keep its own list of the leaf scopes it writes under, and a host that cannot must not read
+`MoreRemain: false` as "this tenant is clean".
+
+#### Stopping early
+
+Erasure is the one thing this library cannot undo, so a sweep that stops half-way never throws away how much it
+destroyed:
+
+- **Cancellation** between records *returns* the partial result, with `Interrupted: true` and `MoreRemain: true`.
+  Cancelling a sweep is a normal way to run one, and a host that asked for it still needs the count for its own
+  compliance log.
+- **A storage failure** part-way throws `ExperienceRetentionSweepInterruptedException`, which carries the same
+  partial result on `.Partial` and is an `ExperienceStoreException` like every other storage failure here — so a
+  host that already catches those keeps working and does not have to learn a new type to stay correct.
+
+`PurgeExpiredAsync` collects a grant once its stored `expires_at` has passed (and any grant naming a record that is
+already a tombstone). A revoked grant that has **not** expired is left alone: its revocation is a fact about a
+window that is still open, and it is collected when that window closes. The cutoff is
+`LEAST(hostClock, clock_timestamp())`: everywhere a grant is *read*, this schema deliberately uses the database's
+clock so a host whose clock is wrong cannot widen a permission, and this is the one grant operation that
+*destroys* rows — a host skewed a day forward must not be able to erase grants the database still considers live.
+The batch bound is applied inside the function too, not only by the validator, because `LIMIT NULL` means "no
+limit" in PostgreSQL and a hand-caller passing `NULL` would otherwise get an unbounded destructive sweep.
+
+### The honesty statement, and the limits
+
+Erasure needs `DELETE` on five append-only tables. `0006` documented a manual runbook for that —
+`ALTER TABLE … DISABLE TRIGGER`, delete, re-enable — and `0010` replaces it rather than automating it: the guards
+themselves recognise one transaction-scoped marker, `SET LOCAL agent_experience.purge_authorized = 'on'`, set only
+inside the purge function, and they go on refusing `UPDATE` and `TRUNCATE` unconditionally in every session,
+including the purging one. Nothing is ever disabled, and no other connection's window is widened for an instant.
+
+**This is an auditability mechanism, not a privilege boundary, and it must not be read as one.**
+
+- A custom GUC is settable by any session. Nothing stops a connection that already has `DELETE` on these tables
+  from issuing the same `SET LOCAL` itself and then deleting from them directly. The marker decides whether a
+  *permitted* delete is refused; it is not what decides permission.
+- The guards still do not bind a role that can `ALTER TABLE` — which is the application role, because it created
+  the tables. An owner can disable or drop a trigger and write what it likes.
+
+What the purge path actually buys is narrower and real: erasure has exactly **one** code path, inside **one**
+transaction, with the guard never switched off, never left off across a failure, and never visible to another
+session. It is a guard against a bug, a careless script, or a compromised application path — not against an
+administrator who has decided to tamper. A deployment that needs more must own these tables with a role the
+application does not have.
+
+**There is exactly one real privilege boundary here, and `0010` creates it.** Both purge functions are
+`SECURITY DEFINER`, and PostgreSQL grants `EXECUTE` on a new function to `PUBLIC` by default — which would make
+them a universally callable erasure primitive, reachable by any role that can connect, over any tenant whose
+`experience_id` and scope it can `SELECT`. `0010` therefore revokes `EXECUTE` from `PUBLIC` and grants it back
+only to the role that applied the migration, which owns these tables and is the role the application runs as. A
+deployment whose application role is *not* the migrating role must grant it once, explicitly, and to nothing
+else:
+
+```sql
+GRANT EXECUTE ON FUNCTION agent_experience.purge_experience_record(
+    uuid, text, text, text, text, text, text, bigint, timestamptz) TO <application_role>;
+GRANT EXECUTE ON FUNCTION agent_experience.purge_expired_grants(
+    text, text, text, text, text, text, timestamptz, integer) TO <application_role>;
+```
+
+**A record whose run was erased can never be finalized again.** `ExperienceFinalizationService.ExperienceIdFor`
+derives a record's ID from the run *and the scope*, deterministically, so replaying finalization for that run
+derives the same ID, collides with the tombstone, and stops — permanently. That is the intended terminal
+semantics: re-finalizing would recreate exactly what the deletion removed. It is the same *shape* of permanent
+dead end that mixing the scope into the derivation just closed, and the difference is what matters — the old one
+was reachable from any scope and undiagnosable, because `CreateAsync`'s conflict is deliberately scope-blind,
+while this one is reachable only by the scope that owns the record and that scope can see exactly why:
+`GetAsync` answers `Deleted` for its own tombstone. (That change removed the one-argument
+`ExperienceIdFor(Guid)` with no compatible overload. The library is pre-1.0 and unpublished, and an `[Obsolete]`
+overload could not have been kept honestly — it would have to go on deriving the squattable ID. Callers pass the
+same `Scope` they finalize under; nothing persisted needs migrating, because a record's ID is stored, never
+re-derived.)
+
+**What deletion does not reach**, stated rather than buried:
+
+- **Backups, replicas, WAL, and logical-replication streams.** Host-owned, and out of reach of this schema. A
+  deployment with a retention obligation has to reach them itself.
+- **Exported telemetry.** Spans and metrics this library emitted carry record IDs; erasing a record does not
+  retract them.
+- **External artifacts a record merely named.** Tickets, logs, commits: the library never held them.
+- **The dead heap tuple — until `VACUUM`, the erased text is still in this database.** The tombstone is written
+  with an `UPDATE`, and an `UPDATE` in PostgreSQL writes a new row version and leaves the old one in the heap.
+  Until `VACUUM` reclaims it, the previous version of the record row still carries the task summary, the lesson,
+  the attempt results and the task ID, readable by anyone who can inspect the page — `pageinspect`, a file-level
+  copy, a base backup taken in that window. The same is true of every row the erasure deleted. Autovacuum will
+  get there on its own schedule, which is not a schedule anybody promised; an obligation with a deadline has to
+  run `VACUUM agent_experience.experience_records` (and the other swept tables) itself. `VACUUM` does not
+  overwrite the freed bytes either, so defeating forensic recovery of freed pages needs `VACUUM FULL` — which
+  rewrites the table under an `ACCESS EXCLUSIVE` lock — or a storage-level guarantee.
+- **Dead index entries.** Entries in the GIN index over `search_vector`, and in the out-of-band HNSW index over
+  `experience_embeddings`, persist until `VACUUM` reclaims them. *These* really do point at row versions that no
+  longer carry the erased text, so they cannot return it — the distinction from the bullet above is exact, and
+  was worth stating both ways round.
+
 ## Schema
 
 The schema lives in the embedded scripts under `Migrations/`.
@@ -831,8 +1098,52 @@ its triggers as to `0006`'s: read them above before relying on them.
   The ceiling above is relative to `issued_at`, so without it a bypassing writer could store an effectively
   permanent grant simply by dating it a century forward; a `CHECK` cannot say this, because it may not call
   `now()`.
-- Retention is deferred to roadmap story 4.5 with the other ledgers'. This is the one most likely to grow without
-  bound in a deployment that shares heavily, so plan it before enabling auditing at scale.
+- Retention: this ledger is deliberately **not** swept by a record erasure, because who read a record before it was
+  deleted outlives the record. It is the table most likely to grow without bound in a deployment that shares
+  heavily, so plan its retention — which is the host's, on host-owned terms — before enabling auditing at scale.
+
+`0010_delete_and_expire.sql` adds the one erasure path (see [Deleting and expiring data](#deleting-and-expiring-data)):
+
+- `experience_records.deleted_at`, nullable, so no existing row is rewritten, plus
+  `experience_records_tombstone_shape` — added `ALTER TABLE … NOT VALID` like every other `CHECK` on an existing
+  table — which makes "erased" one shape rather than a flag a writer could set over a payload that is still there.
+- `agent_experience.purge_experience_record`, a `SECURITY DEFINER` function holding the whole erasure: the scope
+  and revision guards, the seven tables it sweeps in the order above, and the tombstone.
+  `agent_experience.purge_expired_grants` does the same for expired grants and their events.
+- `agent_experience.purge_authorized()`, which reads the transaction-scoped marker the guards recognise, and
+  replacements for `0006`'s `reject_event_log_mutation` and `reject_audited_grant_delete` and `0007`'s
+  `enforce_record_projection`. They are replaced with `CREATE OR REPLACE`, so every `ENABLE ALWAYS` binding
+  survives and no table is unguarded for an instant; nothing is dropped, disabled, or recreated. `UPDATE` and
+  `TRUNCATE` stay refused unconditionally, and `DELETE` is admitted only under the marker and only on the five
+  tables an erasure sweeps — `experience_grant_access` is deliberately not one of them.
+- `agent_experience.reject_record_removal`, and the only two triggers this script creates:
+  `experience_records_no_delete` and `experience_records_no_truncate`, both `ENABLE ALWAYS`. A bare
+  `DELETE FROM agent_experience.experience_records` used to succeed from any session with `DELETE` on the table —
+  orphaning the whole audit trail, none of which has a foreign key back to the record, and **freeing the ID**, so
+  that a record re-created under it inherits every grant issued over the old content. It is refused now with no
+  marker clause and no exception at all, because the erasure never deletes that row: it updates it into a
+  tombstone, which is the point.
+- The projection guard gains two rules: a tombstone can never be updated again, by anyone, and `deleted_at` can be
+  set only inside the purge. The marked exception is shape-checked rather than merely marker-checked — a live row,
+  to an empty-payload tombstone, in its own scope, with its own `payload_version` and a `created_at` equal to the
+  deletion instant, one revision forward — so a marked transaction may make that one transition and no other. The
+  scope columns are part of that check for a concrete reason: without them one marked `UPDATE` could tombstone a
+  record *into another tenant's scope*, leaving the owning scope seeing `NotFound` for its own erased record.
+- `ix_experience_records_live_by_age`, partial on `deleted_at IS NULL`, which is the retention sweep's whole
+  predicate; plus the `confidence_evidence (experience_id)` and `reuse_feedback_exposures (experience_id)` indexes
+  `0007` and `0008` each deferred to this story, because this is the query that justifies them. **All three are
+  built with plain `CREATE INDEX` inside the migrator's per-script transaction**, which takes a `SHARE` lock and
+  blocks writes to those tables for the duration — and one of them is over `experience_records`, the table this
+  library writes most, so on an established database this is a larger write outage than `0007`'s, `0008`'s or
+  `0009`'s. `CREATE INDEX CONCURRENTLY` cannot run in a transaction block at all, so it cannot simply be swapped;
+  the script's header carries the out-of-band runbook (add the column, build all three `CONCURRENTLY`, then
+  migrate, at which point `IF NOT EXISTS` makes the script's own statements no-ops), exactly as `0007`, `0008`
+  and `0009` do for theirs.
+- `REVOKE ALL … FROM PUBLIC` on both purge functions, and `GRANT EXECUTE … TO CURRENT_USER`. Without it,
+  PostgreSQL's default `EXECUTE`-to-`PUBLIC` on a `SECURITY DEFINER` function would make erasure available to
+  every role that can connect.
+- The script's header carries the honesty statement, the retained list (including `payload_version`), the
+  privilege note, the `CONCURRENTLY` runbook, the dead-heap-tuple limit, and the confirm-then-`VALIDATE` step.
 
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package
@@ -871,7 +1182,13 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
   exact-scope predicate (see [Sharing grants](#sharing-grants)). Administering grants additionally needs `INSERT`
   and `UPDATE` on `agent_experience.experience_grants` and `INSERT` on `agent_experience.experience_grant_events`.
   Recording reuse feedback needs `SELECT` and `INSERT` on `agent_experience.reuse_feedback` and
-  `agent_experience.reuse_feedback_exposures`, and ownership of both to create `0008`'s triggers.
+  `agent_experience.reuse_feedback_exposures`, and ownership of both to create `0008`'s triggers. Deleting needs
+  `EXECUTE` on `agent_experience.purge_experience_record` and `agent_experience.purge_expired_grants` — `0010`
+  revokes both from `PUBLIC` and grants them to the migrating role only, so an application role that is *not* the
+  migrating role has to be granted `EXECUTE` explicitly (see
+  [Deleting and expiring data](#the-honesty-statement-and-the-limits)) and nothing else should be. The migrating
+  role also has to own the tables whose guard functions `0010` replaces, and `experience_records` itself, to
+  create `0010`'s two removal-guard triggers on it — which it does when it created them.
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one
   for the scripts. A multiplexing data source (`NpgsqlDataSourceBuilder.EnableMultiplexing`) cannot hold a session
   advisory lock, because its commands do not stay on one physical connection, so it is not supported for migration.
@@ -905,7 +1222,11 @@ definition, and a rename would reapply it. Change the schema by adding the next-
 ## Data semantics
 
 - **One write path per change.** Each create is a single `INSERT`. The only update is a lifecycle commit, which is
-  always paired with its event in one transaction (see above). Nothing deletes a record or an event.
+  always paired with its event in one transaction (see above). The only deletion is `DeleteAsync` and the retention
+  sweep that runs it, which erase payload and leave a tombstone (see
+  [Deleting and expiring data](#deleting-and-expiring-data)); no other path *in this library* removes a record, an
+  event, or a ledger row, and for the record row itself `0010`'s removal guard makes that true of the schema
+  rather than only of the library — a bare `DELETE` or `TRUNCATE` is refused from every session, marker or not.
 - **UTC timestamps.** Every timestamp is stored and returned in UTC. `CreatedAt`, `UpdatedAt`, and a lifecycle
   event's `OccurredAt` are columns, and PostgreSQL keeps microsecond precision, so sub-microsecond ticks are
   truncated on write. Nested timestamps are stored in the payload at full precision.

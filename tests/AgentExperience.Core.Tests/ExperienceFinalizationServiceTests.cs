@@ -364,15 +364,52 @@ public class ExperienceFinalizationServiceTests
 
         var result = await harness.FinalizeAsync();
 
-        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(harness.RunId), result.ExperienceId);
+        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope), result.ExperienceId);
         Assert.Equal(ExperienceFinalizationService.InitialEventIdFor(harness.RunId), result.Event!.EventId);
         Assert.Equal(ExperienceFinalizationService.ReflectionIdFor(harness.RunId), result.Record!.Reflection!.ReflectionId);
 
         // Derivation is stable across calls and distinct per purpose and per run.
-        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(harness.RunId), ExperienceFinalizationService.ExperienceIdFor(harness.RunId));
-        Assert.NotEqual(ExperienceFinalizationService.ExperienceIdFor(harness.RunId), ExperienceFinalizationService.InitialEventIdFor(harness.RunId));
-        Assert.NotEqual(ExperienceFinalizationService.ExperienceIdFor(harness.RunId), ExperienceFinalizationService.ExperienceIdFor(Guid.NewGuid()));
-        Assert.NotEqual(Guid.Empty, ExperienceFinalizationService.ExperienceIdFor(harness.RunId));
+        Assert.Equal(
+            ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope),
+            ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope));
+        Assert.NotEqual(
+            ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope),
+            ExperienceFinalizationService.InitialEventIdFor(harness.RunId));
+        Assert.NotEqual(
+            ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope),
+            ExperienceFinalizationService.ExperienceIdFor(Guid.NewGuid(), TestScope));
+        Assert.NotEqual(Guid.Empty, ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope));
+    }
+
+    [Fact]
+    public void A_derived_record_id_is_distinct_per_scope_so_no_other_scope_can_squat_it()
+    {
+        var runId = Guid.NewGuid();
+        var mine = ExperienceFinalizationService.ExperienceIdFor(runId, TestScope);
+
+        // One differing field is enough, required or optional, and an absent optional field is not the
+        // empty string: each of these is a different scope and must derive a different ID.
+        foreach (var other in new[]
+        {
+            new Scope("tenant-9", "app-1", "project-1"),
+            new Scope("tenant-1", "app-9", "project-1"),
+            new Scope("tenant-1", "app-1", "project-9"),
+            new Scope("tenant-1", "app-1", "project-1", TeamId: "team-1"),
+            new Scope("tenant-1", "app-1", "project-1", AgentId: "agent-1"),
+            new Scope("tenant-1", "app-1", "project-1", UserId: "user-1"),
+            new Scope("tenant-1", "app-1", "project-1", TeamId: string.Empty),
+        })
+        {
+            Assert.NotEqual(mine, ExperienceFinalizationService.ExperienceIdFor(runId, other));
+        }
+
+        // Adjacent fields cannot be re-divided into the same byte sequence, which is what the length
+        // prefixes buy: ("a", "bc") and ("ab", "c") are different scopes.
+        Assert.NotEqual(
+            ExperienceFinalizationService.ExperienceIdFor(runId, new Scope("a", "bc", "p")),
+            ExperienceFinalizationService.ExperienceIdFor(runId, new Scope("ab", "c", "p")));
+
+        Assert.Throws<ArgumentNullException>(() => ExperienceFinalizationService.ExperienceIdFor(runId, null!));
     }
 
     [Fact]
@@ -398,19 +435,31 @@ public class ExperienceFinalizationServiceTests
     }
 
     [Fact]
-    public async Task A_derived_record_id_taken_in_another_scope_is_a_failure_not_a_silent_success()
+    public async Task Another_scope_cannot_block_a_run_by_taking_the_id_it_will_finalize_under()
     {
         var harness = await Harness.WithCompletedRunAsync();
+
+        // The squat this test used to pin: a foreign scope writing a record under the ID the run was
+        // going to finalize under, which left the run permanently unable to finalize and -- because
+        // CreateAsync's conflict is deliberately scope-blind -- with no way to find out why. The ID is
+        // now derived from the scope as well as the run, so a writer in another scope does not have it:
+        // the ID it can derive from this run is a different one, and taking that one blocks nothing.
         var foreignScope = new Scope("tenant-9", "app-1", "project-1");
-        harness.Store.Seed(TestRecord(ExperienceFinalizationService.ExperienceIdFor(harness.RunId), foreignScope));
+        harness.Store.Seed(TestRecord(
+            ExperienceFinalizationService.ExperienceIdFor(harness.RunId, foreignScope),
+            foreignScope));
 
         var result = await harness.FinalizeAsync();
 
-        Assert.Equal(FinalizationOutcome.Failed, result.Outcome);
-        Assert.Equal(FinalizationStage.CreateRecord, result.Stage);
-        Assert.False(result.IsDurable);
-        Assert.Empty(harness.Store.Commits);
+        Assert.Equal(FinalizationOutcome.Validated, result.Outcome);
+        Assert.True(result.IsDurable);
+        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope), result.ExperienceId);
+        Assert.Single(harness.Store.Commits);
     }
+
+    // A derived ID already taken *inside* this scope is not a squat and is not a failure: it is this
+    // run's own earlier attempt, which finalization resumes rather than starting over. That path is
+    // pinned by A_retry_after_a_failed_initial_commit_finishes_that_commit_rather_than_starting_over.
 
     // ---------------------------------------------------------------------------------------------
     // Store failures
@@ -525,7 +574,7 @@ public class ExperienceFinalizationServiceTests
         harness.Store.BeforeCommit = store =>
         {
             store.BeforeCommit = null;
-            store.ForceFinalize(ExperienceFinalizationService.ExperienceIdFor(harness.RunId), ExperienceStatus.Validated);
+            store.ForceFinalize(ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope), ExperienceStatus.Validated);
         };
 
         var result = await harness.FinalizeAsync();

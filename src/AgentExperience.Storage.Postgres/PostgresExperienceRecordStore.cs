@@ -23,11 +23,14 @@ namespace AgentExperience.Storage.Postgres;
 /// does a read the caller declared an <see cref="ExperienceReadPurpose.ScopeCheck"/> -- it is about to refuse the
 /// record for being grant-readable, so nothing is handed over. The two search channels audit what they return
 /// through their own batched append.
-/// <see cref="CommitLifecycleEventAsync"/> is the only operation that changes a stored record: it appends
+/// <see cref="CommitLifecycleEventAsync"/> is the only operation that changes a <em>live</em> record: it appends
 /// the event and updates the record's projection in one transaction on one connection, keyed by
 /// <see cref="LifecycleEvent.EventId"/> for idempotency and by
 /// <see cref="LifecycleEvent.ExpectedRevision"/> for concurrency. The store persists the transition Core
 /// decided and never derives a status, score, or counter of its own.
+/// <see cref="DeleteAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> is the one destructive
+/// operation: it erases a record's payload and every stored row that named it, in one transaction, and leaves a
+/// payload-free tombstone behind that every other path then refuses.
 /// PostgreSQL <c>timestamptz</c> stores microseconds, so <see cref="ExperienceRecord.CreatedAt"/> and
 /// <see cref="ExperienceRecord.UpdatedAt"/> are truncated to whole microseconds (in UTC) on write.
 /// Nested timestamps live in the JSONB payload at full precision and are also returned in UTC.
@@ -43,6 +46,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <summary>The canonical record table. Shared with <see cref="PostgresExperienceCandidateSource"/>, which reads from it.</summary>
     internal const string Table = "agent_experience.experience_records";
 
+    /// <summary>The smallest batch <see cref="SweepExpiredAsync"/> accepts. There is no "sweep everything".</summary>
+    public const int MinSweepBatchSize = 1;
+
+    /// <summary>
+    /// The largest batch <see cref="SweepExpiredAsync"/> accepts. Each record in a batch is erased in
+    /// its own transaction across seven tables, so the bound is what keeps one sweep call from becoming
+    /// an unbounded amount of destructive work the host cannot interrupt.
+    /// </summary>
+    public const int MaxSweepBatchSize = 500;
+
     /// <summary>
     /// The record columns every read selects, in the order <see cref="DecodeRecord"/> expects (ordinals 0-17).
     /// A reader that selects more must append its extra columns <em>after</em> these, never before.
@@ -51,6 +64,59 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "experience_id, source_run_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, task_id, " +
         "status, reuse_confidence, supporting_validations, contradictions, revision, created_at, updated_at, " +
         "payload_version, payload";
+
+    /// <summary>
+    /// "this row is not a tombstone", unqualified, for a statement over the record table alone.
+    /// <para>
+    /// A tombstone carries no payload at all (see <c>0010</c>), so it is not a record a read can
+    /// return: <see cref="ExperiencePayload.Deserialize"/> would fail on it, and a list that included
+    /// one would be handing back a row with nothing in it. Every read filters it out, and the two
+    /// operations that name one record -- <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> and
+    /// <see cref="GetHistoryAsync"/> -- read <c>deleted_at</c> instead of filtering on it, so they can
+    /// answer <see cref="ExperienceStoreOutcome.Deleted"/> inside the scope that owns the tombstone.
+    /// </para>
+    /// </summary>
+    internal const string LivePredicate = "deleted_at IS NULL";
+
+    /// <summary>The same, qualified with the <c>r</c> alias, for a statement that joins the record table to another.</summary>
+    internal const string RecordLivePredicate = "r.deleted_at IS NULL";
+
+    /// <summary>
+    /// The row lock every <em>write</em> that gates on <see cref="RecordLivePredicate"/> has to take on
+    /// the record row it gated against.
+    /// <para>
+    /// Without it the predicate is evaluated against a READ COMMITTED snapshot taken before the erasure
+    /// committed, and the write lands on a record the caller has already been told is gone: a stored
+    /// vector derived from the erased summary and lesson, a live sharing grant over a spent ID, or a
+    /// reviewer identity and free-text rationale about an erased record in an append-only ledger. With
+    /// it, the writer is parked against the purge's own <c>FOR UPDATE</c> (step 1 of
+    /// <c>purge_experience_record</c>) and, when the purge commits, PostgreSQL re-checks the write's
+    /// predicate against the row version the purge left behind -- which is the tombstone, so the write
+    /// matches nothing and the caller is told it lost. The same lock taken first makes the purge wait
+    /// instead, and the erasure then sweeps the row the writer committed.
+    /// </para>
+    /// <para>
+    /// <c>FOR KEY SHARE</c> rather than <c>FOR SHARE</c> on purpose: it is the weakest mode that still
+    /// conflicts with the purge's <c>FOR UPDATE</c>, and it does <em>not</em> conflict with the
+    /// <c>FOR NO KEY UPDATE</c> an ordinary lifecycle commit's projection <c>UPDATE</c> takes, so
+    /// serializing against erasure costs nothing against the writes that happen all the time.
+    /// </para>
+    /// <para>
+    /// <see cref="CommitLifecycleEventAsync"/> needs no locking clause of its own: its projection
+    /// <c>UPDATE</c> is itself the lock, and <c>0010</c>'s projection guard refuses any <c>UPDATE</c> of
+    /// a tombstone from the database's side as well.
+    /// </para>
+    /// </summary>
+    internal const string RecordKeyShareLock = "FOR KEY SHARE OF r";
+
+    /// <summary>The alias a read selects <c>deleted_at</c> under, read back by name, never by ordinal.</summary>
+    internal const string DeletedAtAlias = "deleted_at";
+
+    /// <summary>
+    /// The tombstone marker, appended <em>after</em> the record columns so <see cref="ReadRecord"/>'s
+    /// ordinals 0-17 are untouched.
+    /// </summary>
+    internal const string DeletedAtColumn = "r." + DeletedAtAlias + " AS " + DeletedAtAlias;
 
     /// <summary>The exact-scope predicate every statement applies, shared with <see cref="PostgresExperienceCandidateSource"/>.</summary>
     internal const string ScopePredicate =
@@ -76,7 +142,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// </summary>
     private const string GetSql =
-        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn} FROM {Table} r " +
+        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {DeletedAtColumn} FROM {Table} r " +
         $"{PermittingGrantJoin} " +
         $"WHERE r.experience_id = @experience_id AND {ReadableWithNamedGrantPredicate}";
 
@@ -87,10 +153,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// requesting scope already owns.
     /// </summary>
     private const string GetExactSql =
-        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias} FROM {Table} r " +
+        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, {DeletedAtColumn} " +
+        $"FROM {Table} r " +
         $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate}";
 
-    private const string QuerySql = $"SELECT {SelectColumns} FROM {Table} WHERE {ScopePredicate}";
+    private const string QuerySql = $"SELECT {SelectColumns} FROM {Table} WHERE {ScopePredicate} AND {LivePredicate}";
 
     private const string QueryStatusPredicate = " AND status = ANY(@statuses)";
 
@@ -117,6 +184,9 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     /// <summary>The ordinal <c>r.revision</c> sits at in <see cref="HistorySql"/>, straight after <see cref="EventColumns"/>.</summary>
     private const int HistoryRevisionOrdinal = 32;
+
+    /// <summary>The ordinal <c>r.deleted_at</c> sits at in <see cref="HistorySql"/>, straight after the revision.</summary>
+    private const int HistoryDeletedAtOrdinal = 33;
 
     private const string InsertEventSql =
         $"INSERT INTO {EventsTable} ({EventColumns}) VALUES (@event_id, @experience_id, @tenant_id, @application_id, " +
@@ -188,7 +258,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "ev.prior_reuse_confidence, ev.new_reuse_confidence, ev.prior_supporting_validations, " +
         "ev.new_supporting_validations, ev.prior_contradictions, ev.new_contradictions " +
         $"FROM {EvidenceTable} ev JOIN {Table} r ON r.experience_id = ev.experience_id " +
-        $"WHERE ev.evidence_id = @evidence_id AND {RecordScopePredicate}";
+        $"WHERE ev.evidence_id = @evidence_id AND {RecordScopePredicate} AND {RecordLivePredicate}";
 
     /// <summary>
     /// The record's revision and status, locked for the rest of the transaction. Used only on the
@@ -222,17 +292,38 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         ", reuse_confidence = @new_reuse_confidence, supporting_validations = @new_supporting_validations, " +
         "contradictions = @new_contradictions";
 
+    /// <summary>
+    /// The guards above plus "and this record has not been erased". A tombstone is terminal: a late
+    /// commit against one matches no row here and is reported as
+    /// <see cref="ExperienceStoreOutcome.Deleted"/> after the same re-read that tells a stale revision
+    /// from a missing record. The database refuses it a second time from its own side -- <c>0010</c>'s
+    /// projection guard rejects every UPDATE of a tombstone -- so neither this adapter nor a writer
+    /// bypassing it can move one.
+    /// <para>
+    /// The tombstone term here is redundant and kept on purpose: <c>status = COALESCE(...)</c> compares
+    /// against an <see cref="ExperienceStatus"/> member's name, and a tombstone's status is a literal no
+    /// member has, so this statement could never match one anyway. It is defence in depth against a
+    /// future status whose name collides, and it is named as redundant rather than counted as the thing
+    /// that makes late commits safe -- the re-read below, and <c>0010</c>'s projection guard, are.
+    /// </para>
+    /// </summary>
     private const string UpdateProjectionWhereSql =
         " WHERE experience_id = @experience_id AND revision = @expected_revision " +
-        $"AND status = COALESCE(@prior_status, @current_status) AND {ScopePredicate}";
+        $"AND status = COALESCE(@prior_status, @current_status) AND {ScopePredicate} AND {LivePredicate}";
 
     private const string UpdateProjectionSql = UpdateProjectionSetSql + UpdateProjectionWhereSql;
 
     private const string UpdateProjectionWithConfidenceSql =
         UpdateProjectionSetSql + UpdateProjectionConfidenceSetSql + UpdateProjectionWhereSql;
 
+    /// <summary>
+    /// The record's revision, status, and tombstone marker within exactly this scope. <c>deleted_at</c>
+    /// is selected rather than filtered on, because this read is what turns "the guarded UPDATE matched
+    /// no row" into a reason, and "erased" is one of the reasons. The status of a tombstone is a literal
+    /// this library's enum has no member for, so it is only ever decoded when <c>deleted_at</c> is null.
+    /// </summary>
     private const string SelectRevisionAndStatusSql =
-        $"SELECT revision, status FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate}";
+        $"SELECT revision, status, {DeletedAtAlias} FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate}";
 
     private const string SelectEventSql = $"SELECT {EventColumns} FROM {EventsTable} WHERE event_id = @event_id";
 
@@ -397,7 +488,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// </summary>
     private const string HistorySql =
-        $"SELECT {JoinedEventColumns}, r.revision FROM {Table} r " +
+        $"SELECT {JoinedEventColumns}, r.revision, r.{DeletedAtAlias} FROM {Table} r " +
         $"LEFT JOIN {EventsTable} e ON e.experience_id = r.experience_id " +
         "AND (@start_after_revision IS NULL OR e.applied_revision > @start_after_revision) " +
         $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate} " +
@@ -448,10 +539,47 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             WHERE e.replacement_experience_id IS NOT NULL AND {EventScopePredicate}
         )
         SELECT
-            (SELECT r.status FROM {Table} r WHERE r.experience_id = @experience_id AND {RecordScopePredicate}),
-            (SELECT r.status FROM {Table} r WHERE r.experience_id = @replacement_id AND {RecordScopePredicate}),
+            (SELECT r.status FROM {Table} r
+             WHERE r.experience_id = @experience_id AND {RecordScopePredicate} AND {RecordLivePredicate}),
+            (SELECT r.status FROM {Table} r
+             WHERE r.experience_id = @replacement_id AND {RecordScopePredicate} AND {RecordLivePredicate}),
             EXISTS (SELECT 1 FROM replaced_by WHERE experience_id = @experience_id)
         """;
+
+    /// <summary>
+    /// The one erasure path, created by <c>0010</c>. Every step of it -- the scope and revision guards,
+    /// the seven tables it sweeps, and the tombstone it leaves -- runs inside this one function, in one
+    /// transaction, under a marker the append-only guards recognise and no other session can see. This
+    /// adapter composes no DELETE of its own: there is nothing here to get out of step with the order the
+    /// script pins.
+    /// </summary>
+    private const string PurgeSql =
+        "SELECT purge_outcome, purge_revision FROM agent_experience.purge_experience_record(" +
+        "@experience_id, @tenant_id, @application_id, @project_id, @team_id, @agent_id, @user_id, " +
+        "@expected_revision, @deleted_at)";
+
+    /// <summary>
+    /// One bounded page of a scope's records that are older than the retention cutoff, oldest first.
+    /// Deliberately only the IDs: the sweep erases what it finds and never reads a payload it is about
+    /// to destroy. One row beyond the batch is selected so the result can say whether more remain
+    /// without a second count.
+    /// </summary>
+    private const string SweepCandidatesSql =
+        $"SELECT experience_id FROM {Table} " +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND created_at < @cutoff " +
+        "ORDER BY created_at, experience_id LIMIT @limit";
+
+    /// <summary>The purge function's outcome for a record it erased.</summary>
+    private const string PurgedOutcome = "Deleted";
+
+    /// <summary>The purge function's outcome for a record that was already a tombstone.</summary>
+    private const string AlreadyPurgedOutcome = "AlreadyDeleted";
+
+    /// <summary>The purge function's outcome for a record that is not in the requesting scope, erased or not.</summary>
+    private const string PurgeNotFoundOutcome = "NotFound";
+
+    /// <summary>The purge function's outcome for a record whose revision has moved past the expected one.</summary>
+    private const string PurgeStaleOutcome = "StaleRevision";
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -463,6 +591,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     private readonly PostgresGrantSupport _grants;
 
     private readonly ExperienceGrantAuditing? _auditing;
+
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>Creates a store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
@@ -476,16 +606,25 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <see langword="null"/> -- the default -- switches auditing off entirely: no extra write, no
     /// extra failure mode, and a deployment behaves exactly as it did before this was added.
     /// </param>
+    /// <param name="timeProvider">
+    /// The clock this store stamps its own readings from: a lifecycle event's <c>recorded_at</c>, a
+    /// tombstone's <c>deleted_at</c>, and the cutoff a retention sweep measures against
+    /// <see cref="ExperienceRecord.CreatedAt"/>. Defaults to <see cref="TimeProvider.System"/>. It is
+    /// this store's own clock and never a caller's: whether a sharing grant is still live is always the
+    /// database's <c>clock_timestamp()</c>, which no host can wind.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceRecordStore(
         NpgsqlDataSource dataSource,
         Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
-        ExperienceGrantAuditing? auditing = null)
+        ExperienceGrantAuditing? auditing = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
         _auditing = auditing;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -639,11 +778,26 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
         }
 
+        var sharedByGrant = ReadSharedByGrant(reader);
+
+        if (ReadDeleted(reader))
+        {
+            // An erased record. The owner is told so -- the ID is spent and no retry will make it
+            // resolve -- but a reader that only reached the row through a grant is told nothing it did
+            // not already have: the erasure purges every grant over the record, so a grant that still
+            // names a tombstone was written outside this library, and answering it with anything but
+            // NotFound would leak the tombstone's existence across a scope boundary.
+            return new(
+                sharedByGrant ? ExperienceStoreOutcome.NotFound : ExperienceStoreOutcome.Deleted,
+                null,
+                NoErrors);
+        }
+
         return new(
             ExperienceStoreOutcome.Found,
             ReadRecord(reader),
             NoErrors,
-            ReadSharedByGrant(reader),
+            sharedByGrant,
             ReadPermittingGrant(reader));
     }
 
@@ -774,7 +928,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         // Both timestamps are truncated the same way the record's columns are, so a replay's stored
         // OccurredAt compares equal to the value the caller resubmits.
         var occurredAt = ToStoredTimestamp(lifecycleEvent.OccurredAt);
-        var recordedAt = ToStoredTimestamp(DateTimeOffset.UtcNow);
+        var recordedAt = ToStoredTimestamp(_timeProvider.GetUtcNow());
         var appliedRevision = lifecycleEvent.ExpectedRevision + 1;
 
         try
@@ -908,6 +1062,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                     return new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors);
                 }
 
+                if (record.Deleted)
+                {
+                    // The record was erased. A tombstone is terminal, so this is not a race to retry:
+                    // the event this call appended is rolled back with everything else.
+                    return new(ExperienceStoreOutcome.Deleted, record.Revision, null, NoErrors);
+                }
+
                 return record.Revision != lifecycleEvent.ExpectedRevision
                     ? new(ExperienceStoreOutcome.StaleRevision, record.Revision, null, NoErrors)
                     // Scope and revision both matched, so the prior-status guard is what rejected it.
@@ -965,6 +1126,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             {
                 // No record in this scope: indistinguishable from one that exists elsewhere.
                 return new(ExperienceStoreOutcome.NotFound, 0, [], NoErrors);
+            }
+
+            if (!reader.IsDBNull(HistoryDeletedAtOrdinal))
+            {
+                // An erased record has no history left to page: its events were removed with its
+                // payload. Reported as Deleted rather than as an empty page, which would say the record
+                // is alive and has nothing to show.
+                return new(ExperienceStoreOutcome.Deleted, 0, [], NoErrors);
             }
 
             var revision = ReadRevision(reader, HistoryRevisionOrdinal);
@@ -1029,6 +1198,307 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             throw Translate(ex, "supersession check", cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Erases one record: its payload and every stored row that named it, leaving a payload-free
+    /// tombstone under the same ID. This is the only destructive operation this library has.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What is erased, and what is left.</b> The evidence ledger, the exposure rows, the grants and
+    /// their audit events, the lifecycle history, and the embedding are removed. The record row survives
+    /// carrying only <see cref="ExperienceRecord.ExperienceId"/>, the six scope columns,
+    /// <see cref="ExperienceRecord.Revision"/>, the deletion timestamp, a tombstone status, and a fixed
+    /// <c>task_id</c> placeholder. <c>experience_grant_access</c> rows are deliberately kept: they name
+    /// a grant and a principal, carry no payload, and are the answer to "who read this before it was
+    /// deleted". See the package README for the retained list, stated exhaustively.
+    /// </para>
+    /// <para>
+    /// <b>One transaction, one code path.</b> Every step runs inside <c>0010</c>'s
+    /// <c>purge_experience_record</c> function, in the order that script pins, under a
+    /// transaction-scoped marker the append-only guards recognise. The guards are never disabled and
+    /// never widened for another session. That buys atomicity and a single path -- not a privilege
+    /// boundary; the README says exactly what it does not bind.
+    /// </para>
+    /// <para>
+    /// <b>Foreign scope is indistinguishable from absent</b>, exactly as it is everywhere else: both are
+    /// <see cref="ExperienceStoreOutcome.NotFound"/>, decided by one statement's predicate rather than
+    /// by a branch here. <b>Deleting twice</b> is <see cref="ExperienceStoreOutcome.Deleted"/> again,
+    /// with nothing written.
+    /// </para>
+    /// <para>
+    /// <b>This is not on <see cref="IExperienceRecordStore"/>.</b> Erasure is a capability of this
+    /// adapter, not of the port: Core never deletes, and a port method would oblige every
+    /// implementation -- including the in-memory doubles hosts write for tests -- to promise an erasure
+    /// it cannot actually perform.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the record must lie in. Never treated as authority.</param>
+    /// <param name="experienceId">The record to erase. Must not be <see cref="Guid.Empty"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns><see cref="ExperienceStoreOutcome.Deleted"/>, <see cref="ExperienceStoreOutcome.NotFound"/>, <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    public Task<ExperienceRecordDeleteResult> DeleteAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken) =>
+        DeleteAsync(authorization, scope, experienceId, expectedRevision: null, cancellationToken);
+
+    /// <summary>
+    /// The same erasure, refused unless the record is still at <paramref name="expectedRevision"/>.
+    /// </summary>
+    /// <remarks>
+    /// The revision guard, the scope predicate, and the existence check are one statement inside the
+    /// purge function, so a stale revision, a foreign scope, and a missing record are all "no row" --
+    /// and only the scope that owns the record is told which. Pass <see langword="null"/> to erase
+    /// whatever revision the record is at, which is what the retention sweep does: an age-based deletion
+    /// is not racing a writer for a particular version.
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the record must lie in. Never treated as authority.</param>
+    /// <param name="experienceId">The record to erase. Must not be <see cref="Guid.Empty"/>.</param>
+    /// <param name="expectedRevision">The revision the record must still be at, or <see langword="null"/> for none. Must not be negative.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Deleted"/>, <see cref="ExperienceStoreOutcome.StaleRevision"/>
+    /// (carrying the record's current revision), <see cref="ExperienceStoreOutcome.NotFound"/>,
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    public async Task<ExperienceRecordDeleteResult> DeleteAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        long? expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateDelete(scope, experienceId, expectedRevision);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, 0, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            // Fail-closed, and before any connection opens: nothing is erased and nothing is read.
+            return new(ExperienceStoreOutcome.Denied, 0, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            return await PurgeAsync(connection, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "delete", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Erases the records in one scope that are older than <paramref name="retentionAge"/>, in one
+    /// bounded batch, through exactly the same erasure as <see cref="DeleteAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>There is no default retention and no timer.</b> Nothing expires unless a host calls this with
+    /// a positive age, and this library ships no scheduler, no background service, and no hosted
+    /// service: when a sweep runs is the host's decision, made with the host's own scheduling, because
+    /// only the host knows what its data-retention obligations are.
+    /// </para>
+    /// <para>
+    /// <b>Bounded, and resumable.</b> At most <paramref name="batchSize"/> records are erased per call,
+    /// oldest <see cref="ExperienceRecord.CreatedAt"/> first, and
+    /// <see cref="ExperienceRetentionSweepResult.MoreRemain"/> says whether another call would find
+    /// more. Each record is erased in its own transaction, so an interrupted sweep leaves every record
+    /// it reached wholly erased and every record it did not reach wholly untouched.
+    /// </para>
+    /// <para>
+    /// The cutoff is measured on this store's <see cref="TimeProvider"/> against the record's stored
+    /// <see cref="ExperienceRecord.CreatedAt"/>, never against <see cref="ExperienceRecord.UpdatedAt"/>:
+    /// age is how long the library has held the data, and a record that is read, ranked, or re-scored
+    /// does not thereby become younger.
+    /// </para>
+    /// <para>
+    /// <b>It sweeps the EXACT scope and no scope under it, and that is the one failure mode here that
+    /// looks like success.</b> <paramref name="scope"/> is matched field for field, exactly as every
+    /// other operation in this library matches it, so a sweep of
+    /// <c>(tenant, app, project)</c> with no team, agent or user reaches only the records stored with
+    /// those three fields and all three of the others null. Records the same tenant holds under a team,
+    /// an agent or a user are a <em>different</em> scope: they are not swept, they are not counted, and
+    /// <see cref="ExperienceRetentionSweepResult.MoreRemain"/> comes back <see langword="false"/> --
+    /// a retention obligation quietly unmet, reported as a clean sweep. A host whose policy is
+    /// "delete everything in this tenant older than N days" must enumerate every leaf scope it has
+    /// written under and call this once per scope; the library cannot enumerate them for it, because a
+    /// scope is the host's own partitioning and nothing here knows which of them exist.
+    /// </para>
+    /// <para>
+    /// <b>Stopping early.</b> Cancelling between records returns what the call had already erased, with
+    /// <see cref="ExperienceRetentionSweepResult.Interrupted"/> set, rather than throwing away the
+    /// count. A storage failure part-way through throws
+    /// <see cref="ExperienceRetentionSweepInterruptedException"/>, which carries the same partial
+    /// result and is an <see cref="ExperienceStoreException"/> like any other storage failure here.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope to sweep, matched field for field. Never treated as authority, and never widened to the scopes beneath it.</param>
+    /// <param name="retentionAge">How long a record may be kept, measured from <see cref="ExperienceRecord.CreatedAt"/>. Must be strictly positive.</param>
+    /// <param name="batchSize">The most records this call may erase, from <see cref="MinSweepBatchSize"/> to <see cref="MaxSweepBatchSize"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation between records; records already erased stay erased, and the count comes back on the result rather than being lost.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Deleted"/> when the sweep ran (possibly erasing nothing, and
+    /// possibly stopping early -- see <see cref="ExperienceRetentionSweepResult.Interrupted"/>),
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>, or <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ExperienceRetentionSweepInterruptedException">A storage failure stopped the batch part-way; the count of what was erased is on the exception.</exception>
+    public async Task<ExperienceRetentionSweepResult> SweepExpiredAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        TimeSpan retentionAge,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateRetentionSweep(scope, retentionAge, batchSize);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, 0, false, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, 0, false, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var cutoff = ToStoredTimestamp(_timeProvider.GetUtcNow() - retentionAge);
+
+        try
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            var candidates = new List<Guid>(batchSize + 1);
+            await using (var command = new NpgsqlCommand(SweepCandidatesSql, connection))
+            {
+                AddScopeParameters(command.Parameters, scope);
+                command.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", cutoff));
+
+                // One row beyond the batch, so "more remain" is read off the same statement rather than
+                // from a second count that could disagree with it.
+                command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    candidates.Add(reader.GetGuid(0));
+                }
+            }
+
+            var moreRemain = candidates.Count > batchSize;
+
+            // Declared outside the loop, and read again by both handlers below, because the number of
+            // records this call irreversibly erased is the one fact a compliance log needs and it must
+            // not be lost just because the batch stopped early.
+            var deleted = 0;
+            try
+            {
+                foreach (var experienceId in candidates.Take(batchSize))
+                {
+                    // No expected revision: a sweep deletes a record for its age, not for the version it
+                    // happened to be at when the page was read.
+                    var result = await PurgeAsync(connection, scope, experienceId, expectedRevision: null, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (result.Outcome == ExperienceStoreOutcome.Deleted)
+                    {
+                        deleted++;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not ExperienceStoreException && cancellationToken.IsCancellationRequested)
+            {
+                // Caller cancellation, however the driver reported it -- an OperationCanceledException,
+                // or the server's own query_canceled for a statement that was already running. Decided
+                // by the token exactly as Translate decides it, so the two never disagree.
+                //
+                // The host asked the sweep to stop, which is a normal way to run one: each record was
+                // erased in its own transaction, so what is erased is erased and what is left is whole.
+                // Returned rather than thrown, because a cancelled sweep that threw away its count would
+                // leave a host unable to say how much of its data it had just destroyed. MoreRemain is
+                // true regardless of what the page said: at least the record it stopped on is still there.
+                return new(ExperienceStoreOutcome.Deleted, deleted, true, NoErrors, Interrupted: true);
+            }
+            catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+            {
+                // A failure, not a request. Thrown -- a host must not read this as a sweep that ran --
+                // but thrown carrying the count, as an ExperienceStoreException like every other storage
+                // failure here, so nothing that already catches those has to change.
+                throw new ExperienceRetentionSweepInterruptedException(
+                    new(ExperienceStoreOutcome.Deleted, deleted, true, NoErrors, Interrupted: true),
+                    Translate(ex, "retention sweep", cancellationToken));
+            }
+
+            return new(ExperienceStoreOutcome.Deleted, deleted, moreRemain, NoErrors);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            // Only the candidate read can reach this now, and it erases nothing.
+            throw Translate(ex, "retention sweep", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Runs the purge function and maps its outcome. One statement, so the whole erasure is one
+    /// transaction whether or not the caller opened one.
+    /// </summary>
+    private async Task<ExperienceRecordDeleteResult> PurgeAsync(
+        NpgsqlConnection connection,
+        Scope scope,
+        Guid experienceId,
+        long? expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(PurgeSql, connection);
+        var parameters = command.Parameters;
+        parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+        AddScopeParameters(parameters, scope);
+        parameters.Add(new NpgsqlParameter("expected_revision", NpgsqlDbType.Bigint)
+        {
+            Value = expectedRevision is { } revision ? revision : DBNull.Value,
+        });
+        parameters.Add(new NpgsqlParameter<DateTimeOffset>("deleted_at", ToStoredTimestamp(_timeProvider.GetUtcNow())));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // The function always returns exactly one row; treat the impossible case the way a missing
+            // record is treated, which writes nothing and claims nothing.
+            return new(ExperienceStoreOutcome.NotFound, 0, NoErrors);
+        }
+
+        var outcome = reader.GetString(0);
+        var currentRevision = reader.GetInt64(1);
+
+        return outcome switch
+        {
+            // Erased now, or erased earlier: deleting twice is a success that touches nothing.
+            PurgedOutcome or AlreadyPurgedOutcome => new(ExperienceStoreOutcome.Deleted, currentRevision, NoErrors),
+            PurgeStaleOutcome => new(ExperienceStoreOutcome.StaleRevision, currentRevision, NoErrors),
+            PurgeNotFoundOutcome => new(ExperienceStoreOutcome.NotFound, 0, NoErrors),
+            _ => throw new ExperienceStoreException("The erasure function reported an unrecognized outcome."),
+        };
     }
 
     /// <summary>
@@ -1284,6 +1754,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 return (new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors), Commit: false);
             }
 
+            if (record.Deleted)
+            {
+                // Nothing is recorded against a tombstone -- not even a duplicate submission's ledger
+                // row, which would put the erased record's ID back into a table the erasure emptied.
+                return (new(ExperienceStoreOutcome.Deleted, record.Revision, null, NoErrors), Commit: false);
+            }
+
             if (record.Revision != lifecycleEvent.ExpectedRevision)
             {
                 return (new(ExperienceStoreOutcome.StaleRevision, record.Revision, null, NoErrors), Commit: false);
@@ -1297,7 +1774,9 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             var recordedOnly = submitted.AsRecordedOnly();
             try
             {
-                await InsertOneAsync(recordedOnly, eventId: null, record.Revision, record.Status).ConfigureAwait(false);
+                // Not a tombstone, so the status decoded: the branch above returned for the one case
+                // where it could not.
+                await InsertOneAsync(recordedOnly, eventId: null, record.Revision, record.Status!.Value).ConfigureAwait(false);
             }
             catch (PostgresException pk) when (IsViolationOf(pk, EvidencePrimaryKey, cancellationToken))
             {
@@ -1426,9 +1905,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         CancellationToken cancellationToken)
     {
         var current = await ReadRevisionAndStatusAsync(connection, transaction, scope, experienceId, cancellationToken).ConfigureAwait(false);
-        return current is { } record
-            ? new(ExperienceStoreOutcome.StaleRevision, record.Revision, null, NoErrors)
-            : new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors);
+        if (current is not { } record)
+        {
+            return new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors);
+        }
+
+        return record.Deleted
+            ? new(ExperienceStoreOutcome.Deleted, record.Revision, null, NoErrors)
+            : new(ExperienceStoreOutcome.StaleRevision, record.Revision, null, NoErrors);
     }
 
     /// <summary>
@@ -1436,7 +1920,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// the row for the rest of the transaction. Only the duplicate path needs the lock: every other caller
     /// either holds the row through its own revision-guarded UPDATE or is reporting a race it already lost.
     /// </summary>
-    private static async Task<(long Revision, ExperienceStatus Status)?> ReadRevisionAndStatusAsync(
+    private static async Task<StoredRecordState?> ReadRevisionAndStatusAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         Scope scope,
@@ -1455,8 +1939,18 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return null;
         }
 
-        return (ReadRevision(reader, 0), ReadStoredStatus(reader, 1));
+        // A tombstone's status is a literal no ExperienceStatus member names, so it is never decoded:
+        // the marker is read first and the status left alone.
+        return reader.IsDBNull(2)
+            ? new StoredRecordState(ReadRevision(reader, 0), ReadStoredStatus(reader, 1), Deleted: false)
+            : new StoredRecordState(ReadRevision(reader, 0), null, Deleted: true);
     }
+
+    /// <summary>
+    /// What a scoped read of one record row found: its revision, its status when it has one this
+    /// library's enum names, and whether it is a tombstone.
+    /// </summary>
+    private readonly record struct StoredRecordState(long Revision, ExperienceStatus? Status, bool Deleted);
 
     /// <summary>
     /// Matches a unique violation of one named constraint. Naming it keeps the event primary key (a
@@ -1613,6 +2107,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         catch (IndexOutOfRangeException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the tombstone marker by name. A reader that did not select it is treated as "not erased",
+    /// which is the safe direction for a caller that never asked: every statement that could meet a
+    /// tombstone either selects this column or filters tombstones out in SQL.
+    /// </summary>
+    internal static bool ReadDeleted(DbDataReader reader)
+    {
+        try
+        {
+            return !reader.IsDBNull(reader.GetOrdinal(DeletedAtAlias));
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return false;
         }
     }
 

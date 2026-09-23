@@ -167,8 +167,27 @@ other than `Removed` or `NotIndexed` is a work item for the host — record the 
 `RemoveAsync` again later. That includes `Denied`, which reports `IsRetryable: false` because repeating the *same*
 call changes nothing; it needs a different authorization, not another attempt.
 
-Deleting the record itself needs no removal at all — `0004`'s `ON DELETE CASCADE` means an embedding can never
-outlive the record it describes.
+**Erasing the record removes its vector too, from the other package's transaction.** `DeleteAsync` in
+`AgentExperience.Storage.Postgres` leaves a payload-free tombstone rather than deleting the record row, so
+`0004`'s `ON DELETE CASCADE` never fires — the base package's purge function deletes the embedding explicitly
+instead, guarded by `to_regclass` so a deployment without this package simply skips the step. Nothing here has to
+be called, and nothing here is depended on. Afterwards the tombstone can never be indexed again: a write against
+it reports `Missing` rather than `Stale`, because no revision of an erased record can ever be indexed, and
+`ScanAsync` does not offer it, because a tombstone has no summary and no lesson to embed.
+
+`WriteAsync` takes `FOR KEY SHARE` on the record row in the same statement that checks it is not a tombstone, so a
+write already in flight when an erasure commits is parked against the purge and re-checks when it is released,
+rather than landing afterwards. That matters more here than anywhere else: a stored vector is a searchable
+derivative of exactly the summary and lesson the erasure was asked to destroy, so a write that slipped through
+would put a queryable copy of erased content back into the database.
+
+**What the erasure leaves behind in this package.** Dead entries stay in the HNSW index until `VACUUM` reclaims
+them. Those entries point at heap tuples that are themselves dead, so a query cannot return them — but be precise
+about the two halves, because they are not the same: the *index* entry cannot return anything, while the *heap*
+tuple it points at is still the row, vector and all, until `VACUUM` reclaims it. A deployment with an erasure
+deadline has to `VACUUM agent_experience.experience_embeddings` itself rather than wait for autovacuum, and needs
+`VACUUM FULL` or a storage-level guarantee if it must also defeat forensic recovery of freed pages. The base
+package's README says the same about the record table's own heap, at more length.
 
 ## Re-indexing
 

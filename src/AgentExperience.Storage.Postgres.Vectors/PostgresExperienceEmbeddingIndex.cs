@@ -131,7 +131,15 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         "@model_id, @dimension, @content_hash, @source_revision, CAST(@embedding AS vector), @now, @now " +
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        // An erased record is never indexed: the erasure removes its vector, and an in-flight write that
+        // landed afterwards would put a derived copy of a deleted record back into the table. The lock is
+        // what makes that true under concurrency rather than only in the quiet case -- a stored vector is
+        // a searchable derivative of exactly the summary and lesson the erasure was asked to destroy, so
+        // this write must serialize against the purge and not against a snapshot it has already
+        // invalidated. See PostgresExperienceRecordStore.RecordKeyShareLock.
+        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND r.revision = @source_revision " +
+        $"{PostgresExperienceRecordStore.RecordKeyShareLock} " +
         "ON CONFLICT (experience_id) DO UPDATE SET " +
         "model_id = EXCLUDED.model_id, dimension = EXCLUDED.dimension, content_hash = EXCLUDED.content_hash, " +
         "source_revision = EXCLUDED.source_revision, embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at " +
@@ -152,7 +160,10 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </summary>
     private const string ProbeRevisionSql =
         $"SELECT r.revision FROM {PostgresExperienceRecordStore.Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate}";
+        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        // A tombstone is reported the way a record in another scope is: Missing, never Stale. There is
+        // no revision to retry against, because no revision of an erased record can ever be indexed.
+        $"AND {PostgresExperienceRecordStore.RecordLivePredicate}";
 
     /// <summary>
     /// One statement, so a record's revision, the summary read at that revision, and the descriptor of
@@ -166,6 +177,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"LEFT JOIN {Table} e ON e.experience_id = r.experience_id " +
         $"WHERE {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         // The search's own predicates, applied here too: a record whose vector could never be returned
         // is never embedded, so its summary and lesson never leave the database for a third party.
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence";
@@ -192,18 +204,18 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </summary>
     private static readonly string CompatibilityProbeExactSql =
         $"SELECT EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ExactJoinScopePredicate} " +
+        $"WHERE {ExactJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence), " +
         $"EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ExactJoinScopePredicate} " +
+        $"WHERE {ExactJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence AND e.model_id = @model_id)";
 
     private static readonly string CompatibilityProbeSql =
         $"SELECT EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ReadableJoinScopePredicate} " +
+        $"WHERE {ReadableJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence), " +
         $"EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ReadableJoinScopePredicate} " +
+        $"WHERE {ReadableJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence AND e.model_id = @model_id)";
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
@@ -218,6 +230,8 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     private readonly ExperienceGrantAuditing? _auditing;
 
+    private readonly TimeProvider _timeProvider;
+
     /// <summary>Creates an embedding index over a host-owned data source. The index never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="onGrantsUnavailable">
@@ -230,16 +244,26 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// is a disclosure; the whole search's rows are written in one statement. <see langword="null"/> --
     /// the default -- switches auditing off entirely.
     /// </param>
+    /// <param name="timeProvider">
+    /// The clock this index stamps a stored vector's <c>created_at</c> and <c>updated_at</c> from --
+    /// its own reading of when the row landed, never a caller's. Defaults to
+    /// <see cref="TimeProvider.System"/>. It is here for the same reason the record and feedback stores
+    /// took one in story 4.5: a store that stamps rows from <c>DateTimeOffset.UtcNow</c> cannot be
+    /// driven to a known instant by a test, and every other timestamp this library writes is now
+    /// controllable.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceEmbeddingIndex(
         NpgsqlDataSource dataSource,
         Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
-        ExperienceGrantAuditing? auditing = null)
+        ExperienceGrantAuditing? auditing = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
         _auditing = auditing;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -281,7 +305,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                 parameters.Add(new NpgsqlParameter<string>("content_hash", NpgsqlDbType.Text) { TypedValue = write.Descriptor.ContentHash });
                 parameters.Add(new NpgsqlParameter<long>("source_revision", write.Descriptor.SourceRevision));
                 parameters.Add(new NpgsqlParameter<string>("embedding", NpgsqlDbType.Text) { TypedValue = ToVectorLiteral(write.Vector) });
-                parameters.Add(new NpgsqlParameter<DateTimeOffset>("now", ToStoredTimestamp(DateTimeOffset.UtcNow)));
+                parameters.Add(new NpgsqlParameter<DateTimeOffset>("now", ToStoredTimestamp(_timeProvider.GetUtcNow())));
 
                 written = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -596,6 +620,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             // what makes ix_experience_embeddings_scope_model usable (see EmbeddingScopePredicate).
             // An active grant is the alternative to that exact match, decided in SQL like the rest.
             $"WHERE {scope} " +
+            $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
             "AND r.status = ANY(@statuses) " +
             "AND r.reuse_confidence >= @min_confidence " +
             "AND e.model_id = @model_id " +

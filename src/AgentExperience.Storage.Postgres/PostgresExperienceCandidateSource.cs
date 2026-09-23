@@ -81,7 +81,17 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         $" FROM {PostgresExperienceRecordStore.Table} r {PostgresExperienceRecordStore.PermittingGrantJoin} WHERE ";
 
     private const string SearchFilters =
-        " AND status = ANY(@statuses) " +
+        // A tombstone carries no payload, so it is not a candidate: its generated search_vector holds
+        // only the deletion placeholder, and a row that matched it would come back with nothing in it.
+        //
+        // Redundant today, and kept on purpose. The status filter below already excludes a tombstone --
+        // its status is a literal no ExperienceStatus member names -- so no query this adapter can build
+        // distinguishes the two, and no test can either. It is stated here rather than left to be
+        // rediscovered: it is defence in depth against a future status whose name collides, not the
+        // thing that makes erased text unfindable. What makes erased text unfindable is that
+        // search_vector is GENERATED ALWAYS and regenerates from the placeholder alone.
+        $" AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        "AND status = ANY(@statuses) " +
         "AND reuse_confidence >= @min_confidence " +
         $"AND search_vector @@ websearch_to_tsquery('{SearchConfiguration}', @task_text) " +
         $"ORDER BY {RelevanceColumn} DESC, experience_id LIMIT @limit";

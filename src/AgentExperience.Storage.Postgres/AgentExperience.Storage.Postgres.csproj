@@ -35,6 +35,7 @@
     <EmbeddedResource Include="Migrations\0007_confidence_evidence.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0007_confidence_evidence.sql" />
     <EmbeddedResource Include="Migrations\0008_reuse_feedback.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0008_reuse_feedback.sql" />
     <EmbeddedResource Include="Migrations\0009_grant_access_log.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0009_grant_access_log.sql" />
+    <EmbeddedResource Include="Migrations\0010_delete_and_expire.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0010_delete_and_expire.sql" />
   </ItemGroup>
 
   <ItemGroup>

@@ -37,10 +37,16 @@ namespace AgentExperience.Storage.Postgres;
 /// row in another scope and handing it back would be a cross-scope read.
 /// </para>
 /// <para>
-/// <b>This store never reads an Experience Record.</b> There is no foreign key to
-/// <c>experience_records</c> and no join to it: an exposed ID that resolves to nothing in the scope is
-/// recorded exactly like one that resolves, and whether it resolves is decided later, by the confidence
-/// path, against the record itself.
+/// <b>This store reads an Experience Record for exactly one reason.</b> There is still no foreign key
+/// to <c>experience_records</c> and no join in the write: an exposed ID that resolves to nothing in the
+/// scope is recorded exactly like one that resolves, and whether it resolves is decided later, by the
+/// confidence path, against the record itself. The one exception is an <em>erased</em> record. Recording
+/// an exposure to a tombstone would write the ID back into a ledger the erasure emptied, so a submission
+/// naming one is <see cref="ExperienceReuseFeedbackStoreOutcome.Invalid"/>, naming the exposure by
+/// position, with nothing written. Only tombstones in the submission's own scope are visible to that
+/// check, so a refusal can never reveal another scope's. That read takes <c>FOR KEY SHARE</c> on the
+/// records it names, so a record erased while the submission is being written is refused rather than
+/// recorded against.
 /// </para>
 /// <para>
 /// <b>The database's own CHECKs are defence in depth, not a second validation path.</b> Every rule
@@ -102,17 +108,54 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         $"SELECT experience_id, attributed, evidence_id FROM {ExposuresTable} " +
         "WHERE feedback_id = @feedback_id ORDER BY ordinal";
 
+    /// <summary>
+    /// Every exposed record this scope actually holds, with its tombstone marker, locked for the rest of
+    /// the transaction.
+    /// <para>
+    /// A run's exposure to a record that never existed here, or that was revoked, is still recordable --
+    /// <c>0008</c> has no foreign key precisely so that "the run saw an ID that resolves to nothing" stays
+    /// a fact worth keeping. An <em>erased</em> record is the one exception: writing its ID into this
+    /// ledger would put back an association the erasure just removed, and a human assessment carries a
+    /// reviewer identity and a free-text rationale about the record into an append-only table. A
+    /// tombstone in another scope is invisible to this statement, so a refusal can never reveal one.
+    /// </para>
+    /// <para>
+    /// <b>It selects live rows too, and locks them, on purpose.</b> Asking only for tombstones would
+    /// lock nothing when every named record is still live -- which is the case a concurrent erasure
+    /// turns into a lie between this read and the exposure inserts below it. Taking
+    /// <c>FOR KEY SHARE</c> over every named record in scope, live or not, is what makes this a check
+    /// that holds until the transaction commits rather than a check-then-write; see
+    /// <see cref="PostgresExperienceRecordStore.RecordKeyShareLock"/>. The rows are locked in
+    /// <c>experience_id</c> order so two submissions naming overlapping records cannot deadlock.
+    /// </para>
+    /// </summary>
+    private static readonly string SelectExposedRecordStateSql =
+        $"SELECT r.experience_id, r.{PostgresExperienceRecordStore.DeletedAtAlias} " +
+        $"FROM {PostgresExperienceRecordStore.Table} r " +
+        "WHERE r.experience_id = ANY(@experience_ids) " +
+        $"AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        "ORDER BY r.experience_id " +
+        PostgresExperienceRecordStore.RecordKeyShareLock;
+
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
     private readonly NpgsqlDataSource _dataSource;
 
+    private readonly TimeProvider _timeProvider;
+
     /// <summary>Creates a feedback store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
+    /// <param name="timeProvider">
+    /// The clock this store stamps <c>recorded_at</c> from -- its own reading of when the row landed,
+    /// deliberately separate from the caller's <see cref="RecordedExperienceReuseFeedback.ObservedAt"/>.
+    /// Defaults to <see cref="TimeProvider.System"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
-    public PostgresExperienceReuseFeedbackStore(NpgsqlDataSource dataSource)
+    public PostgresExperienceReuseFeedbackStore(NpgsqlDataSource dataSource, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -171,6 +214,16 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
                     NoErrors);
             }
 
+            var erased = await ReadErasedExposuresAsync(connection, transaction, feedback, cancellationToken).ConfigureAwait(false);
+            if (erased.Count > 0)
+            {
+                // Read and refused inside the transaction that is about to be rolled back, so a
+                // submission naming an erased record writes nothing at all -- not the submission row the
+                // insert above provisionally took, and not one exposure.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                return new(ExperienceReuseFeedbackStoreOutcome.Invalid, null, erased);
+            }
+
             for (var ordinal = 0; ordinal < feedback.Exposures.Count; ordinal++)
             {
                 await InsertExposureAsync(connection, transaction, feedback.FeedbackId, feedback.Exposures[ordinal], ordinal, cancellationToken)
@@ -186,7 +239,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         }
     }
 
-    private static async Task<bool> InsertSubmissionAsync(
+    private async Task<bool> InsertSubmissionAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         RecordedExperienceReuseFeedback feedback,
@@ -227,7 +280,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
             PostgresExperienceRecordStore.ToStoredTimestamp(feedback.ObservedAt)));
         parameters.Add(new NpgsqlParameter<DateTimeOffset>(
             "recorded_at",
-            PostgresExperienceRecordStore.ToStoredTimestamp(DateTimeOffset.UtcNow)));
+            PostgresExperienceRecordStore.ToStoredTimestamp(_timeProvider.GetUtcNow())));
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
@@ -250,6 +303,63 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         parameters.Add(NullableUuid("evidence_id", exposure.EvidenceId));
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Names every exposure whose record has been erased, as a validation error per exposure. The
+    /// message is content-free and the path is an index, so a refusal says which position of the
+    /// caller's own submission is unrecordable without echoing anything back.
+    /// </summary>
+    private static async Task<IReadOnlyList<StoreValidationError>> ReadErasedExposuresAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        RecordedExperienceReuseFeedback feedback,
+        CancellationToken cancellationToken)
+    {
+        var exposedIds = feedback.Exposures.Select(exposure => exposure.ExperienceId).Distinct().ToArray();
+        if (exposedIds.Length == 0)
+        {
+            return NoErrors;
+        }
+
+        var erased = new HashSet<Guid>();
+        await using (var command = new NpgsqlCommand(SelectExposedRecordStateSql, connection, transaction))
+        {
+            command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid)
+            {
+                TypedValue = exposedIds,
+            });
+            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, feedback.Scope);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                // Every named record in scope comes back and is now locked; only the tombstones among
+                // them are refusals.
+                if (!reader.IsDBNull(1))
+                {
+                    erased.Add(reader.GetGuid(0));
+                }
+            }
+        }
+
+        if (erased.Count == 0)
+        {
+            return NoErrors;
+        }
+
+        var errors = new List<StoreValidationError>();
+        for (var ordinal = 0; ordinal < feedback.Exposures.Count; ordinal++)
+        {
+            if (erased.Contains(feedback.Exposures[ordinal].ExperienceId))
+            {
+                errors.Add(new(
+                    $"Exposures[{ordinal}].ExperienceId",
+                    "names an Experience Record that has been erased; nothing may be recorded against it again."));
+            }
+        }
+
+        return errors;
     }
 
     /// <summary>

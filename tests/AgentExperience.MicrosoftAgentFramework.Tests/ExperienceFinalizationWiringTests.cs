@@ -63,7 +63,7 @@ public class ExperienceFinalizationWiringTests
 
         // The record is the one this invocation's run produced.
         var runId = Assert.Single(harness.Service.StartedRunIds);
-        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(runId), result.ExperienceId);
+        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(runId, TestScope), result.ExperienceId);
         Assert.Equal(runId, result.Record!.SourceRunId);
         Assert.Equal(ExperienceStatus.Validated, harness.Store.StatusOf(result.ExperienceId!.Value));
     }

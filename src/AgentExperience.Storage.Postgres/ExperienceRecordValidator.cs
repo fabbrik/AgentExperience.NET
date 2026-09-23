@@ -75,6 +75,72 @@ internal static class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates an erasure: the scope, the record, and the optional expected revision. A negative
+    /// revision is refused rather than treated as "any", because a caller that computed one is asking
+    /// for something it did not mean -- and the thing it is asking for here is destructive.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateDelete(Scope scope, Guid experienceId, long? expectedRevision)
+    {
+        var errors = new List<StoreValidationError>();
+        if (experienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        if (expectedRevision is < 0)
+        {
+            errors.Add(new("ExpectedRevision", "must not be negative."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a retention sweep: the scope, the age, and the batch bound. A non-positive age is
+    /// refused rather than read as "delete everything": retention is indefinite until a host names a
+    /// span, and a zero or negative one is the shape a misconfigured setting takes.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateRetentionSweep(Scope scope, TimeSpan retentionAge, int batchSize)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (retentionAge <= TimeSpan.Zero)
+        {
+            errors.Add(new("RetentionAge", "must be strictly positive; there is no retention age that means 'delete everything'."));
+        }
+
+        if (batchSize is < PostgresExperienceRecordStore.MinSweepBatchSize or > PostgresExperienceRecordStore.MaxSweepBatchSize)
+        {
+            errors.Add(new(
+                "BatchSize",
+                $"must be between {PostgresExperienceRecordStore.MinSweepBatchSize} and {PostgresExperienceRecordStore.MaxSweepBatchSize}."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates an expired-grant purge: the owner scope and the batch bound. There is no age
+    /// parameter, because a grant carries its own: it is collected once its stored expiry has passed.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateGrantPurge(Scope recordScope, int batchSize)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (batchSize is < PostgresExperienceRecordStore.MinSweepBatchSize or > PostgresExperienceRecordStore.MaxSweepBatchSize)
+        {
+            errors.Add(new(
+                "BatchSize",
+                $"must be between {PostgresExperienceRecordStore.MinSweepBatchSize} and {PostgresExperienceRecordStore.MaxSweepBatchSize}."));
+        }
+
+        ValidateScope(recordScope, "RecordScope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates a bounded history read: the scope, the record, the page bound, and the optional keyset
     /// cursor. A negative cursor is rejected rather than treated as "from the beginning", because a
     /// caller that computed one is asking for something it did not mean.

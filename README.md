@@ -43,6 +43,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Historical Reference injection into MAF: a context provider that retrieves, re-checks eligibility immediately before injecting, asks the host's risk policy, and injects one delimited, labeled block within record and byte limits — never throwing into the invocation | `AgentExperience.MicrosoftAgentFramework` |
 | Explicit sharing grants: an administrator the host names lets one named record be *read* by a sibling scope until it expires or is revoked; the grant and its audit event commit together, and reads honour it in SQL, never in application code. A grant's lifetime is bounded by a host-configured maximum, so there is no permanent grant | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
 | An optional access log answering "who read our team's experience, and when": one append-only row per record a grant *delivered*, naming that grant and the revision disclosed, written outside the read's own statement and batched per search, best-effort or fail-closed as the host chooses, with an owner-scoped reader for the trail | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
+| Deleting and expiring library-owned data: one authorized, atomic, scope-safe erasure across seven tables leaving a payload-free tombstone, a bounded retention sweep the host schedules, and expired sharing grants collected with their events — with the append-only guards never disabled and the limits stated rather than overclaimed | `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 | Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types. Injection is the one piece the host constructs itself, because the resolver and risk decision are per-host | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 
 ## Quick look
@@ -286,11 +287,54 @@ otherwise rewrite history — not against an administrator who has decided to ta
 tamper-evidence beyond this should ship the log off-box, or own these tables with a role the application does not
 have.
 
-**Because nothing can delete, purging is an explicit operator action.** The logs carry free-text `reason` and
-`producer` that a host may have filled with personal data, and roadmap story 4.5 ("delete and expire library-owned
-data") has not landed. Until it does, the tables' owner purges in one transaction — disable the trigger, delete
-narrowly, re-enable it — as documented in `0006`'s own header, and reconciles `experience_records` afterwards,
-because deleting an event does not move the projection.
+**There is exactly one exception, and it is the subject of the next section.** Migration `0010` gives the guards a
+transaction-scoped marker that one `SECURITY DEFINER` purge function sets, so erasing a record can remove the rows
+that named it without any trigger ever being disabled. `UPDATE` and `TRUNCATE` stay refused unconditionally, in
+every session, including the purging one. That replaces `0006`'s manual
+`ALTER TABLE … DISABLE TRIGGER` runbook — which was table-wide, visible to every other connection in the pool, and
+left the guard off if anything failed in between.
+
+## Deleting and expiring data
+
+Revocation stops reads. **Deletion removes payload.** One authorized, atomic, scope-safe operation erases every
+payload-bearing trace of one experience across seven tables and leaves a payload-free tombstone behind:
+
+```csharp
+var deleted = await store.DeleteAsync(hostAuthorization, scope, experienceId, cancellationToken);
+
+// Or on a schedule the host owns: this library ships no timer.
+var sweep = await store.SweepExpiredAsync(hostAuthorization, scope, TimeSpan.FromDays(90), batchSize: 200, cancellationToken);
+```
+
+- **A tombstone, never a vanishing row.** What is retained is exactly the opaque `ExperienceId`, the six scope
+  fields, the revision, the deletion timestamp, a fixed tombstone status, and a fixed `TaskId` placeholder —
+  nothing else. Evidence, exposure rows, grants and their events, lifecycle history, and the embedding are
+  *removed*. The access trail (`experience_grant_access`) is deliberately kept: it carries no payload and is the
+  answer to "who read this before it was deleted".
+- **A tombstone is terminal.** A late create, lifecycle commit, confidence submission, feedback write, index write,
+  or grant naming it is refused, never resurrected — and, within its own scope, a host can tell `Deleted` from
+  `NotFound`. Across scopes the two collapse: a foreign-scope delete is the same answer as one naming an ID that
+  never existed. Three of those refusals are enforced by the schema and cannot be worked around at all: the ID can
+  never be re-created, the tombstone can never be moved, and the record row can never be deleted or truncated. The
+  rest are predicates this library puts in its own statements — binding for everything that goes through the
+  library, not for raw SQL from another tool. The adapter README says which is which, table by table, rather than
+  claiming the stronger version of both.
+- **Retention is indefinite by default.** A sweep runs only when a host passes a positive age, in bounded batches,
+  through the same delete. The library ships no timer, no background service, and no hosted service: scheduling
+  belongs to the host — **and a sweep matches one exact scope**, so a host with a tenant-wide policy has to
+  enumerate its own leaf scopes and sweep each one. A sweep of the tenant alone reports a clean `MoreRemain:
+  false` while every team-, agent- and user-scoped record stays put.
+- **It is an auditability mechanism, not a privilege boundary.** The purge path buys one code path, one
+  transaction, and a guard that is never switched off — not protection from an administrator. A custom GUC is
+  settable by any session, and the guards still do not bind a role that can `ALTER TABLE`, which the application
+  role can. There is one real privilege boundary: `0010` revokes `EXECUTE` on both `SECURITY DEFINER` purge
+  functions from `PUBLIC`, because PostgreSQL's default would otherwise let any role that can connect erase any
+  tenant's record.
+- **The limits are stated, including the uncomfortable one.** Backups, replicas, WAL, exported telemetry and
+  external artifacts are host-owned and out of reach — and *inside* this database the erased text survives in the
+  dead heap tuple until `VACUUM` reclaims it, which is a schedule nobody promised. The
+  [adapter README](src/AgentExperience.Storage.Postgres/README.md#deleting-and-expiring-data) carries that, the
+  retained list, the erasure order, and the full outcome table.
 
 **Upgrading an existing database.** `0006` adds every `CHECK` as `NOT VALID`, so it does not scan existing rows and
 cannot abort on a pre-`0006` `Superseded` event that has no replacement — one the public port accepted, because the
@@ -407,8 +451,9 @@ against the history rather than reading that as "it never landed".
 prior and new counters, the evidence ID, the rule version, and the `Actor` — the principal the commit ran under, recorded by the
 store from the host's authorization and never from anything the caller put in the event. Read it through
 `GetHistoryAsync` like any other transition; `stored.Event.Confidence` is `null` for the events that carried none.
-An *uncounted* submission has no event, by construction — the ledger row is its audit trail, and listing that ledger
-arrives with roadmap story 4.5 along with its retention path.
+An *uncounted* submission has no event, by construction — the ledger row is its audit trail. Listing that ledger is
+still not a port operation; its retention is covered by a record's erasure, which removes every evidence row that
+named it.
 
 ## Recording what reuse was worth
 

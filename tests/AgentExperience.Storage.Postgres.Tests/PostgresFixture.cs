@@ -27,6 +27,47 @@ public sealed class PostgresFixture : IAsyncLifetime
     }
 
     /// <summary>
+    /// Creates a login role in the shared container with only the privileges <paramref name="grants"/>
+    /// names, and returns a data source connecting as it. The caller owns the data source and disposes
+    /// it; the role goes away with the container.
+    /// </summary>
+    /// <remarks>
+    /// For privilege tests -- proving that a role which is <em>not</em> the owner cannot reach an
+    /// operation, which the owning fixture connection can never prove about itself.
+    /// </remarks>
+    /// <param name="purpose">A short name fragment: 1 to 20 lower-case ASCII letters, digits, or underscores.</param>
+    /// <param name="grants">Statements to run as the owner after the role exists, each naming the role as <c>{role}</c>.</param>
+    public async Task<NpgsqlDataSource> CreateRoleAsync(string purpose, params string[] grants)
+    {
+        Assert.InRange(purpose.Length, 1, 20);
+        Assert.All(purpose, c => Assert.True(c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_', $"Invalid purpose character '{c}'."));
+
+        var name = $"aen_{purpose}_{Guid.NewGuid():N}";
+        const string Password = "aen-role-password";
+
+        // CREATE ROLE takes no parameters, so the identifier is interpolated; every character of it has
+        // just been checked against the allowlist above.
+        await using (var command = DataSource.CreateCommand($"CREATE ROLE \"{name}\" LOGIN PASSWORD '{Password}'"))
+        {
+            await command.ExecuteNonQueryAsync();
+        }
+
+        foreach (var grant in grants)
+        {
+            await using var command = DataSource.CreateCommand(grant.Replace("{role}", $"\"{name}\"", StringComparison.Ordinal));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(_container!.GetConnectionString())
+        {
+            Username = name,
+            Password = Password,
+        };
+
+        return NpgsqlDataSource.Create(builder.ConnectionString);
+    }
+
+    /// <summary>
     /// Creates an empty database in the shared container and returns a data source for it. The caller
     /// owns the data source and disposes it; the database goes away with the container.
     /// </summary>

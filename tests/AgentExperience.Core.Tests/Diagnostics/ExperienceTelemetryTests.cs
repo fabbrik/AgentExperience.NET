@@ -737,7 +737,7 @@ public class ExperienceTelemetryTests
             new AppendAttemptRequest(Guid.NewGuid(), ExperienceLoop.Now, TimeSpan.FromSeconds(1), [], "done", null));
         await capture.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, ExperienceLoop.Now.AddSeconds(3));
 
-        var experienceId = ExperienceFinalizationService.ExperienceIdFor(runId);
+        var experienceId = ExperienceFinalizationService.ExperienceIdFor(runId, ExperienceLoop.Scope);
         index.Records[experienceId] = new FakeEmbeddingIndex.Row(1, "a retrieval summary");
 
         var finalized = await finalization.FinalizeAsync(FinalizeRequest(runId), CancellationToken.None);
