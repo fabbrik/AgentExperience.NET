@@ -16,7 +16,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <b>How to wire it.</b> This is a "simple tier" <see cref="AIContextProvider"/>: it overrides only
 /// <see cref="ProvideAIContextAsync"/> and lets MAF do the merging and message-source stamping. Add
 /// it to an agent yourself, through <see cref="ChatClientAgentOptions.AIContextProviders"/> --
-/// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture"/> never constructs those
+/// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/> never constructs those
 /// options, so capture and injection are configured separately and either can be used without the
 /// other.
 /// </para>

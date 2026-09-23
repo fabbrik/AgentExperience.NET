@@ -176,6 +176,6 @@ The two modes rank candidates differently: the in-memory candidate source scores
 and the PostgreSQL one uses full-text search, so the relevance number each computes for the same
 record is different. Nothing downstream of the ranking is: with one candidate, both modes rank it
 first, and the Historical Reference block is written from the record, so both modes print the same
-`byte budget used: 2059`. `SamplePostgresModeTests` asserts exactly that — the PostgreSQL mode's
+`byte budget used: 2210`. `SamplePostgresModeTests` asserts exactly that — the PostgreSQL mode's
 transcript is compared against the checked-in one line for line, with the header that names the
 ports as the only difference.

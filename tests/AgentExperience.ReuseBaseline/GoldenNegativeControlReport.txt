@@ -204,13 +204,15 @@ LEARNED RECORDS -- produced by the learning phase, read back out of the store:
 
   The 'working approach' line above is the harness's own, and a reader should weigh it as such.
   The library's shipped DefaultExperienceReflector is domain-blind -- its lesson names the task
-  and the checks that passed, never how -- and the injected Historical Reference block carries an
-  evidence summary only, never attempts, tool calls or tool arguments. With the default reflector
-  alone, nothing about a working approach could reach a later run at all, and the two conditions
-  here would be indistinguishable. This harness fills that gap through IExperienceReflector, the
-  documented seam for it, with a host reflector that reads the strategy out of the captured run's
-  final successful attempt. That is a legitimate host responsibility and it is also a load-bearing
-  part of why the arms differ, so it is named here rather than left in source.
+  and the checks that passed, never how. The injected Historical Reference block does now carry the
+  ordered tool NAMES of a verified run's final attempt, but never a tool's arguments -- and in this
+  experiment every strategy is the same single tool, distinguished only by its 'strategy' argument.
+  So the block's own approach line cannot tell the conditions apart here, and with the default
+  reflector alone nothing about a working approach would reach a later run. This harness fills that
+  gap through IExperienceReflector, the documented seam for it, with a host reflector that reads the
+  strategy out of the captured run's final successful attempt. That is a legitimate host
+  responsibility and it is also a load-bearing part of why the arms differ, so it is named here
+  rather than left in source.
 
 PER-CONDITION RESULTS -- sample size and dispersion, per condition, per metric.
 

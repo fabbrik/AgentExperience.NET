@@ -138,12 +138,18 @@ public class ExperienceInjectionTests
         var everything = string.Join("\n", harness.Client.LastMessages!.Select(m => m.Text));
         Assert.Contains(HistoricalReferenceWriter.BlockBegin, everything, StringComparison.Ordinal);
 
-        // Attempts, tool calls, arguments, results, errors, and evidence detail are never serialized.
+        // Tool arguments, tool results, attempt results, attempt errors and evidence detail are never
+        // serialized. Story 4.6 narrowed this from "attempts and tool calls are never serialized at
+        // all": the ordered tool *names* of the verified approach now are, and only those.
         Assert.DoesNotContain(InjectionRecords.SecretArgument, everything, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.RawResult, everything, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.RawError, everything, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.EvidenceDetail, everything, StringComparison.Ordinal);
-        Assert.DoesNotContain("refund_ticket", everything, StringComparison.Ordinal);
+
+        // The name of the tool the verified attempt called is the one thing that does cross, and it
+        // crosses on the Approach line -- not smuggled into some other field.
+        Assert.Contains("Approach: ", everything, StringComparison.Ordinal);
+        Assert.Contains("refund_ticket", everything, StringComparison.Ordinal);
     }
 
     // ---- Matrix: No candidates ------------------------------------------------------------------

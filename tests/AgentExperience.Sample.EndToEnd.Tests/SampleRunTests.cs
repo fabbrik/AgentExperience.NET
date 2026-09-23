@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using AgentExperience.Abstractions;
 using AgentExperience.MicrosoftAgentFramework;
+using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.Sample.EndToEnd.Fixtures;
 
 namespace AgentExperience.Sample.EndToEnd.Tests;
@@ -223,7 +224,7 @@ public class SampleRunTests
     /// was actually handed.
     /// </summary>
     [Fact]
-    public async Task Injected_block_carries_the_lesson_and_not_the_raw_captured_result()
+    public async Task Injected_block_carries_the_lesson_and_the_approach_but_not_the_raw_captured_result()
     {
         var execution = await SampleFacts.RunAsync();
         var block = execution.InjectedBlock();
@@ -234,9 +235,25 @@ public class SampleRunTests
         Assert.Contains("Confidence: ", block, StringComparison.Ordinal);
         Assert.Contains("Applicability (as ranked at retrieval)", block, StringComparison.Ordinal);
 
+        // Story 4.6: the verified attempt's tool names, in order, and derived from the record's own
+        // attempts rather than from the reflection's prose.
+        var winning = record.Attempts.OrderBy(attempt => attempt.SequenceNumber).Last();
+        Assert.Null(winning.Error);
+        Assert.Contains(
+            "Approach: " + HistoricalReferenceWriter.ApproachPrefix
+                + string.Join(HistoricalReferenceWriter.ApproachSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName)) + ".",
+            block,
+            StringComparison.Ordinal);
+
         foreach (var attempt in record.Attempts.Where(attempt => attempt.Result is { Length: > 0 }))
         {
             Assert.DoesNotContain(attempt.Result!, block, StringComparison.Ordinal);
+        }
+
+        // Names cross; the arguments they were called with do not.
+        foreach (var value in record.Attempts.SelectMany(a => a.ToolCalls).SelectMany(c => c.Arguments.Values).OfType<string>().Where(v => v.Length > 0))
+        {
+            Assert.DoesNotContain(value, block, StringComparison.Ordinal);
         }
     }
 

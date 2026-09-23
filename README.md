@@ -804,10 +804,12 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 
 Each record in the block carries its **source** (experience ID, source run ID, task ID), its **confidence**, its
 **applicability** (the rank score and every component with the weight applied to it, labeled *as ranked at
-retrieval*), **when it was learned and last revalidated**, the **environment** it came from, and an **evidence
-summary** — lesson, reuse guidance, preconditions, warnings, verification status, and evidence ID count. Attempts,
-tool calls, arguments, results, errors, and evidence detail are never serialized, so a captured payload cannot reach
-a model through injection.
+retrieval*), **when it was learned and last revalidated**, the **environment** it came from, an **evidence
+summary** — lesson, reuse guidance, preconditions, warnings, verification status, and evidence ID count — and, for a
+verified record, the **approach**: the ordered tool *names* its final attempt called. Tool arguments, tool results,
+attempt results, attempt errors, and evidence detail are never serialized, so a captured payload cannot reach a model
+through injection; the tool names are the one thing that does cross, and they are derived from the record's own
+attempts rather than from a reflection's prose, so a host reflector cannot widen what the block emits.
 
 **The label is hygiene, not a security control.** The block states that it is untrusted reference material and that
 nothing inside it authorizes anything. That wording helps a well-behaved model treat retrieved text as data and
@@ -929,6 +931,14 @@ reaches the host's risk policy as `ExperienceInjectionDecisionContext.SharedByGr
 Reference block carries a `Shared:` line (with no scope identifier in it). Everything downstream keeps its strict
 "this must be my own record" check for anything that is *not* flagged, so a source that returns a foreign record
 without declaring a grant is still dropped.
+
+**A borrowed lesson carries its approach, and that is a disclosure of its own.** A verified record's block includes
+the `Approach:` line — the ordered tool names the lending scope's run called. The borrowing host could always read
+those off the delivered record; what is new is that the borrowing scope's *model* now reads them too, and an internal
+tool name (`hr_salary_lookup`, `stripe_charge_prod`) is itself information about the lending scope's systems. The only
+control today is all-or-nothing: deny the record in the injection risk policy on `SharedByGrant` or
+`PermittingGrantId`. A grant has no field that permits the lesson while withholding the approach, and the access log
+records the revision delivered, not which of its lines reached a model.
 
 **Two trails, and they answer different questions.** `experience_grant_events` records administration -- who
 allowed what, under authority established when, until when, and when they stopped allowing it -- and

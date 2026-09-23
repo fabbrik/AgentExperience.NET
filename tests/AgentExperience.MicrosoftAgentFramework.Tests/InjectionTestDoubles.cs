@@ -488,7 +488,10 @@ internal static class InjectionRecords
         string? reuseGuidance = "Reuse only when the ticket is a refund.",
         ExperienceStatus status = ExperienceStatus.Validated,
         double confidence = 2d / 3d,
-        Reflection? reflection = null)
+        Reflection? reflection = null,
+        string toolName = "refund_ticket",
+        IReadOnlyList<Attempt>? attempts = null,
+        TaskVerificationStatus verification = TaskVerificationStatus.Verified)
     {
         var evidenceId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000001");
 
@@ -498,7 +501,7 @@ internal static class InjectionRecords
             Scope: scope,
             TaskId: taskId,
             TaskSummary: "A refund ticket stuck on a lock.",
-            Attempts:
+            Attempts: attempts ??
             [
                 new Attempt(
                     AttemptId: Guid.Parse("22222222-0000-0000-0000-000000000001"),
@@ -510,7 +513,7 @@ internal static class InjectionRecords
                         new ToolCallRecord(
                             ToolCallId: Guid.Parse("33333333-0000-0000-0000-000000000001"),
                             SequenceNumber: 0,
-                            ToolName: "refund_ticket",
+                            ToolName: toolName,
                             Arguments: new Dictionary<string, object?>(StringComparer.Ordinal) { ["apiKey"] = SecretArgument },
                             StartedAt: Now,
                             Duration: TimeSpan.FromMilliseconds(5),
@@ -521,7 +524,7 @@ internal static class InjectionRecords
                     Error: null),
             ],
             Outcome: new Outcome(
-                TaskVerificationStatus.Verified,
+                verification,
                 [
                     new Evidence(
                         EvidenceId: evidenceId,

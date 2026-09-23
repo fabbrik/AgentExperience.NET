@@ -36,7 +36,8 @@ var response = await agent.RunAsync("...", session);
 Call `UseExperienceCapture` first on the builder so capture is the outermost layer. It registers:
 
 - **Agent-run middleware.** It opens the run before the inner agent executes and completes it exactly once, on
-  success, failure, cancellation, or when a streaming consumer stops early.
+  success, failure, cancellation, or when a streaming consumer stops early — unless you asked to keep the run open
+  for a further attempt (see [Retries as attempts of one run](#retries-as-attempts-of-one-run)).
 - **Function middleware** (when `CaptureToolCalls` is `true`, the default). It records each tool call, including
   its result or exception, into the run for that invocation.
 
@@ -53,7 +54,10 @@ because MAF forwards those to the model provider.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `ResolveRun` | required | Maps messages, session, and agent to a task ID, scope, and task description. If it throws or returns a null descriptor, task ID, or scope, the invocation runs uncaptured and the failure is reported. |
+| `ResolveRun` | required | Maps messages, session, and agent to a task ID, scope, task description, and optionally the ID of a run this invocation continues. If it throws or returns a null descriptor, task ID, or scope, the invocation runs uncaptured and the failure is reported. |
+| `ShouldCompleteRun` | always complete | Decides, after the attempt is recorded, whether this invocation's run is finished. `false` keeps it open for a further attempt. The default is exactly the behaviour every host had before continuation existed. |
+| `MaxOpenRunDuration` | 5 min | How long a run may stay open across invocations before the adapter completes it itself and reports. Must be positive and at most `uint.MaxValue - 1` milliseconds. |
+| `MaxAttemptsPerOpenRun` | 8 | The most attempts a run the adapter is holding open may accumulate before it is completed anyway and reported. Must be positive. Separate from the capture service's own `CaptureLimits.MaxAttemptsPerRun`; whichever is reached first ends the run. |
 | `Environment` | machine name + `RuntimeInformation` | Environment fingerprint recorded on every run. |
 | `CaptureToolCalls` | `true` | Registers function middleware. Requires a `ChatClientAgent`. |
 | `FinalizationTimeout` | 5 s | Upper bound on the whole post-invocation step: appending the attempt, completing the run, and — when `FinalizationService` is set — finalizing it into a durable Experience Record. With finalization configured this bounds database round trips, not just in-memory capture, so 5 s may be too tight. Must be positive and at most `uint.MaxValue - 1` milliseconds. It uses its own token, never the caller's. |
@@ -63,6 +67,104 @@ because MAF forwards those to the model provider.
 | `OnRunFinalized` | none | Receives every `FinalizeExperienceResult`, durable or not — including a host decision such as `StorageDenied`, which is not a capture failure. Not called once finalization has overrun `FinalizationTimeout`. Exceptions it throws are swallowed. |
 | `TimeProvider` | `TimeProvider.System` | Timestamps, durations, and the finalization timeout. |
 | `NewId` | `Guid.NewGuid` | Run, attempt, tool-call, and completion-event IDs. Must be thread-safe. |
+
+## Retries as attempts of one run
+
+By default one invocation is one run: it is opened, its single attempt is recorded, and it is completed. A retry is
+therefore a *second run* — the failed one finalizes on its own (quarantined, never reusable) and the successful one
+is reflected on as if the failure never happened. That makes the library's own premise, learning from failure,
+unreachable through this adapter.
+
+Opt out by naming the run the invocation continues and saying when the run is finished. **One retry cycle is one
+run**: mint its identifier when the cycle starts, and a fresh one for the next cycle. A completed run is final, so an
+identifier reused after its run closed is refused and every later invocation naming it runs uncaptured.
+
+```csharp
+Guid? currentRun = null;   // the run of the retry cycle in progress
+
+var agent = innerAgent.AsBuilder()
+    .UseExperienceCapture(capture, new ExperienceCaptureOptions
+    {
+        ResolveRun = _ => new ExperienceRunDescriptor("triage-ticket", hostScope, ContinuesRunId: currentRun),
+        // Decided on the attempt's own recorded result, inside the invocation, so the attempt that
+        // succeeds is the one that closes the run.
+        ShouldCompleteRun = ctx => (ctx.Result is { } text && Check(text)) || ctx.AttemptCount >= 3,
+        MaxAttemptsPerOpenRun = 3,
+        MaxOpenRunDuration = TimeSpan.FromMinutes(2),
+        FinalizationService = finalization,
+        ResolveFinalization = ctx => BuildRequest(ctx.Run),
+    }, out var captureLifetime)
+    .Build();
+
+async Task RunCycleAsync(string prompt)
+{
+    currentRun = Guid.NewGuid();   // a new cycle, so a new run
+
+    for (var attempt = 1; attempt <= 3; attempt++)
+    {
+        var response = await agent.RunAsync(prompt);
+        if (Check(response.Text))
+        {
+            break;
+        }
+    }
+}
+
+// At teardown, so no open-run bound fires into a host that is shutting down.
+captureLifetime.Dispose();
+```
+
+The second invocation of a cycle appends attempt `1` to the same run, so the reflection eventually produced sees the
+failure and the success together; the next call to `RunCycleAsync` starts a new run. Finalization is deferred with the
+run: an open run is never handed to `FinalizationService`, because only a completed run can become a durable
+Experience Record. The example keeps the cycle's identifier in one field, so it runs one cycle at a time; a host
+running several at once keeps each cycle's identifier with that task's own state and returns it from `ResolveRun`.
+
+**The rules this comes with.**
+
+- A continuation ID that names a run with a **different task ID or scope**, or a run that has **already been
+  completed**, is a conflict: that invocation runs uncaptured and the refusal is reported through `OnCaptureFailure`
+  at the `StartRun` stage, exactly as a colliding identifier always has been. A run finalizes once and is never
+  reopened.
+- A continuation ID that names **no run at all** simply opens a new run under it. An all-zeros ID (`Guid.Empty`) is
+  refused at the `ResolveRun` stage: it is a default-valued field, not a run, and accepting it would pile every
+  invocation onto one run.
+- **A continuation joins a run; it never rewrites it.** The run keeps the task description, environment, provenance
+  (its `CorrelationId` included) and start time it was *opened* with, and the continuing invocation's own are dropped.
+  So an ID reused by accident, with the same task and scope, is merged rather than refused, and the two invocations
+  are reflected on as one run. Matching task and scope is the only check, and the capture service keeps its runs for
+  the process lifetime, so the collision window is that long. Minting the ID per cycle is what prevents it.
+- **Two invocations cannot capture on one run at once** — including while the invocation that *opened* the run is
+  still in flight, since its ID is readable from the session the moment the run exists. The second is refused and
+  runs uncaptured, rather than interleaving a second half-recorded attempt.
+- **What the default path costs.** To make the rule above hold for the invocation that opens a run, every captured
+  invocation takes a transient claim — one entry in the registration's open-run ledger — for as long as it is in
+  flight, the default single-invocation path included. The claim is removed when the invocation releases the run. A
+  default invocation, which completes its own run, therefore leaves no entry behind and arms no bound. Only a run
+  that is left open keeps an entry, with its bound armed, until the run is completed.
+- **An open run is bounded and never silent.** It holds captured payload in memory, so the adapter completes it —
+  reporting through `OnCaptureFailure` — when it reaches `MaxAttemptsPerOpenRun`, when it has been open for
+  `MaxOpenRunDuration` (enforced by a timer on your `TimeProvider`, so a host that never invokes again cannot leave
+  one open), when an attempt could not be recorded at all, when the run could not be read back to ask
+  `ShouldCompleteRun`, or when `ShouldCompleteRun` throws. There is no path where a run stays open because a host
+  forgot to close it. If the duration bound fires while an invocation is holding the run, the close is handed to that
+  invocation once and the bound re-arms for one further period; if the invocation has still not come back (a hung
+  inner agent, or a streaming consumer that abandoned its enumerator without disposing it), the run is closed
+  underneath it. A run that was completed normally is never reported as closed at its bound.
+- **Known limit: the bound starts when a run is first left open.** The duration bound is armed when an invocation
+  releases a run it is keeping open, not when the run is opened. So an invocation that *opens* a run and then never
+  returns (an inner agent that hangs with no cancellation) holds a run with no bound. That run has no recorded
+  attempt yet, and the same was true before continuation existed. Arming a bound at open would add a timer to every
+  default single-invocation run. Give the inner agent its own cancellation if this matters to you.
+- **Bound callbacks arrive off the invocation.** A run closed by `MaxOpenRunDuration` is completed, reported through
+  `OnCaptureFailure`, and finalized (with `OnRunFinalized`) from a timer callback on a thread-pool thread, with no
+  invocation in flight. Both callbacks must be thread-safe. Use the `UseExperienceCapture(..., out var captureLifetime)`
+  overload and dispose the handle at teardown: that cancels every armed bound, so nothing reaches a data source or
+  logger you have already torn down. A run still open at that moment is abandoned — nothing is written and no
+  timer reports it; an invocation still in flight says so as it returns — and later invocations through that agent
+  run uncaptured and say so.
+- The run this registration is holding open belongs to that registration. Build the agent once and reuse it; two
+  independently built agents do not share continuations.
 
 ## Finalizing captured runs
 
@@ -182,6 +284,7 @@ Environment: host build-07; runtime .NET 10.0.0; os linux; application version 3
 Verification: Verified
 Evidence: 3 evidence ID(s); no evidence detail is included.
 Lesson: ...
+Approach: the verified run's final attempt called these tools, in order: read_ledger -> wait_for_lock -> retry_refund. Tool names only -- no arguments, no results, no error text.
 Reuse guidance: ...
 Preconditions:
   - ...
@@ -194,8 +297,16 @@ Warnings:
 
 Per record: its **source** (experience ID, source run ID, task ID), its **confidence**, its **applicability** (the
 rank score and every normalized component with the weight applied to it), **when it was learned and last revalidated**,
-the **environment** it came from, and an **evidence summary** — lesson, reuse guidance, preconditions, warnings,
-verification status, and how many evidence IDs back it.
+the **environment** it came from, an **evidence summary** — lesson, reuse guidance, preconditions, warnings,
+verification status, and how many evidence IDs back it — and, for a verified record, the **approach**: the ordered
+tool *names* its final attempt called.
+
+`Approach:` is derived from the record's own `Attempts`, not from the reflection's prose, and it appears only when the
+record's outcome is `Verified` **and** its final attempt carries no error. That is deliberately the same rule
+`DefaultExperienceReflector` uses: attempts are not linked to verification rounds, so presenting an earlier error-free
+attempt as "the approach that worked" would be causal invention. A verified attempt that called no tool says so
+(`the verified run's final attempt completed without calling any tool.`) rather than printing an empty list, and a
+quarantined or unverified record carries no `Approach:` line at all.
 
 `Confidence:` is the record's stored reuse confidence, `(1 + S) / (2 + S + F)` over the independent supporting
 validations and contradictions that have been submitted against it. It is a **heuristic**, not a calibrated
@@ -214,8 +325,24 @@ record as the final eligibility check re-read it moments later; the score and it
 record was ranked. Saying so is what keeps a confidence component that has since moved from silently contradicting
 the `Confidence:` line above it.
 
-**Raw payloads never appear.** Attempts, tool calls, tool arguments, tool results, errors, and evidence *detail* are
-never serialized into the block, so a captured payload cannot reach a model through injection. Record text that
+**Raw payloads never appear.** Tool *arguments*, tool *results*, attempt *results*, attempt *errors*, and evidence
+*detail* are never serialized into the block, so a captured payload cannot reach a model through injection. The one
+thing that does cross from a captured run is the `Approach:` line's ordered tool **names**. What makes that
+acceptable is their *provenance*: MAF resolves the name a model emits against the agent's tool inventory and refuses
+one that does not resolve before any middleware runs, so a recorded name was fixed when the tool was registered and is
+not derived from the captured run's own data flow. That is the whole of the claim. A tool name is not guaranteed
+short, plain, or chosen by the host — an MCP or OpenAPI inventory takes its names from a remote server or a
+specification, and nothing in capture sanitizes or bounds `RawToolCall.ToolName` — so the writer bounds it where it
+enters a model's context: whitespace (newlines included) is collapsed, the block's markers and labels are neutralized,
+each name is cut to `HistoricalReferenceWriter.MaxToolNameLength` characters and the sequence to
+`MaxApproachToolNames` names, and both cuts are marked in the text. Until story 4.6 this
+paragraph promised that attempts and tool calls were never serialized at all; it is amended here rather than quietly
+dropped, because a lesson that cannot say *what was done* teaches a later agent nothing.
+
+A host reflector may write anything at all into a reflection's `SuccessfulApproaches`/`FailedApproaches` — the shipped
+default already embeds an attempt's own result and error text there — so the writer never reads them. Deriving the
+sequence from the record's attempts is what keeps the set of things this block can emit bounded by the writer rather
+than by whichever reflector a host installed. Record text that
 contains one of the block's own markers has that marker replaced before it is written, and so does a line that
 *starts* with one of its field labels (`Source:`, `Confidence:`, `Verification:`, …) — so a stored lesson can forge
 neither an end of block nor a provenance line. The same words mid-sentence are left alone: this is about structure,
@@ -270,6 +397,15 @@ provider carries onto `RankedExperience.PermittingGrantId` and
 tie an injected lesson back to the sharing decision behind it. The grant ID is for the host, not for the model: it
 is never written into the block. Retrieval itself leaves it null — a search *matching* a shared record is not a
 delivery, and no grant has been used to hand anything over until the re-read.
+
+**A borrowed lesson carries its approach, and that is a disclosure of its own.** A verified record's block includes
+the `Approach:` line: the ordered tool names the lending scope's run called. The borrowing *host* could always read
+those off the delivered record; what is new is that the borrowing scope's *model* now reads them too, and an internal
+tool name (`hr_salary_lookup`, `stripe_charge_prod`) is itself information about the lending scope's systems. The
+only control today is all-or-nothing: deny the record in the risk policy on `SharedByGrant` or `PermittingGrantId`.
+A grant has no field that permits the lesson while withholding the approach, and the access log records the revision
+delivered, not which of its lines reached a model. If a scope's tool inventory is sensitive, do not let its verified
+records be injected into a scope whose model should not see it.
 
 **That re-read is audited.** If the host wired an
 [access log](../AgentExperience.Storage.Postgres/README.md#recording-who-read-a-shared-record), each record the
@@ -343,9 +479,10 @@ boundary that nothing in the library can check. See
 
 ## Semantics
 
-- **One invocation is one run with one attempt.** That attempt holds every tool call from the invocation, ordered by
+- **One invocation is one attempt.** That attempt holds every tool call from the invocation, ordered by
   start time, including calls MAF runs concurrently (`AllowConcurrentInvocation`). MAF's own function-calling loop
-  iterations are not split into separate attempts.
+  iterations are not split into separate attempts. By default that attempt's run is completed with the invocation, so
+  one invocation is one run; a host that opts into continuation gets several attempts on one run instead.
 - **Attempt result.** On success the attempt `Result` is the response `Text`. For streaming, it is the concatenated
   `Text` of the yielded updates. Tool-call `Result` is the tool's return value converted to a string, and `Arguments`
   are the `FunctionInvocationContext.Arguments`. All of it is raw input to the capture service's sanitizer.

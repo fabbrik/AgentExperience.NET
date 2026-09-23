@@ -11,10 +11,40 @@ public enum StartRunOutcome
     Started,
 
     /// <summary>
-    /// A run with the given <c>RunId</c> already exists. Starting a run carries no caller-supplied
-    /// idempotency event ID of its own to distinguish a legitimate retry from a colliding
-    /// identifier, so any collision -- whatever the new call's own parameters -- is a
-    /// <see cref="Conflict"/>, never silently reused or overwritten.
+    /// A run with the given <c>RunId</c> already exists, it is still open, and it is <em>the same
+    /// run</em>: its <c>TaskId</c> and <c>Scope</c> both match this call's. The existing run is
+    /// returned untouched -- nothing it already holds is overwritten, and no attempt is added here --
+    /// so the caller may append a further attempt to it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is how a host continues one task across several framework invocations (a retry loop is
+    /// the motivating case): the second invocation names the same <c>RunId</c> and gets its failed
+    /// predecessor's attempts, instead of opening a second run whose first attempt has no knowledge
+    /// that the failure happened. Matching on <c>TaskId</c> <em>and</em> <c>Scope</c> is what keeps
+    /// this from being a silent reuse of somebody else's identifier: anything that does not match is
+    /// still a <see cref="Conflict"/>.
+    /// </para>
+    /// <para>
+    /// <b>What the continuing call's own arguments do, which is nothing.</b> The run keeps the
+    /// <c>TaskDescription</c>, <c>Environment</c>, <c>Provenance</c> -- its <c>CorrelationId</c>
+    /// included -- and <c>StartedAt</c> it was opened with; the ones this call passed are discarded
+    /// without a word. Overwriting them would rewrite the recorded history of a run that already
+    /// holds attempts, so discarding is the right half of the trade -- but it does mean a
+    /// <c>RunId</c> reused by accident on a matching task and scope is <em>merged</em> into one run
+    /// and reflected on as one, rather than refused. Matching on task and scope is the whole of the
+    /// protection against that.
+    /// </para>
+    /// </remarks>
+    Continued,
+
+    /// <summary>
+    /// A run with the given <c>RunId</c> already exists and this call is <em>not</em> a continuation
+    /// of it: its <c>TaskId</c> or <c>Scope</c> differs, or the run has already been finalized by
+    /// <c>CompleteRunAsync</c>. Starting a run carries no caller-supplied idempotency event ID of its
+    /// own, so a collision that is not provably the same, still-open run is refused rather than
+    /// silently reused or overwritten -- and a finalized run is never reopened, which is the same
+    /// invariant <c>AppendAttemptAsync</c> enforces.
     /// </summary>
     Conflict,
 }
@@ -104,7 +134,7 @@ public sealed record TruncatedField(string FieldPath, string Reason);
 /// The result of one <see cref="IExperienceCaptureService.StartRun"/> call.
 /// </summary>
 /// <param name="Outcome">What happened.</param>
-/// <param name="Run">The newly opened run's initial snapshot when <see cref="Outcome"/> is <see cref="StartRunOutcome.Started"/>; <see langword="null"/> on <see cref="StartRunOutcome.Conflict"/>.</param>
+/// <param name="Run">The newly opened run's initial snapshot when <see cref="Outcome"/> is <see cref="StartRunOutcome.Started"/>, or the existing run's current snapshot when it is <see cref="StartRunOutcome.Continued"/>; <see langword="null"/> on <see cref="StartRunOutcome.Conflict"/>.</param>
 /// <param name="Reason">Optional, auditable explanation, e.g. why a duplicate <c>RunId</c> conflicted.</param>
 public sealed record StartRunResult(StartRunOutcome Outcome, ExperienceRun? Run, string? Reason);
 
