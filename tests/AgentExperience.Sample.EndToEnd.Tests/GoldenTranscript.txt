@@ -1,0 +1,71 @@
+AgentExperience.NET -- end-to-end sample
+ports:  in-memory demonstration doubles (set AGENTEXPERIENCE_SAMPLE_POSTGRES to a connection string for the PostgreSQL adapters)
+clock:  a stepping fixture; identifiers: a counter. Two runs print the same bytes.
+
+[1] capture  Run A opens; attempt 1 takes the wrong approach.
+             -> StartRunOutcome.Started
+             -> AppendAttemptOutcome.Recorded
+                run ae000000-0000-4000-8000-000000000001, attempt ae000000-0000-4000-8000-000000000003
+                the agent called run_refund_check(strategy: retry-immediately) and it exited 2
+                captured as run_refund_check(apiToken="", strategy="retry-immediately", ticketId="RF-4821") -- 'apiToken' is empty because the sanitization policy classifies it as a secret
+
+[2] capture  Attempt 2 takes the correct approach; the run completes.
+             -> AppendAttemptOutcome.Recorded
+             -> CompleteRunOutcome.Recorded
+                attempt ae000000-0000-4000-8000-000000000005, on the same run ae000000-0000-4000-8000-000000000001
+                the agent called run_refund_check(strategy: wait-for-lock) and it exited 0
+                read back from capture: RunExecutionStatus.Completed, 2 attempts captured, 1 of them failed
+
+[3] verify   Attempt 1's evidence sits in a round the host left open; attempt 2's is in the round the host closed.
+             -> TaskVerificationStatus.Verified
+                completion score 1.000 under rule 1.0.0, required checks: refund-check
+                attempt 1 evidence: CheckResult.Fail in round 11111111-1111-4111-8111-111111111111
+                attempt 2 evidence: CheckResult.Pass in the closed round 22222222-2222-4222-8222-222222222222, revision refund-pipeline@rev-7
+                with no round closed at all, the same evidence aggregates to TaskVerificationStatus.Unknown -- an open round is unresolved, never failed
+                had the host closed round 11111111-1111-4111-8111-111111111111 instead, it would have been TaskVerificationStatus.Failed: inside one round a Fail on a required check dominates a later Pass
+                trust boundary: which round is closed is the host's claim, not the library's finding. The
+                aggregator cannot tell a genuine fix-and-rerun -- what this sample is staging -- from a host
+                parking a failure in a round it simply never closes. Closing a round is an assertion you are
+                accountable for, and the lifecycle log is where it is auditable.
+
+[4] finalize The verified run is reflected on and persisted as one Experience Record.
+             -> FinalizationOutcome.Validated
+             -> IsDurable=true
+                experience 219b3e10-e601-833a-bd12-e137df161b37, ExperienceStatus.Validated, revision 1 (read back from the store)
+                reuse confidence 0.667, 2 attempts kept: #0 failed, #1 succeeded
+                lesson: Task 'refund-ticket-triage' verified: required checks [refund-check] passed (evidence: 44444444-4444-4444-8444-444444444444).
+                failed approaches recorded: 1; successful: 1
+
+[5] retrieve Run B asks the same task; the stored record is found.
+             -> RetrievalOutcome.Completed
+             -> candidates ranked: 1
+                eligible statuses: Validated, Reinforced; confidence floor 0.50
+                top candidate: experience 219b3e10-e601-833a-bd12-e137df161b37, ExperienceStatus.Validated
+                text-only retrieval: no vector channel is configured, which is a supported deployment
+
+[6] inject   The record is injected into run B as a labelled Historical Reference.
+             -> InjectionOutcome.Injected
+             -> injected: 219b3e10-e601-833a-bd12-e137df161b37
+                byte budget used: 2059 of 16384; record limit 8
+                omitted: 0; excluded before ranking: 0; truncated search: false
+                read out of the 2059 bytes run B's model was handed: lesson present, source named, confidence named, applicability named, raw captured result absent
+                run B's own Experience Run is ae000000-0000-4000-8000-000000000007, read from the session state key 'AgentExperience.RunId'
+
+[7] feedback The exposure is recorded against run B, and nothing is claimed about it.
+             -> ExperienceReuseFeedbackOutcome.Recorded
+             -> Outcome: Recorded | Benefit: Unknown | nothing moved
+                feedback 55555555-5555-4555-8555-555555555555 against run ae000000-0000-4000-8000-000000000007
+                ReuseAttributionSource.None; experience 219b3e10-e601-833a-bd12-e137df161b37: ExperienceExposureDisposition.ExposureOnly, counted=false
+                exposure is not attribution: the run saw the record and the run ended, and nothing in those two facts
+                attributes one to the other. Moving a confidence score needs a human assessment or a comparative
+                evaluation, and the sample performed neither, so it submits neither.
+
+What this run demonstrates: that the mechanism works end to end -- an Experience Run is
+captured with both of its attempts, verified from host-supplied evidence, reflected on,
+persisted, retrieved by a second run, injected as a labelled Historical Reference, and
+that the exposure is recorded.
+
+What it does not demonstrate: anything at all about model quality. The model here is a
+scripted fixture with no credentials and no network, the clock and the identifiers are
+fixtures too, and the reuse feedback claims no benefit because none was measured.
+Measuring what reuse does to a real model is story 4.4's job, not this sample's.

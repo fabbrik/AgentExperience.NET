@@ -30,3 +30,19 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build --configuration Release
+
+      # The sample's whole promise is that a stranger can clone the repository, run one command with
+      # no Docker, no database and no credentials, and get the same seven stages every time. Running
+      # it here is the only place that promise is checked end to end as a process: the test suite
+      # exercises SampleHost, but never `dotnet run`.
+      - name: Run the sample twice and diff its output
+        run: |
+          set -euo pipefail
+          # Written outside the workspace so a local run of this script leaves no untracked files
+          # behind next to the sources it just diffed.
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          dotnet run --project samples/AgentExperience.Sample.EndToEnd --configuration Release --no-build > "$out/run-1.txt"
+          dotnet run --project samples/AgentExperience.Sample.EndToEnd --configuration Release --no-build > "$out/run-2.txt"
+          diff -u "$out/run-1.txt" "$out/run-2.txt"
+          diff -u tests/AgentExperience.Sample.EndToEnd.Tests/GoldenTranscript.txt "$out/run-1.txt"

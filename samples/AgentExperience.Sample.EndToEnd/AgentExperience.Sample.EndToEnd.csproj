@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AgentExperience.Sample.EndToEnd</RootNamespace>
+    <!-- A demonstration, never a package: shipping an in-memory record store from a published
+         package would invite someone to run it in production. -->
+    <IsPackable>false</IsPackable>
+    <!-- Directory.Build.props turns on GenerateDocumentationFile with TreatWarningsAsErrors, which
+         would make every undocumented public member a build error. The sample documents the types a
+         reader is meant to follow, not every member of them. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The container itself (Core and the adapters reference only the DI abstractions), so the
+         sample can show the same registration calls a host would make. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.11]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embedded so the sample's own test can scan it for improvement claims without knowing where
+         the repository root is at test time. -->
+    <EmbeddedResource Include="README.md" LogicalName="AgentExperience.Sample.EndToEnd.README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentExperience.Sample.EndToEnd.Tests" />
+  </ItemGroup>
+
+</Project>
