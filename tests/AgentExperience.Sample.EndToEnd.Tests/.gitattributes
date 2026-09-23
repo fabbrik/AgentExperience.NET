@@ -1,0 +1,3 @@
+# The golden transcript is compared against the sample's stdout byte for byte, and the sample writes
+# '\n' explicitly on every platform. Never let a checkout rewrite its line endings.
+GoldenTranscript.txt -text

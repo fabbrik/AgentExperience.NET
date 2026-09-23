@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Not packed/consumed, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[17.14.1]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.4]" />
+    <!-- Ephemeral postgres:16 container (Docker required), for the opt-in PostgreSQL mode only. The
+         sample's base schema needs nothing pgvector provides, so the stock image is enough. Pin
+         verified 2026-09-22 against the version AgentExperience.Storage.Postgres.Tests already uses. -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="[4.15.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\samples\AgentExperience.Sample.EndToEnd\AgentExperience.Sample.EndToEnd.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The checked-in transcript the sample's stdout is compared against byte for byte. Embedded so
+         the comparison does not depend on where the repository root is at test time. -->
+    <EmbeddedResource Include="GoldenTranscript.txt" LogicalName="AgentExperience.Sample.EndToEnd.Tests.GoldenTranscript.txt" />
+    <!-- The repository README, so the "Run the sample" section's claims are scanned by the same
+         deny-list as the sample's own README and its printed report. -->
+    <EmbeddedResource Include="..\..\README.md" LogicalName="AgentExperience.Sample.EndToEnd.Tests.RootREADME.md" />
+  </ItemGroup>
+
+</Project>

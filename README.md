@@ -1044,6 +1044,9 @@ tests/
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container
   AgentExperience.Storage.Postgres.Vectors.Tests/  embedding index and hybrid retrieval, against a pgvector container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
+  AgentExperience.Sample.EndToEnd.Tests/    asserts the sample's seven stages, its determinism, and what it does not claim
+samples/
+  AgentExperience.Sample.EndToEnd/          one runnable command: capture a wrong approach and a right one, verify, reflect, persist, retrieve, inject, record reuse
 docs/                                       original production architecture research
 _sdlc/                                      product brief, PRD, architecture, epics, and specs
 ```
@@ -1063,6 +1066,14 @@ Unit and MAF adapter tests run in memory, with no network, database, or model cr
 ```bash
 dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
+
+### Run the sample
+
+```bash
+dotnet run --project samples/AgentExperience.Sample.EndToEnd
+```
+
+Seven stages, exit code 0, on a fresh clone: no Docker, no PostgreSQL, no model credentials, no network. Run it twice and the two transcripts are byte-identical. Set `AGENTEXPERIENCE_SAMPLE_POSTGRES` to a connection string to run the same seven stages against the real PostgreSQL adapters. See [`samples/AgentExperience.Sample.EndToEnd/README.md`](samples/AgentExperience.Sample.EndToEnd/README.md) for what the sample proves and what it deliberately does not.
 
 ## Roadmap
 
