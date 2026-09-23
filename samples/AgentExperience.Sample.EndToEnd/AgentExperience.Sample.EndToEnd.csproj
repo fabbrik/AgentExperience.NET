@@ -32,6 +32,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentExperience.Sample.EndToEnd.Tests" />
+    <!-- Story 4.4's measurement harness reuses this sample's three in-memory port doubles and its
+         attempt-level tool recorder rather than copying them. It deliberately does not reuse the
+         stepping clock or the counter-based identifier source: see ReuseBaselineExperiment. -->
+    <InternalsVisibleTo Include="AgentExperience.ReuseBaseline" />
   </ItemGroup>
 
 </Project>
