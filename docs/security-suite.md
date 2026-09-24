@@ -36,6 +36,8 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_request_scope_outside_the_authorization_injects_nothing_and_is_reported_as_denied` | No retrieval, no block |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_store_that_answers_with_a_record_from_another_tenant_is_omitted_even_though_it_said_Found` | The pre-injection re-read checks scope itself |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_candidate_no_longer_readable_in_scope_is_omitted_indistinguishably_from_a_missing_one` | A re-scoped record drops out, revealing nothing |
+| MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_LessonOnly_grant_withholds_the_approach_says_so_and_the_access_row_records_the_level` | A borrowed record's `Approach:` line — the lending scope's tool names — is withheld unless its grant permits it |
+| MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_store_that_says_shared_but_reports_no_level_is_rendered_LessonOnly` | A store that reports no disclosure level fails closed to the least disclosure |
 
 ### Write
 
@@ -51,6 +53,11 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Storage.Postgres.Tests | `PostgresDeletionTests.A_sweep_never_reaches_another_scope` | Retention cannot either **(DB)** |
 | Storage.Postgres.Tests | `PostgresReuseFeedbackTests.A_run_scope_outside_the_authorization_is_denied_before_anything_is_written` | Feedback **(DB)** |
 | Storage.Postgres.Tests | `PostgresGrantTests.A_revoke_without_administrator_authority_is_denied_and_the_grant_still_stands` | Grant administration needs its own authority **(DB)** |
+| Storage.Postgres.Tests | `PostgresSupersessionAndAppendOnlyTests.A_live_grants_disclosure_level_cannot_be_changed_in_place` | A grant's disclosure level is immutable: widening it needs a new, audited grant **(DB)** |
+| Storage.Postgres.Tests | `PostgresGrantTests.An_undefined_disclosure_level_is_Invalid_on_Disclosure_and_writes_nothing` | A disclosure level nobody chose is refused before anything is written **(DB)** |
+| Storage.Postgres.Tests | `PostgresGrantAccessAuditTests.A_new_access_row_without_a_disclosure_level_is_refused_and_the_mode_decides_the_read` | A delivery that cannot say what level it was made under is refused by the database, not stored blank **(DB)** |
+| Storage.Postgres.Tests | `PostgresGrantAccessAuditTests.Upgrading_to_0011_makes_every_live_grant_LessonOnly_and_leaves_old_trail_rows_unrecorded` | An upgrade narrows every existing grant to the least disclosure and invents no level for old trail rows **(DB)** |
+| Storage.Postgres.Vectors.Tests | `HybridRetrievalIntegrationTests.A_vector_delivery_records_the_grants_disclosure_level_and_retrieval_carries_none` | The vector channel records the permitting grant's level on its access row **(DB)** |
 | Core.Tests | `ExperienceIndexingServiceTests.A_scope_outside_the_authorization_is_denied_before_anything_is_read_or_embedded` | Indexing |
 | Core.Tests | `ExperienceFinalizationServiceTests.Another_scope_cannot_block_a_run_by_taking_the_id_it_will_finalize_under` | The cross-scope ID squat (deferred item 1, fixed by story 4.5) cannot block a run from finalizing |
 
@@ -104,6 +111,5 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 
 The label on an injected block is hygiene, not a control: nothing here claims a model will *treat* retrieved text
 as data. The control is the approval boundary around tools, which lives outside the block, and section 4 is what
-proves that boundary holds when the model does obey. The residual risks — a borrowed record's `Approach:` line
-disclosing the lending scope's tool names, and injected blocks accumulating in a reused session — are rows in the
-root README's Known limits table.
+proves that boundary holds when the model does obey. The residual risk — injected blocks accumulating in a reused
+session — is a row in the root README's Known limits table.

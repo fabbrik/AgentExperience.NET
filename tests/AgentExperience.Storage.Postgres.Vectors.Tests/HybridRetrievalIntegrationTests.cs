@@ -309,6 +309,53 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
         Assert.Equal(byWords, Assert.Single(afterRevocation.Records).Record.ExperienceId);
     }
 
+    [Theory]
+    [InlineData(ExperienceGrantDisclosure.LessonOnly)]
+    [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
+    public async Task A_vector_delivery_records_the_grants_disclosure_level_and_retrieval_carries_none(ExperienceGrantDisclosure level)
+    {
+        var world = await TestWorld.CreateAsync(DataSource);
+        var owner = world.Scope with { TeamId = "team-a" };
+        var recipient = world.Scope with { TeamId = "team-b" };
+
+        // Found only by meaning, so the vector channel is the one that delivers it.
+        var byMeaning = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice", scope: owner);
+        await world.Indexing.IndexAsync(world.Authorization, owner, byMeaning);
+        var grant = await world.GrantAsync(byMeaning, owner, recipient, level);
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+        var log = new PostgresExperienceGrantAccessLog(world.DataSource);
+        var audited = new PostgresExperienceEmbeddingIndex(
+            world.DataSource, onGrantsUnavailable: null, auditing: new ExperienceGrantAuditing(log, failures.Add));
+
+        var result = await audited.SearchAsync(
+            world.Authorization,
+            new ExperienceVectorQuery(
+                recipient,
+                world.Generator.ModelId,
+                TopicEmbeddingGenerator.VectorFor(SemanticTaskText),
+                [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
+                MinimumConfidence: 0d,
+                Limit: 50),
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceVectorSearchOutcome.Found, result.Outcome);
+        Assert.Equal(byMeaning, Assert.Single(result.Candidates).Record.ExperienceId);
+        Assert.Empty(failures);
+
+        var row = Assert.Single((await log.QueryAsync(
+            world.Authorization, new ExperienceGrantAccessQuery(owner, byMeaning), CancellationToken.None)).Accesses);
+        Assert.Equal(grant.GrantId, row.GrantId);
+        Assert.Equal(level, row.Disclosure);
+
+        // Retrieval matches; it does not deliver. Like the grant ID, the level is filled in only by the
+        // pre-injection re-read.
+        var retrieved = await world.Retrieval().RetrieveAsync(new RetrieveExperienceRequest(world.Authorization, recipient, SemanticTaskText));
+        var ranked = Assert.Single(retrieved.Records);
+        Assert.True(ranked.SharedByGrant);
+        Assert.Null(ranked.GrantDisclosure);
+    }
+
     private static RetrieveExperienceRequest Request(TestWorld world, string taskText) =>
         new(world.Authorization, world.Scope, taskText);
 

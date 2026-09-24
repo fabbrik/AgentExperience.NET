@@ -90,6 +90,17 @@ public sealed record HistoricalReferencePayload(
 /// the two can never disagree or double-report an omission.
 /// </para>
 /// <para>
+/// <b>A grant decides whether a borrowed record's approach is shown.</b> The <c>Approach:</c> line
+/// names the tools the <em>owner</em> scope used. For a record read through a sharing grant
+/// (<see cref="RankedExperience.SharedByGrant"/>) the line is written only when
+/// <see cref="RankedExperience.GrantDisclosure"/> is
+/// <see cref="ExperienceGrantDisclosure.LessonAndApproach"/>; any other value, <see langword="null"/>
+/// included, is the least disclosure, so the line is omitted and, when the record has an approach to
+/// withhold, the <c>Shared:</c> line ends with <see cref="ApproachWithheld"/>. Only the <c>Approach:</c>
+/// line is governed: the reflection's prose is rendered unfiltered under either level. The record a store returns to host code is unaffected -- this
+/// writer is the boundary, not the store. A record in the reader's own scope is rendered as always.
+/// </para>
+/// <para>
 /// <b>Delimiter spoofing is neutralized.</b> Record text that contains one of this block's own
 /// markers, or that starts a line with one of its field labels, has that marker or label replaced
 /// before it is written -- so a stored lesson can forge neither an end of block nor a
@@ -155,6 +166,18 @@ public static class HistoricalReferenceWriter
 
     /// <summary>What closes an <c>Approach:</c> line whose sequence was cut to <see cref="MaxApproachToolNames"/>.</summary>
     public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
+
+    /// <summary>The <c>Shared:</c> line written for every record read through a sharing grant.</summary>
+    internal const string SharedLine = "this lesson belongs to another scope and was read through an explicit sharing grant.";
+
+    /// <summary>
+    /// The sentence appended to <see cref="SharedLine"/> when the grant withholds the record's
+    /// <c>Approach:</c> line, in place of that line. Written only when the record has an approach to
+    /// withhold. Fixed text: it names no scope and no tool. It covers the <c>Approach:</c> line only:
+    /// the lesson, reuse guidance, preconditions and warnings are the reflector's prose and are rendered
+    /// unfiltered, so a tool name the reflector wrote into them still reaches the model.
+    /// </summary>
+    public const string ApproachWithheld = " The grant withholds this lesson's approach.";
 
     /// <summary>
     /// What is written in place of a number that is not a real number (a NaN or an infinity). It is
@@ -313,9 +336,23 @@ public static class HistoricalReferenceWriter
 
         // Borrowed experience says so. No scope identifier is written -- the block never carries who
         // owns or may act on anything -- only the fact that this lesson is not the reader's own.
+        //
+        // A borrowed record's Approach: line is rendered only when the grant that permitted it says so.
+        // Anything else, a level the store did not report included, is the least disclosure: fail closed.
+        // The withheld sentence is written only when there is an approach to withhold, so the block never
+        // implies one exists for a record that has none.
+        var approach = Approach(record);
+        var approachWithheld = ranked.SharedByGrant
+            && ranked.GrantDisclosure != ExperienceGrantDisclosure.LessonAndApproach;
         if (ranked.SharedByGrant)
         {
-            text.Append("Shared: this lesson belongs to another scope and was read through an explicit sharing grant.\n");
+            text.Append("Shared: ").Append(SharedLine);
+            if (approachWithheld && approach is not null)
+            {
+                text.Append(ApproachWithheld);
+            }
+
+            text.Append('\n');
         }
 
         text.Append("Confidence: ").Append(Number(record.ReuseConfidence))
@@ -344,8 +381,9 @@ public static class HistoricalReferenceWriter
         text.Append("Lesson: ").Append(Clean(reflection?.Lesson)).Append('\n');
 
         // Derived from the record's own attempts, never from the reflection's prose -- see the type's
-        // remarks. Absent entirely when there is no verified approach to describe.
-        if (Approach(record) is { } approach)
+        // remarks. Absent entirely when there is no verified approach to describe, and when a sharing
+        // grant withholds it.
+        if (!approachWithheld && approach is not null)
         {
             text.Append("Approach: ").Append(approach).Append('\n');
         }

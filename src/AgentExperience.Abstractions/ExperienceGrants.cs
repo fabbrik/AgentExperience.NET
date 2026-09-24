@@ -53,6 +53,11 @@ public sealed record GrantAdministration(
 /// <param name="ExpiresAt">When the grant stops permitting reads, compared against the database's own clock.</param>
 /// <param name="RevokedAt">When the grant was revoked, or <see langword="null"/> while it stands.</param>
 /// <param name="RevocationReason">Why it was revoked, or <see langword="null"/> while it stands.</param>
+/// <param name="Disclosure">
+/// How much of the record the grant lets injection show the recipient's model. Fixed for the life of
+/// the grant: to change it, revoke the grant and issue a new one. A grant stored before the level
+/// existed reads as <see cref="ExperienceGrantDisclosure.LessonOnly"/>.
+/// </param>
 public sealed record ExperienceGrant(
     Guid GrantId,
     Guid ExperienceId,
@@ -63,7 +68,8 @@ public sealed record ExperienceGrant(
     DateTimeOffset IssuedAt,
     DateTimeOffset ExpiresAt,
     DateTimeOffset? RevokedAt,
-    string? RevocationReason)
+    string? RevocationReason,
+    ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly)
 {
     /// <summary>The smallest permitted <see cref="IExperienceGrantStore.ListAsync"/> limit.</summary>
     public const int MinListLimit = 1;
@@ -111,13 +117,55 @@ public sealed record ExperienceGrant(
 /// exactly at the maximum is accepted.
 /// </para>
 /// </param>
+/// <param name="Disclosure">
+/// How much of the record injection may show the recipient's model. Defaults to
+/// <see cref="ExperienceGrantDisclosure.LessonOnly"/>, which withholds the <c>Approach:</c> line, and
+/// only that line: the reflection's prose is rendered unfiltered. A value the enum does not define is
+/// <see cref="ExperienceGrantOutcome.Invalid"/> on this field, and nothing is written. The level is
+/// immutable once issued.
+/// </param>
 public sealed record ExperienceGrantRequest(
     Guid GrantId,
     Guid ExperienceId,
     Scope RecordScope,
     Scope RecipientScope,
     string Reason,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly);
+
+/// <summary>
+/// How much of a shared record a grant lets injection show the recipient's model. It governs only
+/// what the MAF adapter renders into a block: the <see cref="ExperienceRecord"/> a store returns to
+/// host code is complete either way.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The default value is the least disclosure, so a grant that never names a level withholds the
+/// <c>Approach:</c> line. A level is fixed for the life of the grant: to widen or narrow it, revoke the
+/// grant and issue a new one.
+/// </para>
+/// <para>
+/// The level governs the <c>Approach:</c> line only. The lesson, reuse guidance, preconditions and
+/// warnings come from the reflector and are rendered unfiltered, so a tool name a reflector wrote into
+/// that prose reaches the model under either level.
+/// </para>
+/// <para>
+/// <b>Member names are persisted.</b> The PostgreSQL adapter stores each member's name verbatim in
+/// three tables and constrains it with <c>*_disclosure_known</c> <c>CHECK</c>s. A name must never
+/// change, and a new member needs a migration that widens those constraints first.
+/// </para>
+/// </remarks>
+public enum ExperienceGrantDisclosure
+{
+    /// <summary>
+    /// Injection omits the record's <c>Approach:</c> line, and says in the block that the grant
+    /// withholds it when the record has one. The reflection's prose is still rendered.
+    /// </summary>
+    LessonOnly = 0,
+
+    /// <summary>The lesson and the <c>Approach:</c> line, exactly as the owner scope would see it.</summary>
+    LessonAndApproach = 1,
+}
 
 /// <summary>
 /// A request to revoke one <see cref="ExperienceGrant"/>. Revocation appends another audit event and
@@ -164,6 +212,10 @@ public enum ExperienceGrantAction
 /// <param name="AdministratorAuthorizedAt">When the host established that administrator's authority.</param>
 /// <param name="ExpiresAt">The grant's expiry, as stored when this event was appended.</param>
 /// <param name="OccurredAt">When the action happened, from the database's own clock.</param>
+/// <param name="Disclosure">
+/// The grant's <see cref="ExperienceGrant.Disclosure"/> when this event was appended, or
+/// <see langword="null"/> for an event written before the level was recorded.
+/// </param>
 public sealed record ExperienceGrantEvent(
     Guid EventId,
     Guid GrantId,
@@ -175,7 +227,8 @@ public sealed record ExperienceGrantEvent(
     string AdministratorPrincipalId,
     DateTimeOffset AdministratorAuthorizedAt,
     DateTimeOffset ExpiresAt,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    ExperienceGrantDisclosure? Disclosure = null);
 
 /// <summary>
 /// The result of <see cref="IExperienceGrantStore.GetHistoryAsync"/>.

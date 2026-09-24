@@ -53,6 +53,131 @@ public class HistoricalReferenceApproachTests
         Result: result,
         Error: error);
 
+    // ---- Grant disclosure: a borrowed record's approach is the lending grant's to give -------------
+
+    private static string WriteShared(ExperienceRecord record, bool shared, ExperienceGrantDisclosure? level) =>
+        HistoricalReferenceWriter.Write(
+            [new RankedExperience(record, 0.5d, [], SharedByGrant: shared, GrantDisclosure: level)],
+            ExperienceInjectionLimits.Default).Text;
+
+    private static ExperienceRecord Borrowed() => InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts:
+    [
+        Attempt(0, error: null, result: "refunded", "lender_read_ledger", "lender_retry_refund"),
+    ]);
+
+    [Fact]
+    public void A_LessonOnly_grant_withholds_the_approach_and_says_so_on_the_shared_line()
+    {
+        var text = WriteShared(Borrowed(), shared: true, ExperienceGrantDisclosure.LessonOnly);
+
+        Assert.DoesNotContain("Approach: ", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("lender_", text, StringComparison.Ordinal);
+        Assert.Contains(
+            "Shared: " + HistoricalReferenceWriter.SharedLine + HistoricalReferenceWriter.ApproachWithheld + "\n",
+            text,
+            StringComparison.Ordinal);
+
+        // The lesson itself is still there: withholding the approach is not withholding the record.
+        Assert.Contains("Lesson: ", text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(TaskVerificationStatus.Failed)]
+    [InlineData(TaskVerificationStatus.Unknown)]
+    public void A_LessonOnly_borrowed_record_with_no_approach_does_not_claim_one_was_withheld(TaskVerificationStatus verification)
+    {
+        var record = InjectionRecords.Record(InjectionRecords.Id(1), TestScope, verification: verification, attempts:
+        [
+            Attempt(0, error: null, result: "refunded", "lender_read_ledger"),
+        ]);
+
+        var text = WriteShared(record, shared: true, ExperienceGrantDisclosure.LessonOnly);
+
+        // Nothing to withhold, so the block must not imply there was an approach.
+        Assert.DoesNotContain("Approach: ", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
+        Assert.Contains("Shared: " + HistoricalReferenceWriter.SharedLine + "\n", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_LessonOnly_borrowed_record_whose_final_attempt_errored_does_not_claim_one_was_withheld()
+    {
+        var record = InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts:
+        [
+            Attempt(0, error: "System.TimeoutException", result: null, "lender_read_ledger"),
+        ]);
+
+        var text = WriteShared(record, shared: true, ExperienceGrantDisclosure.LessonOnly);
+
+        Assert.DoesNotContain(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_LessonAndApproach_grant_renders_a_clamped_and_cleaned_approach_identically_to_the_owner()
+    {
+        // Over the name cap, and with a name whose whitespace must be collapsed: the two transformations
+        // a borrowed record must not render differently from an owned one.
+        var names = Enumerable.Range(0, HistoricalReferenceWriter.MaxApproachToolNames + 3)
+            .Select(i => i == 0 ? "lender\n  read   ledger" : $"lender_tool_{i}")
+            .ToArray();
+        var record = InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts:
+        [
+            Attempt(0, error: null, result: "refunded", names),
+        ]);
+
+        static string ApproachLine(string text) =>
+            Assert.Single(text.Split('\n'), line => line.StartsWith("Approach: ", StringComparison.Ordinal));
+
+        var owned = ApproachLine(WriteShared(record, shared: false, level: null));
+        var borrowed = ApproachLine(WriteShared(record, shared: true, ExperienceGrantDisclosure.LessonAndApproach));
+
+        Assert.Equal(owned, borrowed);
+        Assert.Contains(HistoricalReferenceWriter.ApproachClamped, borrowed, StringComparison.Ordinal);
+        Assert.Contains("lender read ledger", borrowed, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_LessonAndApproach_grant_renders_the_approach_exactly_as_the_owner_would_see_it()
+    {
+        var text = WriteShared(Borrowed(), shared: true, ExperienceGrantDisclosure.LessonAndApproach);
+
+        Assert.Contains(
+            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + "lender_read_ledger -> lender_retry_refund." + HistoricalReferenceWriter.ApproachSuffix,
+            text,
+            StringComparison.Ordinal);
+        Assert.Contains("Shared: " + HistoricalReferenceWriter.SharedLine + "\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(7)]
+    public void A_shared_record_with_no_level_or_an_undefined_one_renders_as_LessonOnly(int? level)
+    {
+        var text = WriteShared(Borrowed(), shared: true, (ExperienceGrantDisclosure?)level);
+
+        Assert.DoesNotContain("lender_", text, StringComparison.Ordinal);
+        Assert.Contains(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_record_in_the_readers_own_scope_renders_its_approach_whatever_level_it_carries()
+    {
+        var text = WriteShared(Borrowed(), shared: false, level: null);
+
+        Assert.Contains("lender_read_ledger -> lender_retry_refund.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Shared:", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_withheld_sentence_names_no_scope_and_no_tool()
+    {
+        // A fixed public constant, so this is a property of the text rather than of one record.
+        Assert.DoesNotContain("team", HistoricalReferenceWriter.ApproachWithheld, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tenant", HistoricalReferenceWriter.ApproachWithheld, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\n", HistoricalReferenceWriter.ApproachWithheld, StringComparison.Ordinal);
+    }
+
     // ---- Matrix row 10: the final successful attempt, in order ----------------------------------
 
     [Fact]

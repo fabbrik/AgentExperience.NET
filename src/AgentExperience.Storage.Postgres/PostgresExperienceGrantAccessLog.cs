@@ -40,15 +40,16 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
     internal const string Table = "agent_experience.experience_grant_access";
 
     /// <summary>
-    /// The row's columns in the order <see cref="Decode"/> expects (ordinals 0-18), <c>recorded_at</c>
-    /// excluded because it is the database's own and nothing reads it back.
+    /// The row's columns in the order <see cref="Decode"/> expects (ordinals 0-19), <c>recorded_at</c>
+    /// excluded because it is the database's own and nothing reads it back. <c>disclosure</c> was added
+    /// by <c>0011</c> and is null on every row written before it.
     /// </summary>
     private const string Columns =
         "access_id, grant_id, experience_id, record_revision, " +
         "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
         "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
         "recipient_team_id, recipient_agent_id, recipient_user_id, " +
-        "principal_id, correlation_id, occurred_at";
+        "principal_id, correlation_id, occurred_at, disclosure";
 
     /// <summary>
     /// The batch insert. Every column arrives as an array of the same length and <c>unnest</c> turns
@@ -63,12 +64,12 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
         "a.tenant_id, a.application_id, a.project_id, a.team_id, a.agent_id, a.user_id, " +
         "a.recipient_tenant_id, a.recipient_application_id, a.recipient_project_id, " +
         "a.recipient_team_id, a.recipient_agent_id, a.recipient_user_id, " +
-        "a.principal_id, a.correlation_id, a.occurred_at, clock_timestamp() " +
+        "a.principal_id, a.correlation_id, a.occurred_at, a.disclosure, clock_timestamp() " +
         "FROM unnest(@access_id, @grant_id, @experience_id, @record_revision, " +
         "@tenant_id, @application_id, @project_id, @team_id, @agent_id, @user_id, " +
         "@recipient_tenant_id, @recipient_application_id, @recipient_project_id, " +
         "@recipient_team_id, @recipient_agent_id, @recipient_user_id, " +
-        "@principal_id, @correlation_id, @occurred_at) " +
+        "@principal_id, @correlation_id, @occurred_at, @disclosure) " +
         $"AS a({Columns})";
 
     /// <summary>
@@ -133,6 +134,7 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
         var principalIds = new string[count];
         var correlationIds = new string?[count];
         var occurredAt = new DateTimeOffset[count];
+        var disclosures = new string?[count];
 
         for (var i = 0; i < count; i++)
         {
@@ -160,6 +162,11 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             principalIds[i] = access.PrincipalId;
             correlationIds[i] = access.CorrelationId;
             occurredAt[i] = PostgresExperienceRecordStore.ToStoredTimestamp(access.OccurredAt);
+
+            // Only a defined level is written by name. Null, or a value the enum does not define, goes
+            // in as null, and 0011's experience_grant_access_disclosure_recorded refuses the row: a
+            // delivery that cannot say what it disclosed is an audit failure, decided by the mode.
+            disclosures[i] = access.Disclosure is { } level && Enum.IsDefined(level) ? level.ToString() : null;
         }
 
         try
@@ -185,6 +192,7 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             parameters.Add(Array("principal_id", NpgsqlDbType.Text, principalIds));
             parameters.Add(Array("correlation_id", NpgsqlDbType.Text, correlationIds));
             parameters.Add(Array("occurred_at", NpgsqlDbType.TimestampTz, occurredAt));
+            parameters.Add(Array("disclosure", NpgsqlDbType.Text, disclosures));
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -290,5 +298,6 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             reader.IsDBNull(15) ? null : reader.GetString(15)),
         PrincipalId: reader.GetString(16),
         CorrelationId: reader.IsDBNull(17) ? null : reader.GetString(17),
-        OccurredAt: reader.GetFieldValue<DateTimeOffset>(18));
+        OccurredAt: reader.GetFieldValue<DateTimeOffset>(18),
+        Disclosure: reader.IsDBNull(19) ? null : PostgresExperienceRecordStore.ParseDisclosure(reader.GetString(19)));
 }

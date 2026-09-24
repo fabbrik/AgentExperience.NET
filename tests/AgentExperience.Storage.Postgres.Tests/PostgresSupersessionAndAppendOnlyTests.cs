@@ -672,6 +672,32 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
     }
 
     [Fact]
+    public async Task A_live_grants_disclosure_level_cannot_be_changed_in_place()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var record = Minimal(scope);
+        await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+
+        var grants = new PostgresExperienceGrantStore(_fixture.DataSource);
+        var grantId = Guid.NewGuid();
+        await grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration("admin-1", ColumnTime),
+            new ExperienceGrantRequest(grantId, record.ExperienceId, scope, scope with { TeamId = "team-2" }, "shared", DateTimeOffset.UtcNow.AddHours(1)),
+            CancellationToken.None);
+
+        // Widening in place would disclose tool names nobody issued a grant for; the level is one of the
+        // grant's identity pins, so the only way to change it is to revoke and issue a new grant.
+        var ex = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            "UPDATE agent_experience.experience_grants SET disclosure = 'LessonAndApproach' WHERE grant_id = @id", grantId));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, ex.SqlState);
+
+        var stored = (await grants.GetHistoryAsync(Authorize(tenant), scope, grantId, CancellationToken.None)).Grant!;
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, stored.Disclosure);
+    }
+
+    [Fact]
     public async Task The_record_projection_cannot_be_wound_back_or_moved_without_its_revision()
     {
         var tenant = NewTenant();

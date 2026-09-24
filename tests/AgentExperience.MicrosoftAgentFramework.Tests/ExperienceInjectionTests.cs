@@ -496,6 +496,155 @@ public class ExperienceInjectionTests
         Assert.DoesNotContain(grantId.ToString("D"), text, StringComparison.Ordinal);
     }
 
+    // ---- Grant disclosure: whether a borrowed record's Approach: line is shown ------------------
+
+    [Fact]
+    public async Task A_LessonOnly_grant_withholds_the_approach_says_so_and_the_access_row_records_the_level()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var log = new InMemoryGrantAccessLog();
+        var seen = new List<(Guid Id, ExperienceGrantDisclosure? Level)>();
+
+        var shared = InjectionRecords.Id(1);
+        var mine = InjectionRecords.Id(2);
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                seen.Add((context.Current.ExperienceId, context.GrantDisclosure));
+                return InjectionDecision.Permit;
+            },
+        };
+
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(
+            InjectionRecords.Record(shared, owner, lesson: "Check the lock table first.", toolName: "lender_private_tool"),
+            relevance: 1d);
+        harness.World.Publish(
+            InjectionRecords.Record(mine, reader, lesson: "Escalate after two retries.", toolName: "my_own_tool"),
+            relevance: 0.9d);
+        harness.World.Grant(shared, reader, ExperienceGrantDisclosure.LessonOnly);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+
+        // The borrowed lesson is injected, but no tool name from its attempts is.
+        Assert.Contains("Lesson: Check the lock table first.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("lender_private_tool", text, StringComparison.Ordinal);
+        Assert.Contains(
+            "Shared: " + HistoricalReferenceWriter.SharedLine + HistoricalReferenceWriter.ApproachWithheld + "\n",
+            text,
+            StringComparison.Ordinal);
+
+        // The reader's own record is unaffected: its approach is still rendered, and it has no level.
+        Assert.Contains("my_own_tool", text, StringComparison.Ordinal);
+        Assert.Equal(1, text.Split("Approach: ").Length - 1);
+
+        Assert.Contains((shared, (ExperienceGrantDisclosure?)ExperienceGrantDisclosure.LessonOnly), seen);
+        Assert.Contains((mine, (ExperienceGrantDisclosure?)null), seen);
+
+        var row = Assert.Single(log.Rows);
+        Assert.Equal(shared, row.ExperienceId);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, row.Disclosure);
+    }
+
+    [Fact]
+    public async Task A_LessonAndApproach_grant_renders_the_approach_and_the_access_row_records_the_level()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var log = new InMemoryGrantAccessLog();
+        var harness = ReadingAs(reader);
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(
+            InjectionRecords.Record(shared, owner, lesson: "Check the lock table first.", toolName: "lender_private_tool"),
+            relevance: 1d);
+        harness.World.Grant(shared, reader, ExperienceGrantDisclosure.LessonAndApproach);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.Contains(
+            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + "lender_private_tool.",
+            text,
+            StringComparison.Ordinal);
+        Assert.Contains("Shared: " + HistoricalReferenceWriter.SharedLine + "\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
+
+        Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, Assert.Single(log.Rows).Disclosure);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(7)]
+    public async Task A_store_that_says_shared_but_reports_no_level_is_rendered_LessonOnly(int? reported)
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var seen = new List<ExperienceGrantDisclosure?>();
+
+        var shared = InjectionRecords.Id(1);
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                seen.Add(context.GrantDisclosure);
+                return InjectionDecision.Permit;
+            },
+        };
+
+        harness.World.Publish(
+            InjectionRecords.Record(shared, owner, lesson: "Check the lock table first.", toolName: "lender_private_tool"),
+            relevance: 1d);
+
+        // A third-party store, or a test double, that declares the record shared and names no level --
+        // or names one this build does not define.
+        harness.World.Grant(shared, reader, disclosure: (ExperienceGrantDisclosure?)reported);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.DoesNotContain("lender_private_tool", text, StringComparison.Ordinal);
+        Assert.Contains(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
+
+        // The host is shown what will actually be rendered, not the store's silence.
+        Assert.Equal([ExperienceGrantDisclosure.LessonOnly], seen);
+    }
+
+    [Theory]
+    [InlineData(ExperienceGrantDisclosure.LessonOnly)]
+    [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
+    public async Task A_host_denial_omits_a_borrowed_record_whatever_its_disclosure_level(ExperienceGrantDisclosure level)
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+
+        var shared = InjectionRecords.Id(1);
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context => context.SharedByGrant ? InjectionDecision.Deny("borrowed") : InjectionDecision.Permit,
+        };
+
+        harness.World.Publish(InjectionRecords.Record(shared, owner, lesson: "Check the lock table first."), relevance: 1d);
+        harness.World.Grant(shared, reader, level);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Empty(result.InjectedExperienceIds);
+        Assert.Equal(InjectionOmissionReason.HostDenied, Assert.Single(result.Omitted).Reason);
+    }
+
     [Fact]
     public async Task A_record_the_host_then_denies_was_still_delivered_and_is_still_recorded()
     {

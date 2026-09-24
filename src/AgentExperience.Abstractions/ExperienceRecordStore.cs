@@ -442,12 +442,21 @@ public sealed record ExperienceReadOptions(
 /// handed this ID can find the delivery in the trail and the grant in its administration history.
 /// </para>
 /// </param>
+/// <param name="GrantDisclosure">
+/// The permitting grant's <see cref="ExperienceGrant.Disclosure"/>, when
+/// <paramref name="SharedByGrant"/> is <see langword="true"/>: read from the same grant row that
+/// <paramref name="PermittingGrantId"/> names, never looked up separately. <see langword="null"/> for a
+/// record the requester owns, and <see langword="null"/> from an implementation that cannot say -- which
+/// a consumer must treat as <see cref="ExperienceGrantDisclosure.LessonOnly"/>, the least disclosure.
+/// It governs only what injection renders; <paramref name="Record"/> is returned complete either way.
+/// </param>
 public sealed record ExperienceRecordGetResult(
     ExperienceStoreOutcome Outcome,
     ExperienceRecord? Record,
     IReadOnlyList<StoreValidationError> Errors,
     bool SharedByGrant = false,
-    Guid? PermittingGrantId = null);
+    Guid? PermittingGrantId = null,
+    ExperienceGrantDisclosure? GrantDisclosure = null);
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.QueryAsync"/>.

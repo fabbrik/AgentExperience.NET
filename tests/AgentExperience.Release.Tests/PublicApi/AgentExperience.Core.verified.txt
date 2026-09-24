@@ -472,8 +472,9 @@ namespace AgentExperience.Core.Retrieval
     }
     public sealed class RankedExperience : System.IEquatable<AgentExperience.Core.Retrieval.RankedExperience>
     {
-        public RankedExperience(AgentExperience.Abstractions.ExperienceRecord Record, double Score, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components, bool SharedByGrant = false, System.Guid? PermittingGrantId = default) { }
+        public RankedExperience(AgentExperience.Abstractions.ExperienceRecord Record, double Score, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components, bool SharedByGrant = false, System.Guid? PermittingGrantId = default, AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure = default) { }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components { get; init; }
+        public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
         public double Score { get; init; }

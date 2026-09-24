@@ -69,6 +69,83 @@ public sealed class PostgresGrantTests
         Assert.Equal(grant, Assert.Single(listed.Grants));
     }
 
+    // ---------------------------------------------------------------- matrix: disclosure level
+
+    [Fact]
+    public async Task A_request_that_names_no_level_stores_LessonOnly_and_the_issue_event_says_so()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+
+        // Request() names no level, so the record's trailing default applies.
+        var grant = await GrantAsync(tenant, id, owner, recipient);
+
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, grant.Disclosure);
+        var history = await _grants.GetHistoryAsync(Authorize(tenant), owner, grant.GrantId, CancellationToken.None);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, history.Grant!.Disclosure);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, Assert.Single(history.Events).Disclosure);
+
+        var read = await ReadAsync(tenant, recipient, id);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, read.GrantDisclosure);
+
+        // The record itself is never redacted: host code still receives it in full.
+        Assert.Equivalent((await ReadAsync(tenant, owner, id)).Record, read.Record, strict: true);
+    }
+
+    [Fact]
+    public async Task An_explicit_LessonAndApproach_is_stored_read_back_and_copied_onto_both_events()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+
+        var created = await _grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            Request(Guid.NewGuid(), id, owner, recipient) with { Disclosure = ExperienceGrantDisclosure.LessonAndApproach },
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceGrantOutcome.Created, created.Outcome);
+        Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, created.Grant!.Disclosure);
+        Assert.Equal(created.Grant, Assert.Single((await _grants.ListAsync(Authorize(tenant), owner, id, CancellationToken.None)).Grants));
+        Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, (await ReadAsync(tenant, recipient, id)).GrantDisclosure);
+
+        await _grants.RevokeAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            new ExperienceGrantRevocation(created.Grant.GrantId, owner, "ended"),
+            CancellationToken.None);
+
+        var history = await _grants.GetHistoryAsync(Authorize(tenant), owner, created.Grant.GrantId, CancellationToken.None);
+        Assert.Equal(2, history.Events.Count);
+        Assert.All(history.Events, e => Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, e.Disclosure));
+    }
+
+    [Fact]
+    public async Task An_undefined_disclosure_level_is_Invalid_on_Disclosure_and_writes_nothing()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+        var grantId = Guid.NewGuid();
+
+        var result = await _grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            Request(grantId, id, owner, recipient) with { Disclosure = (ExperienceGrantDisclosure)7 },
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceGrantOutcome.Invalid, result.Outcome);
+        Assert.Null(result.Grant);
+        Assert.Equal("Disclosure", Assert.Single(result.Errors).Path);
+        Assert.Equal(0L, await CountGrantsAsync(grantId));
+        Assert.Equal(0L, await CountEventsAsync(grantId));
+    }
+
     // ---------------------------------------------------------------- matrix: missing authority
 
     [Theory]

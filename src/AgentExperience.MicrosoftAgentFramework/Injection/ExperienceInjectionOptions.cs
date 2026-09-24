@@ -154,11 +154,20 @@ public sealed record ExperienceInjectionContext(
 /// correlate what it injected with the sharing trail, instead of only knowing that some grant applied.
 /// <see langword="null"/> when the record is the requester's own, or when the store did not say.
 /// </param>
+/// <param name="GrantDisclosure">
+/// The permitting grant's <see cref="ExperienceGrant.Disclosure"/>, from the same re-read, when
+/// <paramref name="SharedByGrant"/> is <see langword="true"/>: what the block will show of this record.
+/// Under <see cref="ExperienceGrantDisclosure.LessonOnly"/> the <c>Approach:</c> line is omitted. A
+/// store that did not report a level is shown here, and rendered, as
+/// <see cref="ExperienceGrantDisclosure.LessonOnly"/>. <see langword="null"/> when the record is the
+/// requester's own. It is informational: a host may deny on it, but nothing it returns can widen it.
+/// </param>
 public sealed record ExperienceInjectionDecisionContext(
     RankedExperience Candidate,
     ExperienceRecord Current,
     bool SharedByGrant = false,
-    Guid? PermittingGrantId = null);
+    Guid? PermittingGrantId = null,
+    ExperienceGrantDisclosure? GrantDisclosure = null);
 
 /// <summary>
 /// Host configuration for <see cref="ExperienceContextProvider"/>.

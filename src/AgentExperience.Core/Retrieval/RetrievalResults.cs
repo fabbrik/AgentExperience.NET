@@ -85,12 +85,19 @@ public sealed record RankingComponent(RankingComponentKind Kind, double Value, d
 /// trail for that record.
 /// </para>
 /// </param>
+/// <param name="GrantDisclosure">
+/// The permitting grant's <see cref="ExperienceGrant.Disclosure"/>, filled in by the same pre-injection
+/// re-read that fills <paramref name="PermittingGrantId"/>, and <see langword="null"/> on everything
+/// retrieval itself returns. Anything that renders a shared record treats <see langword="null"/> as
+/// <see cref="ExperienceGrantDisclosure.LessonOnly"/>.
+/// </param>
 public sealed record RankedExperience(
     ExperienceRecord Record,
     double Score,
     IReadOnlyList<RankingComponent> Components,
     bool SharedByGrant = false,
-    Guid? PermittingGrantId = null);
+    Guid? PermittingGrantId = null,
+    ExperienceGrantDisclosure? GrantDisclosure = null);
 
 /// <summary>Why a candidate the search returned was not ranked.</summary>
 public enum RetrievalExclusionReason

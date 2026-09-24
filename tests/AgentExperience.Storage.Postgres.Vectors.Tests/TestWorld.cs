@@ -110,7 +110,11 @@ internal sealed class TestWorld
     /// Issues a sharing grant over one record, through the real grant store, so the vector channel can
     /// be asked what a recipient scope actually sees.
     /// </summary>
-    public async Task<ExperienceGrant> GrantAsync(Guid experienceId, Scope owner, Scope recipient)
+    public async Task<ExperienceGrant> GrantAsync(
+        Guid experienceId,
+        Scope owner,
+        Scope recipient,
+        ExperienceGrantDisclosure disclosure = ExperienceGrantDisclosure.LessonOnly)
     {
         var store = new PostgresExperienceGrantStore(DataSource);
         var result = await store.CreateAsync(
@@ -122,7 +126,8 @@ internal sealed class TestWorld
                 owner,
                 recipient,
                 "sibling team owns the follow-up",
-                DateTimeOffset.UtcNow.AddHours(1)),
+                DateTimeOffset.UtcNow.AddHours(1),
+                disclosure),
             CancellationToken.None);
 
         Assert.Equal(ExperienceGrantOutcome.Created, result.Outcome);

@@ -1608,11 +1608,11 @@ public sealed class PostgresDeletionTests
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, recipient_tenant_id, " +
             "recipient_application_id, recipient_project_id, recipient_team_id, recipient_agent_id, " +
             "recipient_user_id, reason, administrator_principal_id, administrator_authorized_at, expires_at, " +
-            "occurred_at, recorded_at) SELECT @event_id, g.grant_id, g.experience_id, 'Issued', g.tenant_id, " +
+            "occurred_at, recorded_at, disclosure) SELECT @event_id, g.grant_id, g.experience_id, 'Issued', g.tenant_id, " +
             "g.application_id, g.project_id, g.team_id, g.agent_id, g.user_id, g.recipient_tenant_id, " +
             "g.recipient_application_id, g.recipient_project_id, g.recipient_team_id, g.recipient_agent_id, " +
             "g.recipient_user_id, g.reason, g.administrator_principal_id, g.issued_at, g.expires_at, " +
-            "g.issued_at, g.issued_at FROM agent_experience.experience_grants g WHERE g.grant_id = @grant_id"))
+            "g.issued_at, g.issued_at, g.disclosure FROM agent_experience.experience_grants g WHERE g.grant_id = @grant_id"))
         {
             issued.Parameters.Add(new NpgsqlParameter<Guid>("event_id", Guid.NewGuid()));
             issued.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));

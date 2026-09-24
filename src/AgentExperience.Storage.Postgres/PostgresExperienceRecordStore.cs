@@ -142,7 +142,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// </summary>
     private const string GetSql =
-        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {DeletedAtColumn} FROM {Table} r " +
+        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {PermittingDisclosureColumn}, {DeletedAtColumn} FROM {Table} r " +
         $"{PermittingGrantJoin} " +
         $"WHERE r.experience_id = @experience_id AND {ReadableWithNamedGrantPredicate}";
 
@@ -153,7 +153,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// requesting scope already owns.
     /// </summary>
     private const string GetExactSql =
-        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, {DeletedAtColumn} " +
+        $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, " +
+        $"NULL::text AS {PermittingDisclosureAlias}, {DeletedAtColumn} " +
         $"FROM {Table} r " +
         $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate}";
 
@@ -446,13 +447,28 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// It is a <c>LEFT JOIN LATERAL ... ON true</c>, so a record the requester owns still comes back
     /// with a null grant ID rather than being filtered away.
     /// </para>
+    /// <para>
+    /// <b>It also yields the grant's disclosure level</b>, from the same row. The level injection honours
+    /// and the level an access row records must be the level of the grant that admitted the read, so it
+    /// is never looked up a second time.
+    /// </para>
     /// </summary>
     internal const string PermittingGrantJoin =
-        $"LEFT JOIN LATERAL (SELECT g.grant_id FROM {GrantsTable} g WHERE {ActiveGrantConditions} " +
+        $"LEFT JOIN LATERAL (SELECT g.grant_id, g.disclosure FROM {GrantsTable} g WHERE {ActiveGrantConditions} " +
         $"ORDER BY g.grant_id LIMIT 1) {PermittingGrantSource} ON true";
 
     /// <summary>The permitting grant's ID, appended <em>after</em> the record columns and the shared flag.</summary>
     internal const string PermittingGrantColumn = PermittingGrantSource + ".grant_id AS " + PermittingGrantAlias;
+
+    /// <summary>The alias the permitting grant's disclosure level is selected under, read back by name.</summary>
+    internal const string PermittingDisclosureAlias = "permitting_grant_disclosure";
+
+    /// <summary>
+    /// The permitting grant's disclosure level, from the same lateral row as
+    /// <see cref="PermittingGrantColumn"/>. Null for a record the requester owns.
+    /// </summary>
+    internal const string PermittingDisclosureColumn =
+        PermittingGrantSource + ".disclosure AS " + PermittingDisclosureAlias;
 
     /// <summary>
     /// <see cref="ReadableRecordScopePredicate"/> expressed against <see cref="PermittingGrantJoin"/>:
@@ -798,7 +814,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             ReadRecord(reader),
             NoErrors,
             sharedByGrant,
-            ReadPermittingGrant(reader));
+            ReadPermittingGrant(reader),
+            ReadPermittingDisclosure(reader));
     }
 
     /// <summary>
@@ -841,7 +858,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return result;
         }
 
-        var access = GrantAuditing.Access(auditing, authorization, scope, options.CorrelationId, record, result.PermittingGrantId);
+        var access = GrantAuditing.Access(
+            auditing, authorization, scope, options.CorrelationId, record, result.PermittingGrantId, result.GrantDisclosure);
 
         return await GrantAuditing.RecordAsync(auditing, [access], cancellationToken).ConfigureAwait(false)
             ? result
@@ -2109,6 +2127,37 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return null;
         }
     }
+
+    /// <summary>
+    /// Reads the permitting grant's disclosure level by name. A reader that did not select it, a null,
+    /// and a value this build does not know are all "not told", which every consumer renders as
+    /// <see cref="ExperienceGrantDisclosure.LessonOnly"/> -- the least disclosure -- rather than
+    /// guessing wider.
+    /// </summary>
+    internal static ExperienceGrantDisclosure? ReadPermittingDisclosure(DbDataReader reader)
+    {
+        try
+        {
+            var ordinal = reader.GetOrdinal(PermittingDisclosureAlias);
+            return reader.IsDBNull(ordinal) ? null : ParseDisclosure(reader.GetString(ordinal));
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses a stored disclosure level by its exact name. Anything else is <see langword="null"/>:
+    /// a level this build cannot name is never widened into one it can.
+    /// </summary>
+    internal static ExperienceGrantDisclosure? ParseDisclosure(string? stored) =>
+        stored is not null
+        && Enum.TryParse<ExperienceGrantDisclosure>(stored, ignoreCase: false, out var parsed)
+        && Enum.IsDefined(parsed)
+        && string.Equals(parsed.ToString(), stored, StringComparison.Ordinal)
+            ? parsed
+            : null;
 
     /// <summary>
     /// Reads the tombstone marker by name. A reader that did not select it is treated as "not erased",
