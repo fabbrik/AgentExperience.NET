@@ -31,7 +31,7 @@ registration timestamp for that version.
 
 | Pin | Declared in | Source | Executable evidence |
 | --- | --- | --- | --- |
-| .NET SDK **10.0.302**, `rollForward: latestFeature` | `global.json` | <https://dotnet.microsoft.com/download/dotnet/10.0> | CI installs this version with `actions/setup-dotnet` (`global-json-file: global.json`), and every CI job that builds then asserts `dotnet --version` equals the `global.json` version, failing if a newer feature band on the runner won the roll-forward. `RELEASING.md` step 1 makes the same equality check before a release build and fails with a message if it does not hold |
+| .NET SDK **10.0.302**, `rollForward: latestFeature` | `global.json` | <https://dotnet.microsoft.com/download/dotnet/10.0> | Every CI job that builds first sets `global.json`'s `rollForward` to `disable` in the runner's working copy, so `actions/setup-dotnet` (`global-json-file: global.json`) installs, and the host selects, exactly this version even though the runner image ships newer bands; each such job that builds then asserts `dotnet --version` equals the `global.json` version, failing if a newer feature band on the runner won the roll-forward. `RELEASING.md` step 1 makes the same equality check before a release build and fails with a message if it does not hold |
 
 `rollForward: latestFeature` makes the SDK pin a *floor* for day-to-day local development — a contributor with a
 later 10.0 feature band can still build. CI and a release build are held to exactly `10.0.302` by the two equality

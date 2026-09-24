@@ -22,6 +22,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -29,8 +37,7 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      # global.json rolls forward to a later feature band when one is installed; CI must build with exactly
-      # the pinned SDK, so a newer band on the runner fails here instead of silently winning.
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
       - name: Assert the exact pinned SDK
         run: |
           pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
@@ -88,6 +95,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -95,8 +110,7 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      # global.json rolls forward to a later feature band when one is installed; CI must build with exactly
-      # the pinned SDK, so a newer band on the runner fails here instead of silently winning.
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
       - name: Assert the exact pinned SDK
         run: |
           pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
@@ -139,6 +153,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -146,8 +168,7 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      # global.json rolls forward to a later feature band when one is installed; CI must build with exactly
-      # the pinned SDK, so a newer band on the runner fails here instead of silently winning.
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
       - name: Assert the exact pinned SDK
         run: |
           pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
