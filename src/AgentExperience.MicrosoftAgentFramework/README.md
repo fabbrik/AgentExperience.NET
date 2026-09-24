@@ -399,9 +399,37 @@ call anyway; the tool body never runs.
 | Resolve | `ResolveRequest` turns the invocation into a `RetrieveExperienceRequest`. Returning `null` skips this invocation (`Skipped`); throwing injects nothing and is reported (`Failed`) |
 | Retrieve | `ExperienceRetrievalService` applies scope, status, confidence, expiry, and environment eligibility, then ranks. Its own timeout bounds the call |
 | Record limit | The top `Limits.MaxRecords` (default 8) in rank order are kept; the rest are recorded as `OverRecordLimit` and are never even re-read. The provider owns this limit — `HistoricalReferenceWriter.Write` *rejects* an untrimmed list rather than applying it a second time |
-| Final eligibility check | Each kept candidate is re-read through the store, in the request's own authorization and scope, and put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 2 s) |
+| Final eligibility check | Every kept candidate is re-read through the store in **one** batched call, `IExperienceRecordStore.GetManyAsync`, in the request's own authorization and scope, and each is put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 2 s) |
 | Host decision | `DecideInjection` is asked about each survivor. A denial omits it as `HostDenied` whatever its stored confidence or status, and **never writes to the record**. Fail-closed: a callback that throws or returns `null` denies |
 | Write | Records are written in rank order until the next would exceed `Limits.MaxBytes` (default 16 KB of UTF-8); that record and everything after it are recorded as `OverByteBudget` |
+
+**The re-read is one round trip.** Before story 5.6 it was one `GetAsync` per kept candidate, in sequence, on the
+invocation's critical path — up to `MaxRecords` round trips inside `EligibilityCheckTimeout` (KL-1). It is now one
+`GetManyAsync` for all of them, which the PostgreSQL store answers with a single statement (plus one access-row append
+when a grant delivered anything). Each record is answered exactly as its own `GetAsync` would answer it, and the
+provider applies the same per-record checks to each answer in rank order, so the omissions, their reasons and the
+block are unchanged — a test pins them to the pre-5.6 provider's output byte for byte. Two things follow from reading
+the batch in one call:
+
+- **A batch that throws falls back to the old loop.** A batch read fails as a whole, but the reads it stands for
+  need not, so when `GetManyAsync` throws the provider re-reads the kept candidates one `GetAsync` at a time, inside
+  the same bound — the pre-5.6 path — and each record is omitted, or not, exactly as before ("Re-reading the record
+  threw …" for the ones whose read fails). A store whose `GetManyAsync` wrote access rows before throwing would
+  record those deliveries twice; the PostgreSQL store appends only after a successful read.
+- **The bound and the caller's token cover every decision, the last one included.** `EligibilityCheckTimeout` bounds
+  the batch read and is re-checked before each record is decided and once more after the last, so a slow
+  `DecideInjection` times the check out wherever it happens. The per-record loop never looked again after its last
+  callback, so a slow decision on the last record used to inject past the bound. The re-check compares the elapsed
+  time on `TimeProvider`, not only the expiry token, because the token flips only when its timer callback runs, and
+  a starved thread pool can run that late. A caller that cancels mid-check stops it before the next record is
+  decided, as the next read's cancelled token used to.
+- **Rows are written for the whole selection at once.** The batch read delivers every kept candidate in one call, so
+  a grant-delivered record gets its access row even when the check then times out before deciding it. The per-record
+  loop wrote rows only for the records it had read before the bound. The row still records exactly what it always
+  did — that the store handed the record over — and a timed-out check injects nothing.
+
+A store that does not override `GetManyAsync` gets the port's default, which reads one record at a time in order —
+the old behaviour, round trips included.
 
 Both size limits are enforced by dropping **whole records**, never by cutting one — so no evidence label is ever cut
 in half, and a single record larger than the entire budget is omitted rather than truncated. All three limits are
@@ -416,7 +444,7 @@ model, a later revocation cannot retract it — it only affects injections that 
 
 **Records shared by a grant are injected like any other.** A record another scope owns can be retrieved and injected
 when an active [sharing grant](../AgentExperience.Storage.Postgres/README.md#sharing-grants) permits the request's
-scope to read it; the re-read goes through the same grant-aware `GetAsync`, so a grant that expires or is revoked
+scope to read it; the re-read applies the same grant-aware rule as `GetAsync`, so a grant that expires or is revoked
 between retrieval and injection drops the record as `Unreadable` — indistinguishable, deliberately, from one that was
 deleted or never readable. The provider decides none of this: whether a grant applies is a predicate in the store's
 own query. What the provider still enforces on its own is the boundary a grant can never cross, so a record from
@@ -465,8 +493,10 @@ disclosure level, tagged with the request's `CorrelationId` — one row per deli
 records that the store handed the record over, so a record the host's risk policy then denies still has one: the
 denial happens after the delivery. For the same reason the row's level is the level the library applied at
 delivery, not proof that an `Approach:` line reached the model: the host may deny the record, the byte budget may drop
-it, or the record may have no approach. Under `Required` auditing a re-read whose row cannot be written returns nothing,
-and the record is dropped as `Unreadable` like any other read that came back empty.
+it, or the record may have no approach. Under `Required` auditing a re-read whose rows cannot be written returns
+nothing for the records a grant delivered, and each is dropped as `Unreadable` like any other read that came back
+empty. The batch writes its rows in one statement, so they land together or not at all: a ledger that is down drops
+every borrowed record of that re-read, and the reader's own records are unaffected.
 
 Retrieval's own search is audited as well, by the channels themselves rather than here — a candidate carries the
 record read back in full, so a search that returns a borrowed record has already disclosed it, whether or not it

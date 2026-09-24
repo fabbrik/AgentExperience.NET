@@ -159,6 +159,42 @@ public class OfflineVectorsTests
     }
 
     [Fact]
+    public async Task A_batch_is_one_provider_call_with_the_vectors_in_input_order()
+    {
+        var provider = new StubEmbeddingGenerator("text-embed-3", 6);
+        var bridge = new AiExperienceEmbeddingGenerator(provider);
+        IExperienceEmbeddingGenerator port = bridge;
+
+        var vectors = await port.GenerateBatchAsync(["one", "two", "three"], CancellationToken.None);
+
+        // One round trip for three texts, where the single-text call made three.
+        Assert.Equal(1, provider.Calls);
+        Assert.Equal(["one", "two", "three"], provider.Requests);
+        Assert.Equal([0f, 1f, 2f], vectors.Select(vector => vector.Span[0]));
+        Assert.All(vectors, vector => Assert.Equal(6, vector.Length));
+        Assert.Equal("text-embed-3", provider.LastOptions!.ModelId);
+        Assert.Equal(6, provider.LastOptions.Dimensions);
+
+        // Nothing to embed is not a provider call.
+        Assert.Empty(await port.GenerateBatchAsync([], CancellationToken.None));
+        Assert.Equal(1, provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_batch_answered_with_the_wrong_count_or_width_is_refused_whole()
+    {
+        var shortAnswer = new AiExperienceEmbeddingGenerator(new StubEmbeddingGenerator("m", 6) { ReturnCount = 1 });
+        var wrongWidth = new AiExperienceEmbeddingGenerator(new StubEmbeddingGenerator("m", 6) { ReturnDimension = 5 });
+        var nothing = new AiExperienceEmbeddingGenerator(new StubEmbeddingGenerator("m", 6) { ReturnNothing = true });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => shortAnswer.GenerateBatchAsync(["a", "b"], CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => wrongWidth.GenerateBatchAsync(["a", "b"], CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => nothing.GenerateBatchAsync(["a"], CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => shortAnswer.GenerateBatchAsync(null!, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => shortAnswer.GenerateBatchAsync(["a", null!], CancellationToken.None));
+    }
+
+    [Fact]
     public void AddAgentExperienceEmbeddingGenerator_resolves_the_bridge_over_a_registered_provider()
     {
         var services = new ServiceCollection();
@@ -207,19 +243,33 @@ public class OfflineVectorsTests
         /// <summary>When set, the answer holds no embedding at all.</summary>
         public bool ReturnNothing { get; init; }
 
+        /// <summary>When set, a batch is answered with this many embeddings instead of one per value.</summary>
+        public int? ReturnCount { get; init; }
+
+        /// <summary>How many times the provider was called: one per round trip, whatever each call carried.</summary>
+        public int Calls { get; private set; }
+
         public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(
             IEnumerable<string> values,
             EmbeddingGenerationOptions? options = null,
             CancellationToken cancellationToken = default)
         {
-            Requests.AddRange(values);
+            var batch = values.ToList();
+            Calls++;
+            Requests.AddRange(batch);
             LastOptions = options;
 
             var generated = new GeneratedEmbeddings<Embedding<float>>();
             if (!ReturnNothing)
             {
                 var width = ReturnDimension ?? options?.Dimensions ?? dimensions ?? 1;
-                generated.Add(new Embedding<float>(new float[width]));
+                for (var i = 0; i < (ReturnCount ?? batch.Count); i++)
+                {
+                    // The first component carries the input's position, so a test can see the pairing.
+                    var vector = new float[width];
+                    vector[0] = i;
+                    generated.Add(new Embedding<float>(vector));
+                }
             }
 
             return Task.FromResult(generated);

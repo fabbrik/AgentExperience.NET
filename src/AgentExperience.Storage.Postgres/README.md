@@ -411,11 +411,24 @@ var created = await grants.CreateAsync(
 `GrantAdministration`. A `null` administration, or one whose principal is blank, is `Denied` before any connection
 opens — administering sharing is not something a role string or a scope can imply.
 
-**What a grant permits.** Reading one named record, and only reading: `GetAsync`, the text channel, and the vector
-channel — and therefore injection, which re-reads through `GetAsync`. A granted record comes back exactly as its
+**What a grant permits.** Reading one named record, and only reading: `GetAsync` (and `GetManyAsync`, which is
+`GetAsync` for several named records in one statement), the text channel, and the vector channel — and therefore
+injection, which re-reads through `GetManyAsync`. A granted record comes back exactly as its
 owner sees it, still carrying the owner's `Scope`. `CreateAsync`, `CommitLifecycleEventAsync`, `GetHistoryAsync`,
 `QueryAsync`'s enumeration, and issuing further grants all keep the exact-scope predicate, so none of them is ever
 widened by a grant.
+
+**The batched read is the single read, widened only in its ID match.** `GetManyAsync` (story 5.6, KL-1) is built
+from the same select list, the same lateral join that names the permitting grant and its disclosure level, and the
+same readability predicate as `GetAsync`'s statement — the text is shared, not retyped, and a test asserts that the
+batched statement is the single one with its ID match replaced and nothing else — with `experience_id = @experience_id` replaced by `experience_id = ANY(@experience_ids)`. Each row is
+answered by the same code as a single read: a tombstone is `Deleted` to the scope that owned it and `NotFound` to
+anyone who reached it through a grant, a missing ID is `NotFound`, and an empty GUID is `Invalid` at its own position
+without reaching the database. The grant fallback narrows it exactly as it narrows `GetAsync`. The batch is read by
+one statement, where the per-record loop read each record at its own instant; grant expiry is still decided per row
+by `clock_timestamp()`, exactly as in the single read. A scope outside the authorization refuses the whole request as
+`Denied`, before any position is looked at. Under a failing ledger the host's `OnNotRecorded` callback is called once
+for the batch, carrying every row it could not write, where N single reads called it N times.
 
 **Enforcement is a SQL predicate.** Reads compose `(exact scope) OR (an active grant naming this record and
 permitting this scope)` in the same statement as everything else, so the database can never return a row the
@@ -572,7 +585,8 @@ table is append-only: neither can ever be backfilled.
 | Read | Recorded? | Why |
 | --- | --- | --- |
 | `GetAsync` widened by a grant | **Yes** | The record was handed to a caller who could only see it through that grant |
-| The MAF provider's pre-injection re-read | **Yes** | It is the same `GetAsync`, and it is a delivery |
+| `GetManyAsync` positions a grant delivered | **Yes** | One row per delivered position, exactly the row a `GetAsync` of that ID would write. The batch's rows are written in **one** statement, so under `Required` they land together or not at all: a failed append drops every grant-delivered position and leaves the owner's own positions as read |
+| The MAF provider's pre-injection re-read | **Yes** | It is one `GetManyAsync`, and it is a delivery |
 | A text or vector candidate a grant admitted | **Yes** | `ExperienceCandidate.Record` is the record read back *in full*, so returning one across a scope boundary is a disclosure, not a notice that something matched. A search's rows are written in **one** statement, so auditing costs one round trip per search rather than one per row |
 | An owner reading its own record | **No** | No grant permitted it, so there is no access to attribute to one |
 | A read that found nothing | **No** | Nothing was delivered |
@@ -612,8 +626,8 @@ var page = await accessLog.QueryAsync(
 A recipient cannot enumerate who else read a record it can read, any more than it can list the grants over one.
 
 **What turning it on costs.** Every read that discloses something across a scope boundary now does a second,
-synchronous round trip on a pooled connection before it returns — one per `GetAsync`, one per search however many
-rows it disclosed. Under `Required`, read availability becomes a function of *write* availability: if the ledger is
+synchronous round trip on a pooled connection before it returns — one per `GetAsync`, one per `GetManyAsync` or
+search however many rows it disclosed. Under `Required`, read availability becomes a function of *write* availability: if the ledger is
 unreachable, grant-widened reads return nothing. That is the mode's promise, not a bug, but it is a real coupling.
 The `dataSource` overloads exist largely for this: pointing `PostgresExperienceGrantAccessLog` at its own
 `NpgsqlDataSource` keeps the audit writes off the read pool, so a slow ledger cannot exhaust the connections reads

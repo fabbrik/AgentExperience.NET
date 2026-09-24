@@ -25,7 +25,6 @@ preview.
 
 | # | Limit | Where the detail lives |
 | --- | --- | --- |
-| KL-1 | **Serial round trips on two paths, one of them the invocation's critical path.** `IExperienceEmbeddingGenerator.GenerateAsync` takes one string, so a re-index pass makes one provider call per record, in sequence. Injection re-reads each kept candidate with its own `GetAsync`, in sequence, before the invocation proceeds — up to `MaxRecords` (default 8) round trips inside `EligibilityCheckTimeout` (default 2 s). Story 4.4 charges both to the memory-enabled condition only, so it reports `elapsed_ms` and keeps it out of its gate. Batching is a breaking change to a public port, deliberately not made in the release that introduces the API baseline | [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check); [Indexing](#indexing-experience-for-semantic-reuse); the 4.4 report (`tests/AgentExperience.ReuseBaseline`) |
 | KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
 | KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the three purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
 | KL-8 | **An approach is its tool names only.** Approaches that differ by argument render identically in the `Approach:` line; a host whose lessons turn on arguments needs its own reflector to say so in the lesson | [Adapter: the payload](src/AgentExperience.MicrosoftAgentFramework/README.md#the-payload) |
@@ -35,6 +34,18 @@ preview.
 
 Resolved, shipping in the next preview:
 
+- KL-1 (serial round trips on the re-index path and on the invocation's critical path) is resolved by story 5.6.
+  `IExperienceEmbeddingGenerator` gained `GenerateBatchAsync`, and a re-index pass embeds the records that need a
+  vector `ReindexExperienceRequest.EmbeddingBatchSize` (default 16, at most 128) per provider call, with each record
+  still written on its own, conditionally on its own revision. `IExperienceRecordStore` gained `GetManyAsync`, which
+  the PostgreSQL store answers with one statement applying exactly `GetAsync`'s scope, grant, disclosure and tombstone
+  rules and one audit append; injection's final eligibility check is now that one call. Measured in the tests: eight
+  candidates cost one read and one access-row append where they cost twelve commands, and forty records cost three
+  provider calls where they cost forty. Both methods have a default implementation that does what the library did
+  before, one call per item, so an out-of-tree store or generator keeps compiling and keeps its behaviour; it simply
+  saves no round trips until it overrides them. See
+  [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check)
+  and [Indexing](#indexing-experience-for-semantic-reuse).
 - KL-7 (an invocation that opens a run and never returns holding it with no bound) is resolved by arming the
   open-run duration bound when the run is opened, for every run, with the timer disposed when the invocation
   releases the run (story 5.3). An invocation that never returns now holds its run for at most twice
@@ -274,6 +285,12 @@ Three consequences are worth stating outright rather than leaving to be discover
   the counter-that-moves-without-a-status-change answer to this limit rather than a carve-out in the table.
 - **`Contested` and `Stale` are one-way.** Nothing resolves a contest or refreshes a stale record back into
   eligibility in this version; both exit only to `Revoked`.
+
+**Port additions in story 5.6 (KL-1)** break nothing: `IExperienceRecordStore.GetManyAsync` and
+`IExperienceEmbeddingGenerator.GenerateBatchAsync` are default interface methods that loop over the existing
+single-item call, so an out-of-tree implementation keeps compiling and behaving exactly as before. Override them to
+save the round trips; a store's override must answer each ID exactly as its own `GetAsync` would, access rows
+included.
 
 **Port changes in this version.** Nothing is published to NuGet yet, but anyone implementing the ports out of tree
 has four breaks to absorb: `IExperienceRecordStore` gained `CheckSupersessionAsync`;
@@ -738,6 +755,20 @@ logger.LogInformation("{Examined} examined, {Indexed} re-embedded, {Skipped} unc
 A pass is **bounded and resumable**: records are considered in ascending `ExperienceId` order, and `pass.LastExaminedId`
 is the cursor to hand to the next pass's `StartAfterId`. Keep going until it comes back `null`, which is how a scope
 larger than one page is walked to the end.
+
+**Provider calls are batched; writes are not.** The records a pass has to embed go to the provider
+`EmbeddingBatchSize` at a time (an init-only property on `ReindexExperienceRequest`: default 16, from 1 to 128)
+through `IExperienceEmbeddingGenerator.GenerateBatchAsync`, so a pass of `n` records to embed makes `ceil(n / 16)`
+provider calls rather than `n`. Each record is then written on its own, conditionally on the revision it was read at,
+so a record that moved on is `Stale` alone and the rest of its batch is written. A provider batch is all or nothing,
+so one that throws, or answers with the wrong number of vectors, is retried one record at a time: a record the
+provider always refuses (too long, filtered) is `ProviderFailed` alone, exactly as before batching, instead of
+keeping its batch-mates unindexed on every pass. An outage costs one extra provider call per failed batch, and a pass
+that fails partway still says exactly which records it wrote. `Skipped` records never take a place in a batch. Tune
+`EmbeddingBatchSize` to your provider's per-request limit: `AiExperienceEmbeddingGenerator` forwards a batch as it
+stands. A generator that implements only `GenerateAsync` gets the port's default `GenerateBatchAsync`,
+which calls it once per text — correct, but with no saving; `AiExperienceEmbeddingGenerator` overrides it with one
+`Microsoft.Extensions.AI` call per batch.
 
 The content hash covers the model ID and the normalized summary, so a record whose vector already came from this
 model and this text is skipped **before** any provider call — running a pass twice over unchanged records costs one

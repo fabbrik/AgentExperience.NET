@@ -5,7 +5,8 @@ namespace AgentExperience.Abstractions;
 /// operation takes a host-established <see cref="AuthorizationContext"/>; a request scope outside
 /// it is <see cref="ExperienceStoreOutcome.Denied"/> before any storage access, and scope matching
 /// is exact (ordinal, case-sensitive, <see langword="null"/> matches only <see langword="null"/>).
-/// The single, explicit exception is <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>, which also returns a record an active
+/// The single, explicit exception is <see cref="GetAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/> (and its batched form,
+/// <see cref="GetManyAsync"/>, which applies the identical rule per record), which also returns a record an active
 /// <see cref="ExperienceGrant"/> permits this scope to read; every other operation here, writes and
 /// the lifecycle audit trail included, stays exact-scope whatever grants exist.
 /// Expected conditions return typed results; infrastructure failures throw
@@ -85,6 +86,74 @@ public interface IExperienceRecordStore
         ExperienceReadOptions options,
         CancellationToken cancellationToken) =>
         GetAsync(authorization, scope, experienceId, cancellationToken);
+
+    /// <summary>
+    /// The same read for several records at once: each ID in <paramref name="experienceIds"/> is
+    /// answered exactly as
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// would answer it on its own, with the same <paramref name="options"/>. It exists so a caller that
+    /// needs several named records -- injection's final eligibility check is the case in point -- pays
+    /// one storage round trip for them instead of one per record.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>It widens nothing.</b> The scope, grant, disclosure, status and tombstone rules are
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>'s,
+    /// applied per record: a record neither in <paramref name="scope"/> nor named by an active grant
+    /// permitting it is <see cref="ExperienceStoreOutcome.NotFound"/>, an erased one is
+    /// <see cref="ExperienceStoreOutcome.Deleted"/> only to the scope that owned it, and a grant-widened
+    /// delivery is audited as a single read would audit it -- one access row per delivered position, naming
+    /// the grant the implementation's own predicate used, under the same auditing mode. An implementation
+    /// may append a batch's rows in one write; if it does, they land or fail together, and a host's
+    /// failure callback hears about them once rather than once per row.
+    /// </para>
+    /// <para>
+    /// <b>Refusals of the whole request are the exception to "per position".</b> A scope outside the
+    /// authorization is <see cref="ExperienceStoreOutcome.Denied"/> for the call, before any storage access,
+    /// even for a position a single read would have refused as <see cref="ExperienceStoreOutcome.Invalid"/>
+    /// first (an empty GUID); a malformed scope is <see cref="ExperienceStoreOutcome.Invalid"/> for the call
+    /// from an implementation that validates it up front, and per position from one that leaves it to
+    /// <c>GetAsync</c>, as the default does. A consumer treats every one of these as "not readable".
+    /// </para>
+    /// <para>
+    /// <b>The default implementation reads one record at a time</b>, in order, through
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// (see <see cref="ExperienceRecordStoreExtensions.GetManySequentiallyAsync"/>), so an existing
+    /// implementation keeps compiling and keeps its exact per-record semantics; it simply does not save
+    /// any round trips. An implementation backed by a database should override it with one statement.
+    /// </para>
+    /// <para>
+    /// <b>A failure is whole-call.</b> An infrastructure failure throws
+    /// <see cref="ExperienceStoreException"/> for the call rather than for one record, and caller
+    /// cancellation propagates unwrapped, as everywhere on this port. A caller that needs per-record
+    /// failure isolation -- injection's final eligibility check does -- falls back to
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// per record when the batch throws.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact request scope to read within.</param>
+    /// <param name="experienceIds">
+    /// The records to read, at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>. Duplicates are
+    /// allowed and each position is answered (and, when a grant delivered it, audited) on its own. An
+    /// empty GUID is not a request-wide error: that one position is answered
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>, exactly as a single read of it would be.
+    /// </param>
+    /// <param name="options">Why the reads are being made, and the host's correlation identifier for them.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Found"/> with one result per requested position, in request
+    /// order; <see cref="ExperienceStoreOutcome.Denied"/> when <paramref name="scope"/> lies outside
+    /// <paramref name="authorization"/>; or <see cref="ExperienceStoreOutcome.Invalid"/> when the request
+    /// itself is malformed (too many IDs, or a malformed scope). Neither refusal accesses storage.
+    /// </returns>
+    Task<ExperienceRecordGetManyResult> GetManyAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        ExperienceReadOptions options,
+        CancellationToken cancellationToken) =>
+        this.GetManySequentiallyAsync(authorization, scope, experienceIds, options, cancellationToken);
 
     /// <summary>
     /// Lists records within exactly <see cref="ExperienceRecordQuery.Scope"/>, optionally filtered by
@@ -275,6 +344,62 @@ public static class ExperienceRecordStoreExtensions
         ArgumentNullException.ThrowIfNull(store);
         return store.GetHistoryAsync(authorization, new ExperienceRecordHistoryQuery(scope, experienceId), cancellationToken);
     }
+
+    /// <summary>
+    /// <see cref="IExperienceRecordStore.GetManyAsync"/> as a loop: one
+    /// <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// per requested position, in request order. It is the port's default implementation, and it is
+    /// public so an implementation that overrides <see cref="IExperienceRecordStore.GetManyAsync"/> for
+    /// some requests can still fall back to it for others.
+    /// </summary>
+    /// <remarks>
+    /// It saves no round trips: it is exactly the reads a caller would have made itself, so every
+    /// per-record rule, audit row and outcome is by construction the single read's. A read that throws
+    /// ends the whole call with that exception -- records already read are not returned -- which is
+    /// the fail-closed direction for a caller that injects only what it could re-check.
+    /// </remarks>
+    /// <param name="store">The store to read from.</param>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact request scope to read within.</param>
+    /// <param name="experienceIds">The records to read, at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>.</param>
+    /// <param name="options">Why the reads are being made, and the host's correlation identifier for them.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>What <see cref="IExperienceRecordStore.GetManyAsync"/> returns.</returns>
+    /// <exception cref="ArgumentNullException">Any argument other than the token is <see langword="null"/>.</exception>
+    public static async Task<ExperienceRecordGetManyResult> GetManySequentiallyAsync(
+        this IExperienceRecordStore store,
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        ExperienceReadOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(experienceIds);
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (experienceIds.Count > ExperienceRecordGetManyResult.MaxCount)
+        {
+            return ExperienceRecordGetManyResult.TooMany();
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, [], []);
+        }
+
+        var results = new ExperienceRecordGetResult[experienceIds.Count];
+        for (var i = 0; i < results.Length; i++)
+        {
+            results[i] = await store
+                .GetAsync(authorization, scope, experienceIds[i], options, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return new(ExperienceStoreOutcome.Found, results, []);
+    }
 }
 
 /// <summary>
@@ -457,6 +582,41 @@ public sealed record ExperienceRecordGetResult(
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
     ExperienceGrantDisclosure? GrantDisclosure = null);
+
+/// <summary>
+/// The result of <see cref="IExperienceRecordStore.GetManyAsync"/>.
+/// </summary>
+/// <param name="Outcome">
+/// <see cref="ExperienceStoreOutcome.Found"/> when the reads ran, whatever each one found;
+/// <see cref="ExperienceStoreOutcome.Denied"/> or <see cref="ExperienceStoreOutcome.Invalid"/> when the
+/// request as a whole was refused before any storage access.
+/// </param>
+/// <param name="Results">
+/// One result per requested position, in request order, when <paramref name="Outcome"/> is
+/// <see cref="ExperienceStoreOutcome.Found"/>; otherwise empty. Each is exactly what
+/// <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+/// would have returned for that ID -- <see cref="ExperienceRecordGetResult.SharedByGrant"/>,
+/// <see cref="ExperienceRecordGetResult.PermittingGrantId"/> and
+/// <see cref="ExperienceRecordGetResult.GrantDisclosure"/> included.
+/// </param>
+/// <param name="Errors">Every request-wide validation error when <paramref name="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceRecordGetManyResult(
+    ExperienceStoreOutcome Outcome,
+    IReadOnlyList<ExperienceRecordGetResult> Results,
+    IReadOnlyList<StoreValidationError> Errors)
+{
+    /// <summary>
+    /// The most IDs one call may name: <see cref="ExperienceCandidateQuery.MaxLimit"/>, so every record
+    /// one retrieval can return fits in one call.
+    /// </summary>
+    public const int MaxCount = ExperienceCandidateQuery.MaxLimit;
+
+    /// <summary>The request-wide refusal for a list longer than <see cref="MaxCount"/>.</summary>
+    internal static ExperienceRecordGetManyResult TooMany() => new(
+        ExperienceStoreOutcome.Invalid,
+        [],
+        [new StoreValidationError("ExperienceIds", $"must name at most {MaxCount} records.")]);
+}
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.QueryAsync"/>.

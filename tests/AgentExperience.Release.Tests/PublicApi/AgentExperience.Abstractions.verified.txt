@@ -442,6 +442,14 @@
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
     }
+    public sealed class ExperienceRecordGetManyResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRecordGetManyResult>
+    {
+        public const int MaxCount = 200;
+        public ExperienceRecordGetManyResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceRecordGetResult> Results, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceRecordGetResult> Results { get; init; }
+    }
     public sealed class ExperienceRecordGetResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRecordGetResult>
     {
         public ExperienceRecordGetResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, AgentExperience.Abstractions.ExperienceRecord? Record, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, bool SharedByGrant = false, System.Guid? PermittingGrantId = default, AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure = default) { }
@@ -492,6 +500,7 @@
     public static class ExperienceRecordStoreExtensions
     {
         public static System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordHistoryResult> GetFirstHistoryPageAsync(this AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken) { }
+        public static System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManySequentiallyAsync(this AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
     }
     public static class ExperienceRetrievalSummary
     {
@@ -680,6 +689,7 @@
         int Dimension { get; }
         string ModelId { get; }
         System.Threading.Tasks.Task<System.ReadOnlyMemory<float>> GenerateAsync(string text, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<System.ReadOnlyMemory<float>>> GenerateBatchAsync(System.Collections.Generic.IReadOnlyList<string> texts, System.Threading.CancellationToken cancellationToken);
     }
     public interface IExperienceEmbeddingIndex
     {
@@ -708,6 +718,7 @@
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordHistoryResult> GetHistoryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordHistoryQuery query, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken);
     }
     public interface IExperienceReuseFeedbackStore

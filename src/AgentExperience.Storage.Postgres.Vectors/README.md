@@ -75,9 +75,16 @@ works on whatever `NpgsqlDataSource` the host built. You can still call `UseVect
 
 ### Bringing your own generator
 
-`IExperienceEmbeddingGenerator` is three members — `ModelId`, `Dimension`, and `GenerateAsync(string, …)` — and
-speaks domain types only. `AiExperienceEmbeddingGenerator` adapts a `Microsoft.Extensions.AI`
-`IEmbeddingGenerator<string, Embedding<float>>` to it, taking the model ID and dimension from the generator's
+`IExperienceEmbeddingGenerator` is `ModelId`, `Dimension`, `GenerateAsync(string, …)` and — since story 5.6 —
+`GenerateBatchAsync(IReadOnlyList<string>, …)`, and it speaks domain types only. `GenerateBatchAsync` is shaped like
+`Microsoft.Extensions.AI`'s own batch call (a list in, one vector per input out, in order) and has a default
+implementation that calls `GenerateAsync` once per text, so a generator written before it keeps working, with no
+saving. `AiExperienceEmbeddingGenerator` adapts a `Microsoft.Extensions.AI`
+`IEmbeddingGenerator<string, Embedding<float>>` to it and overrides the batch with **one** provider call; an answer
+with the wrong number of embeddings, or one of the wrong width, fails the whole batch rather than being paired with
+the wrong record. It forwards the batch as it stands — Core's indexing pass bounds it
+(`ReindexExperienceRequest.EmbeddingBatchSize`, at most 128) — so a provider with a smaller per-request limit is the
+underlying generator's to split. It takes the model ID and dimension from the generator's
 `EmbeddingGeneratorMetadata` unless you pass your own. Both are read **once**, at construction: the content hash
 covers the model ID, so "the same text under the same model" has to be recognizable before any provider call. A
 generator that reports neither fails at wiring time rather than mid-query.

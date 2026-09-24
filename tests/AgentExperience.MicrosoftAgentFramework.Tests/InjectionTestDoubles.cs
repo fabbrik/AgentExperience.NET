@@ -29,6 +29,100 @@ internal sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
 }
 
 /// <summary>
+/// A clock that moves only when a test moves it. Its wall clock and its timestamps both advance by
+/// exactly what <see cref="Advance"/> is given, and a timer created through it fires, synchronously
+/// inside <see cref="Advance"/>, once the clock reaches its due time -- so a bound is crossed at a
+/// known step rather than whenever a starved thread pool gets round to a timer callback.
+/// </summary>
+internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
+{
+    private readonly object _gate = new();
+    private readonly List<ManualTimer> _timers = [];
+    private TimeSpan _elapsed;
+
+    public override DateTimeOffset GetUtcNow()
+    {
+        lock (_gate)
+        {
+            return start + _elapsed;
+        }
+    }
+
+    public override long GetTimestamp()
+    {
+        lock (_gate)
+        {
+            return _elapsed.Ticks;
+        }
+    }
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        var timer = new ManualTimer(this, callback, state);
+        timer.Change(dueTime, period);
+        return timer;
+    }
+
+    /// <summary>Moves the clock forward, firing every live timer that falls due on the way.</summary>
+    public void Advance(TimeSpan by)
+    {
+        List<ManualTimer> due;
+        lock (_gate)
+        {
+            _elapsed += by;
+            due = _timers.Where(timer => timer.DueAt is { } at && at <= _elapsed).ToList();
+            foreach (var timer in due)
+            {
+                timer.DueAt = null;
+            }
+        }
+
+        foreach (var timer in due)
+        {
+            timer.Fire();
+        }
+    }
+
+    private sealed class ManualTimer(ManualClock clock, TimerCallback callback, object? state) : ITimer
+    {
+        public TimeSpan? DueAt { get; set; }
+
+        public void Fire() => callback(state);
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            lock (clock._gate)
+            {
+                DueAt = dueTime == Timeout.InfiniteTimeSpan ? null : clock._elapsed + dueTime;
+                if (!clock._timers.Contains(this))
+                {
+                    clock._timers.Add(this);
+                }
+            }
+
+            return true;
+        }
+
+        public void Dispose()
+        {
+            lock (clock._gate)
+            {
+                DueAt = null;
+                clock._timers.Remove(this);
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
+}
+
+/// <summary>
 /// The world an injection test runs against: a search index and a record store that are
 /// deliberately <em>separate</em> collections, because that is the whole point of the final
 /// eligibility check. What <see cref="SearchAsync"/> returns is a snapshot taken when the record was
@@ -144,6 +238,15 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// without declaring any grant -- a store that hands back something it was never asked for.
     /// </summary>
     public HashSet<Guid> Foreign { get; } = [];
+
+    /// <summary>
+    /// Records that have been erased: a read in the owning scope answers <c>Deleted</c>, and any other
+    /// read <c>NotFound</c> -- the real adapter's tombstone rule.
+    /// </summary>
+    public HashSet<Guid> Erased { get; } = [];
+
+    /// <summary>Records whose single read throws, while every other read succeeds -- a store whose failures are per record.</summary>
+    public HashSet<Guid> ThrowsFor { get; } = [];
 
     /// <summary>Whether <paramref name="scope"/> may read <paramref name="record"/>: its own scope, or an active grant.</summary>
     private bool Readable(ExperienceRecord record, Scope scope) =>
@@ -278,6 +381,11 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             throw exception;
         }
 
+        if (ThrowsFor.Contains(experienceId))
+        {
+            throw new ExperienceStoreException("this one record cannot be read.");
+        }
+
         if (!authorization.Permits(scope) || Denied.Contains(experienceId))
         {
             return new ExperienceRecordGetResult(ExperienceStoreOutcome.Denied, null, []);
@@ -291,6 +399,16 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         ExperienceRecordGetResult result;
         lock (_stored)
         {
+            if (Erased.Contains(experienceId))
+            {
+                return new ExperienceRecordGetResult(
+                    _stored.TryGetValue(experienceId, out var erased) && erased.Scope == scope
+                        ? ExperienceStoreOutcome.Deleted
+                        : ExperienceStoreOutcome.NotFound,
+                    null,
+                    []);
+            }
+
             if (Unreadable.Contains(experienceId)
                 || !_stored.TryGetValue(experienceId, out var record)
                 || !Readable(record, scope))
@@ -357,6 +475,90 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             return auditing.Mode == ExperienceGrantAuditingMode.Required
                 ? new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, [])
                 : result;
+        }
+    }
+
+    /// <summary>Every batched re-read, in order, with the IDs it named: one entry per store round trip.</summary>
+    public IReadOnlyList<IReadOnlyList<Guid>> BatchReads
+    {
+        get
+        {
+            lock (_batchReads)
+            {
+                return _batchReads.ToList();
+            }
+        }
+    }
+
+    private readonly List<IReadOnlyList<Guid>> _batchReads = [];
+
+    /// <summary>When set, answers every batched read instead of the per-record logic -- to script a store that breaks the batch contract.</summary>
+    public Func<IReadOnlyList<Guid>, ExperienceRecordGetManyResult>? OnGetMany { get; set; }
+
+    /// <summary>
+    /// When <see langword="true"/>, <see cref="GetManyAsync"/> is the port's sequential default, as a
+    /// store written before story 5.6 has; otherwise it is one "round trip" that answers every ID.
+    /// </summary>
+    public bool SequentialGetMany { get; set; }
+
+    /// <summary>
+    /// One batched re-read. The delay and the failure are applied once, for the whole batch, as a store
+    /// that answers a batch with one statement would apply them; each ID is then answered exactly as
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// answers it, access rows included.
+    /// </summary>
+    public async Task<ExperienceRecordGetManyResult> GetManyAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        ExperienceReadOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (SequentialGetMany)
+        {
+            return await this.GetManySequentiallyAsync(authorization, scope, experienceIds, options, cancellationToken);
+        }
+
+        lock (_batchReads)
+        {
+            _batchReads.Add(experienceIds.ToArray());
+        }
+
+        if (OnGetMany is { } scripted)
+        {
+            return scripted(experienceIds);
+        }
+
+        Entered.TrySetResult();
+
+        if (GetDelay is { } delay)
+        {
+            await delay(cancellationToken);
+        }
+
+        if (GetThrows is { } exception)
+        {
+            throw exception;
+        }
+
+        // The per-record answers, without re-applying the batch-wide delay and failure above.
+        var (heldDelay, heldThrows) = (GetDelay, GetThrows);
+        GetDelay = null;
+        GetThrows = null;
+        try
+        {
+            var results = new ExperienceRecordGetResult[experienceIds.Count];
+            for (var i = 0; i < results.Length; i++)
+            {
+                results[i] = await GetAsync(authorization, scope, experienceIds[i], options, cancellationToken);
+            }
+
+            return new ExperienceRecordGetManyResult(ExperienceStoreOutcome.Found, results, []);
+        }
+        finally
+        {
+            GetDelay = heldDelay;
+            GetThrows = heldThrows;
         }
     }
 

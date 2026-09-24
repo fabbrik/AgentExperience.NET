@@ -23,8 +23,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <para>
 /// <b>What happens on each invocation.</b> The resolver turns the invocation into a
 /// <see cref="RetrieveExperienceRequest"/>; retrieval ranks what is eligible and bounded by its own
-/// timeout; the top <see cref="ExperienceInjectionLimits.MaxRecords"/> are re-read one by one
-/// through the record store; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
+/// timeout; the top <see cref="ExperienceInjectionLimits.MaxRecords"/> are re-read together, in one
+/// batched read through the record store; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
 /// asked about each survivor; and <see cref="HistoricalReferenceWriter"/> renders the rest inside the
 /// byte budget. Every record that falls out at any of those steps is reported with its reason.
 /// </para>
@@ -39,12 +39,16 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <see cref="InjectionOmissionReason.Ineligible"/> with the rule named. A record that can no longer
 /// be read in the request's scope is omitted as <see cref="InjectionOmissionReason.Unreadable"/>,
 /// which deliberately does not distinguish "deleted" from "not yours" -- and, since the re-read goes
-/// through the same grant-aware store call retrieval used, a record shared by an
+/// through the same grant-aware store rule retrieval used, a record shared by an
 /// <see cref="ExperienceGrant"/> that has since expired or been revoked falls out here exactly like
-/// one that was deleted. The whole check is bounded by
-/// <see cref="ExperienceInjectionLimits.EligibilityCheckTimeout"/>, because it is up to
-/// <see cref="ExperienceInjectionLimits.MaxRecords"/> serial store reads on the invocation's critical
-/// path and retrieval's own timeout has already been spent.
+/// one that was deleted. The re-read is one
+/// <see cref="IExperienceRecordStore.GetManyAsync"/> call for every selected candidate, so a store that
+/// implements it with one statement (the PostgreSQL adapter does) costs one round trip on the
+/// invocation's critical path however many records are selected; each record is still answered, and
+/// audited, exactly as its own <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+/// would answer it. A store that keeps the port's default reads them one at a time. The whole check is
+/// bounded by <see cref="ExperienceInjectionLimits.EligibilityCheckTimeout"/>, because it sits on the
+/// invocation's critical path and retrieval's own timeout has already been spent.
 /// </para>
 /// <para>
 /// <b>What the check cannot do is reach backwards.</b> Once a block has been handed to a model, a
@@ -380,10 +384,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
     }
 
     /// <summary>
-    /// The final gate, run immediately before the payload is built: re-read each candidate in the
-    /// request's own authorization and scope, re-apply every eligibility rule retrieval applies, drop
-    /// anything that now fails one, and ask the host about what is left. The re-read record replaces
-    /// the retrieved one, so what is rendered is what was just checked. The whole loop is bounded by
+    /// The final gate, run immediately before the payload is built: re-read every candidate in one
+    /// batched read in the request's own authorization and scope, re-apply every eligibility rule
+    /// retrieval applies to each, drop anything that now fails one, and ask the host about what is left.
+    /// The re-read record replaces the retrieved one, so what is rendered is what was just checked. The
+    /// read and the per-record checks after it are bounded together by
     /// <see cref="ExperienceInjectionLimits.EligibilityCheckTimeout"/>.
     /// </summary>
     private async Task<CheckOutcome> CheckAsync(
@@ -398,54 +403,113 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var required = request.RequiredEnvironmentAttributes;
         var unrestricted = required is null or { Count: 0 };
 
-        using var expiry = new CancellationTokenSource(_options.Limits.EligibilityCheckTimeout, _options.TimeProvider);
+        var timeout = _options.Limits.EligibilityCheckTimeout;
+        var started = _options.TimeProvider.GetTimestamp();
+        using var expiry = new CancellationTokenSource(timeout, _options.TimeProvider);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
 
-        foreach (var candidate in selected)
+        // The bound, as a fact about the clock rather than about a timer. The token above is what a store
+        // is handed, and it only flips when its timer callback has actually run -- which, on a starved
+        // thread pool, can be well after the deadline. The checks between records must not depend on that,
+        // so they compare the elapsed time as well.
+        bool Expired() => expiry.IsCancellationRequested || _options.TimeProvider.GetElapsedTime(started) >= timeout;
+
+        var ids = new Guid[selected.Count];
+        for (var i = 0; i < ids.Length; i++)
         {
-            var experienceId = candidate.Record.ExperienceId;
+            ids[i] = selected[i].Record.ExperienceId;
+        }
 
-            ExperienceRecordGetResult result;
-            try
+        // One scoped batch read for every selected candidate (story 5.6, KL-1), rather than one read per
+        // candidate. Each position is answered exactly as the single read would answer it -- same
+        // authorization, scope, grant, disclosure and tombstone rules, same access rows -- so everything
+        // below is the per-record check it always was, applied to the batch's per-record results.
+        var readOptions = new ExperienceReadOptions(ExperienceReadPurpose.Delivery, request.CorrelationId);
+        ExperienceRecordGetManyResult? batch = null;
+        var perRecord = false;
+        try
+        {
+            // A delivery, and named: this re-read is what actually hands the records to the model, so an
+            // access log records it, and the request's correlation ID ties each row to the invocation it
+            // was injected into.
+            batch = await _store
+                .GetManyAsync(request.Authorization, request.Scope, ids, readOptions, bounded.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Rethrown against the caller's own token, not the linked one the store was handed,
+            // so a caller inspecting the exception sees the token it actually cancelled.
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
+        catch (OperationCanceledException) when (expiry.IsCancellationRequested)
+        {
+            return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
+        }
+        catch (Exception)
+        {
+            // A batch fails as a whole, but the reads it stood for need not: a store whose single reads
+            // fail for some records and not others would otherwise lose every record for one bad one.
+            // So a batch that throws falls back to the pre-5.6 loop -- one read per candidate, inside the
+            // same bound -- and each record is then omitted, or not, exactly as it was before batching.
+            perRecord = true;
+        }
+
+        for (var index = 0; index < selected.Count; index++)
+        {
+            var candidate = selected[index];
+            var experienceId = ids[index];
+
+            ExperienceRecordGetResult? result;
+            if (perRecord)
             {
-                // A delivery, and named: this re-read is what actually hands the record to the model,
-                // so an access log records it, and the request's correlation ID ties that row to the
-                // invocation it was injected into.
-                result = await _store
-                    .GetAsync(
-                        request.Authorization,
-                        request.Scope,
+                try
+                {
+                    result = await _store
+                        .GetAsync(request.Authorization, request.Scope, experienceId, readOptions, bounded.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw;
+                }
+                catch (OperationCanceledException) when (expiry.IsCancellationRequested)
+                {
+                    return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
+                }
+                catch (Exception ex)
+                {
+                    // Fail-closed, per record: a record that could not be re-checked is not injected.
+                    omitted.Add(new OmittedExperience(
                         experienceId,
-                        new ExperienceReadOptions(ExperienceReadPurpose.Delivery, request.CorrelationId),
-                        bounded.Token)
-                    .ConfigureAwait(false);
+                        InjectionOmissionReason.Unreadable,
+                        $"Re-reading the record threw {ex.GetType().FullName}."));
+                    continue;
+                }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            else
             {
-                // Rethrown against the caller's own token, not the linked one the store was handed,
-                // so a caller inspecting the exception sees the token it actually cancelled.
-                cancellationToken.ThrowIfCancellationRequested();
-                throw;
-            }
-            catch (OperationCanceledException) when (expiry.IsCancellationRequested)
-            {
-                return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
-            }
-            catch (Exception ex)
-            {
-                // Fail-closed, per record: a record that could not be re-checked is not injected.
-                omitted.Add(new OmittedExperience(
-                    experienceId,
-                    InjectionOmissionReason.Unreadable,
-                    $"Re-reading the record threw {ex.GetType().FullName}."));
-                continue;
+                // A request-wide refusal (Denied, Invalid) answers every position the way a per-record
+                // refusal did, and a store that returned fewer results than it was asked for has not
+                // answered the rest: all of them are unreadable below.
+                result = batch is { Outcome: ExperienceStoreOutcome.Found, Results: { } results } && index < results.Count
+                    ? results[index]
+                    : null;
             }
 
-            if (expiry.IsCancellationRequested)
+            // The per-record loop's next read failed on a cancelled token; with one read there is no next
+            // read, so the caller's cancellation is honoured here instead of deciding more records for an
+            // invocation that is already over.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (Expired())
             {
-                // A store that ignores the token still has to stop the loop here, or the bound would
-                // only ever apply to one that honours it.
-                return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
+                // A store that ignores the token still has to stop the check here, or the bound would only
+                // ever apply to one that honours it. Checked for every record, as the per-record loop
+                // checked after every read, so time the host's own decision callback spends still counts.
+                return CheckOutcome.TimedOut(timeout);
             }
 
             // Denied, NotFound, Invalid, a null record, a record that came back under another ID, and a
@@ -533,7 +597,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
             injectable.Add(refreshed);
         }
 
-        return CheckOutcome.Checked(injectable);
+        // And once more after the last record: the whole check is bounded, the last decision included.
+        // The per-record loop never looked again after its last callback, so a slow decision on the last
+        // record used to inject past the bound.
+        return Expired() ? CheckOutcome.TimedOut(timeout) : CheckOutcome.Checked(injectable);
     }
 
     /// <summary>

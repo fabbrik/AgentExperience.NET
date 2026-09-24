@@ -75,6 +75,23 @@ internal static class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates what is request-wide about a batched read: the scope and the number of IDs. An empty
+    /// GUID in the list is deliberately <em>not</em> checked here -- it is answered per position, exactly
+    /// as <see cref="ValidateGet"/> answers a single read of it.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateGetMany(Scope scope, int count)
+    {
+        var errors = new List<StoreValidationError>();
+        if (count > ExperienceRecordGetManyResult.MaxCount)
+        {
+            errors.Add(new("ExperienceIds", $"must name at most {ExperienceRecordGetManyResult.MaxCount} records."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates an erasure: the scope, the record, and the optional expected revision. A negative
     /// revision is refused rather than treated as "any", because a caller that computed one is asking
     /// for something it did not mean -- and the thing it is asking for here is destructive.

@@ -6,6 +6,7 @@
         public int Dimension { get; }
         public string ModelId { get; }
         public System.Threading.Tasks.Task<System.ReadOnlyMemory<float>> GenerateAsync(string text, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<System.ReadOnlyMemory<float>>> GenerateBatchAsync(System.Collections.Generic.IReadOnlyList<string> texts, System.Threading.CancellationToken cancellationToken) { }
     }
     public static class ExperienceVectorIndexMaintenance
     {

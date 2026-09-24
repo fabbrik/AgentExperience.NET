@@ -41,6 +41,19 @@ namespace AgentExperience.Core.Indexing;
 /// eventually overwrites newer state, and never a row for a record that no longer exists.
 /// </para>
 /// <para>
+/// <b>Provider calls are batched; writes are not.</b> A pass embeds the records that need a vector
+/// <see cref="ReindexExperienceRequest.EmbeddingBatchSize"/> at a time through
+/// <see cref="IExperienceEmbeddingGenerator.GenerateBatchAsync"/>, so <c>n</c> records cost
+/// <c>ceil(n / EmbeddingBatchSize)</c> provider round trips rather than <c>n</c>. Each record is then
+/// still written on its own, conditionally on its own revision, so a stale record in a batch is
+/// <see cref="ExperienceIndexingOutcome.Stale"/> alone and the rest of its batch is written. A provider
+/// batch is all or nothing, so a batch the provider fails is retried one record at a time: a record the
+/// provider always refuses is <see cref="ExperienceIndexingOutcome.ProviderFailed"/> alone, as it was
+/// before batching, instead of keeping its batch-mates unindexed on every pass. An outage therefore costs
+/// one extra provider call per failed batch, and a pass that fails partway still says exactly which
+/// records it wrote.
+/// </para>
+/// <para>
 /// <b>Only records a search could return are ever embedded.</b> Both the scan and the post-commit hook
 /// apply the same status filter and confidence floor the vector search applies, so a
 /// <see cref="ExperienceStatus.Quarantined"/>, <see cref="ExperienceStatus.Revoked"/>,
@@ -418,6 +431,21 @@ public sealed class ExperienceIndexingService
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.EmbeddingBatchSize is < ReindexExperienceRequest.MinEmbeddingBatchSize or > ReindexExperienceRequest.MaxEmbeddingBatchSize)
+        {
+            // Refused before the scan, so a malformed pass reads nothing, like one the index refuses.
+            return Ended(
+                ExperienceReindexOutcome.Invalid,
+                new ExperienceIndexingFailure(
+                    "The re-index request is malformed. See the validation errors.",
+                    [
+                        new StoreValidationError(
+                            nameof(ReindexExperienceRequest.EmbeddingBatchSize),
+                            $"must be between {ReindexExperienceRequest.MinEmbeddingBatchSize} and {ReindexExperienceRequest.MaxEmbeddingBatchSize}."),
+                    ],
+                    Exception: null));
+        }
+
         ExperienceIndexScanResult scan;
         try
         {
@@ -496,12 +524,8 @@ public sealed class ExperienceIndexingService
                 new ExperienceIndexingFailure("The embedding index reported a successful scan but returned no target list.", NoErrors, Exception: null));
         }
 
-        var results = new List<ExperienceIndexingResult>(scan.Targets.Count);
-        var indexed = 0;
-        var skipped = 0;
-        var rejected = 0;
-        var failed = 0;
-
+        // Every target is checked before any provider call, so a malformed scan never gets as far as
+        // sending some records' text to a provider and then abandoning the pass.
         foreach (var target in scan.Targets)
         {
             if (target is null)
@@ -510,10 +534,72 @@ public sealed class ExperienceIndexingService
                     ExperienceReindexOutcome.Failed,
                     new ExperienceIndexingFailure("The embedding index returned a null scan target.", NoErrors, Exception: null));
             }
+        }
 
-            var result = await IndexTargetAsync(authorization, request.Scope, target, cancellationToken).ConfigureAwait(false);
-            results.Add(result);
+        var outcomes = new ExperienceIndexingResult[scan.Targets.Count];
+        var pending = new List<PendingEmbedding>(scan.Targets.Count);
 
+        for (var i = 0; i < scan.Targets.Count; i++)
+        {
+            var target = scan.Targets[i];
+            var summary = target.Summary ?? string.Empty;
+            var contentHash = ExperienceEmbeddingDescriptor.ComputeContentHash(ModelId, summary);
+
+            if (target.Stored is { } stored
+                && string.Equals(stored.ModelId, ModelId, StringComparison.Ordinal)
+                && string.Equals(stored.ContentHash, contentHash, StringComparison.Ordinal))
+            {
+                // Same model, same text: the stored vector is exactly what this pass would have produced.
+                // No provider call, no write -- this is the whole point of storing the hash. Decided before
+                // any batch is formed, so an unchanged record never takes a place in one.
+                outcomes[i] = new(ExperienceIndexingOutcome.Skipped, target.ExperienceId, stored, null);
+                continue;
+            }
+
+            pending.Add(new PendingEmbedding(i, target, summary, contentHash));
+        }
+
+        // One provider call per batch rather than one per record (KL-1). The batch size bounds how much
+        // text one request carries and how many records one provider failure fails together.
+        for (var offset = 0; offset < pending.Count; offset += request.EmbeddingBatchSize)
+        {
+            var batch = pending.GetRange(offset, Math.Min(request.EmbeddingBatchSize, pending.Count - offset));
+            var embedded = await EmbedBatchAsync(batch, cancellationToken).ConfigureAwait(false);
+
+            if (embedded.Failure is not null && batch.Count > 1)
+            {
+                // A provider batch is all or nothing, so one record the provider always refuses (too long,
+                // a content filter) would fail the same batch-mates on every pass and they would never be
+                // indexed. A failed batch is therefore retried one record at a time: each record then fails
+                // or succeeds on its own, exactly as it did before batching. An outage costs one extra
+                // provider call per batch over the pre-batching pass, and no more.
+                foreach (var item in batch)
+                {
+                    var alone = await EmbedBatchAsync([item], cancellationToken).ConfigureAwait(false);
+                    outcomes[item.Index] = alone.Failure is { } failure
+                        ? new(ExperienceIndexingOutcome.ProviderFailed, item.Target.ExperienceId, item.Target.Stored, failure)
+                        : await WriteTargetAsync(authorization, request.Scope, item, alone.Vectors![0], cancellationToken).ConfigureAwait(false);
+                }
+
+                continue;
+            }
+
+            for (var j = 0; j < batch.Count; j++)
+            {
+                var item = batch[j];
+                outcomes[item.Index] = embedded.Failure is { } batchFailure
+                    ? new(ExperienceIndexingOutcome.ProviderFailed, item.Target.ExperienceId, item.Target.Stored, batchFailure)
+                    : await WriteTargetAsync(authorization, request.Scope, item, embedded.Vectors![j], cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        var indexed = 0;
+        var skipped = 0;
+        var rejected = 0;
+        var failed = 0;
+
+        foreach (var result in outcomes)
+        {
             switch (result.Outcome)
             {
                 case ExperienceIndexingOutcome.Indexed:
@@ -536,68 +622,98 @@ public sealed class ExperienceIndexingService
 
         return new(
             ExperienceReindexOutcome.Completed,
-            results.Count,
+            outcomes.Length,
             indexed,
             skipped,
             rejected,
             failed,
-            results,
+            outcomes,
             Failure: null,
-            scan.LastExaminedId ?? (results.Count > 0 ? results[^1].ExperienceId : null));
+            scan.LastExaminedId ?? (outcomes.Length > 0 ? outcomes[^1].ExperienceId : null));
     }
 
+    /// <summary>One listed record that needs a vector, with the text and hash it will be embedded and stamped with.</summary>
+    /// <param name="Index">Its position in the scan, which is where its result goes.</param>
+    /// <param name="Target">The record as the scan listed it.</param>
+    /// <param name="Summary">The exact text sent to the provider.</param>
+    /// <param name="ContentHash">The hash of <paramref name="Summary"/> under this service's model.</param>
+    private sealed record PendingEmbedding(int Index, ExperienceIndexTarget Target, string Summary, string ContentHash);
+
+    /// <summary>What one provider batch produced: a vector per record, or one failure that applies to all of them.</summary>
+    private readonly record struct EmbeddedBatch(IReadOnlyList<ReadOnlyMemory<float>>? Vectors, ExperienceIndexingFailure? Failure);
+
     /// <summary>
-    /// Indexes one already-listed record: decide whether anything changed, embed only if it did, then
-    /// write conditionally on the revision the target was read at.
+    /// Embeds one batch with a single provider call. A provider batch is all or nothing, so any failure
+    /// -- a throw, a missing result, a result of the wrong length -- fails every record in it, each
+    /// reported as a retryable <see cref="ExperienceIndexingOutcome.ProviderFailed"/>. Records in other
+    /// batches are unaffected, so a pass that fails partway still says exactly which records it wrote.
     /// </summary>
-    private async Task<ExperienceIndexingResult> IndexTargetAsync(
-        AuthorizationContext authorization,
-        Scope scope,
-        ExperienceIndexTarget target,
-        CancellationToken cancellationToken)
+    private async Task<EmbeddedBatch> EmbedBatchAsync(List<PendingEmbedding> batch, CancellationToken cancellationToken)
     {
-        // Only the caller's own cancellation ends a pass. A provider that cancels for its own reasons
-        // is the ordinary shape of a client-side timeout -- HttpClient raises its request timeout as a
-        // TaskCanceledException with the caller's token untouched -- and one slow record must not
-        // abandon a whole re-index with no per-record results at all.
-        bool CallerCancelled() => cancellationToken.IsCancellationRequested;
-
-        var summary = target.Summary ?? string.Empty;
-        var contentHash = ExperienceEmbeddingDescriptor.ComputeContentHash(ModelId, summary);
-
-        if (target.Stored is { } stored
-            && string.Equals(stored.ModelId, ModelId, StringComparison.Ordinal)
-            && string.Equals(stored.ContentHash, contentHash, StringComparison.Ordinal))
+        var texts = new string[batch.Count];
+        for (var i = 0; i < texts.Length; i++)
         {
-            // Same model, same text: the stored vector is exactly what this pass would have produced.
-            // No provider call, no write -- this is the whole point of storing the hash.
-            return new(ExperienceIndexingOutcome.Skipped, target.ExperienceId, stored, null);
+            texts[i] = batch[i].Summary;
         }
 
-        ReadOnlyMemory<float> vector;
+        IReadOnlyList<ReadOnlyMemory<float>>? vectors;
         try
         {
-            vector = await _generator.GenerateAsync(summary, cancellationToken).ConfigureAwait(false);
+            vectors = await _generator.GenerateBatchAsync(texts, cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (CallerCancelled())
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Only the caller's own cancellation ends the pass.
+            // Only the caller's own cancellation ends the pass. A provider that cancels for its own
+            // reasons is the ordinary shape of a client-side timeout -- HttpClient raises its request
+            // timeout as a TaskCanceledException with the caller's token untouched -- and one slow batch
+            // must not abandon a whole re-index with no per-record results at all.
             throw;
         }
         catch (Exception ex)
         {
-            // Caught, never rethrown: the record stays committed and text-searchable, and this is
+            // Caught, never rethrown: the records stay committed and text-searchable, and this is
             // reported as retryable rather than failing whatever called us. A provider-side timeout
             // arrives here as an OperationCanceledException and is a provider failure like any other.
             return new(
-                ExperienceIndexingOutcome.ProviderFailed,
-                target.ExperienceId,
-                target.Stored,
+                null,
                 new ExperienceIndexingFailure(
                     $"The embedding provider threw {ex.GetType().FullName}; the record is unchanged and still indexable later.",
                     NoErrors,
                     ex));
         }
+
+        if (vectors is null || vectors.Count != batch.Count)
+        {
+            // Pairing is positional: a response of the wrong length cannot say which vector belongs to
+            // which record, so none of it is stored.
+            return new(
+                null,
+                new ExperienceIndexingFailure(
+                    $"The embedding provider returned {vectors?.Count ?? 0} vector(s) for a batch of {batch.Count}; " +
+                    "a vector that cannot be paired with its record is never stored, so the record is unchanged and still indexable later.",
+                    NoErrors,
+                    Exception: null));
+        }
+
+        return new(vectors, null);
+    }
+
+    /// <summary>
+    /// Writes one already-embedded record: check the vector, then write conditionally on the revision
+    /// the target was read at. Each record is its own write, so a stale or missing record in a batch
+    /// never affects another.
+    /// </summary>
+    private async Task<ExperienceIndexingResult> WriteTargetAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        PendingEmbedding item,
+        ReadOnlyMemory<float> vector,
+        CancellationToken cancellationToken)
+    {
+        // Only the caller's own cancellation ends a pass; see EmbedBatchAsync.
+        bool CallerCancelled() => cancellationToken.IsCancellationRequested;
+
+        var target = item.Target;
 
         if (vector.Length != Dimension)
         {
@@ -628,7 +744,7 @@ public sealed class ExperienceIndexingService
                     Exception: null));
         }
 
-        var descriptor = new ExperienceEmbeddingDescriptor(ModelId, Dimension, contentHash, target.SourceRevision);
+        var descriptor = new ExperienceEmbeddingDescriptor(ModelId, Dimension, item.ContentHash, target.SourceRevision);
 
         ExperienceIndexWriteResult write;
         try

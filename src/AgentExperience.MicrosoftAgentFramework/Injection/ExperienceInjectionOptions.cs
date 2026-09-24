@@ -52,9 +52,11 @@ public sealed record ExperienceInjectionLimits(int MaxRecords, int MaxBytes)
     public const int DefaultMaxBytes = 16 * 1024;
 
     /// <summary>
-    /// The default bound on the whole final eligibility re-check: 2 seconds. The check is up to
-    /// <see cref="MaxRecords"/> serial store reads on the invocation's critical path, so it needs a
-    /// bound of its own -- retrieval's timeout has already been spent by the time it starts.
+    /// The default bound on the whole final eligibility re-check: 2 seconds. The check is one batched
+    /// store read of up to <see cref="MaxRecords"/> records (one round trip against the PostgreSQL
+    /// adapter; one read per record against a store that keeps the port's default) on the invocation's
+    /// critical path, so it needs a bound of its own -- retrieval's timeout has already been spent by
+    /// the time it starts.
     /// </summary>
     public static readonly TimeSpan DefaultEligibilityCheckTimeout = TimeSpan.FromSeconds(2);
 

@@ -48,7 +48,53 @@ internal sealed class FakeEmbeddingGenerator : IExperienceEmbeddingGenerator
         return vector;
     }
 
+    /// <summary>Every batch this generator was asked to embed, in order: one entry per provider round trip.</summary>
+    public List<IReadOnlyList<string>> Batches { get; } = [];
+
+    /// <summary>The zero-based batch numbers that throw <see cref="ThrownException"/>, so a test can fail one batch in the middle of a pass.</summary>
+    public HashSet<int> FailingBatches { get; init; } = [];
+
+    /// <summary>A batch that contains any of these texts throws <see cref="ThrownException"/>: a record the provider always refuses.</summary>
+    public HashSet<string> FailingTexts { get; init; } = [];
+
+    /// <summary>When set, every batch comes back this many vectors short of one per input.</summary>
+    public int? ShortBy { get; init; }
+
+    /// <summary>One provider round trip for the whole batch, as a batch-capable provider makes.</summary>
+    public async Task<IReadOnlyList<ReadOnlyMemory<float>>> GenerateBatchAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken)
+    {
+        int number;
+        lock (Batches)
+        {
+            number = Batches.Count;
+            Batches.Add(texts.ToArray());
+        }
+
+        if (FailingBatches.Contains(number) || texts.Any(FailingTexts.Contains))
+        {
+            throw ThrownException;
+        }
+
+        var produced = new List<ReadOnlyMemory<float>>(texts.Count);
+        foreach (var text in texts)
+        {
+            produced.Add(await EmbedAsync(text, cancellationToken));
+        }
+
+        return ShortBy is { } shortBy ? produced.Take(Math.Max(0, produced.Count - shortBy)).ToList() : produced;
+    }
+
     public async Task<ReadOnlyMemory<float>> GenerateAsync(string text, CancellationToken cancellationToken)
+    {
+        lock (Batches)
+        {
+            Batches.Add([text]);
+        }
+
+        return await EmbedAsync(text, cancellationToken);
+    }
+
+    private async Task<ReadOnlyMemory<float>> EmbedAsync(string text, CancellationToken cancellationToken)
     {
         lock (Requests)
         {

@@ -25,7 +25,33 @@ public sealed record ReindexExperienceRequest(
     Scope Scope,
     IReadOnlyList<Guid>? ExperienceIds = null,
     int Limit = ExperienceIndexScan.DefaultLimit,
-    Guid? StartAfterId = null);
+    Guid? StartAfterId = null)
+{
+    /// <summary>The smallest permitted <see cref="EmbeddingBatchSize"/>: one record per provider call, which is the pre-5.6 behaviour.</summary>
+    public const int MinEmbeddingBatchSize = 1;
+
+    /// <summary>
+    /// The largest permitted <see cref="EmbeddingBatchSize"/>. It bounds how much record text one
+    /// provider request carries (at most this many summaries of up to
+    /// <see cref="ExperienceRetrievalSummary.MaxLength"/> characters each) and how many records one
+    /// provider failure can fail together.
+    /// </summary>
+    public const int MaxEmbeddingBatchSize = 128;
+
+    /// <summary>The <see cref="EmbeddingBatchSize"/> used when none is specified.</summary>
+    public const int DefaultEmbeddingBatchSize = 16;
+
+    /// <summary>
+    /// How many records' summaries one provider call may embed, from
+    /// <see cref="MinEmbeddingBatchSize"/> to <see cref="MaxEmbeddingBatchSize"/>. Only records that
+    /// actually need a vector count: an unchanged record is skipped before any batch is formed. A pass
+    /// of <c>n</c> records to embed makes <c>ceil(n / EmbeddingBatchSize)</c> provider calls through
+    /// <see cref="IExperienceEmbeddingGenerator.GenerateBatchAsync"/>; the writes stay one conditional,
+    /// revision-checked write per record, so one stale record never affects another. A value outside the
+    /// range makes the pass <see cref="ExperienceReindexOutcome.Invalid"/> before anything is read.
+    /// </summary>
+    public int EmbeddingBatchSize { get; init; } = DefaultEmbeddingBatchSize;
+}
 
 /// <summary>What indexing one record ended as.</summary>
 public enum ExperienceIndexingOutcome

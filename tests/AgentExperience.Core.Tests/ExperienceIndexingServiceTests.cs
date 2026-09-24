@@ -619,6 +619,256 @@ public class ExperienceIndexingServiceTests
         Assert.Equal(ExperienceRetrievalSummary.MaxLength, ExperienceRetrievalSummary.For(new string('a', 20_000), null, null).Length);
     }
 
+    // ---------------------------------------------------------------- story 5.6: batched provider calls (KL-1)
+
+    [Fact]
+    public async Task A_pass_embeds_in_bounded_batches_and_makes_one_provider_call_per_batch_rather_than_per_record()
+    {
+        var index = IndexOf(40);
+        var generator = new FakeEmbeddingGenerator();
+
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope));
+
+        Assert.Equal(40, pass.Indexed);
+
+        // Round trips: 40 records at the default batch size of 16 are 3 provider calls (16 + 16 + 8)
+        // where the pre-5.6 pass made 40.
+        Assert.Equal(3, generator.Batches.Count);
+        Assert.Equal([16, 16, 8], generator.Batches.Select(batch => batch.Count));
+
+        // Each vector is paired with its own record, in scan order: the stored vector is exactly the
+        // one that record's own summary produces.
+        foreach (var n in Enumerable.Range(1, 40))
+        {
+            Assert.Equal(FakeEmbeddingGenerator.VectorFor($"summary {n}", 4).ToArray(), index.Stored[Id(n)].Vector.ToArray());
+        }
+
+        // Writes stay one per record: batching the provider never merges the conditional writes.
+        Assert.Equal(40, index.Writes.Count);
+    }
+
+    [Fact]
+    public async Task A_batch_size_of_one_is_the_pre_batching_behaviour_one_provider_call_per_record()
+    {
+        var generator = new FakeEmbeddingGenerator();
+
+        var pass = await new ExperienceIndexingService(IndexOf(40), generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope) { EmbeddingBatchSize = 1 });
+
+        Assert.Equal(40, pass.Indexed);
+        Assert.Equal(40, generator.Batches.Count);
+    }
+
+    [Fact]
+    public async Task The_port_default_batch_is_one_call_per_text_so_an_existing_generator_keeps_working_unchanged()
+    {
+        var index = IndexOf(5);
+        var generator = new SingleTextGenerator();
+
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope));
+
+        Assert.Equal(5, pass.Indexed);
+        Assert.Equal(Enumerable.Range(1, 5).Select(n => $"summary {n}"), generator.Texts);
+        Assert.All(Enumerable.Range(1, 5), n => Assert.Equal(
+            FakeEmbeddingGenerator.VectorFor($"summary {n}", 4).ToArray(),
+            index.Stored[Id(n)].Vector.ToArray()));
+    }
+
+    [Fact]
+    public async Task An_unchanged_record_never_takes_a_place_in_a_batch()
+    {
+        var index = IndexOf(6);
+        foreach (var n in new[] { 1, 3, 5 })
+        {
+            var text = $"summary {n}";
+            index.Stored[Id(n)] = (
+                new ExperienceEmbeddingDescriptor("fake-embed-v1", 4, ExperienceEmbeddingDescriptor.ComputeContentHash("fake-embed-v1", text), 1),
+                FakeEmbeddingGenerator.VectorFor(text, 4));
+        }
+
+        var generator = new FakeEmbeddingGenerator();
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope));
+
+        Assert.Equal(3, pass.Skipped);
+        Assert.Equal(3, pass.Indexed);
+        var batch = Assert.Single(generator.Batches);
+        Assert.Equal(["summary 2", "summary 4", "summary 6"], batch);
+
+        // Results stay in scan order, whatever order the batch was formed in.
+        Assert.Equal(Enumerable.Range(1, 6).Select(Id), pass.Records.Select(record => record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task A_stale_record_in_a_batch_is_rejected_alone_and_every_other_record_in_that_batch_is_written()
+    {
+        FakeEmbeddingIndex? index = null;
+        index = new FakeEmbeddingIndex
+        {
+            // Record 2 moves on while its batch's writes are landing: its own write is conditional on the
+            // revision it was read at, so it alone is rejected.
+            BeforeWrite = write =>
+            {
+                if (write.ExperienceId == Id(2))
+                {
+                    index!.Records[Id(2)] = new(2, "summary 2");
+                }
+            },
+        };
+
+        foreach (var n in Enumerable.Range(1, 4))
+        {
+            index.Records[Id(n)] = new(1, $"summary {n}");
+        }
+
+        var generator = new FakeEmbeddingGenerator();
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope));
+
+        Assert.Single(generator.Batches);
+        Assert.Equal(
+            [ExperienceIndexingOutcome.Indexed, ExperienceIndexingOutcome.Stale, ExperienceIndexingOutcome.Indexed, ExperienceIndexingOutcome.Indexed],
+            pass.Records.Select(record => record.Outcome));
+        Assert.Equal(3, pass.Indexed);
+        Assert.Equal(1, pass.Rejected);
+        Assert.False(index.Stored.ContainsKey(Id(2)));
+    }
+
+    [Fact]
+    public async Task A_record_the_provider_always_refuses_fails_alone_rather_than_taking_its_batch_with_it()
+    {
+        var index = IndexOf(5);
+        var generator = new FakeEmbeddingGenerator { FailingTexts = ["summary 3"] };
+
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope) { EmbeddingBatchSize = 2 });
+
+        // Batches are [1,2], [3,4], [5]. The second is refused whole, so it is retried one record at a
+        // time: record 3 fails on its own and record 4 is indexed, exactly as a pre-batching pass did.
+        Assert.Equal(
+            [["summary 1", "summary 2"], ["summary 3", "summary 4"], ["summary 3"], ["summary 4"], ["summary 5"]],
+            generator.Batches);
+        Assert.Equal(ExperienceReindexOutcome.Completed, pass.Outcome);
+        Assert.Equal(
+            [
+                ExperienceIndexingOutcome.Indexed,
+                ExperienceIndexingOutcome.Indexed,
+                ExperienceIndexingOutcome.ProviderFailed,
+                ExperienceIndexingOutcome.Indexed,
+                ExperienceIndexingOutcome.Indexed,
+            ],
+            pass.Records.Select(record => record.Outcome));
+        Assert.Equal(4, pass.Indexed);
+        Assert.Equal(1, pass.Failed);
+
+        var failed = pass.Records[2];
+        Assert.True(failed.IsRetryable);
+        Assert.Same(FakeEmbeddingGenerator.ThrownException, failed.Failure!.Exception);
+        Assert.Equal(
+            $"The embedding provider threw {typeof(InvalidOperationException).FullName}; the record is unchanged and still indexable later.",
+            failed.Failure.Reason);
+
+        Assert.Equal([Id(1), Id(2), Id(4), Id(5)], index.Stored.Keys.Order());
+    }
+
+    [Fact]
+    public async Task A_provider_outage_fails_every_record_and_costs_one_call_per_batch_more_than_the_pre_batching_pass()
+    {
+        var index = IndexOf(5);
+        var generator = new FakeEmbeddingGenerator { Throws = FakeEmbeddingGenerator.ThrownException };
+
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope) { EmbeddingBatchSize = 2 });
+
+        Assert.Equal(5, pass.Failed);
+        Assert.All(pass.Records, record => Assert.Equal(ExperienceIndexingOutcome.ProviderFailed, record.Outcome));
+
+        // [1,2] then 1, 2; [3,4] then 3, 4; [5] is already one record. Seven calls where the pre-batching
+        // pass made five, and still one result per record.
+        Assert.Equal(7, generator.Batches.Count);
+        Assert.Empty(index.Writes);
+    }
+
+    [Fact]
+    public async Task A_batch_answered_with_the_wrong_number_of_vectors_stores_none_of_them()
+    {
+        var index = IndexOf(3);
+
+        var pass = await new ExperienceIndexingService(index, new FakeEmbeddingGenerator { ShortBy = 1 })
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope));
+
+        // Pairing is positional, so a short answer cannot say which record each vector belongs to. The
+        // retry one record at a time is short as well, so every record fails and nothing is written.
+        Assert.Equal(3, pass.Failed);
+        Assert.All(pass.Records, record =>
+        {
+            Assert.Equal(ExperienceIndexingOutcome.ProviderFailed, record.Outcome);
+            Assert.Contains("0 vector(s) for a batch of 1", record.Failure!.Reason, StringComparison.Ordinal);
+        });
+        Assert.Empty(index.Writes);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(ReindexExperienceRequest.MaxEmbeddingBatchSize + 1)]
+    public async Task A_batch_size_outside_its_bounds_is_invalid_before_anything_is_read(int batchSize)
+    {
+        var index = IndexOf(2);
+        var generator = new FakeEmbeddingGenerator();
+
+        var pass = await new ExperienceIndexingService(index, generator)
+            .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope) { EmbeddingBatchSize = batchSize });
+
+        Assert.Equal(ExperienceReindexOutcome.Invalid, pass.Outcome);
+        Assert.Equal(nameof(ReindexExperienceRequest.EmbeddingBatchSize), Assert.Single(pass.Failure!.Errors).Path);
+        Assert.Empty(index.Scans);
+        Assert.Empty(generator.Batches);
+    }
+
+    [Fact]
+    public async Task The_batch_bounds_are_accepted_at_both_ends()
+    {
+        foreach (var size in new[] { ReindexExperienceRequest.MinEmbeddingBatchSize, ReindexExperienceRequest.MaxEmbeddingBatchSize })
+        {
+            var pass = await new ExperienceIndexingService(IndexOf(3), new FakeEmbeddingGenerator())
+                .ReindexAsync(Authorization, new ReindexExperienceRequest(RequestScope) { EmbeddingBatchSize = size });
+
+            Assert.Equal(3, pass.Indexed);
+        }
+
+        Assert.Equal(16, new ReindexExperienceRequest(RequestScope).EmbeddingBatchSize);
+    }
+
+    /// <summary>A generator written before story 5.6: it implements only the single-text call, so the port's default batch applies.</summary>
+    private sealed class SingleTextGenerator : IExperienceEmbeddingGenerator
+    {
+        public List<string> Texts { get; } = [];
+
+        public string ModelId => "fake-embed-v1";
+
+        public int Dimension => 4;
+
+        public Task<ReadOnlyMemory<float>> GenerateAsync(string text, CancellationToken cancellationToken)
+        {
+            Texts.Add(text);
+            return Task.FromResult(FakeEmbeddingGenerator.VectorFor(text, Dimension));
+        }
+    }
+
+    private static FakeEmbeddingIndex IndexOf(int count)
+    {
+        var index = new FakeEmbeddingIndex();
+        foreach (var n in Enumerable.Range(1, count))
+        {
+            index.Records[Id(n)] = new(1, $"summary {n}");
+        }
+
+        return index;
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static Guid Id(int n) => Guid.Parse(FormattableString.Invariant($"00000000-0000-0000-0000-{n:000000000000}"));
