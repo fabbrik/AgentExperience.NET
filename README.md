@@ -31,7 +31,6 @@ preview.
 | KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the two purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
 | KL-5 | **Default-deny on evidence kind is opt-in per check.** A `RequiredCheck` with a null `ExpectedKind` accepts evidence of any kind | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here); `RequiredCheck` |
 | KL-6 | **A reflection can be paired with the wrong evaluation by a host that calls `IExperienceReflector` directly.** Finalization computes the evaluation itself, so it cannot mismatch; a direct caller can | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here) |
-| KL-7 | **An invocation that opens a run and never returns holds it with no bound.** The open-run duration bound is armed when an invocation releases a run it keeps open, not when the run opens | [Adapter: retries as attempts of one run](src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run) |
 | KL-8 | **An approach is its tool names only.** Approaches that differ by argument render identically in the `Approach:` line; a host whose lessons turn on arguments needs its own reflector to say so in the lesson | [Adapter: the payload](src/AgentExperience.MicrosoftAgentFramework/README.md#the-payload) |
 | KL-10 | **The grant access log has no retention path.** Erasure deliberately keeps access rows, and the ledger is append-only, so it grows until the tables' owner prunes it | [Store: schema, `0009`](src/AgentExperience.Storage.Postgres/README.md#script-comments-that-were-written-before-the-work-they-point-at-shipped) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
@@ -40,6 +39,11 @@ preview.
 
 Resolved, shipping in the next preview:
 
+- KL-7 (an invocation that opens a run and never returns holding it with no bound) is resolved by arming the
+  open-run duration bound when the run is opened, for every run, with the timer disposed when the invocation
+  releases the run (story 5.3). An invocation that never returns now holds its run for at most twice
+  `MaxOpenRunDuration`, and the close is reported. See
+  [Adapter: retries as attempts of one run](src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run).
 - KL-9 (a borrowed lesson disclosing the lending scope's tool names) is resolved by the grant disclosure level
   (story 3.6); see [Sharing experience across scopes](#sharing-experience-across-scopes).
 - KL-14 (exact pins blocking a newer MAF) is resolved by moving the supported pin to `Microsoft.Agents.AI` 1.22.0,

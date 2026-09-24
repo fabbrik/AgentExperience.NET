@@ -55,11 +55,17 @@ public static class ExperienceCaptureAgentBuilderExtensions
     /// <see cref="AIAgent"/> is not itself disposable, so this overload has nothing to attach a
     /// teardown to: its bounds outlive the agent and can complete a run, and call
     /// <see cref="ExperienceCaptureOptions.OnCaptureFailure"/>/<see cref="ExperienceCaptureOptions.OnRunFinalized"/>,
-    /// afterwards. For the default configuration -- every invocation completes its own run -- no
-    /// bound is ever armed and there is nothing to dispose: each invocation still takes a transient
-    /// claim in the registration's open-run ledger while it is in flight, so a second invocation
-    /// naming its run is refused, but the claim is removed when the invocation releases the run and
-    /// nothing outlives it.
+    /// afterwards. On the default configuration -- every invocation completes its own run -- each
+    /// invocation takes a transient claim in the registration's open-run ledger while it is in flight,
+    /// so a second invocation naming its run is refused, and arms its run's duration bound when the run
+    /// opens, so even a run whose invocation never returns is bounded; when the invocation completes
+    /// its run, the claim is removed and the bound disposed, and nothing outlives it. A bound can still
+    /// call back after <c>RunAsync</c> has returned when the invocation did not complete its run -- its
+    /// finalization failed, returned a non-success outcome, or overran
+    /// <see cref="ExperienceCaptureOptions.FinalizationTimeout"/>, leaving the run open and bounded --
+    /// and while an invocation that never returns is still holding its run. A host whose callbacks
+    /// write to anything with a lifetime should therefore use the overload that hands back a lifetime,
+    /// on the default configuration too.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceCaptureOptions.ResolveRun"/>, <see cref="ExperienceCaptureOptions.Environment"/>, <see cref="ExperienceCaptureOptions.TimeProvider"/>, <see cref="ExperienceCaptureOptions.NewId"/>, or <see cref="ExperienceCaptureOptions.ShouldCompleteRun"/>, is <see langword="null"/>.</exception>
@@ -85,7 +91,10 @@ public static class ExperienceCaptureAgentBuilderExtensions
     /// data source and logger those callbacks reach. A run still open at that moment is
     /// <em>abandoned</em>: nothing is written for it and no timer reports it, because the host that
     /// would receive the report is the one shutting down; an invocation still in flight at that moment
-    /// reports the abandonment itself, on its own thread, as it returns. Complete the runs that matter first. After
+    /// reports the abandonment itself, on its own thread, as it returns. Disposal does not wait for a
+    /// bound's close that was already under way: that close may still write its completion to
+    /// <paramref name="captureService"/>, but it reports nothing and finalizes nothing once it sees the
+    /// disposal (a callback already executing is not interrupted). Complete the runs that matter first. After
     /// disposal, further invocations through this agent run uncaptured and say so through
     /// <see cref="ExperienceCaptureOptions.OnCaptureFailure"/>.
     /// </param>

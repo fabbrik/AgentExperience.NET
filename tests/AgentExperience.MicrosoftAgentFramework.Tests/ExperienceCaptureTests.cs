@@ -66,6 +66,7 @@ public class ExperienceCaptureTests
     private sealed class Harness
     {
         private readonly List<ExperienceCaptureFailure> _failures = [];
+        private readonly List<(int ThreadId, bool IsThreadPool)> _failureThreads = [];
 
         public Harness(int maxAttemptsPerRun = 10, ISanitizer? sanitizer = null, int maxResultLength = 10_000, int maxErrorLength = 10_000)
         {
@@ -83,6 +84,18 @@ public class ExperienceCaptureTests
                 lock (_failures)
                 {
                     return _failures.ToList();
+                }
+            }
+        }
+
+        /// <summary>The thread each failure in <see cref="Failures"/> was reported on, in the same order.</summary>
+        public IReadOnlyList<(int ThreadId, bool IsThreadPool)> FailureThreads
+        {
+            get
+            {
+                lock (_failures)
+                {
+                    return _failureThreads.ToList();
                 }
             }
         }
@@ -111,6 +124,7 @@ public class ExperienceCaptureTests
                     lock (_failures)
                     {
                         _failures.Add(failure);
+                        _failureThreads.Add((Environment.CurrentManagedThreadId, Thread.CurrentThread.IsThreadPoolThread));
                     }
 
                     if (throwingCallback)
@@ -1593,7 +1607,10 @@ public class ExperienceCaptureTests
 
     /// <summary>
     /// BH-9. A timer callback that was already running when the run was completed normally -- disposing
-    /// a timer does not join it -- must not report the run as still open at its bound.
+    /// a timer does not join it -- must not report the run as still open at its bound. Since story 5.3
+    /// it finds the entry removed and does nothing at all, not even a conflicting completion; the
+    /// conflict path for a callback that got past that check first is covered in
+    /// <see cref="OpenRunRegistryTests"/>.
     /// </summary>
     [Fact]
     public async Task A_late_bound_callback_for_a_run_completed_normally_reports_nothing()
@@ -1618,9 +1635,9 @@ public class ExperienceCaptureTests
         var completions = harness.Service.CompleteCalls;
 
         bound.Fire();
-        await Eventually(() => harness.Service.CompleteCalls > completions);
         await Task.Delay(200);
 
+        Assert.Equal(completions, harness.Service.CompleteCalls);
         Assert.Empty(harness.Failures);
         Assert.Equal(RunExecutionStatus.Completed, StatusOf(harness, runId));
     }
@@ -1669,8 +1686,9 @@ public class ExperienceCaptureTests
 
     /// <summary>
     /// BH-8, the other half: an invocation still in flight when capture is disposed abandons its run
-    /// rather than arming a bound that would call back into a host that is tearing down, and says so
-    /// itself, on its own thread.
+    /// rather than leaving a bound that would call back into a host that is tearing down, and says so
+    /// itself, on its own thread. Since story 5.3 that run has a bound from the moment it opened;
+    /// disposal cancels it, and a callback already on its way does nothing.
     /// </summary>
     [Fact]
     public async Task An_invocation_in_flight_at_disposal_abandons_its_run_and_reports_it_on_its_own_thread()
@@ -1692,11 +1710,23 @@ public class ExperienceCaptureTests
 
         var inFlight = Task.Run(() => agent.RunAsync("task-in-flight"));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var bound = Assert.Single(clock.Bounds);
+        Assert.False(bound.Disposed);
+
         captureLifetime.Dispose();
+        Assert.True(bound.Disposed);
+
+        // Twice, so the one hand-off to the live invocation is spent and a live registry would close.
+        bound.Fire();
+        bound.Fire();
+        await Task.Delay(100);
+        Assert.Equal(0, harness.Service.CompleteCalls);
+        Assert.Empty(harness.Failures);
+
         release.TrySetResult();
         await inFlight;
 
-        Assert.Empty(clock.Bounds);
+        Assert.Single(clock.Bounds);
         Assert.Null(harness.SingleRun().ExecutionStatus);
         var failure = Assert.Single(harness.Failures);
         Assert.Equal(ExperienceCaptureFailureStage.Finalize, failure.Stage);
@@ -1763,8 +1793,9 @@ public class ExperienceCaptureTests
     public async Task A_failed_start_gives_its_claim_back_so_a_later_continuation_on_the_same_id_is_captured(string how)
     {
         var harness = new Harness();
+        var clock = new ManualBoundTimeProvider();
         var runId = Guid.NewGuid();
-        var options = harness.Options(resolve: _ => new ExperienceRunDescriptor("incident-42", TestScope, ContinuesRunId: runId));
+        var options = harness.Options(resolve: _ => new ExperienceRunDescriptor("incident-42", TestScope, ContinuesRunId: runId), timeProvider: clock);
         var agent = CreateAgent(new ScriptedChatClient()).AsBuilder()
             .UseExperienceCapture(harness.Service, options, out var captureLifetime)
             .Build();
@@ -1783,6 +1814,10 @@ public class ExperienceCaptureTests
         Assert.Equal(ExperienceCaptureFailureStage.StartRun, failure.Stage);
         Assert.Contains(how == "null" ? "StartRun returned null" : "Starting the run threw", failure.Reason, StringComparison.Ordinal);
         Assert.Equal(0, OpenRunsOf(captureLifetime).Count);
+
+        // Story 5.3: the bound is armed only once the service has accepted the run, so a failed start
+        // never created one.
+        Assert.Empty(clock.Bounds);
 
         await agent.RunAsync("attempt-2");
 
@@ -1942,12 +1977,12 @@ public class ExperienceCaptureTests
         Assert.Equal(2, run.Attempts.Count);
         Assert.Single(harness.Failures, f => f.Reason.Contains("still open at its", StringComparison.Ordinal));
 
-        // The re-armed timer firing late finds the run already completed and says nothing more.
+        // The re-armed timer firing late finds the run already closed and forgotten, and does nothing.
         var completions = harness.Service.CompleteCalls;
         bound.Fire();
-        await Eventually(() => harness.Service.CompleteCalls > completions);
-        await Eventually(() => registry.Count == 0);
         await Task.Delay(100);
+        Assert.Equal(completions, harness.Service.CompleteCalls);
+        Assert.Equal(0, registry.Count);
         Assert.Single(harness.Failures);
     }
 
@@ -2015,12 +2050,14 @@ public class ExperienceCaptureTests
     }
 
     /// <summary>
-    /// VG-13. The bound measures the run, not the invocation: it is armed for what remains of the
-    /// declared duration since the run opened, and armed once -- a continuation that leaves the run
-    /// open again does not start a second clock.
+    /// VG-13, as story 5.3 changed it. The bound measures the run, not the invocation: it is armed
+    /// once, when the run opens -- before the first invocation's two minutes in the model -- for the
+    /// whole declared duration, and neither that invocation's release nor a continuation that leaves
+    /// the run open again starts a second clock. What remains is measured from the run's own start,
+    /// which <see cref="OpenRunRegistryTests"/> covers for an entry armed after its run opened.
     /// </summary>
     [Fact]
-    public async Task The_bound_is_armed_for_what_remains_of_the_run_and_only_once()
+    public async Task The_bound_is_armed_once_when_the_run_opens_and_measures_the_run()
     {
         var harness = new Harness();
         var openedAt = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
@@ -2032,8 +2069,9 @@ public class ExperienceCaptureTests
             maxOpenRunDuration: TimeSpan.FromMinutes(5),
             timeProvider: clock);
 
-        // The first invocation itself takes two minutes, so three are left when it releases the run.
+        // The first invocation itself takes two minutes; its bound is already running by then.
         var calls = 0;
+        ManualBoundTimer? armedDuringFirstCall = null;
         var agent = harness.Capture(
             CreateAgent(new ScriptedChatClient
             {
@@ -2041,6 +2079,7 @@ public class ExperienceCaptureTests
                 {
                     if (Interlocked.Increment(ref calls) == 1)
                     {
+                        armedDuringFirstCall = Assert.Single(clock.Bounds);
                         clock.Now = openedAt.AddMinutes(2);
                     }
                 },
@@ -2049,7 +2088,8 @@ public class ExperienceCaptureTests
 
         await agent.RunAsync("attempt-1");
         var bound = Assert.Single(clock.Bounds);
-        Assert.Equal(TimeSpan.FromMinutes(3), bound.DueTime);
+        Assert.Same(armedDuringFirstCall, bound);
+        Assert.Equal(TimeSpan.FromMinutes(5), bound.DueTime);
 
         clock.Now = openedAt.AddMinutes(4);
         await agent.RunAsync("attempt-2");
@@ -2066,11 +2106,13 @@ public class ExperienceCaptureTests
     /// <summary>
     /// VG-11/20, and frozen rule 1 as it is really implemented: the default path takes a transient
     /// claim for the length of each invocation -- the same serialization a continuing run gets -- and
-    /// removes it when the invocation releases. After any number of default invocations, the
-    /// registration holds no entry and has armed no bound.
+    /// removes it when the invocation releases. Since story 5.3 each invocation also arms its run's
+    /// bound when the run opens, and disposes it on release: after any number of default invocations
+    /// the registration holds no entry and no live bound, and a disposed bound's late callback does
+    /// nothing at all.
     /// </summary>
     [Fact]
-    public async Task The_default_path_takes_a_transient_claim_per_invocation_and_leaves_no_entry_and_no_bound_behind()
+    public async Task The_default_path_takes_a_transient_claim_and_bound_per_invocation_and_leaves_neither_behind()
     {
         var harness = new Harness();
         var clock = new ManualBoundTimeProvider();
@@ -2094,6 +2136,7 @@ public class ExperienceCaptureTests
         var first = Task.Run(() => agent.RunAsync("task-default"));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(1, registry.Count);
+        Assert.False(Assert.Single(clock.Bounds).Disposed);
         release.TrySetResult();
         await first;
 
@@ -2105,8 +2148,281 @@ public class ExperienceCaptureTests
         Assert.Equal(5, harness.Service.StartedRunIds.Count);
         Assert.All(harness.Service.StartedRunIds, runId => Assert.Equal(RunExecutionStatus.Completed, StatusOf(harness, runId)));
         Assert.Equal(0, registry.Count);
-        Assert.Empty(clock.Bounds);
+        Assert.Equal(5, clock.Bounds.Count);
+        Assert.All(clock.Bounds, bound => Assert.True(bound.Disposed));
+
+        // Callbacks already on their way when their timers were disposed: nothing is closed or reported.
+        var completions = harness.Service.CompleteCalls;
+        foreach (var bound in clock.Bounds)
+        {
+            bound.Fire();
+            bound.Fire();
+        }
+
+        await Task.Delay(100);
+        Assert.Equal(completions, harness.Service.CompleteCalls);
         Assert.Empty(harness.Failures);
+    }
+
+    // ---- Story 5.3: a run is bounded from the moment it is opened (KL-7) ---------------------------
+
+    /// <summary>
+    /// KL-7's own case, on the default configuration: an invocation that opens a run and never returns
+    /// no longer holds it with no bound. The bound armed at open is handed to the hung invocation
+    /// once, then closes the run underneath it; the close is reported through
+    /// <see cref="ExperienceCaptureOptions.OnCaptureFailure"/> while the invocation is still hung, so
+    /// off its thread, and the registration is left holding nothing.
+    /// </summary>
+    [Fact]
+    public async Task An_invocation_that_opens_a_run_and_never_returns_is_closed_at_its_bound_and_reported()
+    {
+        var harness = new Harness();
+        var clock = new ManualBoundTimeProvider { Now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero) };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hungThread = 0;
+        var agent = CreateAgent(new ScriptedChatClient
+        {
+            OnCall = () =>
+            {
+                hungThread = Environment.CurrentManagedThreadId;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            },
+        }).AsBuilder().UseExperienceCapture(harness.Service, harness.Options(timeProvider: clock), out var captureLifetime).Build();
+        var registry = OpenRunsOf(captureLifetime);
+
+        var hung = Task.Run(() => agent.RunAsync("task-hangs"));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var runId = Assert.Single(harness.Service.StartedRunIds);
+            var bound = Assert.Single(clock.Bounds);
+            Assert.Equal(harness.Options().MaxOpenRunDuration, bound.DueTime);
+
+            // First firing: handed to the invocation holding the run, and re-armed for one more period.
+            bound.Fire();
+            Assert.Equal(1, bound.Changes);
+            Assert.Null(StatusOf(harness, runId));
+            Assert.Empty(harness.Failures);
+
+            // Second firing: the opener never came back, so the run is closed underneath it.
+            bound.Fire();
+            await Eventually(() => registry.Count == 0);
+            Assert.Equal(RunExecutionStatus.Cancelled, StatusOf(harness, runId));
+            var failure = Assert.Single(harness.Failures);
+            Assert.Equal(ExperienceCaptureFailureStage.Finalize, failure.Stage);
+            Assert.Equal(runId, failure.RunId);
+            Assert.Contains("still open at its", failure.Reason, StringComparison.Ordinal);
+            Assert.False(hung.IsCompleted);
+
+            // Reported on a thread-pool thread, not the hung invocation's. (Which pool thread is not
+            // asserted: the thread that fired the timer may itself be the one the close is scheduled on.)
+            var (reportThread, isThreadPool) = Assert.Single(harness.FailureThreads);
+            Assert.True(isThreadPool);
+            Assert.NotEqual(hungThread, reportThread);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        // When it does come back its answer is untouched; its attempt is refused by the completed run,
+        // and that is reported -- but the bound is not reported a second time.
+        Assert.Equal("Hello, world", (await hung).Text);
+        await Eventually(() => registry.Count == 0);
+        var run = harness.SingleRun();
+        Assert.Equal(RunExecutionStatus.Cancelled, run.ExecutionStatus);
+        Assert.Empty(run.Attempts);
+        Assert.Contains(harness.Failures, f => f.Reason.Contains("AppendAttemptAsync returned Conflict", StringComparison.Ordinal));
+        Assert.Single(harness.Failures, f => f.Reason.Contains("still open at its", StringComparison.Ordinal));
+
+        // The bound's close, and the returning invocation's own attempt to complete: the release finds
+        // the run already closed and forgotten, and does not close it a third time.
+        Assert.Equal(2, harness.Service.CompleteCalls);
+    }
+
+    /// <summary>
+    /// A hung invocation whose run was closed underneath it, returning only after the host disposed
+    /// capture, does not claim the run was abandoned open: the bound already completed it.
+    /// </summary>
+    [Fact]
+    public async Task A_run_closed_underneath_a_hung_invocation_is_not_reported_abandoned_by_a_later_disposal()
+    {
+        var harness = new Harness();
+        var clock = new ManualBoundTimeProvider();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateAgent(new ScriptedChatClient
+        {
+            OnCall = () =>
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            },
+        }).AsBuilder().UseExperienceCapture(harness.Service, harness.Options(shouldComplete: _ => false, timeProvider: clock), out var captureLifetime).Build();
+        var registry = OpenRunsOf(captureLifetime);
+
+        var hung = Task.Run(() => agent.RunAsync("task-hangs"));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var bound = Assert.Single(clock.Bounds);
+            bound.Fire();
+            bound.Fire();
+            await Eventually(() => registry.Count == 0);
+            Assert.Equal(RunExecutionStatus.Cancelled, harness.SingleRun().ExecutionStatus);
+
+            captureLifetime.Dispose();
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await hung;
+
+        Assert.Equal(RunExecutionStatus.Cancelled, harness.SingleRun().ExecutionStatus);
+        Assert.DoesNotContain(harness.Failures, f => f.Reason.Contains("abandoned open", StringComparison.Ordinal));
+        Assert.Single(harness.Failures, f => f.Reason.Contains("still open at its", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A continuation of a run the registration has no entry for (opened earlier, by another
+    /// registration or before its entry was forgotten) is armed at open for what remains since the run
+    /// itself opened -- the start the capture service kept -- not a fresh period from this invocation.
+    /// </summary>
+    [Fact]
+    public async Task A_continuation_with_a_fresh_entry_is_armed_for_what_remains_since_the_run_opened()
+    {
+        var harness = new Harness();
+        var openedAt = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new ManualBoundTimeProvider { Now = openedAt };
+        var runId = Guid.NewGuid();
+        var options = harness.Options(
+            resolve: _ => new ExperienceRunDescriptor("incident-42", TestScope, ContinuesRunId: runId),
+            shouldComplete: _ => false,
+            timeProvider: clock);
+
+        Assert.Equal(
+            StartRunOutcome.Started,
+            harness.Service.StartRun(runId, "incident-42", null, TestScope, options.Environment, new Provenance("elsewhere", null, openedAt, null), openedAt).Outcome);
+
+        clock.Now = openedAt.AddMinutes(2);
+        await harness.Capture(CreateAgent(new ScriptedChatClient()), options).RunAsync("attempt-1");
+
+        Assert.Equal(TimeSpan.FromMinutes(3), Assert.Single(clock.Bounds).DueTime);
+        Assert.Null(StatusOf(harness, runId));
+        Assert.Empty(harness.Failures);
+    }
+
+    /// <summary>
+    /// KL-7 through streaming: a consumer that opens a run by taking one update and then abandons the
+    /// enumerator without disposing it never runs the finalizing <c>finally</c>. The run it opened is
+    /// bounded all the same, closed at its bound, and the run the abandoned invocation held does not
+    /// stop later invocations from being captured.
+    /// </summary>
+    [Fact]
+    public async Task A_streaming_opener_abandoned_without_disposal_is_closed_at_its_bound_and_reported()
+    {
+        var harness = new Harness();
+        var clock = new ManualBoundTimeProvider();
+        var agent = CreateAgent(new ScriptedChatClient()).AsBuilder()
+            .UseExperienceCapture(harness.Service, harness.Options(timeProvider: clock), out var captureLifetime)
+            .Build();
+        var registry = OpenRunsOf(captureLifetime);
+
+        var abandoned = agent.RunStreamingAsync("task-abandoned").GetAsyncEnumerator();
+        Assert.True(await abandoned.MoveNextAsync());
+        var runId = Assert.Single(harness.Service.StartedRunIds);
+        var bound = Assert.Single(clock.Bounds);
+
+        bound.Fire();
+        Assert.Equal(1, bound.Changes);
+        Assert.Null(StatusOf(harness, runId));
+
+        bound.Fire();
+        await Eventually(() => registry.Count == 0);
+        Assert.Equal(RunExecutionStatus.Cancelled, StatusOf(harness, runId));
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(runId, failure.RunId);
+        Assert.Contains("still open at its", failure.Reason, StringComparison.Ordinal);
+
+        // A later default invocation opens and completes its own run, unaffected.
+        await agent.RunAsync("task-after");
+        Assert.Equal(2, harness.Service.StartedRunIds.Count);
+        Assert.Equal(RunExecutionStatus.Completed, StatusOf(harness, harness.Service.StartedRunIds.Last()));
+        Assert.Single(harness.Failures);
+        GC.KeepAlive(abandoned);
+    }
+
+    /// <summary>
+    /// The bound armed at open never produces a false report for a run that completes normally: a
+    /// default invocation that outlives one bound period is handed the bound, and when it returns it
+    /// completes its own run as <see cref="RunExecutionStatus.Completed"/>, reporting nothing and
+    /// disposing the bound.
+    /// </summary>
+    [Fact]
+    public async Task A_default_invocation_that_outlives_one_bound_period_but_returns_completes_normally_and_reports_nothing()
+    {
+        var harness = new Harness();
+        var clock = new ManualBoundTimeProvider();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateAgent(new ScriptedChatClient
+        {
+            OnCall = () =>
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            },
+        }).AsBuilder().UseExperienceCapture(harness.Service, harness.Options(timeProvider: clock), out var captureLifetime).Build();
+
+        var slow = Task.Run(() => agent.RunAsync("task-slow"));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var bound = Assert.Single(clock.Bounds);
+        bound.Fire();
+        Assert.Equal(1, bound.Changes);
+
+        release.TrySetResult();
+        Assert.Equal("Hello, world", (await slow).Text);
+
+        var run = harness.SingleRun();
+        Assert.Equal(RunExecutionStatus.Completed, run.ExecutionStatus);
+        Assert.Single(run.Attempts);
+        Assert.True(bound.Disposed);
+        Assert.Equal(0, OpenRunsOf(captureLifetime).Count);
+
+        // The re-armed timer's late firing finds the run forgotten.
+        bound.Fire();
+        await Task.Delay(100);
+        Assert.Equal(1, harness.Service.CompleteCalls);
+        Assert.Empty(harness.Failures);
+    }
+
+    /// <summary>
+    /// A <see cref="TimeProvider"/> that cannot make the bound at open is reported once, with what it
+    /// means for the invocation in flight; on the default path the invocation then completes its own
+    /// run as usual, and nothing claims the run was open at a bound.
+    /// </summary>
+    [Fact]
+    public async Task A_bound_that_cannot_be_armed_at_open_is_reported_once_and_the_default_run_still_completes()
+    {
+        var harness = new Harness();
+        var clock = new ManualBoundTimeProvider { ThrowOnBound = true };
+        var agent = CreateAgent(new ScriptedChatClient()).AsBuilder()
+            .UseExperienceCapture(harness.Service, harness.Options(timeProvider: clock), out var captureLifetime)
+            .Build();
+
+        Assert.Equal("Hello, world", (await agent.RunAsync("task-no-timer")).Text);
+
+        Assert.Equal(RunExecutionStatus.Completed, harness.SingleRun().ExecutionStatus);
+        Assert.Equal(0, OpenRunsOf(captureLifetime).Count);
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(ExperienceCaptureFailureStage.Finalize, failure.Stage);
+        Assert.Contains("Arming the open-run bound threw", failure.Reason, StringComparison.Ordinal);
+        Assert.Contains("while this invocation is in flight", failure.Reason, StringComparison.Ordinal);
+        Assert.IsType<InvalidOperationException>(failure.Exception);
     }
 
     /// <summary>

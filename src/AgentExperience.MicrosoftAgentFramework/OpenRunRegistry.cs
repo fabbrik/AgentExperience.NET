@@ -22,22 +22,31 @@ namespace AgentExperience.MicrosoftAgentFramework;
 /// capture scopes never share a run in the first place.
 /// </para>
 /// <para>
-/// <b>No run stays open because a host forgot.</b> An open run holds its captured payload in memory,
-/// so an entry whose invocation finished without completing the run arms a timer on the host's own
-/// <see cref="TimeProvider"/> for what remains of
-/// <see cref="ExperienceCaptureOptions.MaxOpenRunDuration"/>. When it fires the run is completed and
-/// the reason is reported through <see cref="ExperienceCaptureOptions.OnCaptureFailure"/>. If an
-/// invocation happens to be in flight at that moment the close is handed to it rather than raced
-/// against it -- but only once: the bound re-arms for one further period, and the second firing
-/// closes the run underneath an invocation that never came back. An invocation can fail to come back
-/// at all (a streaming consumer that abandons its enumerator without disposing it, or an inner agent
-/// that hangs with no cancellation), and a bound that such an invocation could suspend forever would
-/// not be a bound.
+/// <b>No run stays open because a host forgot, or because an invocation never came back.</b> An open
+/// run holds its captured payload in memory, so every run is bounded from the moment it is opened:
+/// as soon as the capture service has opened (or continued) the run, <see cref="ArmAtOpen"/> arms a
+/// timer on the host's own <see cref="TimeProvider"/> for what remains of
+/// <see cref="ExperienceCaptureOptions.MaxOpenRunDuration"/>, measured from when the run was opened.
+/// The timer is created once per entry and disposed when the entry is removed, so on the default path
+/// -- one invocation, one run, completed by that invocation -- it lives exactly as long as that
+/// invocation's claim. When it fires the run is completed and the reason is reported through
+/// <see cref="ExperienceCaptureOptions.OnCaptureFailure"/>. If an invocation happens to be in flight
+/// at that moment the close is handed to it rather than raced against it -- but only once: the bound
+/// re-arms for one further period, and the second firing closes the run underneath an invocation
+/// that never came back. An invocation can fail to come back at all (a streaming consumer that
+/// abandons its enumerator without disposing it, or an inner agent that hangs with no cancellation)
+/// -- the invocation that <em>opened</em> the run included -- and a bound that such an invocation
+/// could suspend forever, or that started only once it returned, would not be a bound.
 /// </para>
 /// <para>
 /// <b>Callbacks reach the host off the invocation.</b> A run closed by its bound completes and
-/// reports from a <see cref="TimeProvider"/> timer callback on a thread-pool thread, after the
-/// invocation that opened the run has long returned. <see cref="Dispose"/> is what stops that: it
+/// reports from a <see cref="TimeProvider"/> timer callback on a thread-pool thread, never on an
+/// invocation's own thread -- whether the invocation that opened the run returned long ago or is
+/// still hung inside the inner agent. (That assumes a <see cref="TimeProvider"/> that runs timer
+/// callbacks asynchronously, as <see cref="TimeProvider.System"/> does; a fake clock that fires a due
+/// timer synchronously runs the callback on whichever thread created or changed it -- and a firing
+/// inside the very <c>CreateTimer</c> call that arms the bound is deferred until the timer exists, so
+/// it still gets the hand-off.) <see cref="Dispose"/> is what stops that: it
 /// cancels every armed bound, so no callback can arrive after the host has torn down the data source
 /// and logger those callbacks would reach.
 /// </para>
@@ -50,12 +59,17 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     private readonly ConcurrentDictionary<Guid, OpenRun> _entries = new();
     private int _disposed;
 
+    // Every captured invocation arms a bound, so the callback delegate is made once rather than per
+    // timer. Set lazily -- a field initializer cannot name an instance method -- and a race here only
+    // makes a second, identical delegate.
+    private TimerCallback? _onBoundReached;
+
     /// <summary>Whether <see cref="Dispose"/> has run, after which nothing captures through this registration.</summary>
     internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     /// <summary>
     /// How many runs this registration is tracking right now: claimed by an in-flight invocation, or
-    /// left open with a bound armed. Zero whenever nothing is in flight and nothing is left open.
+    /// left open -- each with its bound armed. Zero whenever nothing is in flight and nothing is left open.
     /// </summary>
     internal int Count => _entries.Count;
 
@@ -116,6 +130,38 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     }
 
     /// <summary>
+    /// Arms the duration bound of a run the claiming invocation has just opened or continued, so the
+    /// run is bounded while that invocation is still in flight rather than only once it releases the
+    /// run. A no-op when the entry already has its bound (a run an earlier invocation left open), and
+    /// after <see cref="Dispose"/>.
+    /// </summary>
+    /// <param name="entry">The entry the caller claimed for this invocation.</param>
+    /// <param name="runStartedAt">When the run itself was opened, which is what the duration bound is measured from.</param>
+    /// <remarks>
+    /// Called only once the capture service has accepted the run, so a start that fails -- and is
+    /// withdrawn or unclaimed -- never arms anything. A <see cref="TimeProvider"/> that cannot make
+    /// the timer is reported here, once, and remembered: the invocation then runs with its run
+    /// unbounded, and when it returns the run is completed rather than left open.
+    /// </remarks>
+    internal void ArmAtOpen(OpenRun entry, DateTimeOffset runStartedAt)
+    {
+        lock (entry.Gate)
+        {
+            entry.RunStartedAt = runStartedAt;
+
+            // Checked under the gate Dispose's per-entry DisposeTimer also takes: either this arms
+            // first and Dispose then disposes the timer, or Dispose has already set its flag and this
+            // arms nothing that could call back into a host that is tearing down.
+            if (IsDisposed || entry.Removed || entry.Timer is not null || entry.ArmFailed)
+            {
+                return;
+            }
+
+            entry.ArmFailed = !TryArm(entry, atOpen: true);
+        }
+    }
+
+    /// <summary>
     /// Withdraws an entry this invocation created but never opened a run under, so a failed start
     /// leaves no trace and no timer behind.
     /// </summary>
@@ -145,7 +191,8 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
 
     /// <summary>
     /// Releases an entry whose invocation has finished without completing the run: the run stays
-    /// open for a later attempt, and the duration bound's timer is armed if it is not already.
+    /// open for a later attempt, with the duration bound armed at open still running (or armed now, on
+    /// an entry that somehow has none).
     /// </summary>
     /// <param name="entry">The entry this invocation claimed at its start. Every captured invocation holds one.</param>
     /// <param name="runStartedAt">When the run itself was opened, which is what the duration bound is measured from.</param>
@@ -153,12 +200,23 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     /// <see cref="LeaveOpenResult.LeftOpen"/> when the run really was left open, bounded;
     /// <see cref="LeaveOpenResult.BoundReached"/> or <see cref="LeaveOpenResult.NoBound"/> when the
     /// caller must complete it instead; <see cref="LeaveOpenResult.Disposed"/> when this registration
-    /// has been disposed and the caller must abandon it.
+    /// has been disposed and the caller must abandon it; <see cref="LeaveOpenResult.AlreadyClosed"/>
+    /// when the bound already closed the run underneath this invocation and there is nothing left to do.
     /// </returns>
     internal LeaveOpenResult TryLeaveOpen(OpenRun entry, DateTimeOffset runStartedAt)
     {
         lock (entry.Gate)
         {
+            // Closed underneath an invocation that did not come back in time, and forgotten. Checked
+            // first, so a run the bound already completed is neither closed a second time (which could
+            // only conflict -- or, for a run erased since, falsely report RunNotFound) nor reported as
+            // abandoned open by a disposal that happened afterwards. The invocation already tried to
+            // complete the run itself on its way here.
+            if (entry.Removed)
+            {
+                return LeaveOpenResult.AlreadyClosed;
+            }
+
             entry.RunStartedAt = runStartedAt;
 
             if (IsDisposed)
@@ -171,7 +229,9 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
                 return LeaveOpenResult.BoundReached;
             }
 
-            if (!TryArm(entry))
+            // Arming failed at open and was reported then; trying again would report a second time
+            // for the one run.
+            if (entry.ArmFailed || !TryArm(entry, atOpen: false))
             {
                 return LeaveOpenResult.NoBound;
             }
@@ -192,7 +252,17 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     /// once the completion has landed. A run closed because no bound could be armed was already
     /// reported, with the reason, when arming failed.
     /// </param>
-    internal void CloseNow(OpenRun entry, bool atBound) => _ = Task.Run(() => CloseAsync(entry, atBound));
+    internal void CloseNow(OpenRun entry, bool atBound)
+    {
+        // Marked as closing, as a close the bound starts is, so the bound's own re-armed timer firing
+        // while this close is in flight does not start a second one.
+        lock (entry.Gate)
+        {
+            entry.Closing = true;
+        }
+
+        _ = Task.Run(() => CloseAsync(entry, atBound));
+    }
 
     /// <summary>Forgets a run the caller has completed, cancelling its duration bound with it.</summary>
     internal void Forget(OpenRun claimed) => Remove(claimed);
@@ -230,7 +300,9 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     /// thread, as it returns. Complete the runs that matter -- by letting
     /// <see cref="ExperienceCaptureOptions.ShouldCompleteRun"/> return <see langword="true"/> on a
     /// final invocation -- before disposing. After disposal no further invocation captures through
-    /// this registration.
+    /// this registration. Disposal never blocks: a close that was already under way is not joined. It
+    /// may still write its completion to the capture service, but it reports nothing and starts no
+    /// finalization once it sees the registration disposed.
     /// </remarks>
     public void Dispose()
     {
@@ -252,7 +324,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     /// entry's gate. Returns <see langword="false"/> when no bound could be armed, in which case the
     /// caller must complete the run rather than leave it open without one.
     /// </summary>
-    private bool TryArm(OpenRun entry)
+    private bool TryArm(OpenRun entry, bool atOpen)
     {
         if (entry.Timer is not null)
         {
@@ -261,7 +333,41 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
 
         try
         {
-            entry.Timer = options.TimeProvider.CreateTimer(OnBoundReached, entry, Remaining(entry), Timeout.InfiniteTimeSpan);
+            var callback = _onBoundReached ??= OnBoundReached;
+
+            // Not flowed: the timer would otherwise capture the invocation's ExecutionContext -- its
+            // Activity and every host AsyncLocal -- keep it alive for the life of the bound, and run a
+            // bound close under a hung invocation's ambient context.
+            var restoreFlow = !ExecutionContext.IsFlowSuppressed();
+            if (restoreFlow)
+            {
+                ExecutionContext.SuppressFlow();
+            }
+
+            ITimer timer;
+            entry.Arming = true;
+            try
+            {
+                timer = options.TimeProvider.CreateTimer(callback, entry, Remaining(entry), Timeout.InfiniteTimeSpan);
+            }
+            finally
+            {
+                entry.Arming = false;
+                if (restoreFlow)
+                {
+                    ExecutionContext.RestoreFlow();
+                }
+            }
+
+            entry.Timer = timer;
+            if (entry.FiredWhileArming)
+            {
+                // The provider fired synchronously inside CreateTimer; fire it again now that the
+                // hand-off can re-arm the timer it needs.
+                entry.FiredWhileArming = false;
+                timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -271,17 +377,25 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
             Report(new ExperienceCaptureFailure(
                 ExperienceCaptureFailureStage.Finalize,
                 entry.RunId,
-                $"Arming the open-run bound threw {ex.GetType().FullName}; the run is completed now rather than left open without a bound.",
+                atOpen
+                    ? $"Arming the open-run bound threw {ex.GetType().FullName}; the run has no bound while this invocation is in flight, and is completed when it returns rather than left open without one."
+                    : $"Arming the open-run bound threw {ex.GetType().FullName}; the run is completed now rather than left open without a bound.",
                 ex));
             return false;
         }
     }
 
-    /// <summary>What is left of the declared open-run duration for this entry, never negative.</summary>
+    /// <summary>
+    /// What is left of the declared open-run duration for this entry: never negative, and never more
+    /// than the whole duration -- a continued run whose recorded start is ahead of this clock (another
+    /// node's clock, or skew) must not get a longer bound, or a due time the timer cannot take.
+    /// </summary>
     private TimeSpan Remaining(OpenRun entry)
     {
         var remaining = options.MaxOpenRunDuration - (options.TimeProvider.GetUtcNow() - entry.RunStartedAt);
-        return remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
+        return remaining < TimeSpan.Zero ? TimeSpan.Zero
+            : remaining > options.MaxOpenRunDuration ? options.MaxOpenRunDuration
+            : remaining;
     }
 
     /// <summary>
@@ -300,6 +414,27 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
 
         lock (entry.Gate)
         {
+            // Removed: the run was completed by its own invocation, withdrawn, or already closed, and
+            // this callback was already on its way when the timer was disposed -- which, with a bound
+            // armed at open on every run, is a race every default invocation now takes part in.
+            // There is nothing left to close, and a close attempted anyway could only conflict.
+            // Closing: a close is already under way (this bound's earlier firing, or a CloseNow from a
+            // release), and a second one could only duplicate its completion and its reports.
+            if (entry.Removed || entry.Closing)
+            {
+                return;
+            }
+
+            // Arming: only this thread can be inside the gate while the timer is being created, so
+            // this is a TimeProvider that ran a due-now callback synchronously inside CreateTimer. The
+            // timer is not assigned yet, so the hand-off could not re-arm it and would close the run
+            // underneath its own opener. Deferred instead: TryArm re-fires it once the timer exists.
+            if (entry.Arming)
+            {
+                entry.FiredWhileArming = true;
+                return;
+            }
+
             entry.CloseRequested = true;
 
             // Handed to the invocation holding the run, so the bound is reached at the end of that
@@ -440,11 +575,29 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
                 null));
         }
 
+        // A close already under way when the host disposed capture is not joined -- Dispose never
+        // blocks -- but it stops handing the run to a finalization the host is tearing down.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         await CaptureScope.FinalizeExperienceAsync(service, options, runId, Report, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Reports to the host, unless the host has disposed capture: a close that was already under way
+    /// then finishes silently rather than calling back into what is being torn down. The check narrows
+    /// that window to a report already inside the host's callback; it cannot close it without making
+    /// Dispose wait.
+    /// </summary>
     private void Report(ExperienceCaptureFailure failure)
     {
+        if (IsDisposed)
+        {
+            return;
+        }
+
         try
         {
             options.OnCaptureFailure?.Invoke(failure);
@@ -470,6 +623,9 @@ internal enum LeaveOpenResult
 
     /// <summary>The registration has been disposed; the caller abandons the run.</summary>
     Disposed,
+
+    /// <summary>The bound already closed the run underneath this invocation and forgot it; nothing is left to do.</summary>
+    AlreadyClosed,
 }
 
 /// <summary>One run the adapter is capturing on: who owns it right now, and its duration bound.</summary>
@@ -506,7 +662,19 @@ internal sealed class OpenRun(Guid runId)
     /// <summary>When the run itself was opened, which is what the duration bound is measured from.</summary>
     internal DateTimeOffset RunStartedAt { get; set; }
 
-    /// <summary>The armed duration bound, created once and disposed when the run is forgotten.</summary>
+    /// <summary>
+    /// Whether arming the duration bound failed when the run was opened. Already reported; the run is
+    /// completed when its invocation returns instead of being left open.
+    /// </summary>
+    internal bool ArmFailed { get; set; }
+
+    /// <summary>Whether the bound's timer is being created right now, by the thread holding <see cref="Gate"/>.</summary>
+    internal bool Arming { get; set; }
+
+    /// <summary>Whether the timer provider fired the bound synchronously while it was being created.</summary>
+    internal bool FiredWhileArming { get; set; }
+
+    /// <summary>The armed duration bound, created once -- when the run is opened -- and disposed when the run is forgotten.</summary>
     internal ITimer? Timer { get; set; }
 
     /// <summary>Disposes the duration bound, if one was armed. Never throws.</summary>

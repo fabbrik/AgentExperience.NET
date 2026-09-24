@@ -142,31 +142,54 @@ running several at once keeps each cycle's identifier with that task's own state
   still in flight, since its ID is readable from the session the moment the run exists. The second is refused and
   runs uncaptured, rather than interleaving a second half-recorded attempt.
 - **What the default path costs.** To make the rule above hold for the invocation that opens a run, every captured
-  invocation takes a transient claim — one entry in the registration's open-run ledger — for as long as it is in
-  flight, the default single-invocation path included. The claim is removed when the invocation releases the run. A
-  default invocation, which completes its own run, therefore leaves no entry behind and arms no bound. Only a run
-  that is left open keeps an entry, with its bound armed, until the run is completed.
-- **An open run is bounded and never silent.** It holds captured payload in memory, so the adapter completes it —
-  reporting through `OnCaptureFailure` — when it reaches `MaxAttemptsPerOpenRun`, when it has been open for
-  `MaxOpenRunDuration` (enforced by a timer on your `TimeProvider`, so a host that never invokes again cannot leave
-  one open), when an attempt could not be recorded at all, when the run could not be read back to ask
-  `ShouldCompleteRun`, or when `ShouldCompleteRun` throws. There is no path where a run stays open because a host
-  forgot to close it. If the duration bound fires while an invocation is holding the run, the close is handed to that
-  invocation once and the bound re-arms for one further period; if the invocation has still not come back (a hung
-  inner agent, or a streaming consumer that abandoned its enumerator without disposing it), the run is closed
-  underneath it. A run that was completed normally is never reported as closed at its bound.
-- **Known limit: the bound starts when a run is first left open.** The duration bound is armed when an invocation
-  releases a run it is keeping open, not when the run is opened. So an invocation that *opens* a run and then never
-  returns (an inner agent that hangs with no cancellation) holds a run with no bound. That run has no recorded
-  attempt yet, and the same was true before continuation existed. Arming a bound at open would add a timer to every
-  default single-invocation run. Give the inner agent its own cancellation if this matters to you.
+  invocation takes a transient claim (one entry in the registration's open-run ledger) for as long as it is in
+  flight, the default single-invocation path included. It also arms its run's duration bound, one timer on your
+  `TimeProvider`, as soon as the run is opened (see the next point). When the invocation releases the run, the
+  claim is removed and the timer is disposed. A default invocation, which completes its own run, therefore leaves no
+  entry and no timer behind. In a microbenchmark on one machine (not part of this repository), creating and
+  disposing the timer with `TimeProvider.System` took about 45 ns and 120 bytes. Together with keeping the timer
+  from capturing the invocation's `ExecutionContext`, it added about 200 bytes to an in-memory invocation through the
+  adapter (about 5.7 KB allocated, 7 to 10 µs), with no time difference above the noise. That is far below the cost
+  of one model call. A run that is left open keeps its entry and its timer until the run is completed, and so does
+  a run whose default finalization failed or overran `FinalizationTimeout`, because whether that run was completed
+  is unknown.
+- **An open run is bounded from the moment it opens, and never silent.** It holds captured payload in memory, so
+  the adapter completes it, reporting through `OnCaptureFailure`, in any of these cases:
+  - it reaches `MaxAttemptsPerOpenRun`;
+  - it has been open for `MaxOpenRunDuration`. A timer on your `TimeProvider` enforces this, armed when the run is
+    opened, so neither a host that never invokes again nor an invocation that never returns can leave a run open;
+  - an attempt could not be recorded at all;
+  - the run could not be read back to ask `ShouldCompleteRun`;
+  - `ShouldCompleteRun` throws.
+
+  There is no path where a run stays open because a host forgot to close it. If the duration bound fires while an
+  invocation is holding the run, the close is handed to that invocation once, and the bound re-arms for one further
+  period. If the invocation has still not come back by then, the run is closed underneath it: a hung inner agent, a
+  streaming consumer that abandoned its enumerator without disposing it, or the invocation that *opened* the run and
+  never returned. A run that was completed normally is never reported as closed at its bound. The one exception is
+  a `TimeProvider` whose `CreateTimer` throws. That is reported at once, the run has no bound while its invocation is
+  in flight, and the run is completed when the invocation returns instead of being left open.
+- **So an invocation can hold a run for at most twice `MaxOpenRunDuration`, on the default path too.** The only
+  addition to that is the time the close itself takes, which is bounded by `FinalizationTimeout`. A default
+  invocation still running when one bound period ends is handed the bound and completes its run normally when it
+  returns. One still running at twice the duration has its run completed as `Cancelled` underneath it, and that is
+  reported. When it does return, its answer is untouched, but its attempt is refused by the completed run and that
+  is reported too. Set `MaxOpenRunDuration` (default 5 minutes) above the longest invocation you expect.
 - **Bound callbacks arrive off the invocation.** A run closed by `MaxOpenRunDuration` is completed, reported through
-  `OnCaptureFailure`, and finalized (with `OnRunFinalized`) from a timer callback on a thread-pool thread, with no
-  invocation in flight. Both callbacks must be thread-safe. Use the `UseExperienceCapture(..., out var captureLifetime)`
-  overload and dispose the handle at teardown: that cancels every armed bound, so nothing reaches a data source or
-  logger you have already torn down. A run still open at that moment is abandoned — nothing is written and no
-  timer reports it; an invocation still in flight says so as it returns — and later invocations through that agent
-  run uncaptured and say so.
+  `OnCaptureFailure`, and finalized (with `OnRunFinalized`) from a timer callback on a thread-pool thread. That is
+  never the thread of an invocation, including a hung one still holding the run. This holds with
+  `TimeProvider.System` and with any provider that runs timer callbacks asynchronously. A fake clock that fires a
+  due timer synchronously inside `CreateTimer` or `Change` runs the callback on whichever thread called it. Both
+  callbacks must be thread-safe.
+
+  Use the `UseExperienceCapture(..., out var captureLifetime)` overload and dispose the handle at teardown.
+  Disposal cancels every armed bound, including one armed at open for an invocation still in flight. After
+  disposal, the adapter reports nothing more through its bounds and starts no finalization. Disposal does not
+  wait: a close that was already inside your capture service when you disposed still finishes writing its
+  completion, and a callback already running is not interrupted. A run still open at that moment is abandoned:
+  nothing is written and no timer reports it, and an invocation still in flight says so as it returns. Later
+  invocations through that agent run uncaptured and say so. The default configuration can have bounds to dispose
+  too: a hung invocation's, and one whose finalization failed.
 - The run this registration is holding open belongs to that registration. Build the agent once and reuse it; two
   independently built agents do not share continuations.
 
