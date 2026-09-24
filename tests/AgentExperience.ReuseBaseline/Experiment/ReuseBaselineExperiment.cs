@@ -39,7 +39,10 @@ public enum TrialFaultKind
     /// <summary>The trial throws part-way through.</summary>
     Throw,
 
-    /// <summary>The trial exceeds its own deadline.</summary>
+    /// <summary>
+    /// The trial hangs: it awaits work that never completes on its own, so the only thing that can
+    /// end it is its deadline. It cannot finish first, whatever the machine's load.
+    /// </summary>
     Timeout,
 
     /// <summary>The candidate source throws, so retrieval fails and nothing is injected.</summary>
@@ -78,6 +81,19 @@ public sealed record ExperimentOptions
     /// </summary>
     public TimeSpan TrialTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// The clock the per-trial deadline runs on. <see cref="TimeProvider.System"/> in every
+    /// pre-registered arm, so a hung trial is ended by real time passing.
+    /// </summary>
+    /// <remarks>
+    /// A test that golden-files which trials timed out must not let that depend on how fast the
+    /// machine is: a 250 ms deadline on the system clock is a race every clean trial can lose under
+    /// CPU contention. Such a test supplies a clock that only moves when it is told to, so a clean
+    /// trial's deadline can never elapse, and moves it past the deadline from
+    /// <see cref="OnTrialHanging"/>, so a <see cref="TrialFaultKind.Timeout"/> trial's always does.
+    /// </remarks>
+    public TimeProvider DeadlineClock { get; init; } = TimeProvider.System;
+
     /// <summary>The retrieval timeout, set explicitly for the same reason.</summary>
     public TimeSpan RetrievalTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
@@ -104,6 +120,13 @@ public sealed record ExperimentOptions
     /// it entirely.
     /// </remarks>
     public Func<int, bool>? UnguardTheGuardedToolAt { get; init; }
+
+    /// <summary>
+    /// Called with the trial index once a <see cref="TrialFaultKind.Timeout"/> trial has started to
+    /// hang, and before anything else happens to it. A test driving <see cref="DeadlineClock"/> by
+    /// hand advances it past <see cref="TrialTimeout"/> here; with the system clock it is not needed.
+    /// </summary>
+    public Action<int>? OnTrialHanging { get; init; }
 
     /// <summary>Called as each learning record is produced. Used by the tests to prove nothing was written before a refusal.</summary>
     public Action<LearnedRecord>? OnRecordLearned { get; init; }
@@ -569,8 +592,10 @@ public static class ReuseBaselineExperiment
         var boundary = new ToolApprovalBoundary(guarded: options.UnguardTheGuardedToolAt?.Invoke(index) != true);
         var stopwatch = Stopwatch.StartNew();
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(options.TrialTimeout);
+        // The deadline runs on the injected clock, not on CancelAfter's system timer, so a test can
+        // make whether it elapses a matter of construction rather than of machine load.
+        using var expiry = new CancellationTokenSource(options.TrialTimeout, options.DeadlineClock);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
 
         await using var provider = BuildContainer(
             options,
@@ -592,7 +617,11 @@ public static class ReuseBaselineExperiment
 
             if (fault?.Kind == TrialFaultKind.Timeout)
             {
-                await Task.Delay(options.TrialTimeout + TimeSpan.FromSeconds(30), deadline.Token).ConfigureAwait(false);
+                // A hang, not a long delay: it completes only when the deadline cancels it, so there
+                // is no duration for the deadline to race.
+                var hang = Task.Delay(Timeout.InfiniteTimeSpan, deadline.Token);
+                options.OnTrialHanging?.Invoke(index);
+                await hang.ConfigureAwait(false);
             }
 
             execution = await ExecuteTaskAsync(
