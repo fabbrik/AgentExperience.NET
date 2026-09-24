@@ -13,8 +13,8 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <!-- Test-only: a real container, so the package's own AddAgentExperience... registrations are
          resolved rather than merely declared. The shipping package takes only the DI abstractions. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
-    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="10.10.0" />
   </ItemGroup>
 
   <ItemGroup>

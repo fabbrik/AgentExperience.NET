@@ -15,7 +15,7 @@
   <ItemGroup>
     <!-- The container itself (Core and the adapters reference only the DI abstractions), so the
          sample can show the same registration calls a host would make. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.11]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.12]" />
   </ItemGroup>
 
   <ItemGroup>

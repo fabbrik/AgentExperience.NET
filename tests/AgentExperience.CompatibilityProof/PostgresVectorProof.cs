@@ -13,9 +13,11 @@ namespace AgentExperience.CompatibilityProof;
 /// plain-<c>Npgsql</c> canonical write cannot share a transaction with the vector connector.
 /// </summary>
 /// <remarks>
-/// Grounding: <c>story-1-7-research-digest.md</c>, Track 3. Packages (all versions per that digest, 2026-09-07):
+/// Grounding: <c>story-1-7-research-digest.md</c>, Track 3. Packages (versions per that digest, 2026-09-07, except the VectorData abstractions, which story 5.1
+/// moved to the train <c>Microsoft.Agents.AI</c> 1.22.0 requires; <c>CommunityToolkit.VectorData.PgVector</c>
+/// 1.0.1 declares <c>&gt;= 10.8.2</c> of them, and this proof passing against 10.10.0 is the evidence that it still works):
 /// <c>Npgsql</c> 10.0.3 (https://www.nuget.org/packages/npgsql/), <c>Pgvector</c> 0.3.2
-/// (https://www.nuget.org/packages/Pgvector/), <c>Microsoft.Extensions.VectorData.Abstractions</c> 10.9.0
+/// (https://www.nuget.org/packages/Pgvector/), <c>Microsoft.Extensions.VectorData.Abstractions</c> 10.10.0
 /// (https://www.nuget.org/packages/Microsoft.Extensions.VectorData.Abstractions/), and
 /// <c>CommunityToolkit.VectorData.PgVector</c> 1.0.1 -- the current, actively-maintained connector, successor to
 /// the now-legacy <c>Microsoft.SemanticKernel.Connectors.PgVector</c>

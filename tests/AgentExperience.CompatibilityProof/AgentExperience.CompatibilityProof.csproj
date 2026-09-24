@@ -14,23 +14,24 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 
-  <!-- Story 1.7 proof-track dependencies. Exact versions per story-1-7-research-digest.md (2026-09-07).
+  <!-- Story 1.7 proof-track dependencies, first chosen in story-1-7-research-digest.md (2026-09-07) and moved to
+       the Microsoft.Agents.AI 1.22.0 train by story 5.1.
        Every package a shipping project also pins is exact-pinned here too, to the same version, so this
        proof always exercises what ships (story 4.3). AgentExperience.Release.Tests'
        CompatibilityPinAgreementTests fails if the two ever disagree, from the csproj files and the
        resolved lock files both. The evidence behind each pin is docs/compatibility-evidence.md. -->
   <ItemGroup>
     <!-- Track 1: MAF invocation hooks -->
-    <PackageReference Include="Microsoft.Agents.AI" Version="[1.20.0]" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="[1.22.0]" />
     <!-- Track 3: PostgreSQL / pgvector -->
     <PackageReference Include="Npgsql" Version="[10.0.3]" />
     <PackageReference Include="Pgvector" Version="[0.3.2]" />
-    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.10.0" />
     <PackageReference Include="CommunityToolkit.VectorData.PgVector" Version="1.0.1" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
     <!-- Track 4: evaluation & redaction -->
-    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="[10.9.0]" />
-    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="[10.10.0]" />
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.10.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -7,6 +7,10 @@ context-provider fit; PostgreSQL/pgvector; evaluation-and-redaction mapping) are
 down after the run). Track 5 (AgentMemory.NET/MagiCore) is an API-fit comparison only, no runnable proof required
 by design -- both remain deferred. Epic 2 stories (2.1, 2.3, 2.6) may cite the decisions below directly.
 
+**Versions are as proven on 2026-09-07.** The pins have moved since (story 5.1: `Microsoft.Agents.AI` 1.22.0 and the
+10.10.0 `Microsoft.Extensions.*` train). The current pins and their evidence are in `docs/compatibility-evidence.md`;
+the decisions below still hold at those versions, and the same proofs back them.
+
 **Local run note:** Testcontainers' Ryuk resource-reaper container can fail to start under some local Docker
 setups (observed on Rancher Desktop, which rejected Ryuk's docker.sock bind-mount) -- if `dotnet test` hangs or
 errors starting the Track 3 container locally, set `TESTCONTAINERS_RYUK_DISABLED=true` as a workaround; the

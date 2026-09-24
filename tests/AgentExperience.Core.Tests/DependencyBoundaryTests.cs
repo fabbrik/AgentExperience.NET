@@ -94,12 +94,13 @@ public class DependencyBoundaryTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        // The DI abstractions pin is exact, matching AgentExperience.Storage.Postgres, so the two
-        // packages can never resolve different versions of the same dependency.
+        // Both pins are exact. The DI abstractions pin matches AgentExperience.Storage.Postgres, so the
+        // two packages can never resolve different versions of the same dependency. The redaction pin
+        // was a floor until story 5.1 (KL-15).
         Assert.Equal(
             [
-                "Microsoft.Extensions.Compliance.Redaction 10.9.0",
-                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+                "Microsoft.Extensions.Compliance.Redaction [10.10.0]",
+                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
             ],
             declared);
     }

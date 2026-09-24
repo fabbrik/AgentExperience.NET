@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Preview, not production ready. pgvector adapter for AgentExperience.NET: stores one derived embedding per Experience Record through the IExperienceEmbeddingIndex port, with conditional revision-and-existence-checked writes, scoped idempotent re-indexing, and a scoped nearest-neighbour search that applies the same eligibility filters as the text channel. Split out of AgentExperience.Storage.Postgres because that package's dependency boundary forbids Pgvector and the model-provider abstractions. Pinned to Npgsql 10.0.3, Pgvector 0.3.2, and Microsoft.Extensions.AI.Abstractions 10.9.0.</Description>
+    <Description>Preview, not production ready. pgvector adapter for AgentExperience.NET: stores one derived embedding per Experience Record through the IExperienceEmbeddingIndex port, with conditional revision-and-existence-checked writes, scoped idempotent re-indexing, and a scoped nearest-neighbour search that applies the same eligibility filters as the text channel. Split out of AgentExperience.Storage.Postgres because that package's dependency boundary forbids Pgvector and the model-provider abstractions. Pinned to Npgsql 10.0.3, Pgvector 0.3.2, and Microsoft.Extensions.AI.Abstractions 10.10.0.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
@@ -12,9 +12,9 @@
     <PackageReference Include="Pgvector" Version="[0.3.2]" />
     <!-- The model-provider seam this package adapts to AgentExperience's own domain-typed
          IExperienceEmbeddingGenerator. Abstractions stays BCL-only and Core never sees it. -->
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="[10.9.0]" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="[10.10.0]" />
     <!-- DI abstractions only (no container, no hosting), matching Core and the store adapter. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.11]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.12]" />
   </ItemGroup>
 
   <ItemGroup>

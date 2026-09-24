@@ -48,18 +48,18 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     ["AgentExperience.Core"] =
     [
         "AgentExperience.Abstractions {self}",
-        "Microsoft.Extensions.Compliance.Redaction 10.9.0",
-        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+        "Microsoft.Extensions.Compliance.Redaction [10.10.0]",
+        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
     ],
     ["AgentExperience.MicrosoftAgentFramework"] =
     [
         "AgentExperience.Core {self}",
-        "Microsoft.Agents.AI [1.20.0]",
+        "Microsoft.Agents.AI [1.22.0]",
     ],
     ["AgentExperience.Storage.Postgres"] =
     [
         "AgentExperience.Abstractions {self}",
-        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
         "Npgsql [10.0.3]",
         "dbup-core [6.1.1]",
         "dbup-postgresql [7.0.1]",
@@ -67,8 +67,8 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     ["AgentExperience.Storage.Postgres.Vectors"] =
     [
         "AgentExperience.Storage.Postgres {self}",
-        "Microsoft.Extensions.AI.Abstractions [10.9.0]",
-        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+        "Microsoft.Extensions.AI.Abstractions [10.10.0]",
+        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
         "Npgsql [10.0.3]",
         "Pgvector [0.3.2]",
     ],

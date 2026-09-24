@@ -36,13 +36,21 @@ preview.
 | KL-10 | **The grant access log has no retention path.** Erasure deliberately keeps access rows, and the ledger is append-only, so it grows until the tables' owner prunes it | [Store: schema, `0009`](src/AgentExperience.Storage.Postgres/README.md#script-comments-that-were-written-before-the-work-they-point-at-shipped) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
-| KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.20.0 only | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
-| KL-14 | **Exact pins block a newer MAF.** `Microsoft.Agents.AI` 1.22.0 needs `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.12, which Core's exact `[10.0.11]` pin refuses, so a host cannot move to it without a new preview. CI's MAF probe reports this on every run | [Compatibility evidence: the MAF matrix](docs/compatibility-evidence.md#the-maf-compatibility-matrix) |
-| KL-15 | **Core's redaction dependency is a floor, not an exact pin.** `Microsoft.Extensions.Compliance.Redaction` is referenced as `10.9.0` (≥), so a consumer may resolve a later, unverified version | [Compatibility evidence: core and shared](docs/compatibility-evidence.md#core-and-shared) |
+| KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 | KL-16 | **Erasure emits no library telemetry.** Deletion, the retention sweep and the grant purge are not in the operation table and emit no span, count, duration or failure classification; the host observes them through the results they return and through the database | [Telemetry: what is not instrumented](docs/telemetry.md#what-is-not-instrumented) |
 
-KL-9 (a borrowed lesson disclosing the lending scope's tool names) is resolved by the grant disclosure level
-(story 3.6), shipping in the next preview; see [Sharing experience across scopes](#sharing-experience-across-scopes).
+Resolved, shipping in the next preview:
+
+- KL-9 (a borrowed lesson disclosing the lending scope's tool names) is resolved by the grant disclosure level
+  (story 3.6); see [Sharing experience across scopes](#sharing-experience-across-scopes).
+- KL-14 (exact pins blocking a newer MAF) is resolved by moving the supported pin to `Microsoft.Agents.AI` 1.22.0,
+  with `Microsoft.Extensions.DependencyInjection.Abstractions` `[10.0.12]` in Core and both stores and
+  `Microsoft.Extensions.AI.Abstractions` `[10.10.0]` in the vectors package (story 5.1). The general hazard remains
+  and is part of KL-13: a later MAF can need newer shared pins. See
+  [Compatibility evidence](docs/compatibility-evidence.md#the-maf-compatibility-matrix).
+- KL-15 (Core's redaction dependency a floor) is resolved by exact-pinning `Microsoft.Extensions.Compliance.Redaction`
+  at `[10.10.0]` (story 5.1). Every `PackageReference` a shipping project declares is now exact, and a release test
+  fails on a new floor; the dependencies those packages declare in turn are still whatever NuGet floors they carry.
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -1168,9 +1176,9 @@ operation emits: [`docs/telemetry.md`](docs/telemetry.md). Erasure is not instru
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
   AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval, reuse feedback
-  AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned Microsoft.Agents.AI 1.20.0)
+  AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned Microsoft.Agents.AI 1.22.0)
   AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, sharing grants, reuse feedback ledger, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
-  AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.9.0)
+  AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.10.0)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
   AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle, indexing, retrieval tests

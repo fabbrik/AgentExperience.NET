@@ -8,7 +8,7 @@ Records Microsoft Agent Framework (MAF) invocations and their tool calls as Agen
 and injects applicable past experience back into later invocations as a labeled Historical Reference.
 Capture covers ordinary, streaming, failed, and cancelled invocations, plus streams the consumer stops reading early.
 
-Pinned to `Microsoft.Agents.AI` **1.20.0** (exact). No other MAF version is verified.
+Pinned to `Microsoft.Agents.AI` **1.22.0** (exact). No other MAF version is verified.
 
 ## Usage
 
@@ -544,10 +544,14 @@ boundary that nothing in the library can check. See
 - **Late tool calls.** A tool call that finishes after its run was finalized is not recorded. This can happen after an
   early stream break.
 
-## MAF caveats (1.20.0)
+## MAF caveats (1.22.0)
 
-- **Don't reuse `ChatClientAgentRunOptions` instances across invocations.** MAF's function middleware changes the
-  options instance it receives (`ChatClientFactory`), so a reused instance accumulates middleware layers.
+- **Reusing a `ChatClientAgentRunOptions` instance for one invocation after another is safe at 1.22.0.** At 1.20.0,
+  MAF's function middleware wrote its `ChatClientFactory` onto the options instance it received, so a reused instance
+  stacked a middleware layer per invocation. 1.22.0 works on a per-run clone and leaves the caller's instance, and any
+  factory the host set on it, unchanged. The three `ExperienceCaptureTests.A_reused_ChatClientAgentRunOptions_instance_…`
+  tests pin this for sequential reuse, streaming and not, with and without a host factory. Sharing one instance
+  across *concurrent* invocations is not tested; MAF's source clones it per run, but this library makes no claim.
 - MAF function middleware accepts only a `null` `AgentRunOptions`, a plain `AgentRunOptions`, or a
   `ChatClientAgentRunOptions`. Other options subclasses throw `NotSupportedException` when `CaptureToolCalls` is
   `true`.

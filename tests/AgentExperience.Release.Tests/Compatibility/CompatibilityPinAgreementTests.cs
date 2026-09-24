@@ -30,15 +30,6 @@ public sealed class CompatibilityPinAgreementTests
         "Pgvector",
         "Microsoft.Extensions.Compliance.Redaction");
 
-    /// <summary>
-    /// The one shipping reference that is a floor rather than an exact pin, named so the exception is
-    /// visible rather than tolerated by accident. It is listed in the README's Known limits table.
-    /// </summary>
-    private static readonly HashSet<string> DocumentedFloors = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "AgentExperience.Core|Microsoft.Extensions.Compliance.Redaction",
-    };
-
     [Theory]
     [MemberData(nameof(ProvenPins))]
     public void The_proof_references_every_pin_it_is_evidence_for_and_pins_it_exactly(string package)
@@ -99,24 +90,21 @@ public sealed class CompatibilityPinAgreementTests
         Assert.True(compared >= 6, $"Only {compared} shipping pins were found in the proof's lock file, so this comparison proves little.");
     }
 
+    /// <summary>
+    /// Every shipping reference is exact, with no exceptions. Core's redaction reference was the last
+    /// floor (KL-15) until story 5.1 exact-pinned it: a floor lets a consumer resolve a version no
+    /// evidence row describes, so a new one has to be argued for here rather than tolerated.
+    /// </summary>
     [Fact]
-    public void Every_shipping_package_reference_is_an_exact_pin_except_the_documented_floor()
+    public void Every_shipping_package_reference_is_an_exact_pin()
     {
         var floating = ShippingProjects()
             .SelectMany(project => DeclaredReferences(project).Select(reference => (Project: project, reference.Key, reference.Value)))
-            .Where(r => !IsExact(r.Value) && !DocumentedFloors.Contains($"{r.Project}|{r.Key}"))
+            .Where(r => !IsExact(r.Value))
             .Select(r => $"{r.Project}: {r.Key} '{r.Value}'")
             .ToList();
 
         Assert.True(floating.Count == 0, "Floating shipping references with no compatibility claim behind them:" + Environment.NewLine + string.Join(Environment.NewLine, floating));
-
-        foreach (var floor in DocumentedFloors)
-        {
-            var parts = floor.Split('|');
-            Assert.True(
-                DeclaredReferences(parts[0]).TryGetValue(parts[1], out var version) && !IsExact(version),
-                $"{floor} is listed as a documented floor but is now exact-pinned or gone; remove it from DocumentedFloors and the README's Known limits table.");
-        }
     }
 
     private static IEnumerable<string> ShippingProjects() =>
