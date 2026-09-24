@@ -51,12 +51,13 @@ public class TrialRetentionTests
     [Fact]
     public async Task A_timed_out_trial_is_retained_and_classified_distinctly_from_an_error()
     {
-        var result = await ReuseBaselineExperiment.RunAsync(new ExperimentOptions
+        // On a clock that moves only when trial 2 hangs, so no clean trial can also time out under
+        // load and make the counts below depend on the machine.
+        var result = await ReuseBaselineExperiment.RunAsync(ManualDeadlineClock.Drive(TimeSpan.FromMilliseconds(250), new ExperimentOptions
         {
             Arm = ReuseBaselineArms.Reference,
-            TrialTimeout = TimeSpan.FromMilliseconds(250),
             FaultAt = index => index == 2 ? new TrialFault(TrialFaultKind.Timeout) : null,
-        });
+        }));
 
         var timedOut = result.Trials.Single(trial => trial.Index == 2);
 

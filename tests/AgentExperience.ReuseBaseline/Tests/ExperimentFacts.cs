@@ -49,10 +49,17 @@ internal static class ExperimentFacts
     /// failure, which completed with nothing injected -- and therefore an undefined standard
     /// deviation.
     /// </summary>
-    public static ExperimentOptions FaultedOptions() => new()
+    /// <remarks>
+    /// The 250 ms deadline runs on a <see cref="ManualDeadlineClock"/>, not the system clock. On the
+    /// system clock the retrieval-failure trial -- the memory-enabled condition's only observation --
+    /// could take longer than 250 ms under a loaded full-suite run, be recorded as TimedOut, and
+    /// leave the condition with no observations and the verdict flipped. Here a clean trial's
+    /// deadline cannot elapse, and each injected timeout's deadline elapses because the run moves
+    /// the clock past it the moment that trial hangs.
+    /// </remarks>
+    public static ExperimentOptions FaultedOptions() => ManualDeadlineClock.Drive(TimeSpan.FromMilliseconds(250), new()
     {
         Arm = ReuseBaselineArms.Reference,
-        TrialTimeout = TimeSpan.FromMilliseconds(250),
         FaultAt = index => index switch
         {
             1 => new TrialFault(TrialFaultKind.RetrievalFailure),
@@ -63,7 +70,7 @@ internal static class ExperimentFacts
             11 => new TrialFault(TrialFaultKind.Throw),
             _ => null,
         },
-    };
+    });
 
     /// <summary>Builds one synthetic trial for the gate tests. No agent, no store, no run: numbers only.</summary>
     /// <param name="index">The trial index.</param>
