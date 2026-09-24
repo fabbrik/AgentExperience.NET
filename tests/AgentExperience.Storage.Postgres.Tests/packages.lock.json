@@ -322,7 +322,7 @@
       "agentexperience.core": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.1, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.2, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, 10.10.0]",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, 10.0.12]"
         }
@@ -330,7 +330,7 @@
       "agentexperience.storage.postgres": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.1, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.2, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, 10.0.12]",
           "Npgsql": "[10.0.3, 10.0.3]",
           "dbup-core": "[6.1.1, 6.1.1]",

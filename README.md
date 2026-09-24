@@ -7,7 +7,7 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: preview (`0.1.0-preview.1`). Not production ready** — the [Known limits](#known-limits) below are unresolved, and any unresolved item blocks a production-readiness claim.
+> **Status: preview (`0.1.0-preview.2`). Not production ready** — the [Known limits](#known-limits) below are unresolved, and any unresolved item blocks a production-readiness claim.
 
 All four epics are implemented and tested: capture and explain agent experience, reuse it (PostgreSQL persistence,
 atomic audited lifecycle, text and hybrid retrieval, Historical Reference injection into MAF), govern it (sharing
@@ -32,7 +32,7 @@ preview.
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
 | KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 
-Resolved, shipping in the next preview:
+Resolved in `0.1.0-preview.2`:
 
 - KL-1 (serial round trips on the re-index path and on the invocation's critical path) is resolved by story 5.6.
   `IExperienceEmbeddingGenerator` gained `GenerateBatchAsync`, and a re-index pass embeds the records that need a
