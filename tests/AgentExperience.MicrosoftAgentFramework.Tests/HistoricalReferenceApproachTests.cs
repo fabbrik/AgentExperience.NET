@@ -401,7 +401,13 @@ public class HistoricalReferenceApproachTests
         var reflection = await new DefaultExperienceReflector().ReflectAsync(new ReflectionRequest(
             ReflectionId: Guid.Parse("55555555-0000-0000-0000-00000000000a"),
             Run: run,
-            Evaluation: new VerificationResult(record.Outcome, 1d, "1.0.0"),
+            Evaluation: VerificationAggregator.Aggregate(
+                run.RunId,
+                record.Outcome.Evidence,
+                [new RequiredCheck("tests", "TestResult")],
+                new ClosedVerificationRound(record.Outcome.Evidence[0].VerificationRoundId, record.Outcome.Evidence[0].ArtifactRevision),
+                record.Outcome.Evidence[0].ArtifactRevision,
+                InjectionRecords.Now),
             CreatedAt: InjectionRecords.Now));
 
         // The shipped reflector really does carry the raw result in its approach string.
@@ -670,7 +676,13 @@ public class HistoricalReferenceApproachTests
         await Assert.ThrowsAsync<ArgumentException>(() => new DefaultExperienceReflector().ReflectAsync(new ReflectionRequest(
             ReflectionId: Guid.Parse("55555555-0000-0000-0000-00000000000b"),
             Run: run,
-            Evaluation: new VerificationResult(record.Outcome, 1d, "1.0.0"),
+            Evaluation: VerificationAggregator.Aggregate(
+                run.RunId,
+                record.Outcome.Evidence,
+                [new RequiredCheck("tests", "TestResult")],
+                new ClosedVerificationRound(record.Outcome.Evidence[0].VerificationRoundId, record.Outcome.Evidence[0].ArtifactRevision),
+                record.Outcome.Evidence[0].ArtifactRevision,
+                InjectionRecords.Now),
             CreatedAt: InjectionRecords.Now)));
     }
 

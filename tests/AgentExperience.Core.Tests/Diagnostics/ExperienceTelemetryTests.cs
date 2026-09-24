@@ -1110,7 +1110,7 @@ public class ExperienceTelemetryTests
         RunId: runId,
         Authorization: ExperienceLoop.Authorization,
         ClosedRound: ExperienceLoop.Round,
-        RequiredChecks: [new RequiredCheck("tests")],
+        RequiredChecks: [new RequiredCheck("tests", "TestResult")],
         Evidence: [ExperienceLoop.Evidence()],
         CurrentArtifactRevision: ExperienceLoop.ArtifactRevision,
         StorageDecision: StorageDecision.Permit,
@@ -1178,12 +1178,13 @@ public class ExperienceTelemetryTests
 
             ("verify", "argument") => Task.Run(
                 () => VerificationAggregator.Aggregate(
-                    evidence: null!, [], ExperienceLoop.Round, ExperienceLoop.ArtifactRevision, ExperienceLoop.Now),
+                    Guid.NewGuid(), evidence: null!, [], ExperienceLoop.Round, ExperienceLoop.ArtifactRevision, ExperienceLoop.Now),
                 CancellationToken.None),
             ("verify", _) => Task.Run(
                 () => VerificationAggregator.Aggregate(
+                    arranged.RunId,
                     [ExperienceLoop.Evidence()],
-                    [new RequiredCheck("tests")],
+                    [new RequiredCheck("tests", "TestResult")],
                     ExperienceLoop.Round,
                     ExperienceLoop.ArtifactRevision,
                     ExperienceLoop.Now,
@@ -1291,8 +1292,9 @@ public class ExperienceTelemetryTests
 
             case "verify":
                 return VerificationAggregator.Aggregate(
+                    arranged.RunId,
                     [ExperienceLoop.Evidence(CheckResult.Fail)],
-                    [new RequiredCheck("tests")],
+                    [new RequiredCheck("tests", "TestResult")],
                     ExperienceLoop.Round,
                     ExperienceLoop.ArtifactRevision,
                     ExperienceLoop.Now).Outcome.Status.ToString();
@@ -1301,8 +1303,9 @@ public class ExperienceTelemetryTests
                 return (await new DefaultExperienceReflector().ReflectAsync(new ReflectionRequest(
                     Run(loop, arranged.RunId),
                     VerificationAggregator.Aggregate(
+                        arranged.RunId,
                         [ExperienceLoop.Evidence(CheckResult.Fail)],
-                        [new RequiredCheck("tests")],
+                        [new RequiredCheck("tests", "TestResult")],
                         ExperienceLoop.Round,
                         ExperienceLoop.ArtifactRevision,
                         ExperienceLoop.Now),

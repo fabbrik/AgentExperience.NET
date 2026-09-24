@@ -55,13 +55,28 @@ Every registration uses `TryAdd`, so a host's own implementation wins. The stora
 
 ## Known limits that live here
 
-Two limits from the repository's [Known limits](https://github.com/fabbrik/AgentExperience.NET#known-limits) table are
-Core's:
+The two that were Core's, KL-5 and KL-6, are resolved by story 5.5, with breaking changes. What KL-6's fix cannot
+check is stated at the end and belongs to KL-11 (host-supplied identifiers).
 
-- A `RequiredCheck` with a null `ExpectedKind` accepts evidence of any kind, so default-deny on evidence kind is
-  opt-in per check.
-- `ExperienceFinalizationService` computes the evaluation a reflection is built from, so the two always match. A host
-  that calls `IExperienceReflector` directly can still pair a reflection with the wrong evaluation.
+- **KL-5, evidence kind is default-deny.** `RequiredCheck(CheckId, ExpectedKind)` has no default for the kind. A
+  check that accepts any kind says so with `RequiredCheck.AnyKind` (`"*"`); a null or blank kind is refused by
+  `VerificationAggregator.Aggregate` (and so by finalization) with an `ArgumentException`, and `Accepts` returns
+  `false` for it. Migrate `new RequiredCheck("id")` to the kind your evaluator produces (`TaskCheckEvaluators` produce
+  `ToolExitCode`, `TestResult`, `WorkflowCompletion`, `HumanApproval` and `HumanCorrection`), or to `AnyKind` if any
+  producer really may answer the check.
+- **KL-6, an evaluation is bound to its run.** `VerificationAggregator.Aggregate(runId, evidence, ...)` takes the run
+  it evaluates and records it, with the closed round, the artifact revision and a copy of the required checks, on
+  `VerificationResult.Basis`. `VerificationResult` has no public constructor and no settable property, so only the
+  aggregator makes one (and it cannot be deserialized). `ReflectionRequest` throws `ReflectionBindingException` (an `ArgumentException`) when the
+  evaluation's basis names a different run, or when the run's own recorded outcome disagrees with it, and its `Run`
+  and `Evaluation` are get-only, so no reflector receives a run paired with an evaluation made under another run ID. `ReflectionRequest.EnsureMatches(reflection)` checks a reflector's output against the
+  request (identity, run, created-at, verdict, score, rule version, evidence IDs); `ExperienceFinalizationService`
+  applies it and quarantines a record whose reflection fails it, exactly as if the reflector had thrown.
+
+  What remains: the binding is as strong as the run ID. The aggregator records the run ID it is given and evidence
+  carries none, so whether a round's evidence belongs to that run is the host's statement; a run re-stamped with
+  another run's ID is refused only if its own recorded outcome contradicts the evaluation. Both are KL-11's trust. A
+  host that calls a reflector and writes records without finalization has only its own call to `EnsureMatches`.
 
 The public surface of this package is pinned by an approval baseline
 (`tests/AgentExperience.Release.Tests/PublicApi/`), so any change to it is a reviewed diff.
