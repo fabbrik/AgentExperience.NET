@@ -108,7 +108,9 @@ public sealed class BatchReReadPostgresEquivalenceTests(SamplePostgresFixture fi
                 new ExperienceInjectionOptions
                 {
                     ResolveRequest = _ => new RetrieveExperienceRequest(authorization, reader, "refund ticket stuck on a lock", CorrelationId: correlationId),
-                    Limits = ExperienceInjectionLimits.Default with { MaxRecords = 12 },
+                    // A generous bound: this test is about equivalence, not the bound, and nine serial reads
+                    // against a loaded CI container must not be able to turn it into a timing test.
+                    Limits = ExperienceInjectionLimits.Default with { MaxRecords = 12, EligibilityCheckTimeout = TimeSpan.FromMinutes(5) },
                     TimeProvider = new FixedNow(Now),
                     OnContextInjected = result => reported = result,
                 });

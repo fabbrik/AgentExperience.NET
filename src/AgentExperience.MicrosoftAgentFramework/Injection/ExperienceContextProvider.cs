@@ -403,8 +403,16 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var required = request.RequiredEnvironmentAttributes;
         var unrestricted = required is null or { Count: 0 };
 
-        using var expiry = new CancellationTokenSource(_options.Limits.EligibilityCheckTimeout, _options.TimeProvider);
+        var timeout = _options.Limits.EligibilityCheckTimeout;
+        var started = _options.TimeProvider.GetTimestamp();
+        using var expiry = new CancellationTokenSource(timeout, _options.TimeProvider);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
+
+        // The bound, as a fact about the clock rather than about a timer. The token above is what a store
+        // is handed, and it only flips when its timer callback has actually run -- which, on a starved
+        // thread pool, can be well after the deadline. The checks between records must not depend on that,
+        // so they compare the elapsed time as well.
+        bool Expired() => expiry.IsCancellationRequested || _options.TimeProvider.GetElapsedTime(started) >= timeout;
 
         var ids = new Guid[selected.Count];
         for (var i = 0; i < ids.Length; i++)
@@ -496,12 +504,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // invocation that is already over.
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (expiry.IsCancellationRequested)
+            if (Expired())
             {
                 // A store that ignores the token still has to stop the check here, or the bound would only
                 // ever apply to one that honours it. Checked for every record, as the per-record loop
                 // checked after every read, so time the host's own decision callback spends still counts.
-                return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
+                return CheckOutcome.TimedOut(timeout);
             }
 
             // Denied, NotFound, Invalid, a null record, a record that came back under another ID, and a
@@ -589,7 +597,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
             injectable.Add(refreshed);
         }
 
-        return CheckOutcome.Checked(injectable);
+        // And once more after the last record: the whole check is bounded, the last decision included.
+        // The per-record loop never looked again after its last callback, so a slow decision on the last
+        // record used to inject past the bound.
+        return Expired() ? CheckOutcome.TimedOut(timeout) : CheckOutcome.Checked(injectable);
     }
 
     /// <summary>

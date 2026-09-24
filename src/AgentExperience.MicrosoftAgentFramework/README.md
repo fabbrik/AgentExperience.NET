@@ -416,10 +416,13 @@ the batch in one call:
   the same bound — the pre-5.6 path — and each record is omitted, or not, exactly as before ("Re-reading the record
   threw …" for the ones whose read fails). A store whose `GetManyAsync` wrote access rows before throwing would
   record those deliveries twice; the PostgreSQL store appends only after a successful read.
-- **The bound and the caller's token still cover the host's decision.** `EligibilityCheckTimeout` bounds the batch
-  read and is re-checked before each record is decided, exactly where the per-record loop found it after each read,
-  so a slow `DecideInjection` still times the check out; and a caller that cancels mid-check stops it before the
-  next record is decided, as the next read's cancelled token used to.
+- **The bound and the caller's token cover every decision, the last one included.** `EligibilityCheckTimeout` bounds
+  the batch read and is re-checked before each record is decided and once more after the last, so a slow
+  `DecideInjection` times the check out wherever it happens. The per-record loop never looked again after its last
+  callback, so a slow decision on the last record used to inject past the bound. The re-check compares the elapsed
+  time on `TimeProvider`, not only the expiry token, because the token flips only when its timer callback runs, and
+  a starved thread pool can run that late. A caller that cancels mid-check stops it before the next record is
+  decided, as the next read's cancelled token used to.
 - **Rows are written for the whole selection at once.** The batch read delivers every kept candidate in one call, so
   a grant-delivered record gets its access row even when the check then times out before deciding it. The per-record
   loop wrote rows only for the records it had read before the bound. The row still records exactly what it always

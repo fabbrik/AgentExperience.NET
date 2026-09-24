@@ -29,6 +29,100 @@ internal sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
 }
 
 /// <summary>
+/// A clock that moves only when a test moves it. Its wall clock and its timestamps both advance by
+/// exactly what <see cref="Advance"/> is given, and a timer created through it fires, synchronously
+/// inside <see cref="Advance"/>, once the clock reaches its due time -- so a bound is crossed at a
+/// known step rather than whenever a starved thread pool gets round to a timer callback.
+/// </summary>
+internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
+{
+    private readonly object _gate = new();
+    private readonly List<ManualTimer> _timers = [];
+    private TimeSpan _elapsed;
+
+    public override DateTimeOffset GetUtcNow()
+    {
+        lock (_gate)
+        {
+            return start + _elapsed;
+        }
+    }
+
+    public override long GetTimestamp()
+    {
+        lock (_gate)
+        {
+            return _elapsed.Ticks;
+        }
+    }
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        var timer = new ManualTimer(this, callback, state);
+        timer.Change(dueTime, period);
+        return timer;
+    }
+
+    /// <summary>Moves the clock forward, firing every live timer that falls due on the way.</summary>
+    public void Advance(TimeSpan by)
+    {
+        List<ManualTimer> due;
+        lock (_gate)
+        {
+            _elapsed += by;
+            due = _timers.Where(timer => timer.DueAt is { } at && at <= _elapsed).ToList();
+            foreach (var timer in due)
+            {
+                timer.DueAt = null;
+            }
+        }
+
+        foreach (var timer in due)
+        {
+            timer.Fire();
+        }
+    }
+
+    private sealed class ManualTimer(ManualClock clock, TimerCallback callback, object? state) : ITimer
+    {
+        public TimeSpan? DueAt { get; set; }
+
+        public void Fire() => callback(state);
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            lock (clock._gate)
+            {
+                DueAt = dueTime == Timeout.InfiniteTimeSpan ? null : clock._elapsed + dueTime;
+                if (!clock._timers.Contains(this))
+                {
+                    clock._timers.Add(this);
+                }
+            }
+
+            return true;
+        }
+
+        public void Dispose()
+        {
+            lock (clock._gate)
+            {
+                DueAt = null;
+                clock._timers.Remove(this);
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
+}
+
+/// <summary>
 /// The world an injection test runs against: a search index and a record store that are
 /// deliberately <em>separate</em> collections, because that is the whole point of the final
 /// eligibility check. What <see cref="SearchAsync"/> returns is a snapshot taken when the record was

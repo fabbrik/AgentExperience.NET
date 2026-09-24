@@ -1563,38 +1563,126 @@ public class ExperienceInjectionTests
         Assert.DoesNotContain("Never answered.", harness.InjectedText(), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task A_host_decision_that_outlasts_the_bound_still_times_the_check_out_on_both_paths()
+    [Theory]
+    [InlineData(2, 1)] // a slow decision on the first of two records: caught before the second is decided
+    [InlineData(1, 1)] // a slow decision on the only record: caught after the last decision
+    [InlineData(3, 3)] // a slow decision on the last of three records: caught after the last decision
+    public async Task A_host_decision_that_outlasts_the_bound_times_the_check_out_identically_on_both_paths(int records, int slowDecision)
     {
-        // In the per-record loop a slow decision on one record left the next read to find the bound
-        // spent. The batch has no next read, so the bound is checked before each record instead.
-        async Task<ExperienceInjectionResult> RunAsync(bool sequential)
+        // Deterministic: the decision itself moves a manual clock past the bound, and the clock's timer
+        // fires inside that step, so nothing depends on when a thread pool runs a timer callback. (The
+        // first version of this test slept on the real clock and was flaky under CI load; see the spec.)
+        async Task<(ExperienceInjectionResult Result, int Decisions)> RunAsync(bool sequential)
         {
+            var clock = new ManualClock(InjectionRecords.Now);
+            var decisions = 0;
             var harness = new Harness
             {
-                Clock = TimeProvider.System,
+                Clock = clock,
                 Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
                 Decide = _ =>
                 {
-                    Thread.Sleep(TimeSpan.FromMilliseconds(250));
+                    if (++decisions == slowDecision)
+                    {
+                        clock.Advance(TimeSpan.FromMilliseconds(250));
+                    }
+
                     return InjectionDecision.Permit;
                 },
             };
-            harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 1d);
-            harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), TestScope), relevance: 0.5d);
+
+            for (var n = 1; n <= records; n++)
+            {
+                harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(n), TestScope), relevance: 1d - (n * 0.1));
+            }
+
             harness.World.SequentialGetMany = sequential;
 
             await harness.Agent().RunAsync("refund ticket stuck on a lock");
-            return Assert.Single(harness.Results);
+            return (Assert.Single(harness.Results), decisions);
         }
 
         var perRecord = await RunAsync(sequential: true);
         var batched = await RunAsync(sequential: false);
 
-        Assert.Equal(InjectionOutcome.Failed, batched.Outcome);
-        Assert.Equal(perRecord.Outcome, batched.Outcome);
-        Assert.Equal(perRecord.Failure!.Reason, batched.Failure!.Reason);
-        Assert.Contains("eligibility check exceeded", batched.Failure.Reason, StringComparison.Ordinal);
+        foreach (var run in new[] { perRecord, batched })
+        {
+            Assert.Equal(InjectionOutcome.Failed, run.Result.Outcome);
+            Assert.Empty(run.Result.InjectedExperienceIds);
+            Assert.Equal("The final eligibility check exceeded its 00:00:00.0500000 bound, so nothing was injected.", run.Result.Failure!.Reason);
+
+            // Nothing is decided after the bound is found spent.
+            Assert.Equal(slowDecision, run.Decisions);
+        }
+
+        Assert.Equal(perRecord.Result.Omitted, batched.Result.Omitted);
+    }
+
+    [Fact]
+    public async Task A_check_that_stays_inside_its_bound_injects_on_the_manual_clock()
+    {
+        // The control for the theory above: the same clock and bound, with a decision that takes no time.
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+            Decide = _ =>
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(10));
+                return InjectionDecision.Permit;
+            },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), TestScope), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Injected, result.Outcome);
+        Assert.Equal([InjectionRecords.Id(1), InjectionRecords.Id(2)], result.InjectedExperienceIds);
+    }
+
+    [Fact]
+    public async Task The_bound_is_enforced_from_the_clock_even_when_its_timer_has_not_fired()
+    {
+        // The CI flake's root cause, pinned: the expiry token flips only when its timer callback runs,
+        // and a starved thread pool can run it late. A clock whose timers never fire models that
+        // worst case; the check must still see the elapsed time and stop.
+        var clock = new NeverFiringClock();
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+            Decide = _ =>
+            {
+                clock.Elapsed += TimeSpan.FromMilliseconds(250);
+                return InjectionDecision.Permit;
+            },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), TestScope), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.Contains("eligibility check exceeded", result.Failure!.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>A clock whose timestamps move only when a test moves them, and whose timers never fire: a timer callback delayed indefinitely.</summary>
+    private sealed class NeverFiringClock : TimeProvider
+    {
+        public TimeSpan Elapsed { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => InjectionRecords.Now + Elapsed;
+
+        public override long GetTimestamp() => Elapsed.Ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            new FrozenTimeProvider(InjectionRecords.Now).CreateTimer(callback, state, dueTime, period);
     }
 
     /// <summary>A harness whose requests are made in <paramref name="scope"/> rather than <see cref="TestScope"/>.</summary>
