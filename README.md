@@ -33,7 +33,6 @@ preview.
 | KL-6 | **A reflection can be paired with the wrong evaluation by a host that calls `IExperienceReflector` directly.** Finalization computes the evaluation itself, so it cannot mismatch; a direct caller can | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here) |
 | KL-7 | **An invocation that opens a run and never returns holds it with no bound.** The open-run duration bound is armed when an invocation releases a run it keeps open, not when the run opens | [Adapter: retries as attempts of one run](src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run) |
 | KL-8 | **An approach is its tool names only.** Approaches that differ by argument render identically in the `Approach:` line; a host whose lessons turn on arguments needs its own reflector to say so in the lesson | [Adapter: the payload](src/AgentExperience.MicrosoftAgentFramework/README.md#the-payload) |
-| KL-9 | **A borrowed lesson discloses the lending scope's tool names to the borrowing scope's model.** A grant has no field that permits the lesson while withholding the `Approach:` line; the only control is denying the whole record in the injection risk policy | [Sharing experience across scopes](#sharing-experience-across-scopes) |
 | KL-10 | **The grant access log has no retention path.** Erasure deliberately keeps access rows, and the ledger is append-only, so it grows until the tables' owner prunes it | [Store: schema, `0009`](src/AgentExperience.Storage.Postgres/README.md#script-comments-that-were-written-before-the-work-they-point-at-shipped) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
@@ -41,6 +40,9 @@ preview.
 | KL-14 | **Exact pins block a newer MAF.** `Microsoft.Agents.AI` 1.22.0 needs `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.12, which Core's exact `[10.0.11]` pin refuses, so a host cannot move to it without a new preview. CI's MAF probe reports this on every run | [Compatibility evidence: the MAF matrix](docs/compatibility-evidence.md#the-maf-compatibility-matrix) |
 | KL-15 | **Core's redaction dependency is a floor, not an exact pin.** `Microsoft.Extensions.Compliance.Redaction` is referenced as `10.9.0` (≥), so a consumer may resolve a later, unverified version | [Compatibility evidence: core and shared](docs/compatibility-evidence.md#core-and-shared) |
 | KL-16 | **Erasure emits no library telemetry.** Deletion, the retention sweep and the grant purge are not in the operation table and emit no span, count, duration or failure classification; the host observes them through the results they return and through the database | [Telemetry: what is not instrumented](docs/telemetry.md#what-is-not-instrumented) |
+
+KL-9 (a borrowed lesson disclosing the lending scope's tool names) is resolved by the grant disclosure level
+(story 3.6), shipping in the next preview; see [Sharing experience across scopes](#sharing-experience-across-scopes).
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -972,13 +974,37 @@ Reference block carries a `Shared:` line (with no scope identifier in it). Every
 "this must be my own record" check for anything that is *not* flagged, so a source that returns a foreign record
 without declaring a grant is still dropped.
 
-**A borrowed lesson carries its approach, and that is a disclosure of its own.** A verified record's block includes
-the `Approach:` line — the ordered tool names the lending scope's run called. The borrowing host could always read
-those off the delivered record; what is new is that the borrowing scope's *model* now reads them too, and an internal
-tool name (`hr_salary_lookup`, `stripe_charge_prod`) is itself information about the lending scope's systems. The only
-control today is all-or-nothing: deny the record in the injection risk policy on `SharedByGrant` or
-`PermittingGrantId`. A grant has no field that permits the lesson while withholding the approach, and the access log
-records the revision delivered, not which of its lines reached a model.
+**A grant decides whether a borrowed lesson carries its approach.** A verified record's block includes the
+`Approach:` line — the ordered tool names the run called — and for a borrowed record those are the *lending* scope's
+tool names, which (`hr_salary_lookup`, `stripe_charge_prod`) are themselves information about its systems. So every
+grant carries an immutable disclosure level, `ExperienceGrantRequest.Disclosure`:
+
+```csharp
+new ExperienceGrantRequest(grantId, recordId, ownerScope, recipientScope, reason, expiresAt,
+    Disclosure: ExperienceGrantDisclosure.LessonAndApproach);   // default: LessonOnly
+```
+
+Under `LessonOnly` — the default — the block omits the `Approach:` line and, when the record has one, the `Shared:`
+line says the grant withholds it; under `LessonAndApproach` the line is rendered exactly as the owner would see it.
+The level governs the `Approach:` line **only**: the lesson, reuse guidance, preconditions and warnings are the
+reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model under
+either level (see KL-8). The level is read from the same row that names the permitting grant, reaches the host's risk
+policy as `ExperienceInjectionDecisionContext.GrantDisclosure`, and is recorded on the grant's issue and revoke events
+and on every access row. The access row records the level the library applied at delivery, not whether an `Approach:`
+line actually reached a model: the host may deny the record, the byte budget may drop it, or it may have no approach.
+A store that says a record is shared but reports no level is rendered as `LessonOnly`, and the host decision can deny
+a record but never widen its level. Only the *block* is governed: the `ExperienceRecord` a store returns to host code
+is complete either way. The level cannot be changed in place — the database refuses the `UPDATE` — so to change it,
+revoke the grant and issue a new one; the one-active-grant rule means the revoke comes first, so the recipient has no
+access in the gap between the two calls.
+
+**Upgrading changes behaviour, and the order matters.** Schema script `0011` gives every existing grant `LessonOnly`,
+so a borrowed record's `Approach:` line disappears from injected blocks until the owner revokes the grant and issues a
+`LessonAndApproach` replacement. Events and access rows written before `0011` read back with a `null` level: it was
+never recorded. **Run `0011`, then deploy this build, and stop older writers first.** This build on a pre-`0011`
+schema fails every grant-joined read with `42703` (undefined column), and an older build on a `0011` schema cannot
+write grant events or access rows, because both now require a level. Both failures are loud by design; there is no
+silent fallback.
 
 **Two trails, and they answer different questions.** `experience_grant_events` records administration -- who
 allowed what, under authority established when, until when, and when they stopped allowing it -- and

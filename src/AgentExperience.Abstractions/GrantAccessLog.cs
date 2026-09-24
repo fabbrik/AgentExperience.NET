@@ -55,6 +55,11 @@ namespace AgentExperience.Abstractions;
 /// invocation behind it. <see langword="null"/> when the caller named none.
 /// </param>
 /// <param name="OccurredAt">When the read happened, from the reader's clock.</param>
+/// <param name="Disclosure">
+/// The permitting grant's <see cref="ExperienceGrant.Disclosure"/> at delivery, read by the same
+/// statement that named <see cref="GrantId"/>. It stays on the row after the grant itself is purged.
+/// <see langword="null"/> for a row written before the level was recorded.
+/// </param>
 public sealed record ExperienceGrantAccess(
     Guid AccessId,
     Guid GrantId,
@@ -64,7 +69,8 @@ public sealed record ExperienceGrantAccess(
     Scope RecipientScope,
     string PrincipalId,
     string? CorrelationId,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    ExperienceGrantDisclosure? Disclosure = null);
 
 /// <summary>
 /// How hard a failed access row is: whether a read whose audit could not be written still returns.

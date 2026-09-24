@@ -74,7 +74,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     /// <summary>
     /// The same <c>FROM</c> with the lateral join that names the grant a shared row came back through.
-    /// The join exposes only <c>grant_id</c>, so every unqualified column in the select list, the
+    /// The join exposes only <c>grant_id</c> and <c>disclosure</c>, both read qualified, so every unqualified column in the select list, the
     /// filters, and the ordering still resolves to <c>r</c> exactly as before.
     /// </summary>
     private const string SearchFromWithGrant =
@@ -98,7 +98,8 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     private const string SearchSql =
         SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
-        + PostgresExperienceRecordStore.PermittingGrantColumn + SearchFromWithGrant
+        + PostgresExperienceRecordStore.PermittingGrantColumn + ", "
+        + PostgresExperienceRecordStore.PermittingDisclosureColumn + SearchFromWithGrant
         + PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate + SearchFilters;
 
     /// <summary>
@@ -108,7 +109,8 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// </summary>
     private const string SearchExactSql =
         SearchSelect + "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
-        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias + SearchFrom
+        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
+        + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
         + PostgresExperienceRecordStore.RecordScopePredicate + SearchFilters;
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
@@ -169,18 +171,19 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         cancellationToken.ThrowIfCancellationRequested();
 
         ExperienceCandidateSearchResult result;
+        IReadOnlyList<ExperienceGrantDisclosure?> disclosures;
         try
         {
             try
             {
-                result = await RunSearchAsync(_grants.Available ? SearchSql : SearchExactSql, query, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(_grants.Available ? SearchSql : SearchExactSql, query, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "candidate search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only. Falling
                 // back narrows the answer and can never return a record this scope did not own.
-                result = await RunSearchAsync(SearchExactSql, query, cancellationToken).ConfigureAwait(false);
+                (result, disclosures) = await RunSearchAsync(SearchExactSql, query, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
@@ -192,7 +195,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         // host's policy to decide, never a storage failure raised as a failed search.
         return _auditing is null
             ? result
-            : await RecordGrantAccessAsync(authorization, query, result, cancellationToken).ConfigureAwait(false);
+            : await RecordGrantAccessAsync(authorization, query, result, disclosures, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -207,11 +210,17 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// <em>no</em> candidates rather than the ones that needed no grant: the mode's promise is that
     /// nothing crosses a scope unrecorded, and a partly-returned page would quietly become a different
     /// search than the caller asked for.
+    /// <para>
+    /// <paramref name="disclosures"/> runs parallel to the candidates: each permitting grant's level,
+    /// read by the same statement. It goes onto the access row only -- an
+    /// <see cref="ExperienceCandidate"/> never carries it.
+    /// </para>
     /// </remarks>
     private async Task<ExperienceCandidateSearchResult> RecordGrantAccessAsync(
         AuthorizationContext authorization,
         ExperienceCandidateQuery query,
         ExperienceCandidateSearchResult result,
+        IReadOnlyList<ExperienceGrantDisclosure?> disclosures,
         CancellationToken cancellationToken)
     {
         var auditing = _auditing!;
@@ -221,13 +230,27 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             return result;
         }
 
-        var accesses = new List<ExperienceGrantAccess>();
-        foreach (var candidate in result.Candidates)
+        if (disclosures.Count != result.Candidates.Count)
         {
-            if (candidate is { SharedByGrant: true, Record: { } record })
+            // Read row by row alongside the candidates, so this cannot happen; if it ever did, guessing a
+            // level for a row would attribute a disclosure to the wrong delivery.
+            throw new ExperienceStoreException(
+                "The disclosure levels read do not line up with the candidates returned.");
+        }
+
+        var accesses = new List<ExperienceGrantAccess>();
+        for (var i = 0; i < result.Candidates.Count; i++)
+        {
+            if (result.Candidates[i] is { SharedByGrant: true, Record: { } record } candidate)
             {
                 accesses.Add(GrantAuditing.Access(
-                    auditing, authorization, query.Scope, query.CorrelationId, record, candidate.PermittingGrantId));
+                    auditing,
+                    authorization,
+                    query.Scope,
+                    query.CorrelationId,
+                    record,
+                    candidate.PermittingGrantId,
+                    disclosures[i]));
             }
         }
 
@@ -236,7 +259,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             : new(ExperienceStoreOutcome.Found, NoCandidates, NoErrors);
     }
 
-    private async Task<ExperienceCandidateSearchResult> RunSearchAsync(
+    private async Task<(ExperienceCandidateSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> RunSearchAsync(
         string sql,
         ExperienceCandidateQuery query,
         CancellationToken cancellationToken)
@@ -252,6 +275,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
 
         var candidates = new List<ExperienceCandidate>();
+        var disclosures = new List<ExperienceGrantDisclosure?>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -260,9 +284,10 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
                 ReadRelevance(reader),
                 PostgresExperienceRecordStore.ReadSharedByGrant(reader),
                 PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
+            disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(reader));
         }
 
-        return new(ExperienceStoreOutcome.Found, candidates, NoErrors);
+        return (new(ExperienceStoreOutcome.Found, candidates, NoErrors), disclosures);
     }
 
     /// <summary>

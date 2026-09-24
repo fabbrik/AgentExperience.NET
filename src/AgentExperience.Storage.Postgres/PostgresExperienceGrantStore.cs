@@ -49,13 +49,13 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     internal const string EventsTable = "agent_experience.experience_grant_events";
 
     /// <summary>
-    /// The grant columns every read selects, in the order <see cref="DecodeGrant"/> expects (ordinals 0-19).
+    /// The grant columns every read selects, in the order <see cref="DecodeGrant"/> expects (ordinals 0-20).
     /// </summary>
     private const string GrantColumns =
         "grant_id, experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
         "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
         "recipient_team_id, recipient_agent_id, recipient_user_id, " +
-        "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason";
+        "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure";
 
     /// <summary>
     /// The conditional insert. The source row is the canonical record, matched on the exact owner
@@ -79,7 +79,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "@recipient_tenant_id, @recipient_application_id, @recipient_project_id, " +
         "@recipient_team_id, @recipient_agent_id, @recipient_user_id, " +
         "@reason, @administrator_principal_id, now(), " +
-        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL " +
+        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL, @disclosure " +
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
         // An erased record is not a record a grant can name: there is nothing left to share, and a grant
@@ -111,7 +111,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "g.grant_id, g.experience_id, g.tenant_id, g.application_id, g.project_id, g.team_id, g.agent_id, g.user_id, " +
         "g.recipient_tenant_id, g.recipient_application_id, g.recipient_project_id, " +
         "g.recipient_team_id, g.recipient_agent_id, g.recipient_user_id, " +
-        "g.reason, g.administrator_principal_id, g.issued_at, g.expires_at, g.revoked_at, g.revocation_reason";
+        "g.reason, g.administrator_principal_id, g.issued_at, g.expires_at, g.revoked_at, g.revocation_reason, g.disclosure";
 
     /// <summary>
     /// The grants over one record, driven from the record itself so that "no such record here" and
@@ -136,7 +136,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "e.tenant_id, e.application_id, e.project_id, e.team_id, e.agent_id, e.user_id, " +
         "e.recipient_tenant_id, e.recipient_application_id, e.recipient_project_id, " +
         "e.recipient_team_id, e.recipient_agent_id, e.recipient_user_id, " +
-        "e.reason, e.administrator_principal_id, e.administrator_authorized_at, e.expires_at, e.occurred_at";
+        "e.reason, e.administrator_principal_id, e.administrator_authorized_at, e.expires_at, e.occurred_at, e.disclosure";
 
     /// <summary>
     /// The audit event, assembled from the grant row itself inside the same transaction, so an event
@@ -148,12 +148,12 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
         "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
         "recipient_team_id, recipient_agent_id, recipient_user_id, " +
-        "reason, administrator_principal_id, administrator_authorized_at, expires_at, occurred_at, recorded_at) " +
+        "reason, administrator_principal_id, administrator_authorized_at, expires_at, occurred_at, recorded_at, disclosure) " +
         "SELECT @event_id, g.grant_id, g.experience_id, @action, " +
         "g.tenant_id, g.application_id, g.project_id, g.team_id, g.agent_id, g.user_id, " +
         "g.recipient_tenant_id, g.recipient_application_id, g.recipient_project_id, " +
         "g.recipient_team_id, g.recipient_agent_id, g.recipient_user_id, " +
-        "@reason, @administrator_principal_id, @administrator_authorized_at, g.expires_at, now(), now() " +
+        "@reason, @administrator_principal_id, @administrator_authorized_at, g.expires_at, now(), now(), g.disclosure " +
         $"FROM {PostgresExperienceRecordStore.GrantsTable} g WHERE g.grant_id = @grant_id";
 
     /// <summary>
@@ -294,6 +294,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                     "expires_at",
                     PostgresExperienceRecordStore.ToStoredTimestamp(request.ExpiresAt)));
                 parameters.Add(new NpgsqlParameter<TimeSpan>("max_lifetime", _policy.MaxLifetime));
+                // By name, never by ordinal: the validator has already refused a value the enum does
+                // not define, and the stored text is what the lateral join reads back.
+                parameters.Add(new NpgsqlParameter<string>("disclosure", NpgsqlDbType.Text) { TypedValue = request.Disclosure.ToString() });
 
                 grant = await ReadOneAsync(insert, cancellationToken).ConfigureAwait(false);
             }
@@ -807,13 +810,18 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 AdministratorPrincipalId: reader.GetString(17),
                 AdministratorAuthorizedAt: reader.GetFieldValue<DateTimeOffset>(18),
                 ExpiresAt: reader.GetFieldValue<DateTimeOffset>(19),
-                OccurredAt: reader.GetFieldValue<DateTimeOffset>(20));
+                OccurredAt: reader.GetFieldValue<DateTimeOffset>(20),
+                Disclosure: reader.IsDBNull(21) ? null : DecodeDisclosure(reader.GetString(21)));
         }
         catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
         {
             throw new ExperienceStoreException("Stored sharing-grant event could not be decoded.", ex);
         }
     }
+
+    private static ExperienceGrantDisclosure DecodeDisclosure(string disclosure) =>
+        PostgresExperienceRecordStore.ParseDisclosure(disclosure)
+            ?? throw new ExperienceStoreException("Stored sharing grant has an unrecognized disclosure level.");
 
     private static ExperienceGrantAction DecodeAction(string action) =>
         Enum.TryParse<ExperienceGrantAction>(action, ignoreCase: false, out var parsed) && Enum.IsDefined(parsed)
@@ -855,5 +863,6 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         IssuedAt: reader.GetFieldValue<DateTimeOffset>(16),
         ExpiresAt: reader.GetFieldValue<DateTimeOffset>(17),
         RevokedAt: reader.IsDBNull(18) ? null : reader.GetFieldValue<DateTimeOffset>(18),
-        RevocationReason: reader.IsDBNull(19) ? null : reader.GetString(19));
+        RevocationReason: reader.IsDBNull(19) ? null : reader.GetString(19),
+        Disclosure: DecodeDisclosure(reader.GetString(20)));
 }

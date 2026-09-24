@@ -79,6 +79,8 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
 
     private readonly Dictionary<(Guid ExperienceId, Scope Recipient), Guid> _grantIds = [];
 
+    private readonly Dictionary<(Guid ExperienceId, Scope Recipient), ExperienceGrantDisclosure?> _grantDisclosures = [];
+
     /// <summary>
     /// The host's auditing policy, when a test wires one. <see langword="null"/> -- the default -- is a
     /// deployment with no access log: nothing is recorded and nothing else changes. The fake models
@@ -101,12 +103,23 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     }
 
     /// <summary>Shares one record with one recipient scope, the way an administrator's grant would.</summary>
+    /// <param name="experienceId">The record to share.</param>
+    /// <param name="recipient">The scope to share it with.</param>
+    /// <param name="disclosure">
+    /// The level a delivered read reports for this grant. Defaults to the real default,
+    /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>; <see langword="null"/> models a third-party
+    /// store that says a record is shared but reports no level.
+    /// </param>
     /// <returns>The grant's ID, which a delivered read then names.</returns>
-    public Guid Grant(Guid experienceId, Scope recipient)
+    public Guid Grant(
+        Guid experienceId,
+        Scope recipient,
+        ExperienceGrantDisclosure? disclosure = ExperienceGrantDisclosure.LessonOnly)
     {
         Grants.Add((experienceId, recipient));
         var grantId = Guid.NewGuid();
         _grantIds[(experienceId, recipient)] = grantId;
+        _grantDisclosures[(experienceId, recipient)] = disclosure;
         return grantId;
     }
 
@@ -115,11 +128,16 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     {
         Grants.Remove((experienceId, recipient));
         _grantIds.Remove((experienceId, recipient));
+        _grantDisclosures.Remove((experienceId, recipient));
     }
 
     /// <summary>The grant a read through <paramref name="recipient"/> was permitted by, if this fake knows one.</summary>
     private Guid? PermittingGrant(Guid experienceId, Scope recipient) =>
         _grantIds.TryGetValue((experienceId, recipient), out var grantId) ? grantId : null;
+
+    /// <summary>The level a read through <paramref name="recipient"/> reports, if this fake knows one.</summary>
+    private ExperienceGrantDisclosure? PermittingDisclosure(Guid experienceId, Scope recipient) =>
+        _grantDisclosures.TryGetValue((experienceId, recipient), out var disclosure) ? disclosure : null;
 
     /// <summary>
     /// Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> answers <c>Found</c> for with a record from another tenant,
@@ -301,7 +319,8 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
                 record,
                 [],
                 shared,
-                shared ? PermittingGrant(record.ExperienceId, scope) : null);
+                shared ? PermittingGrant(record.ExperienceId, scope) : null,
+                shared ? PermittingDisclosure(record.ExperienceId, scope) : null);
         }
 
         // The adapter audits a DELIVERY, in a separate statement after the read, only when a grant is
@@ -324,7 +343,8 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             scope,
             authorization.PrincipalId,
             options.CorrelationId,
-            auditing.Clock.GetUtcNow());
+            auditing.Clock.GetUtcNow(),
+            result.GrantDisclosure);
 
         try
         {

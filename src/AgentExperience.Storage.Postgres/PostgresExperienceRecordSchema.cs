@@ -134,6 +134,27 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";
 
+    /// <summary>
+    /// The script that adds a sharing grant's disclosure level: <c>experience_grants.disclosure</c>
+    /// (<c>NOT NULL DEFAULT 'LessonOnly'</c>), and a nullable copy of it on
+    /// <c>experience_grant_events</c> and <c>experience_grant_access</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>It changes behaviour on upgrade.</b> Every existing grant becomes
+    /// <see cref="AgentExperience.Abstractions.ExperienceGrantDisclosure.LessonOnly"/>, so a borrowed
+    /// record's <c>Approach:</c> line stops being injected until the owner revokes the grant and issues
+    /// a new one with <see cref="AgentExperience.Abstractions.ExperienceGrantDisclosure.LessonAndApproach"/>.
+    /// </para>
+    /// <para>
+    /// The level is immutable: the script restates <c>0006</c>'s <c>enforce_grant_monotonicity()</c>
+    /// with <c>disclosure</c> added to its identity pins. The two ledger columns are nullable -- rows
+    /// written before this script carry no level -- and require a level on new rows through a
+    /// <c>CHECK</c> added <c>NOT VALID</c>, which is meant to stay that way.
+    /// </para>
+    /// </remarks>
+    public const string GrantDisclosureScriptName = "0011_grant_disclosure.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -154,6 +175,7 @@ public static class PostgresExperienceRecordSchema
         ReuseFeedbackScriptName,
         GrantAccessLogScriptName,
         DeleteAndExpireScriptName,
+        GrantDisclosureScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

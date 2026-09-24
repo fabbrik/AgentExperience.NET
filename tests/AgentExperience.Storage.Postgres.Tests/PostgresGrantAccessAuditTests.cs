@@ -1062,6 +1062,216 @@ public sealed class PostgresGrantAccessAuditTests
             (await plain.GetAsync(Authorize(tenant), recipient, record.ExperienceId, CancellationToken.None)).Outcome);
     }
 
+    // ---------------------------------------------------------------- disclosure level on the trail
+
+    [Theory]
+    [InlineData(ExperienceGrantDisclosure.LessonOnly)]
+    [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
+    public async Task Every_channel_records_the_permitting_grants_disclosure_level_on_the_access_row(ExperienceGrantDisclosure level)
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+        var grant = await GrantAsync(tenant, id, owner, recipient, disclosure: level);
+        Assert.Equal(level, grant.Disclosure);
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+
+        // The get path: the read reports the level from the same lateral row that named the grant.
+        var read = await Audited(failures).GetAsync(Authorize(tenant), recipient, id, CancellationToken.None);
+        Assert.Equal(grant.GrantId, read.PermittingGrantId);
+        Assert.Equal(level, read.GrantDisclosure);
+
+        // The text channel: the level reaches the access row, never the candidate.
+        var source = new PostgresExperienceCandidateSource(
+            _fixture.DataSource, onGrantsUnavailable: null, auditing: new ExperienceGrantAuditing(_log, failures.Add));
+        var search = await source.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(recipient, "refund", [ExperienceStatus.Validated, ExperienceStatus.Reinforced], 0d),
+            CancellationToken.None);
+        Assert.Equal(id, Assert.Single(search.Candidates).Record.ExperienceId);
+        Assert.Empty(failures);
+
+        var rows = await _log.QueryAsync(Authorize(tenant), new ExperienceGrantAccessQuery(owner, id), CancellationToken.None);
+        Assert.Equal(2, rows.Accesses.Count);
+        Assert.All(rows.Accesses, row =>
+        {
+            Assert.Equal(grant.GrantId, row.GrantId);
+            Assert.Equal(level, row.Disclosure);
+        });
+    }
+
+    [Fact]
+    public async Task An_owner_read_reports_no_disclosure_level()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var id = await SeedAsync(owner);
+        await GrantAsync(tenant, id, owner, Scope(tenant, team: "team-b"), disclosure: ExperienceGrantDisclosure.LessonAndApproach);
+
+        var read = await _unaudited.GetAsync(Authorize(tenant), owner, id, CancellationToken.None);
+
+        Assert.False(read.SharedByGrant);
+        Assert.Null(read.PermittingGrantId);
+        Assert.Null(read.GrantDisclosure);
+    }
+
+    [Fact]
+    public async Task A_new_access_row_without_a_disclosure_level_is_refused_and_the_mode_decides_the_read()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+        var grant = await GrantAsync(tenant, id, owner, recipient);
+
+        // Straight to the log, the way a third-party reader that never learned the level would write.
+        var failure = await Assert.ThrowsAsync<ExperienceStoreException>(() => _log.RecordAsync(
+            [
+                new ExperienceGrantAccess(
+                    Guid.NewGuid(), grant.GrantId, id, 0, owner, recipient, "host-principal", null, DateTimeOffset.UtcNow),
+            ],
+            CancellationToken.None));
+
+        var inner = Assert.IsType<PostgresException>(failure.InnerException);
+        Assert.Equal("experience_grant_access_disclosure_recorded", inner.ConstraintName);
+        Assert.Empty(await AccessRowsAsync(id));
+    }
+
+    [Fact]
+    public async Task A_required_search_that_cannot_name_a_disclosure_level_returns_no_candidates()
+    {
+        // A grant row whose level is NULL is unstorable through this library (NOT NULL, and the level is
+        // pinned), so the setup is only reachable as the tables' owner, on a throwaway database.
+        await using var dataSource = await _fixture.CreateDatabaseAsync("nolevelreq");
+        await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
+
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var record = Minimal(owner, status: ExperienceStatus.Validated) with
+        {
+            TaskId = "refund-ticket-triage",
+            TaskSummary = "Resolve a customer refund",
+            ReuseConfidence = 0.75,
+        };
+        Assert.Equal(
+            ExperienceStoreOutcome.Created,
+            (await new PostgresExperienceRecordStore(dataSource).CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
+
+        var created = await new PostgresExperienceGrantStore(dataSource).CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            new ExperienceGrantRequest(
+                Guid.NewGuid(), record.ExperienceId, owner, recipient, "shared", Micro(DateTimeOffset.UtcNow.AddHours(1))),
+            CancellationToken.None);
+        Assert.Equal(ExperienceGrantOutcome.Created, created.Outcome);
+
+        await ExecuteOnAsync(dataSource, "ALTER TABLE agent_experience.experience_grants DISABLE TRIGGER experience_grants_monotonic");
+        await ExecuteOnAsync(dataSource, "ALTER TABLE agent_experience.experience_grants ALTER COLUMN disclosure DROP NOT NULL");
+        await ExecuteOnAsync(dataSource, "UPDATE agent_experience.experience_grants SET disclosure = NULL");
+
+        var failures = new List<ExperienceGrantAccessFailure>();
+        var source = new PostgresExperienceCandidateSource(
+            dataSource,
+            onGrantsUnavailable: null,
+            auditing: new ExperienceGrantAuditing(
+                new PostgresExperienceGrantAccessLog(dataSource), failures.Add, ExperienceGrantAuditingMode.Required));
+
+        var result = await source.SearchAsync(
+            Authorize(tenant),
+            new ExperienceCandidateQuery(recipient, "refund", [ExperienceStatus.Validated, ExperienceStatus.Reinforced], 0d),
+            CancellationToken.None);
+
+        // The row that could not say what level it delivered under was refused by the database, so under
+        // Required the page comes back empty rather than delivering unrecorded.
+        Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+        Assert.Empty(result.Candidates);
+
+        var failure = Assert.Single(failures);
+        Assert.Equal(ExperienceGrantAuditingMode.Required, failure.Mode);
+        Assert.Null(Assert.Single(failure.Accesses).Disclosure);
+        Assert.Empty(await AccessRowsAsync(dataSource, record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task Upgrading_to_0011_makes_every_live_grant_LessonOnly_and_leaves_old_trail_rows_unrecorded()
+    {
+        // A pre-0011 database: every script before 0011, and nothing of it.
+        await using var dataSource = await _fixture.CreateDatabaseAsync("upgrade0011");
+        foreach (var scriptName in PostgresExperienceRecordSchema.ScriptNames
+            .TakeWhile(name => !string.Equals(name, PostgresExperienceRecordSchema.GrantDisclosureScriptName, StringComparison.Ordinal)))
+        {
+            await ExecuteOnAsync(dataSource, PostgresExperienceRecordSchema.GetScript(scriptName));
+        }
+
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var record = Minimal(owner, status: ExperienceStatus.Validated) with { ReuseConfidence = 0.75 };
+        var plain = new PostgresExperienceRecordStore(dataSource);
+        Assert.Equal(
+            ExperienceStoreOutcome.Created,
+            (await plain.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
+
+        // A live grant, its issue event, and one delivery, written in the pre-0011 shape.
+        var grantId = Guid.NewGuid();
+        await using (var legacy = dataSource.CreateCommand(
+            "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason) " +
+            "VALUES (@grant_id, @experience_id, @tenant_id, 'app-1', 'project-1', 'team-a', NULL, NULL, " +
+            "@tenant_id, 'app-1', 'project-1', 'team-b', NULL, NULL, " +
+            "'issued before 0011', 'someone', now(), now() + interval '1 day', NULL, NULL); " +
+            "INSERT INTO agent_experience.experience_grant_events (event_id, grant_id, experience_id, action, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "reason, administrator_principal_id, administrator_authorized_at, expires_at, occurred_at, recorded_at) " +
+            "SELECT gen_random_uuid(), grant_id, experience_id, 'Issued', " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "reason, administrator_principal_id, now(), expires_at, now(), now() " +
+            "FROM agent_experience.experience_grants WHERE grant_id = @grant_id; " +
+            "INSERT INTO agent_experience.experience_grant_access (access_id, grant_id, experience_id, record_revision, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "principal_id, correlation_id, occurred_at, recorded_at) " +
+            "VALUES (gen_random_uuid(), @grant_id, @experience_id, 0, @tenant_id, 'app-1', 'project-1', 'team-a', NULL, NULL, " +
+            "@tenant_id, 'app-1', 'project-1', 'team-b', NULL, NULL, 'host-principal', NULL, now(), now())"))
+        {
+            legacy.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
+            legacy.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", record.ExperienceId));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("tenant_id", tenant));
+            await legacy.ExecuteNonQueryAsync();
+        }
+
+        await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
+
+        // The grant is LessonOnly -- least disclosure is what an upgrade gives every existing grant.
+        var history = await new PostgresExperienceGrantStore(dataSource)
+            .GetHistoryAsync(Authorize(tenant), owner, grantId, CancellationToken.None);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, history.Grant!.Disclosure);
+
+        // The old event and the old access row carry no level: it was never recorded, and it is not
+        // invented after the fact.
+        Assert.Null(Assert.Single(history.Events).Disclosure);
+        var access = await new PostgresExperienceGrantAccessLog(dataSource)
+            .QueryAsync(Authorize(tenant), new ExperienceGrantAccessQuery(owner, record.ExperienceId), CancellationToken.None);
+        Assert.Null(Assert.Single(access.Accesses).Disclosure);
+
+        // And the grant still permits the read it permitted before, now reporting its level.
+        var read = await plain.GetAsync(Authorize(tenant), recipient, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
+        Assert.Equal(grantId, read.PermittingGrantId);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, read.GrantDisclosure);
+    }
+
     [Fact]
     public async Task The_statements_own_maximum_lifetime_catches_a_client_clock_that_runs_behind()
     {
@@ -1144,13 +1354,14 @@ public sealed class PostgresGrantAccessAuditTests
         Guid experienceId,
         Scope owner,
         Scope recipient,
-        string reason = "sibling team owns the follow-up")
+        string reason = "sibling team owns the follow-up",
+        ExperienceGrantDisclosure disclosure = ExperienceGrantDisclosure.LessonOnly)
     {
         var result = await _grants.CreateAsync(
             Authorize(tenant),
             new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
             new ExperienceGrantRequest(
-                Guid.NewGuid(), experienceId, owner, recipient, reason, Micro(DateTimeOffset.UtcNow.AddHours(1))),
+                Guid.NewGuid(), experienceId, owner, recipient, reason, Micro(DateTimeOffset.UtcNow.AddHours(1)), disclosure),
             CancellationToken.None);
 
         Assert.Equal(ExperienceGrantOutcome.Created, result.Outcome);

@@ -379,6 +379,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
                 PostgresExperienceRecordSchema.GrantAccessLogScriptName,
                 PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
+                PostgresExperienceRecordSchema.GrantDisclosureScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -598,7 +599,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^5]);
+            PostgresExperienceRecordSchema.ScriptNames[^6]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -660,7 +661,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^4]);
+            PostgresExperienceRecordSchema.ScriptNames[^5]);
     }
 
     [Fact]
@@ -738,7 +739,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -960,13 +961,48 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
         Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
 
-        // 0010 is applied last, which the migrator relies on for ordinal name ordering.
+        // 0010 is applied immediately before 0011, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^1]);
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Grant_disclosure_script_is_applied_last_and_restates_0006s_monotonicity_with_the_level_pinned()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantDisclosureScriptName);
+        var original = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName);
+
+        // Least disclosure is the default, for existing grants and for writers that bypass the store.
+        Assert.Contains("ADD COLUMN IF NOT EXISTS disclosure text NOT NULL DEFAULT 'LessonOnly'", script, StringComparison.Ordinal);
+        Assert.Contains("CHECK (disclosure IN ('LessonOnly', 'LessonAndApproach'))", script, StringComparison.Ordinal);
+
+        // The two ledgers: nullable, with the not-null rule deferred so pre-0011 rows are not scanned.
+        Assert.Equal(2, CountOccurrences(script, "ADD COLUMN IF NOT EXISTS disclosure text NULL;"));
+        Assert.Equal(2, CountOccurrences(script, "NOT VALID;"));
+        Assert.Contains("experience_grant_events_disclosure_recorded", script, StringComparison.Ordinal);
+        Assert.Contains("experience_grant_access_disclosure_recorded", script, StringComparison.Ordinal);
+
+        // The monotonicity function is replaced in place with every one of 0006's pins, plus the level.
+        Assert.Contains("CREATE OR REPLACE FUNCTION agent_experience.enforce_grant_monotonicity()", script, StringComparison.Ordinal);
+        foreach (var pin in original.Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Contains("IS DISTINCT FROM OLD.", StringComparison.Ordinal) && line.StartsWith("OR NEW.", StringComparison.Ordinal)))
+        {
+            Assert.Contains(pin, script, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("OR NEW.disclosure IS DISTINCT FROM OLD.disclosure", script, StringComparison.Ordinal);
+
+        // The upgrade note says what changes for a running deployment.
+        Assert.Contains("THIS CHANGES BEHAVIOUR", script, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.GrantDisclosureScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>

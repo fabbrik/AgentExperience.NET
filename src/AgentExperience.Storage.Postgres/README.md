@@ -147,7 +147,7 @@ themselves.
 | Lifecycle `PriorStatus` ≠ the record's stored `Status` | `StatusMismatch` with the stored status (nothing written) |
 | Supersession check ran | `Allowed` with the replacement's status, or `RecordNotFound` / `ReplacementNotFound` / `Cycle` (nothing written either way) |
 | Lifecycle event names a replacement the commit transaction will not accept | `ReplacementNotAllowed` with the replacement's stored status (nothing written) |
-| `UPDATE` or `DELETE` against a stored event row, or a grant revocation cleared or expiry extended | rejected by the database with SQLSTATE `42501`, surfaced as `ExperienceStoreException` |
+| `UPDATE` or `DELETE` against a stored event row, or a grant revocation cleared, expiry extended, or disclosure level changed | rejected by the database with SQLSTATE `42501`, surfaced as `ExperienceStoreException` |
 | Candidate search ran (no text match is still `Found`) | `Found` with the matching candidates, strongest match first |
 | Database or driver failure (`NpgsqlException`, `SocketException`, `TimeoutException`) | throws `ExperienceStoreException` with the original as `InnerException` |
 | Stored row with an unsupported `payload_version` or an unreadable payload | throws `ExperienceStoreException` |
@@ -488,6 +488,18 @@ provider surfaces them to the host's risk policy and labels the injected block. 
 own record" check for anything not flagged, so a source that returns a foreign record without declaring a grant is
 still refused downstream.
 
+**A grant says how much of the record a model may see.** `ExperienceGrantRequest.Disclosure` is
+`ExperienceGrantDisclosure.LessonOnly` by default, or `LessonAndApproach`. It governs only the injected block: under
+`LessonOnly` the MAF adapter omits the `Approach:` line — and only that line; the reflection's prose is rendered
+unfiltered — and says the grant withholds it; the `ExperienceRecord` this store returns is complete either way. The level is read from the same lateral join
+that names the permitting grant and comes back on `ExperienceRecordGetResult.GrantDisclosure` (`null` for the
+reader's own record); the search channels read it too, but put it only on the access row, never on an
+`ExperienceCandidate`. It is stored on the grant, copied onto its `Issued` and `Revoked` events, and **cannot be
+changed**: the database refuses an `UPDATE` of it, so to widen or narrow it, revoke the grant and issue a new one —
+the one-active-grant index allows that once the old one is revoked, so the recipient has no access in the gap. A level
+the enum does not define is `Invalid` on `Disclosure`, and nothing is written. Upgrading to `0011` makes every existing
+grant `LessonOnly`.
+
 ### Bounding a grant's lifetime
 
 `PostgresExperienceGrantPolicy` is the policy this store administers grants under. Its one rule today is
@@ -548,8 +560,10 @@ var store = new PostgresExperienceRecordStore(
         ExperienceGrantAuditingMode.Required));
 ```
 
-Each row names the grant, the record **and the revision that was disclosed**, the owner scope, the recipient
-scope, the reading principal (the host's `AuthorizationContext.PrincipalId`, never anything a caller passed as
+Each row names the grant, the record **and the revision that was disclosed**, the grant's disclosure level at
+delivery (kept on the row after the grant itself is purged; `null` on rows written before `0011`; the level the
+library applied, not proof that an `Approach:` line reached a model), the owner scope,
+the recipient scope, the reading principal (the host's `AuthorizationContext.PrincipalId`, never anything a caller passed as
 data), the host's correlation ID for the work that caused the read, and both `occurred_at` (the reader's clock,
 which is `ExperienceGrantAuditing.Clock`) and `recorded_at` (the database's `clock_timestamp()`). The revision and
 the correlation ID are on the row rather than joined in later because a record is a mutable projection and the
@@ -1148,6 +1162,24 @@ its triggers as to `0006`'s: read them above before relying on them.
   every role that can connect.
 - The script's header carries the honesty statement, the retained list (including `payload_version`), the
   privilege note, the `CONCURRENTLY` runbook, the dead-heap-tuple limit, and the confirm-then-`VALIDATE` step.
+
+`0011_grant_disclosure.sql` adds a grant's disclosure level (see [Sharing grants](#sharing-grants)):
+
+- `experience_grants.disclosure text NOT NULL DEFAULT 'LessonOnly'`, with `experience_grants_disclosure_known`
+  (`'LessonOnly'` or `'LessonAndApproach'`). The default covers every existing grant and any writer that bypasses
+  this library. **This changes behaviour on upgrade:** every existing grant becomes `LessonOnly`, so a borrowed
+  record's `Approach:` line stops being injected until the owner revokes the grant and issues a `LessonAndApproach`
+  one.
+- **Deployment order:** run `0011`, then deploy this build, and stop older writers first. This build on a pre-`0011`
+  schema fails every grant-joined read with `42703`; an older build on a `0011` schema cannot write grant events or
+  access rows, because both now require a level. Both failures are loud on purpose.
+- A nullable `disclosure` on `experience_grant_events` and on `experience_grant_access`, each with a
+  `*_disclosure_known` `CHECK` and a `*_disclosure_recorded` `CHECK (disclosure IS NOT NULL)` added `NOT VALID`.
+  New rows must carry a level; rows written before `0011` stay `NULL` — "not recorded" — and are never re-checked.
+  Leave both `NOT VALID`: those rows cannot pass a `VALIDATE`, and nothing can backfill an append-only trail. A
+  hand-written event or access row now has to name a level too.
+- `enforce_grant_monotonicity()` replaced in place with `0006`'s whole body plus `disclosure` among the identity
+  pins, so a live grant's level cannot be changed by `UPDATE` (`42501`); revoke it and issue a new one instead.
 
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package

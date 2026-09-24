@@ -409,21 +409,40 @@ tie an injected lesson back to the sharing decision behind it. The grant ID is f
 is never written into the block. Retrieval itself leaves it null — a search *matching* a shared record is not a
 delivery, and no grant has been used to hand anything over until the re-read.
 
-**A borrowed lesson carries its approach, and that is a disclosure of its own.** A verified record's block includes
-the `Approach:` line: the ordered tool names the lending scope's run called. The borrowing *host* could always read
-those off the delivered record; what is new is that the borrowing scope's *model* now reads them too, and an internal
-tool name (`hr_salary_lookup`, `stripe_charge_prod`) is itself information about the lending scope's systems. The
-only control today is all-or-nothing: deny the record in the risk policy on `SharedByGrant` or `PermittingGrantId`.
-A grant has no field that permits the lesson while withholding the approach, and the access log records the revision
-delivered, not which of its lines reached a model. If a scope's tool inventory is sensitive, do not let its verified
-records be injected into a scope whose model should not see it.
+**A grant decides whether a borrowed lesson carries its `Approach:` line.** A verified record's block includes the
+`Approach:` line: the ordered tool names the run called. For a borrowed record those are the *lending* scope's tool
+names, and an internal name (`hr_salary_lookup`, `stripe_charge_prod`) is itself information about its systems. So the
+block renders that line only when the permitting grant allows it. The store reads the grant's disclosure level from
+the same row that names the grant and returns it on `ExperienceRecordGetResult.GrantDisclosure`; the provider carries
+it onto `RankedExperience.GrantDisclosure` and `ExperienceInjectionDecisionContext.GrantDisclosure`, and
+`HistoricalReferenceWriter` honours it:
+
+| Record | Level | Block |
+| --- | --- | --- |
+| The reader's own | `null` | `Approach:` rendered, no `Shared:` line |
+| Borrowed | `LessonOnly` (the default) | no `Approach:` line; `Shared:` ends with `HistoricalReferenceWriter.ApproachWithheld` when the record has an approach to withhold |
+| Borrowed | `LessonAndApproach` | `Approach:` rendered exactly as the owner would see it |
+| Borrowed, store reports no level or an undefined one | treated as `LessonOnly` | as `LessonOnly` — fail closed |
+
+The level governs the `Approach:` line **only**. The lesson, reuse guidance, preconditions and warnings are the
+reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model under
+either level (see KL-8 in the root README). The level is informational to the risk policy: a host can deny a record on
+it, but nothing the decision returns can widen it. Only the block is governed — the `ExperienceRecord` a store returns
+to host code is complete either way, so a host that forwards delivered records somewhere else is responsible for what
+it forwards. **Upgrading changes behaviour:** schema script `0011` makes every existing grant `LessonOnly`, so borrowed
+`Approach:` lines disappear until the owner revokes the grant and issues one with `LessonAndApproach` — revoke first,
+so the recipient has no access in the gap. Run `0011` before deploying this build, and stop older writers first: this
+build fails grant-joined reads with `42703` on a pre-`0011` schema, and an older build cannot write grant events or
+access rows on a `0011` one.
 
 **That re-read is audited.** If the host wired an
 [access log](../AgentExperience.Storage.Postgres/README.md#recording-who-read-a-shared-record), each record the
-re-read delivers through a grant appends one access row naming that grant and the revision it disclosed, tagged
-with the request's `CorrelationId` — one row per delivered record, and none for the reader's own records. The row
+re-read delivers through a grant appends one access row naming that grant, the revision it disclosed and the grant's
+disclosure level, tagged with the request's `CorrelationId` — one row per delivered record, and none for the reader's own records. The row
 records that the store handed the record over, so a record the host's risk policy then denies still has one: the
-denial happens after the delivery. Under `Required` auditing a re-read whose row cannot be written returns nothing,
+denial happens after the delivery. For the same reason the row's level is the level the library applied at
+delivery, not proof that an `Approach:` line reached the model: the host may deny the record, the byte budget may drop
+it, or the record may have no approach. Under `Required` auditing a re-read whose row cannot be written returns nothing,
 and the record is dropped as `Unreadable` like any other read that came back empty.
 
 Retrieval's own search is audited as well, by the channels themselves rather than here — a candidate carries the

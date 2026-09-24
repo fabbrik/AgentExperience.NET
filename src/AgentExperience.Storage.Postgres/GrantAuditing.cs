@@ -28,13 +28,20 @@ internal static class GrantAuditing
     /// <c>experience_grant_access_grant_id_not_empty</c> refuses the row and the mode decides the read,
     /// rather than a shared record being delivered with no trail.
     /// </param>
+    /// <param name="disclosure">
+    /// The permitting grant's disclosure level, from the same lateral row that named it. Recorded as the
+    /// level at delivery; <see langword="null"/> only if the reader could not read one, in which case
+    /// the database's <c>experience_grant_access_disclosure_recorded</c> refuses the row and the mode
+    /// decides the read.
+    /// </param>
     public static ExperienceGrantAccess Access(
         ExperienceGrantAuditing auditing,
         AuthorizationContext authorization,
         Scope requestScope,
         string? correlationId,
         ExperienceRecord record,
-        Guid? permittingGrantId) =>
+        Guid? permittingGrantId,
+        ExperienceGrantDisclosure? disclosure) =>
         new(
             AccessId: Guid.NewGuid(),
             GrantId: permittingGrantId ?? Guid.Empty,
@@ -44,7 +51,8 @@ internal static class GrantAuditing
             RecipientScope: requestScope,
             PrincipalId: authorization.PrincipalId,
             CorrelationId: string.IsNullOrWhiteSpace(correlationId) ? null : correlationId,
-            OccurredAt: auditing.Clock.GetUtcNow());
+            OccurredAt: auditing.Clock.GetUtcNow(),
+            Disclosure: disclosure);
 
     /// <summary>
     /// Appends every row a single read produced, in one statement, and says whether the read may hand

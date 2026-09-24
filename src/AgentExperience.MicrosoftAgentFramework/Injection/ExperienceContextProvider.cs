@@ -485,11 +485,19 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // readable only if the reader owns it, and the block must say what is true now.
             // The re-read decides which grant, too. It is the delivery the store audits, so the ID the
             // host sees here is the one that appears in the access trail for this record.
+            // And the grant's disclosure level, from that same read. Fail closed: a shared re-read whose
+            // store reported no level -- or one this build does not define -- renders as LessonOnly. A
+            // record in the reader's own scope has no level at all.
             var refreshed = candidate with
             {
                 Record = current,
                 SharedByGrant = result.SharedByGrant,
                 PermittingGrantId = result.SharedByGrant ? result.PermittingGrantId : null,
+                GrantDisclosure = result.SharedByGrant
+                    ? result.GrantDisclosure == ExperienceGrantDisclosure.LessonAndApproach
+                        ? ExperienceGrantDisclosure.LessonAndApproach
+                        : ExperienceGrantDisclosure.LessonOnly
+                    : null,
             };
 
             if (_options.DecideInjection is { } decide)
@@ -498,7 +506,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 try
                 {
                     decision = decide(new ExperienceInjectionDecisionContext(
-                        refreshed, current, result.SharedByGrant, refreshed.PermittingGrantId));
+                        refreshed, current, result.SharedByGrant, refreshed.PermittingGrantId, refreshed.GrantDisclosure));
                 }
                 catch (Exception ex)
                 {
@@ -520,6 +528,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 }
             }
 
+            // The record rendered is refreshed as built above, never anything the decision returned: the
+            // host can only deny, never widen the disclosure level.
             injectable.Add(refreshed);
         }
 

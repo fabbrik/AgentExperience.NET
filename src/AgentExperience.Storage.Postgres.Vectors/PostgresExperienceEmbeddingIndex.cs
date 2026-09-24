@@ -425,19 +425,20 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         var statuses = query.EligibleStatuses.Distinct().Select(status => status.ToString()).ToArray();
 
         ExperienceVectorSearchResult result;
+        IReadOnlyList<ExperienceGrantDisclosure?> disclosures;
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             try
             {
-                result = await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only.
-                result = await RunSearchAsync(connection, query, dimension, statuses, readable: false, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, readable: false, cancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -450,7 +451,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         // policy to decide, never a storage failure raised as a failed search.
         return _auditing is null
             ? result
-            : await RecordGrantAccessAsync(authorization, query, result, cancellationToken).ConfigureAwait(false);
+            : await RecordGrantAccessAsync(authorization, query, result, disclosures, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -462,11 +463,17 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// the text channel does, so the same rule applies: handing one to a caller that does not own it is
     /// a disclosure. Under <see cref="ExperienceGrantAuditingMode.Required"/> a search whose rows
     /// cannot be written returns no candidates at all rather than the subset that needed no grant.
+    /// <para>
+    /// <paramref name="disclosures"/> runs parallel to the candidates: each permitting grant's level,
+    /// read by the same statement. It goes onto the access row only -- an
+    /// <see cref="ExperienceCandidate"/> never carries it.
+    /// </para>
     /// </remarks>
     private async Task<ExperienceVectorSearchResult> RecordGrantAccessAsync(
         AuthorizationContext authorization,
         ExperienceVectorQuery query,
         ExperienceVectorSearchResult result,
+        IReadOnlyList<ExperienceGrantDisclosure?> disclosures,
         CancellationToken cancellationToken)
     {
         var auditing = _auditing!;
@@ -476,13 +483,27 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             return result;
         }
 
-        var accesses = new List<ExperienceGrantAccess>();
-        foreach (var candidate in result.Candidates)
+        if (disclosures.Count != result.Candidates.Count)
         {
-            if (candidate is { SharedByGrant: true, Record: { } record })
+            // Read row by row alongside the candidates, so this cannot happen; if it ever did, guessing a
+            // level for a row would attribute a disclosure to the wrong delivery.
+            throw new ExperienceStoreException(
+                "The disclosure levels read do not line up with the candidates returned.");
+        }
+
+        var accesses = new List<ExperienceGrantAccess>();
+        for (var i = 0; i < result.Candidates.Count; i++)
+        {
+            if (result.Candidates[i] is { SharedByGrant: true, Record: { } record } candidate)
             {
                 accesses.Add(GrantAuditing.Access(
-                    auditing, authorization, query.Scope, query.CorrelationId, record, candidate.PermittingGrantId));
+                    auditing,
+                    authorization,
+                    query.Scope,
+                    query.CorrelationId,
+                    record,
+                    candidate.PermittingGrantId,
+                    disclosures[i]));
             }
         }
 
@@ -535,7 +556,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         }
     }
 
-    private static async Task<ExperienceVectorSearchResult> RunSearchAsync(
+    private static async Task<(ExperienceVectorSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> RunSearchAsync(
         NpgsqlConnection connection,
         ExperienceVectorQuery query,
         int dimension,
@@ -544,6 +565,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         CancellationToken cancellationToken)
     {
         var candidates = new List<ExperienceCandidate>();
+        var disclosures = new List<ExperienceGrantDisclosure?>();
         await using (var command = new NpgsqlCommand(SearchSql(dimension, readable), connection))
         {
             var parameters = command.Parameters;
@@ -562,12 +584,13 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                     ReadRelevance(reader),
                     PostgresExperienceRecordStore.ReadSharedByGrant(reader),
                     PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
+                disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(reader));
             }
         }
 
         if (candidates.Count > 0)
         {
-            return new(ExperienceVectorSearchOutcome.Found, candidates, NoErrors);
+            return (new(ExperienceVectorSearchOutcome.Found, candidates, NoErrors), disclosures);
         }
 
         // Only now -- an empty answer is the one case where "nothing similar" and "nothing
@@ -575,7 +598,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         // probe sees exactly what the search saw, grants included, so a recipient whose only
         // comparable population arrives through a grant is told which mismatch it hit.
         var mismatch = await ProbeCompatibilityAsync(connection, query, statuses, readable, cancellationToken).ConfigureAwait(false);
-        return new(mismatch ?? ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors);
+        return (new(mismatch ?? ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors), disclosures);
     }
 
     /// <summary>
@@ -603,11 +626,14 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         var scope = readable ? ReadableJoinScopeWithNamedGrantPredicate : ExactJoinScopePredicate;
         var shared = readable
             ? PostgresExperienceRecordStore.SharedByGrantColumn + ", " + PostgresExperienceRecordStore.PermittingGrantColumn
+                + ", " + PostgresExperienceRecordStore.PermittingDisclosureColumn
             : "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
-                + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias;
+                + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
+                + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias;
 
         // The lateral join both decides the grant branch and names the grant, so a candidate this
-        // channel discloses carries the same ID its access row does. It exposes only grant_id, so every
+        // channel discloses carries the same ID its access row does, and the access row the same level.
+        // It exposes only grant_id and disclosure, both read qualified, so every
         // unqualified name in the rest of the statement still resolves exactly as it did.
         var grantJoin = readable ? " " + PostgresExperienceRecordStore.PermittingGrantJoin : string.Empty;
 

@@ -465,6 +465,13 @@ internal static class ExperienceRecordValidator
                 $"must not be more than {policy.MaxLifetime} from now, which is the configured maximum grant lifetime."));
         }
 
+        if (!Enum.IsDefined(request.Disclosure))
+        {
+            // An undefined level is never guessed into a defined one: stored, it could only be read
+            // back as "not told", and issuing a grant whose disclosure nobody chose is not a grant.
+            errors.Add(new("Disclosure", "must be LessonOnly or LessonAndApproach."));
+        }
+
         if (request.RecordScope is { } record && request.RecipientScope is { } recipient)
         {
             RequireSameBound(record.TenantId, recipient.TenantId, "RecipientScope.TenantId", errors);
