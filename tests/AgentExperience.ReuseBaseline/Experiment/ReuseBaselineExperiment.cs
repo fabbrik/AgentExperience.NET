@@ -952,6 +952,7 @@ public static class ReuseBaselineExperiment
         }
 
         var verdict = VerificationAggregator.Aggregate(
+            ids.RunId,
             evidence,
             RequiredChecks,
             new ClosedVerificationRound(ids.ClosedRoundId, ArtifactRevision),

@@ -425,13 +425,23 @@ namespace AgentExperience.Core.Reflections
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.Reflection> ReflectAsync(AgentExperience.Core.Reflections.ReflectionRequest request, System.Threading.CancellationToken cancellationToken = default);
     }
+    public sealed class ReflectionBindingException : System.ArgumentException
+    {
+        public ReflectionBindingException() { }
+        public ReflectionBindingException(string message) { }
+        public ReflectionBindingException(string message, System.Exception innerException) { }
+        public ReflectionBindingException(string message, string? paramName, System.Guid runId, string mismatchedField) { }
+        public string? MismatchedField { get; }
+        public System.Guid RunId { get; }
+    }
     public sealed class ReflectionRequest : System.IEquatable<AgentExperience.Core.Reflections.ReflectionRequest>
     {
         public ReflectionRequest(AgentExperience.Abstractions.ExperienceRun Run, AgentExperience.Core.Verification.VerificationResult Evaluation, System.Guid ReflectionId, System.DateTimeOffset CreatedAt) { }
         public System.DateTimeOffset CreatedAt { get; init; }
-        public AgentExperience.Core.Verification.VerificationResult Evaluation { get; init; }
+        public AgentExperience.Core.Verification.VerificationResult Evaluation { get; }
         public System.Guid ReflectionId { get; init; }
-        public AgentExperience.Abstractions.ExperienceRun Run { get; init; }
+        public AgentExperience.Abstractions.ExperienceRun Run { get; }
+        public void EnsureMatches(AgentExperience.Abstractions.Reflection reflection) { }
     }
 }
 namespace AgentExperience.Core.Retrieval
@@ -626,9 +636,11 @@ namespace AgentExperience.Core.Verification
     }
     public sealed class RequiredCheck : System.IEquatable<AgentExperience.Core.Verification.RequiredCheck>
     {
-        public RequiredCheck(string CheckId, string? ExpectedKind = null) { }
+        public const string AnyKind = "*";
+        public RequiredCheck(string CheckId, string ExpectedKind) { }
+        public bool AcceptsAnyKind { get; }
         public string CheckId { get; init; }
-        public string? ExpectedKind { get; init; }
+        public string ExpectedKind { get; init; }
         public bool Accepts(string? evidenceKind) { }
     }
     public static class TaskCheckEvaluators
@@ -642,14 +654,24 @@ namespace AgentExperience.Core.Verification
     public static class VerificationAggregator
     {
         public const string RuleVersion = "1.0.0";
-        public static AgentExperience.Core.Verification.VerificationResult Aggregate(System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> evidence, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> requiredChecks, AgentExperience.Core.Verification.ClosedVerificationRound? closedRound, string currentArtifactRevision, System.DateTimeOffset evaluatedAt, System.Threading.CancellationToken cancellationToken = default) { }
+        public static AgentExperience.Core.Verification.VerificationResult Aggregate(System.Guid runId, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> evidence, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> requiredChecks, AgentExperience.Core.Verification.ClosedVerificationRound? closedRound, string currentArtifactRevision, System.DateTimeOffset evaluatedAt, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class VerificationBasis : System.IEquatable<AgentExperience.Core.Verification.VerificationBasis>
+    {
+        public VerificationBasis(System.Guid RunId, AgentExperience.Core.Verification.ClosedVerificationRound? ClosedRound, string CurrentArtifactRevision, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> RequiredChecks) { }
+        public AgentExperience.Core.Verification.ClosedVerificationRound? ClosedRound { get; init; }
+        public string CurrentArtifactRevision { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> RequiredChecks { get; init; }
+        public System.Guid RunId { get; init; }
+        public bool Equals(AgentExperience.Core.Verification.VerificationBasis? other) { }
+        public override int GetHashCode() { }
     }
     public sealed class VerificationResult : System.IEquatable<AgentExperience.Core.Verification.VerificationResult>
     {
-        public VerificationResult(AgentExperience.Abstractions.Outcome Outcome, double CompletionScore, string RuleVersion) { }
-        public double CompletionScore { get; init; }
-        public AgentExperience.Abstractions.Outcome Outcome { get; init; }
-        public string RuleVersion { get; init; }
+        public AgentExperience.Core.Verification.VerificationBasis Basis { get; }
+        public double CompletionScore { get; }
+        public AgentExperience.Abstractions.Outcome Outcome { get; }
+        public string RuleVersion { get; }
     }
     public enum WorkflowCompletionStatus
     {

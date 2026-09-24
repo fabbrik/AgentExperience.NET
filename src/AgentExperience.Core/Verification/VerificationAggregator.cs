@@ -72,13 +72,15 @@ public static class VerificationAggregator
     /// only the evidence in <paramref name="closedRound"/> for <paramref name="currentArtifactRevision"/>
     /// -- see this type's remarks for the full selection, per-check, and overall-verdict rules.
     /// </summary>
+    /// <param name="runId">The run being evaluated. Recorded on the result's <see cref="VerificationResult.Basis"/>, which is what binds the result to that run (see <see cref="AgentExperience.Core.Reflections.ReflectionRequest"/>). Must not be <see cref="Guid.Empty"/>.</param>
     /// <param name="evidence">All evidence available to consider, in the order it was produced. Never filtered or reordered by the caller; this call does that filtering itself. A <see langword="null"/> entry is a caller error and throws.</param>
-    /// <param name="requiredChecks">The task's declared required checks, whose <see cref="RequiredCheck.CheckId"/>s must be unique (a duplicate is a caller error and throws, rather than silently skewing the completion score) and non-blank. A <see langword="null"/> entry is a caller error and throws. An empty set always yields <see cref="TaskVerificationStatus.Unknown"/>.</param>
+    /// <param name="requiredChecks">The task's declared required checks, whose <see cref="RequiredCheck.CheckId"/>s must be unique (a duplicate is a caller error and throws, rather than silently skewing the completion score) and non-blank, and each of which must name a non-blank <see cref="RequiredCheck.ExpectedKind"/> (<see cref="RequiredCheck.AnyKind"/> to accept any kind; a blank kind throws). A <see langword="null"/> entry is a caller error and throws. An empty set always yields <see cref="TaskVerificationStatus.Unknown"/>.</param>
     /// <param name="closedRound">The host-closed verification round and artifact revision to read from, or <see langword="null"/> if the host has not closed a round yet. Never agent-suppliable -- only a host establishes this.</param>
     /// <param name="currentArtifactRevision">The artifact's current revision. If it does not match <paramref name="closedRound"/>'s own revision, verification is stale.</param>
     /// <param name="evaluatedAt">When this aggregation is being performed.</param>
     /// <param name="cancellationToken">Checked cooperatively; a cancelled call throws rather than returning any <see cref="VerificationResult"/>.</param>
     public static VerificationResult Aggregate(
+        Guid runId,
         IReadOnlyList<Evidence> evidence,
         IReadOnlyList<RequiredCheck> requiredChecks,
         ClosedVerificationRound? closedRound,
@@ -94,7 +96,7 @@ public static class VerificationAggregator
         VerificationResult result;
         try
         {
-            result = AggregateCore(evidence, requiredChecks, closedRound, currentArtifactRevision, evaluatedAt, cancellationToken);
+            result = AggregateCore(runId, evidence, requiredChecks, closedRound, currentArtifactRevision, evaluatedAt, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -112,6 +114,7 @@ public static class VerificationAggregator
     /// that guards the call, and it is <see langword="private"/> because every caller -- this library's
     /// own finalization included -- goes through the instrumented entry point.
     /// </summary>
+    /// <param name="runId">The run being evaluated.</param>
     /// <param name="evidence">The evidence to aggregate.</param>
     /// <param name="requiredChecks">The checks the round must satisfy.</param>
     /// <param name="closedRound">The host-closed verification round, if any.</param>
@@ -120,6 +123,7 @@ public static class VerificationAggregator
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>The verification verdict.</returns>
     private static VerificationResult AggregateCore(
+        Guid runId,
         IReadOnlyList<Evidence> evidence,
         IReadOnlyList<RequiredCheck> requiredChecks,
         ClosedVerificationRound? closedRound,
@@ -127,9 +131,19 @@ public static class VerificationAggregator
         DateTimeOffset evaluatedAt,
         CancellationToken cancellationToken)
     {
+        if (runId == Guid.Empty)
+        {
+            throw new ArgumentException("The run being evaluated must be named; Guid.Empty names no run.", nameof(runId));
+        }
+
         ArgumentNullException.ThrowIfNull(evidence);
         ArgumentNullException.ThrowIfNull(requiredChecks);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentArtifactRevision);
+
+        // One read of each caller list: what is validated, what the basis records, and what is
+        // aggregated are the same entries even if the caller's list changes underneath this call.
+        evidence = evidence.ToArray();
+        requiredChecks = requiredChecks.ToArray();
 
         // Invalid input throws -- never silently dropped or tolerated into a fabricated result, per
         // TaskCheckEvaluators' own convention.
@@ -148,9 +162,13 @@ public static class VerificationAggregator
             throw new ArgumentException("Required check IDs must not be null, empty, or whitespace.", nameof(requiredChecks));
         }
 
-        if (requiredChecks.Any(c => c.ExpectedKind is not null && string.IsNullOrWhiteSpace(c.ExpectedKind)))
+        // Default-deny: a check must say which evidence kind satisfies it. "Any kind" is never implied
+        // by a missing value; it is spelled RequiredCheck.AnyKind.
+        if (requiredChecks.Any(c => string.IsNullOrWhiteSpace(c.ExpectedKind)))
         {
-            throw new ArgumentException("A required check's ExpectedKind must be null or non-blank.", nameof(requiredChecks));
+            throw new ArgumentException(
+                $"Every required check must name the evidence kind that satisfies it (ExpectedKind must be non-blank); use RequiredCheck.AnyKind (\"{RequiredCheck.AnyKind}\") to accept evidence of any kind explicitly.",
+                nameof(requiredChecks));
         }
 
         if (requiredChecks.Select(c => c.CheckId).Distinct(StringComparer.Ordinal).Count() != requiredChecks.Count)
@@ -160,24 +178,29 @@ public static class VerificationAggregator
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        // The basis is a copy: a caller that later mutates the list it passed cannot change what this
+        // result says it was computed from.
+        var basis = new VerificationBasis(runId, closedRound, currentArtifactRevision, Array.AsReadOnly((RequiredCheck[])requiredChecks));
+
         // Stale/unclosed short-circuit -- no round or revision selection from evidence or
         // requiredChecks themselves is ever consulted here; only the host-supplied closedRound
         // decides. Nothing is examined further.
         if (closedRound is null)
         {
-            return UnknownResult("No verification round has been closed by the host; verification is unclosed.", evaluatedAt);
+            return UnknownResult("No verification round has been closed by the host; verification is unclosed.", evaluatedAt, basis);
         }
 
         if (!string.Equals(closedRound.ArtifactRevision, currentArtifactRevision, StringComparison.Ordinal))
         {
             return UnknownResult(
                 $"The host-closed verification round applies to artifact revision '{closedRound.ArtifactRevision}', which does not match the current artifact revision '{currentArtifactRevision}'; verification is stale.",
-                evaluatedAt);
+                evaluatedAt,
+                basis);
         }
 
         if (requiredChecks.Count == 0)
         {
-            return UnknownResult("No required checks were declared for this task; an empty required set can never be conclusively verified.", evaluatedAt);
+            return UnknownResult("No required checks were declared for this task; an empty required set can never be conclusively verified.", evaluatedAt, basis);
         }
 
         // Filter to exactly the host-closed round and current artifact revision -- never blended
@@ -228,7 +251,7 @@ public static class VerificationAggregator
         // The evidence backing the outcome, in the order it was produced (Outcome.Evidence's own
         // contract) -- the original evidence list's own order, not the order requiredChecks
         // happened to name checks in. Drawn only from the already round/revision-scoped selection.
-        var contributingEvidence = selectedEvidence.Where(e => contributingEvidenceIds.Contains(e.EvidenceId)).ToList();
+        var contributingEvidence = selectedEvidence.Where(e => contributingEvidenceIds.Contains(e.EvidenceId)).ToList().AsReadOnly();
 
         if (failedCheckIds.Count > 0)
         {
@@ -239,7 +262,8 @@ public static class VerificationAggregator
                     $"Required check(s) resolved to Fail in the host-closed verification round: {string.Join(", ", failedCheckIds)}; a Fail always dominates a Pass recorded for the same check.",
                     evaluatedAt),
                 completionScore,
-                RuleVersion);
+                RuleVersion,
+                basis);
         }
 
         if (unknownCheckIds.Count > 0)
@@ -251,7 +275,8 @@ public static class VerificationAggregator
                     $"Required check(s) have no conclusive Pass/Fail evidence (missing, errored, or genuinely inconclusive) in the host-closed verification round: {string.Join(", ", unknownCheckIds)}.",
                     evaluatedAt),
                 completionScore,
-                RuleVersion);
+                RuleVersion,
+                basis);
         }
 
         return new VerificationResult(
@@ -261,11 +286,12 @@ public static class VerificationAggregator
                 "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
                 evaluatedAt),
             completionScore,
-            RuleVersion);
+            RuleVersion,
+            basis);
     }
 
-    private static VerificationResult UnknownResult(string reason, DateTimeOffset evaluatedAt) =>
-        new(new Outcome(TaskVerificationStatus.Unknown, [], reason, evaluatedAt), CompletionScore: 0.0, RuleVersion);
+    private static VerificationResult UnknownResult(string reason, DateTimeOffset evaluatedAt, VerificationBasis basis) =>
+        new(new Outcome(TaskVerificationStatus.Unknown, Array.Empty<Evidence>(), reason, evaluatedAt), completionScore: 0.0, RuleVersion, basis);
 
     /// <summary>
     /// Resolves one required check's verdict from the (possibly empty) selected evidence carrying

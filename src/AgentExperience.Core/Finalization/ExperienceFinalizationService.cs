@@ -44,7 +44,8 @@ namespace AgentExperience.Core.Finalization;
 /// <b>Validated vs quarantined.</b> A verified evaluation plus a successful reflection plus a
 /// permitting storage decision produces a <see cref="ExperienceStatus.Validated"/> record with reuse
 /// confidence <c>2/3</c>, one supporting validation and no contradictions. A permitted record whose
-/// verification is not <see cref="TaskVerificationStatus.Verified"/>, or whose reflection threw, is
+/// verification is not <see cref="TaskVerificationStatus.Verified"/>, or whose reflection threw or did
+/// not match its request (<see cref="ReflectionRequest.EnsureMatches"/>), is
 /// <see cref="ExperienceStatus.Quarantined"/> instead, carrying no reflection at all and safe failure
 /// metadata on the result. Reflection is not even attempted for an unverified run, so an unreflected
 /// lesson can never reach a quarantined record. Confidence is never computed from evidence counts
@@ -405,6 +406,7 @@ public sealed class ExperienceFinalizationService
             // The public, instrumented sibling: verifying is a real operation whichever caller asked
             // for it, and a finalization that verifies is a `verify` span nested in a `finalize` one.
             evaluation = VerificationAggregator.Aggregate(
+                run.RunId,
                 request.Evidence,
                 request.RequiredChecks,
                 request.ClosedRound,
@@ -464,10 +466,9 @@ public sealed class ExperienceFinalizationService
         {
             try
             {
+                var reflectionRequest = new ReflectionRequest(run, evaluation, ReflectionIdFor(run.RunId), finalizedAt);
                 reflection = await _reflector
-                    .ReflectAsync(
-                        new ReflectionRequest(run, evaluation, ReflectionIdFor(run.RunId), finalizedAt),
-                        cancellationToken)
+                    .ReflectAsync(reflectionRequest, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (reflection is null)
@@ -477,6 +478,29 @@ public sealed class ExperienceFinalizationService
                         "The reflector returned no reflection; the record is quarantined without an eligible lesson.",
                         NoErrors,
                         Exception: null);
+                }
+                else
+                {
+                    // The reflector is a host seam and is not trusted to have copied its request: a
+                    // reflection for another run, or one that re-judged the verdict or the evidence, is
+                    // handled exactly like a reflector that threw.
+                    try
+                    {
+                        // Checked and stored from one snapshot: a host list that changes after it
+                        // was checked (or enumerates differently the second time) cannot put
+                        // unchecked evidence IDs on the record.
+                        reflection = reflection with { EvidenceIds = reflection.EvidenceIds?.ToArray()! };
+                        reflectionRequest.EnsureMatches(reflection);
+                    }
+                    catch (ReflectionBindingException ex)
+                    {
+                        reflection = null;
+                        failure = new FinalizationFailure(
+                            FinalizationStage.Reflect,
+                            $"The reflector returned a reflection whose {ex.MismatchedField} does not match its request; the record is quarantined without an eligible lesson.",
+                            NoErrors,
+                            ex);
+                    }
                 }
             }
             catch (OperationCanceledException)

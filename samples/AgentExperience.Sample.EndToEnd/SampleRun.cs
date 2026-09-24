@@ -242,13 +242,13 @@ public sealed class SampleRun
         //    obtained by *constructing* a closed round for that ID, which is a different question
         //    from the one above and has a different answer.
         var unclosedVerdict = VerificationAggregator.Aggregate(
-            allEvidence, RequiredChecks, closedRound: null, ArtifactRevision, _clock.GetUtcNow());
+            runAId, allEvidence, RequiredChecks, closedRound: null, ArtifactRevision, _clock.GetUtcNow());
 
         var firstRoundClosedVerdict = VerificationAggregator.Aggregate(
-            allEvidence, RequiredChecks, new ClosedVerificationRound(FirstRoundId, ArtifactRevision), ArtifactRevision, _clock.GetUtcNow());
+            runAId, allEvidence, RequiredChecks, new ClosedVerificationRound(FirstRoundId, ArtifactRevision), ArtifactRevision, _clock.GetUtcNow());
 
         var verdict = VerificationAggregator.Aggregate(
-            allEvidence, RequiredChecks, closedRound, ArtifactRevision, _clock.GetUtcNow());
+            runAId, allEvidence, RequiredChecks, closedRound, ArtifactRevision, _clock.GetUtcNow());
 
         Require(verdict.Outcome.Status == TaskVerificationStatus.Verified, 3, $"the closed round aggregated to {verdict.Outcome.Status}.");
         Require(firstRoundEvidence.Result == CheckResult.Fail, 3, $"attempt 1's evidence is CheckResult.{firstRoundEvidence.Result}, so the two attempts do not contrast.");

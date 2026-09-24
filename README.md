@@ -28,10 +28,8 @@ preview.
 | KL-1 | **Serial round trips on two paths, one of them the invocation's critical path.** `IExperienceEmbeddingGenerator.GenerateAsync` takes one string, so a re-index pass makes one provider call per record, in sequence. Injection re-reads each kept candidate with its own `GetAsync`, in sequence, before the invocation proceeds — up to `MaxRecords` (default 8) round trips inside `EligibilityCheckTimeout` (default 2 s). Story 4.4 charges both to the memory-enabled condition only, so it reports `elapsed_ms` and keeps it out of its gate. Batching is a breaking change to a public port, deliberately not made in the release that introduces the API baseline | [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check); [Indexing](#indexing-experience-for-semantic-reuse); the 4.4 report (`tests/AgentExperience.ReuseBaseline`) |
 | KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
 | KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the three purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
-| KL-5 | **Default-deny on evidence kind is opt-in per check.** A `RequiredCheck` with a null `ExpectedKind` accepts evidence of any kind | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here); `RequiredCheck` |
-| KL-6 | **A reflection can be paired with the wrong evaluation by a host that calls `IExperienceReflector` directly.** Finalization computes the evaluation itself, so it cannot mismatch; a direct caller can | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here) |
 | KL-8 | **An approach is its tool names only.** Approaches that differ by argument render identically in the `Approach:` line; a host whose lessons turn on arguments needs its own reflector to say so in the lesson | [Adapter: the payload](src/AgentExperience.MicrosoftAgentFramework/README.md#the-payload) |
-| KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
+| KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call. The same trust binds an evaluation to its run: the aggregator records the run ID it is given, and evidence carries none | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
 | KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 
@@ -70,6 +68,19 @@ Resolved, shipping in the next preview:
   30 days, by the database's clock: a later cutoff is refused rather than clamped, and the append-only guard
   re-checks every row. Erasing a record still keeps its access rows. It is the `grant.access.purge` telemetry
   operation. See [Store: retention for the access log](src/AgentExperience.Storage.Postgres/README.md#retention-for-the-grant-access-log).
+- KL-5 (default-deny on evidence kind opt-in per check) is resolved by story 5.5. `RequiredCheck`'s `ExpectedKind` is
+  now required; accepting any kind is spelled `RequiredCheck.AnyKind` (`"*"`), and a null or blank kind is refused by
+  the aggregator rather than read as "any". **Breaking:** `new RequiredCheck("id")` no longer compiles. See
+  [Verifying a run](#verifying-a-run-and-binding-its-evaluation).
+- KL-6 (a reflection pairable with the wrong evaluation by a direct caller) is resolved by story 5.5. An evaluation
+  now records the run, round, revision and checks it was computed from, only `VerificationAggregator.Aggregate` can
+  make one, and a `ReflectionRequest` cannot be constructed from an evaluation computed for another run
+  (`ReflectionBindingException`). Finalization also checks every reflection a reflector returns against its request
+  and quarantines one that does not match. **Breaking:** `Aggregate` takes the run ID first, `VerificationResult` has
+  no public constructor (so it can no longer be deserialized), a request's `Run` and `Evaluation` cannot be replaced
+  with `with`, and a run whose own outcome disagrees with the evaluation now fails at request construction rather
+  than inside the default reflector. The binding is only as strong as the run ID a host supplies, which is now part
+  of KL-11; see [Verifying a run](#verifying-a-run-and-binding-its-evaluation).
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -175,7 +186,7 @@ else
 | Outcome | When | What was written |
 | --- | --- | --- |
 | `Validated` | Verified, reflection succeeded, storage permitted | The record (reuse confidence 2/3, one supporting validation, no contradictions), created as `Candidate`, plus the initial event that moved it to `Validated` |
-| `Quarantined` | Storage permitted, but verification did not pass or the reflector threw | The record, with **no** reflection, created as `Candidate`, plus the initial event that moved it to `Quarantined`. `Failure` names the stage that decided it |
+| `Quarantined` | Storage permitted, but verification did not pass, or the reflector threw, returned nothing, or returned a reflection that does not match its request | The record, with **no** reflection, created as `Candidate`, plus the initial event that moved it to `Quarantined`. `Failure` names the stage that decided it |
 | `AlreadyFinalized` | This run's record already exists *and* is already confirmed | Nothing. The result reports the stored record, status, and revision. (A record left unconfirmed by an earlier call is resumed instead: the retry commits its initial event and returns `Validated`/`Quarantined`.) |
 | `StorageDenied` | The host's `StorageDecision` denied | Nothing at all, and no record ID is issued |
 | `NotAuthorized` | The run's scope lies outside the authorization | Nothing; denied before any store call |
@@ -202,6 +213,34 @@ reaches an Experience Record, and never becomes something a grant could later sh
 If an indexing hook is registered, one more thing happens *after* those six stages: the committed record is embedded
 and its vector stored. That step is outside the canonical write and can never change the outcome above — see
 [Indexing experience for semantic reuse](#indexing-experience-for-semantic-reuse).
+
+### Verifying a run, and binding its evaluation
+
+Every required check names the evidence kind that satisfies it, and matching is default-deny: evidence of any other
+kind is ignored, so a check it was not meant for stays `Unknown` rather than passing. A check that really should
+accept any producer says so explicitly with `RequiredCheck.AnyKind`; a null or blank kind is an `ArgumentException`
+from `VerificationAggregator.Aggregate`, never an implied wildcard.
+
+```csharp
+RequiredChecks: [
+    new RequiredCheck("unit-tests-pass", ExpectedKind: "TestResult"),
+    new RequiredCheck("reviewed", ExpectedKind: RequiredCheck.AnyKind),   // explicit, visible opt-in
+]
+```
+
+An evaluation is bound to the run it was computed for. `VerificationAggregator.Aggregate(runId, ...)` is the only
+way to get a `VerificationResult`, and its `Basis` records the run ID, the closed round, the artifact revision and a
+copy of the required checks. A `ReflectionRequest` refuses an evaluation whose basis names another run with a
+`ReflectionBindingException` (an `ArgumentException`), so every `IExperienceReflector`, the default one or a host's,
+only ever receives a run together with its own evaluation. On the way back, `ReflectionRequest.EnsureMatches`
+checks that a reflection carries its request's identity and copies its evaluation's verdict, score, rule version
+and evidence IDs; finalization applies it to every reflection, and a host that calls a reflector directly can too.
+
+What the binding cannot do: it is exactly as strong as the run ID. Evidence carries no run ID, so the library cannot
+tell whether the round and evidence a host aggregated under a run ID really belong to that run, and a host that
+re-stamps another run with `run with { RunId = ... }` is refused only when that run's own recorded outcome
+contradicts the evaluation. That remains the host's statement, like every other host-supplied identifier (KL-11). A host that calls a reflector and then writes records without finalization is
+writing records itself, and nothing but its own call to `EnsureMatches` checks that path.
 
 ## Moving a record through its lifecycle
 

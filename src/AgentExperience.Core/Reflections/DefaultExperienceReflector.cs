@@ -232,18 +232,10 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
     private static void Validate(ReflectionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.Run is null)
-        {
-            throw new ArgumentNullException(nameof(request), "The reflection request's Run must not be null.");
-        }
-
-        if (request.Evaluation is null)
-        {
-            throw new ArgumentNullException(nameof(request), "The reflection request's Evaluation must not be null.");
-        }
-
+        // The request's constructor already refused an evaluation computed for another run; this is
+        // the same check again, so the default reflector never depends on how its request was made.
         var run = request.Run;
-        var evaluation = request.Evaluation;
+        var evaluation = ReflectionRequest.EnsureBound(run, request.Evaluation);
 
         if (string.IsNullOrWhiteSpace(run.TaskId))
         {
@@ -279,13 +271,6 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
         if (!Enum.IsDefined(outcome.Status))
         {
             throw new ArgumentException("The evaluation's Outcome.Status is not a defined TaskVerificationStatus value.", nameof(request));
-        }
-
-        if (run.Outcome is not null && run.Outcome.Status != outcome.Status)
-        {
-            throw new ArgumentException(
-                Invariant($"The run's own Outcome.Status ({run.Outcome.Status}) does not match the evaluation's Outcome.Status ({outcome.Status})."),
-                nameof(request));
         }
 
         if (string.IsNullOrWhiteSpace(evaluation.RuleVersion))

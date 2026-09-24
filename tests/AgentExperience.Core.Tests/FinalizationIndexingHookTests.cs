@@ -296,7 +296,7 @@ public class FinalizationIndexingHookTests
             RunId: RunId,
             Authorization: Authorization,
             ClosedRound: Round,
-            RequiredChecks: [new RequiredCheck("tests")],
+            RequiredChecks: [new RequiredCheck("tests", "TestResult")],
             Evidence:
             [
                 new Evidence(

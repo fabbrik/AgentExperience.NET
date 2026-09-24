@@ -62,8 +62,8 @@ internal static class ReflectionFixtures
             StartedAt: BaseTime,
             EndedAt: executionStatus is null ? null : BaseTime.AddMinutes(1));
 
-    /// <summary>A required check that accepts evidence of any kind unless a kind is named.</summary>
-    public static RequiredCheck Check(string checkId, string? expectedKind = null) => new(checkId, expectedKind);
+    /// <summary>A required check satisfied by <c>TestResult</c> evidence (what <see cref="Evidence"/> produces) unless another kind is named.</summary>
+    public static RequiredCheck Check(string checkId, string expectedKind = "TestResult") => new(checkId, expectedKind);
 
     public static Evidence Evidence(int index, string checkId, CheckResult result) =>
         new(
@@ -79,18 +79,18 @@ internal static class ReflectionFixtures
 
     public static VerificationResult Verified() =>
         VerificationAggregator.Aggregate(
-            [Evidence(1, "build", CheckResult.Pass), Evidence(2, "tests", CheckResult.Pass)],
+            RunId, [Evidence(1, "build", CheckResult.Pass), Evidence(2, "tests", CheckResult.Pass)],
             [Check("build"), Check("tests")], Round, Round.ArtifactRevision, BaseTime);
 
     public static VerificationResult Failed() =>
         VerificationAggregator.Aggregate(
-            [Evidence(1, "build", CheckResult.Fail), Evidence(2, "tests", CheckResult.Pass)],
+            RunId, [Evidence(1, "build", CheckResult.Fail), Evidence(2, "tests", CheckResult.Pass)],
             [Check("build"), Check("tests")], Round, Round.ArtifactRevision, BaseTime);
 
     /// <summary>"build" passes, "tests" has no evidence: Unknown with completion score 0.5.</summary>
     public static VerificationResult Unknown() =>
         VerificationAggregator.Aggregate(
-            [Evidence(1, "build", CheckResult.Pass)],
+            RunId, [Evidence(1, "build", CheckResult.Pass)],
             [Check("build"), Check("tests")], Round, Round.ArtifactRevision, BaseTime);
 
     /// <summary>Attempt 0 errors, attempt 1 completes.</summary>
@@ -102,6 +102,10 @@ internal static class ReflectionFixtures
 
     public static ReflectionRequest Request(ExperienceRun run, VerificationResult evaluation) =>
         new(run, evaluation, ReflectionId, BaseTime.AddMinutes(5));
+
+    /// <summary>Aggregates <paramref name="evidence"/> for <see cref="RunId"/> in <see cref="Round"/>.</summary>
+    public static VerificationResult Evaluate(IReadOnlyList<Evidence> evidence, params RequiredCheck[] checks) =>
+        VerificationAggregator.Aggregate(RunId, evidence, checks, Round, Round.ArtifactRevision, BaseTime);
 
     public static string ToJson(Reflection reflection) => JsonSerializer.Serialize(reflection);
 }
@@ -312,15 +316,17 @@ public class DefaultExperienceReflectorTests
     {
         var first = ReflectionFixtures.Evidence(7, "tests", CheckResult.Pass);
         var second = ReflectionFixtures.Evidence(3, "build", CheckResult.Pass);
-        var evaluation = new VerificationResult(
-            new Outcome(TaskVerificationStatus.Verified, [first, second, first], "all passed", ReflectionFixtures.BaseTime),
-            1.0,
-            "custom-rule");
+        var evaluation = ReflectionFixtures.Evaluate([first, second, first], ReflectionFixtures.Check("build"), ReflectionFixtures.Check("tests"));
+        Assert.Equal([first, second, first], evaluation.Outcome.Evidence);
 
-        var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation));
+        var request = ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation);
+        var reflection = await _reflector.ReflectAsync(request);
 
         Assert.Equal([first.EvidenceId, second.EvidenceId], reflection.EvidenceIds);
-        Assert.Equal("custom-rule", reflection.VerificationRuleVersion);
+        Assert.Equal(VerificationAggregator.RuleVersion, reflection.VerificationRuleVersion);
+
+        // Distinct IDs in produced order is what the binding check expects too.
+        request.EnsureMatches(reflection);
     }
 
     [Theory]
@@ -359,34 +365,24 @@ public class DefaultExperienceReflectorTests
     [Fact]
     public async Task Failed_lesson_matches_the_documented_template_including_the_quoted_reason()
     {
-        var evaluation = new VerificationResult(
-            new Outcome(
-                TaskVerificationStatus.Failed,
-                [ReflectionFixtures.Evidence(1, "build", CheckResult.Fail), ReflectionFixtures.Evidence(2, "tests", CheckResult.Pass)],
-                "build failed in round 3",
-                ReflectionFixtures.BaseTime),
-            0.5,
-            "1.0.0");
+        var evaluation = ReflectionFixtures.Failed();
 
         var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation));
 
         Assert.Equal(
-            "Task 'fix-build' failed verification: required checks [build] failed (evidence: aaaaaaaa-0000-0000-0000-000000000001, aaaaaaaa-0000-0000-0000-000000000002). Evaluation reason: \"build failed in round 3\".",
+            "Task 'fix-build' failed verification: required checks [build] failed (evidence: aaaaaaaa-0000-0000-0000-000000000001, aaaaaaaa-0000-0000-0000-000000000002). Evaluation reason: \"Required check(s) resolved to Fail in the host-closed verification round: build; a Fail always dominates a Pass recorded for the same check.\".",
             reflection.Lesson);
     }
 
     [Fact]
     public async Task Unknown_lesson_matches_the_documented_template()
     {
-        var evaluation = new VerificationResult(
-            new Outcome(TaskVerificationStatus.Unknown, [ReflectionFixtures.Evidence(1, "build", CheckResult.Pass)], "tests has no evidence", ReflectionFixtures.BaseTime),
-            0.5,
-            "1.0.0");
+        var evaluation = ReflectionFixtures.Unknown();
 
         var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation));
 
         Assert.Equal(
-            "Task 'fix-build' is unverified: no conclusive verification was reached (completion score 0.5 under rule 1.0.0; evidence: aaaaaaaa-0000-0000-0000-000000000001). Evaluation reason: \"tests has no evidence\".",
+            "Task 'fix-build' is unverified: no conclusive verification was reached (completion score 0.5 under rule 1.0.0; evidence: aaaaaaaa-0000-0000-0000-000000000001). Evaluation reason: \"Required check(s) have no conclusive Pass/Fail evidence (missing, errored, or genuinely inconclusive) in the host-closed verification round: tests.\".",
             reflection.Lesson);
     }
 
@@ -394,15 +390,16 @@ public class DefaultExperienceReflectorTests
     public async Task Quoted_text_escapes_backslash_double_quote_and_line_breaks_but_keeps_other_characters()
     {
         var attempts = new[] { ReflectionFixtures.Attempt(0, null, "café said \"no\" at C:\\tmp\r\nline 2") };
-        var evaluation = new VerificationResult(
-            new Outcome(TaskVerificationStatus.Failed, [], "reason with \"quotes\"", ReflectionFixtures.BaseTime),
-            0.0,
-            "1.0.0");
+        // The evaluation reason is the aggregator's, and it names the failing check, so a check ID
+        // with quotes in it puts quotes into the reason.
+        var evaluation = ReflectionFixtures.Evaluate(
+            [ReflectionFixtures.Evidence(1, "say \"hi\"", CheckResult.Fail)],
+            ReflectionFixtures.Check("say \"hi\""));
 
         var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run(attempts), evaluation));
 
         Assert.Equal("Attempt 0 with no tool calls ended with error: \"café said \\\"no\\\" at C:\\\\tmp\\r\\nline 2\".", Assert.Single(reflection.FailedApproaches));
-        Assert.EndsWith("Evaluation reason: \"reason with \\\"quotes\\\"\".", reflection.Lesson);
+        Assert.EndsWith("Evaluation reason: \"Required check(s) resolved to Fail in the host-closed verification round: say \\\"hi\\\"; a Fail always dominates a Pass recorded for the same check.\".", reflection.Lesson);
     }
 
     [Theory]
@@ -426,18 +423,6 @@ public class DefaultExperienceReflectorTests
     }
 
     [Fact]
-    public async Task A_verified_evaluation_without_evidence_is_warned_and_the_lesson_says_evidence_none()
-    {
-        var evaluation = new VerificationResult(new Outcome(TaskVerificationStatus.Verified, [], null, ReflectionFixtures.BaseTime), 1.0, "1.0.0");
-
-        var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation));
-
-        Assert.Contains("(evidence: none)", reflection.Lesson);
-        Assert.Contains("Verification status is Verified, but the evaluation supplied no evidence.", reflection.Warnings);
-        Assert.Empty(reflection.EvidenceIds);
-    }
-
-    [Fact]
     public async Task Tool_calls_are_described_in_sequence_number_order_regardless_of_list_order()
     {
         var attempts = new[] { ReflectionFixtures.Attempt(0, "done", null, ReflectionFixtures.ToolCall(1, "second"), ReflectionFixtures.ToolCall(0, "first")) };
@@ -450,7 +435,7 @@ public class DefaultExperienceReflectorTests
     [Fact]
     public async Task Unknown_with_a_zero_completion_score_has_no_partial_score_warning()
     {
-        var evaluation = VerificationAggregator.Aggregate([], [ReflectionFixtures.Check("build")], null, "rev-1", ReflectionFixtures.BaseTime);
+        var evaluation = VerificationAggregator.Aggregate(ReflectionFixtures.RunId, [], [ReflectionFixtures.Check("build")], null, "rev-1", ReflectionFixtures.BaseTime);
         Assert.Equal(TaskVerificationStatus.Unknown, evaluation.Outcome.Status);
         Assert.Equal(0.0, evaluation.CompletionScore);
 
@@ -463,7 +448,10 @@ public class DefaultExperienceReflectorTests
     [Fact]
     public async Task A_tiny_completion_score_is_rendered_with_round_trip_precision()
     {
-        var evaluation = new VerificationResult(new Outcome(TaskVerificationStatus.Unknown, [], null, ReflectionFixtures.BaseTime), 0.0004, "1.0.0");
+        // One pass among 2,500 required checks: a completion score of 0.0004.
+        var checks = Enumerable.Range(0, 2500).Select(i => ReflectionFixtures.Check($"check-{i}")).ToArray();
+        var evaluation = ReflectionFixtures.Evaluate([ReflectionFixtures.Evidence(1, "check-0", CheckResult.Pass)], checks);
+        Assert.Equal(0.0004, evaluation.CompletionScore);
 
         var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation));
 
@@ -489,15 +477,6 @@ public class DefaultExperienceReflectorTests
     [InlineData("null-attempt-entry")]
     [InlineData("null-tool-calls")]
     [InlineData("null-tool-call-entry")]
-    [InlineData("null-outcome")]
-    [InlineData("null-evidence")]
-    [InlineData("null-evidence-entry")]
-    [InlineData("undefined-status")]
-    [InlineData("blank-rule-version")]
-    [InlineData("null-rule-version")]
-    [InlineData("score-nan")]
-    [InlineData("score-negative")]
-    [InlineData("score-above-one")]
     public async Task A_malformed_request_throws_ArgumentException(string defect)
     {
         var run = ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts());
@@ -513,15 +492,6 @@ public class DefaultExperienceReflectorTests
             "null-attempt-entry" => (run with { Attempts = [null!] }, evaluation),
             "null-tool-calls" => (run with { Attempts = [attempt with { ToolCalls = null! }] }, evaluation),
             "null-tool-call-entry" => (run with { Attempts = [attempt with { ToolCalls = [null!] }] }, evaluation),
-            "null-outcome" => (run, evaluation with { Outcome = null! }),
-            "null-evidence" => (run, evaluation with { Outcome = evaluation.Outcome with { Evidence = null! } }),
-            "null-evidence-entry" => (run, evaluation with { Outcome = evaluation.Outcome with { Evidence = [null!] } }),
-            "undefined-status" => (run, evaluation with { Outcome = evaluation.Outcome with { Status = (TaskVerificationStatus)99 } }),
-            "blank-rule-version" => (run, evaluation with { RuleVersion = " " }),
-            "null-rule-version" => (run, evaluation with { RuleVersion = null! }),
-            "score-nan" => (run, evaluation with { CompletionScore = double.NaN }),
-            "score-negative" => (run, evaluation with { CompletionScore = -0.1 }),
-            "score-above-one" => (run, evaluation with { CompletionScore = 1.1 }),
             _ => throw new ArgumentOutOfRangeException(nameof(defect)),
         };
 
@@ -535,17 +505,143 @@ public class DefaultExperienceReflectorTests
     }
 
     [Fact]
-    public async Task A_null_run_throws_ArgumentNullException()
+    public void A_request_with_a_null_run_cannot_be_constructed()
     {
-        var request = ReflectionFixtures.Request(null!, ReflectionFixtures.Verified());
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _reflector.ReflectAsync(request));
+        Assert.Throws<ArgumentNullException>(() => ReflectionFixtures.Request(null!, ReflectionFixtures.Verified()));
     }
 
     [Fact]
-    public async Task A_null_evaluation_throws_ArgumentNullException()
+    public void A_request_with_a_null_evaluation_cannot_be_constructed()
     {
-        var request = ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), null!);
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _reflector.ReflectAsync(request));
+        Assert.Throws<ArgumentNullException>(() => ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), null!));
+    }
+
+    [Theory]
+    [InlineData("verified")]
+    [InlineData("failed")]
+    [InlineData("unknown")]
+    public void KL6_a_request_pairing_a_run_with_another_runs_evaluation_cannot_be_constructed(string kind)
+    {
+        // The KL-6 pairing: run A's evaluation handed to a reflector together with run B. The
+        // evaluation says which run it was computed for, and the request refuses the mismatch before
+        // any reflector, default or host, is called.
+        var otherRunId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        var evidence = kind switch
+        {
+            "verified" => new[] { ReflectionFixtures.Evidence(1, "build", CheckResult.Pass) },
+            "failed" => [ReflectionFixtures.Evidence(1, "build", CheckResult.Fail)],
+            _ => [],
+        };
+        var otherRunsEvaluation = VerificationAggregator.Aggregate(
+            otherRunId, evidence, [ReflectionFixtures.Check("build")], ReflectionFixtures.Round, ReflectionFixtures.Round.ArtifactRevision, ReflectionFixtures.BaseTime);
+        var run = ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts());
+
+        var refused = Assert.Throws<ReflectionBindingException>(() => ReflectionFixtures.Request(run, otherRunsEvaluation));
+
+        Assert.IsAssignableFrom<ArgumentException>(refused);
+        Assert.Equal(run.RunId, refused.RunId);
+        Assert.Equal(nameof(VerificationBasis.RunId), refused.MismatchedField);
+        Assert.Equal("Evaluation", refused.ParamName);
+        Assert.Contains(otherRunId.ToString("D"), refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("other-run")]
+    [InlineData("null-run")]
+    [InlineData("null-evaluation")]
+    public async Task KL6_the_default_reflector_rechecks_the_binding_of_a_request_that_skipped_its_constructor(string defect)
+    {
+        // Defence in depth: a request materialized without its constructor (reflection, a serializer
+        // that writes fields) is re-checked by the default reflector itself.
+        var run = ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts());
+        var evaluation = defect == "other-run"
+            ? VerificationAggregator.Aggregate(
+                Guid.Parse("99999999-9999-9999-9999-999999999999"), [], [ReflectionFixtures.Check("build")], null, "rev-1", ReflectionFixtures.BaseTime)
+            : ReflectionFixtures.Verified();
+
+        var forged = (ReflectionRequest)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(ReflectionRequest));
+        SetBackingField(forged, nameof(ReflectionRequest.Run), defect == "null-run" ? null : run);
+        SetBackingField(forged, nameof(ReflectionRequest.Evaluation), defect == "null-evaluation" ? null : evaluation);
+        SetBackingField(forged, nameof(ReflectionRequest.ReflectionId), ReflectionFixtures.ReflectionId);
+
+        if (defect == "other-run")
+        {
+            await Assert.ThrowsAsync<ReflectionBindingException>(() => _reflector.ReflectAsync(forged));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<ArgumentNullException>(() => _reflector.ReflectAsync(forged));
+        }
+    }
+
+    private static void SetBackingField(ReflectionRequest request, string property, object? value) =>
+        typeof(ReflectionRequest)
+            .GetField($"<{property}>k__BackingField", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(request, value);
+
+    [Fact]
+    public void KL6_a_bound_request_cannot_be_re_paired_with_a_with_expression()
+    {
+        // Only the reflection identity and timestamp can be changed on a copy; the run and its
+        // evaluation stay together.
+        Assert.Null(typeof(ReflectionRequest).GetProperty(nameof(ReflectionRequest.Run))!.SetMethod);
+        Assert.Null(typeof(ReflectionRequest).GetProperty(nameof(ReflectionRequest.Evaluation))!.SetMethod);
+
+        var request = ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), ReflectionFixtures.Verified());
+        var copy = request with { ReflectionId = Guid.Parse("44444444-4444-4444-4444-444444444444") };
+        Assert.Same(request.Run, copy.Run);
+        Assert.Same(request.Evaluation, copy.Evaluation);
+    }
+
+    [Fact]
+    public async Task EnsureMatches_accepts_what_the_default_reflector_produced()
+    {
+        foreach (var evaluation in new[] { ReflectionFixtures.Verified(), ReflectionFixtures.Failed(), ReflectionFixtures.Unknown() })
+        {
+            var request = ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), evaluation);
+            request.EnsureMatches(await _reflector.ReflectAsync(request));
+        }
+    }
+
+    [Theory]
+    [InlineData(nameof(Reflection.ReflectionId))]
+    [InlineData(nameof(Reflection.ExperienceRunId))]
+    [InlineData(nameof(Reflection.CreatedAt))]
+    [InlineData(nameof(Reflection.VerificationStatus))]
+    [InlineData(nameof(Reflection.CompletionScore))]
+    [InlineData(nameof(Reflection.VerificationRuleVersion))]
+    [InlineData(nameof(Reflection.EvidenceIds))]
+    public async Task KL6_EnsureMatches_refuses_a_reflection_that_does_not_carry_its_request(string field)
+    {
+        var request = ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), ReflectionFixtures.Verified());
+        var reflection = await _reflector.ReflectAsync(request);
+
+        var tampered = field switch
+        {
+            nameof(Reflection.ReflectionId) => reflection with { ReflectionId = Guid.NewGuid() },
+            nameof(Reflection.ExperienceRunId) => reflection with { ExperienceRunId = Guid.NewGuid() },
+            nameof(Reflection.CreatedAt) => reflection with { CreatedAt = reflection.CreatedAt.AddSeconds(1) },
+            nameof(Reflection.VerificationStatus) => reflection with { VerificationStatus = TaskVerificationStatus.Failed },
+            nameof(Reflection.CompletionScore) => reflection with { CompletionScore = 0.5 },
+            nameof(Reflection.VerificationRuleVersion) => reflection with { VerificationRuleVersion = "custom-rule" },
+            _ => reflection with { EvidenceIds = [.. reflection.EvidenceIds.Reverse()] },
+        };
+
+        var refused = Assert.Throws<ReflectionBindingException>(() => request.EnsureMatches(tampered));
+        Assert.Equal(field, refused.MismatchedField);
+        Assert.Equal("reflection", refused.ParamName);
+    }
+
+    [Fact]
+    public async Task EnsureMatches_refuses_missing_or_extra_evidence_ids()
+    {
+        var request = ReflectionFixtures.Request(ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts()), ReflectionFixtures.Verified());
+        var reflection = await _reflector.ReflectAsync(request);
+
+        Assert.Throws<ReflectionBindingException>(() => request.EnsureMatches(reflection with { EvidenceIds = reflection.EvidenceIds.Take(1).ToArray() }));
+        Assert.Throws<ReflectionBindingException>(() => request.EnsureMatches(reflection with { EvidenceIds = [.. reflection.EvidenceIds, Guid.NewGuid()] }));
+        Assert.Throws<ReflectionBindingException>(() => request.EnsureMatches(reflection with { EvidenceIds = null! }));
+        Assert.Throws<ArgumentNullException>(() => request.EnsureMatches(null!));
     }
 
     [Fact]
@@ -556,12 +652,31 @@ public class DefaultExperienceReflectorTests
     }
 
     [Fact]
-    public async Task A_run_outcome_status_that_disagrees_with_the_evaluation_throws_ArgumentException()
+    public void A_run_outcome_status_that_disagrees_with_the_evaluation_cannot_be_paired_with_it()
     {
         var runOutcome = new Outcome(TaskVerificationStatus.Failed, [], "failed earlier", ReflectionFixtures.BaseTime);
         var run = ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts(), outcome: runOutcome);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _reflector.ReflectAsync(ReflectionFixtures.Request(run, ReflectionFixtures.Verified())));
+        var refused = Assert.Throws<ReflectionBindingException>(() => ReflectionFixtures.Request(run, ReflectionFixtures.Verified()));
+        Assert.Equal("Outcome.Status", refused.MismatchedField);
+    }
+
+    [Fact]
+    public void KL6_a_failed_run_re_stamped_with_a_verified_runs_id_is_refused_by_its_own_outcome()
+    {
+        // Re-stamping run B with run A's ID passes the run-ID check; B's own recorded outcome still
+        // contradicts A's verdict, and the request refuses it. (A run with no outcome of its own has
+        // nothing to contradict: that is the documented limit of a run-ID binding.)
+        var verifiedEvaluation = ReflectionFixtures.Verified();
+        var otherRun = ReflectionFixtures.Run(
+            ReflectionFixtures.RepairAttempts(),
+            outcome: new Outcome(TaskVerificationStatus.Failed, [], null, ReflectionFixtures.BaseTime)) with { RunId = Guid.NewGuid() };
+
+        var restamped = otherRun with { RunId = verifiedEvaluation.Basis.RunId };
+
+        var refused = Assert.Throws<ReflectionBindingException>(() => ReflectionFixtures.Request(restamped, verifiedEvaluation));
+        Assert.Equal("Outcome.Status", refused.MismatchedField);
+        Assert.Equal("Evaluation", refused.ParamName);
     }
 
     [Fact]

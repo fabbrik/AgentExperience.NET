@@ -192,6 +192,61 @@ public class ExperienceFinalizationServiceTests
         Assert.Null(result.Failure.Exception);
     }
 
+    [Theory]
+    [InlineData(nameof(Reflection.ExperienceRunId))]
+    [InlineData(nameof(Reflection.ReflectionId))]
+    [InlineData(nameof(Reflection.VerificationStatus))]
+    [InlineData(nameof(Reflection.EvidenceIds))]
+    public async Task KL6_a_host_reflection_that_does_not_match_its_request_quarantines_the_record_without_a_lesson(string field)
+    {
+        // A host reflector is not trusted to have copied its request: one that returns a reflection
+        // for another run, under another identity, with a re-judged verdict, or with evidence the
+        // evaluation never had, is handled like one that threw. Before story 5.5 each of these was
+        // stored as the record's validated lesson.
+        var harness = await Harness.WithCompletedRunAsync(reflector: new MismatchingReflector(field));
+
+        var result = await harness.FinalizeAsync();
+
+        Assert.Equal(FinalizationOutcome.Quarantined, result.Outcome);
+        Assert.Equal(ExperienceStatus.Quarantined, result.Record!.Status);
+        Assert.Null(result.Record.Reflection);
+        Assert.Equal(0d, result.Record.ReuseConfidence);
+
+        var failure = Assert.IsType<FinalizationFailure>(result.Failure);
+        Assert.Equal(FinalizationStage.Reflect, failure.Stage);
+        var binding = Assert.IsType<ReflectionBindingException>(failure.Exception);
+        Assert.Equal(field, binding.MismatchedField);
+        Assert.Equal(harness.RunId, binding.RunId);
+        Assert.Contains(field, failure.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task KL6_evidence_ids_are_checked_and_stored_from_one_snapshot()
+    {
+        // A host list that answers the check with the right IDs and anything else afterwards.
+        var extra = Guid.NewGuid();
+        var harness = await Harness.WithCompletedRunAsync(reflector: new FlippingEvidenceReflector(extra));
+
+        var result = await harness.FinalizeAsync();
+
+        Assert.Equal(FinalizationOutcome.Validated, result.Outcome);
+        Assert.DoesNotContain(extra, result.Record!.Reflection!.EvidenceIds);
+        Assert.DoesNotContain(extra, Assert.Single(harness.Store.Creates).Reflection!.EvidenceIds);
+    }
+
+    [Fact]
+    public async Task A_host_reflection_that_only_rewrites_the_lesson_is_still_stored()
+    {
+        // The binding covers identity, verdict and evidence, not wording: a host reflector exists to
+        // phrase lessons its own way.
+        var harness = await Harness.WithCompletedRunAsync(reflector: new MismatchingReflector(nameof(Reflection.Lesson)));
+
+        var result = await harness.FinalizeAsync();
+
+        Assert.Equal(FinalizationOutcome.Validated, result.Outcome);
+        Assert.Equal("a host's own lesson", result.Record!.Reflection!.Lesson);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Storage denied
     // ---------------------------------------------------------------------------------------------
@@ -661,12 +716,47 @@ public class ExperienceFinalizationServiceTests
     {
         var harness = await Harness.WithCompletedRunAsync();
 
-        var result = await harness.FinalizeAsync(requiredChecks: [new RequiredCheck("tests"), new RequiredCheck("tests")]);
+        var result = await harness.FinalizeAsync(requiredChecks: [new RequiredCheck("tests", "TestResult"), new RequiredCheck("tests", "TestResult")]);
 
         Assert.Equal(FinalizationOutcome.Failed, result.Outcome);
         Assert.Equal(FinalizationStage.Evaluate, result.Stage);
         Assert.IsType<ArgumentException>(result.Failure!.Exception);
         Assert.Empty(harness.Store.Creates);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task KL5_a_required_check_with_no_ExpectedKind_ends_the_evaluate_stage_and_writes_nothing(string? expectedKind)
+    {
+        // The aggregator's refusal holds on the library's own storage path: a check whose kind is
+        // missing (a host payload deserialized without it, say) is never read as "any kind".
+        var harness = await Harness.WithCompletedRunAsync();
+        var approval = PassingEvidence() with { Kind = "HumanApproval" };
+
+        var result = await harness.FinalizeAsync(
+            requiredChecks: [new RequiredCheck("tests", expectedKind!)],
+            evidence: [approval]);
+
+        Assert.Equal(FinalizationOutcome.Failed, result.Outcome);
+        Assert.Equal(FinalizationStage.Evaluate, result.Stage);
+        Assert.IsType<ArgumentException>(result.Failure!.Exception);
+        Assert.Empty(harness.Store.Creates);
+    }
+
+    [Fact]
+    public async Task A_round_that_repeats_a_piece_of_evidence_still_validates_through_the_reflection_check()
+    {
+        // The evaluation then lists the evidence twice and the reflection lists its ID once;
+        // EnsureMatches compares against the distinct IDs, so this is not a mismatch.
+        var harness = await Harness.WithCompletedRunAsync();
+        var evidence = PassingEvidence();
+
+        var result = await harness.FinalizeAsync(evidence: [evidence, evidence]);
+
+        Assert.Equal(FinalizationOutcome.Validated, result.Outcome);
+        Assert.Equal([evidence.EvidenceId], result.Record!.Reflection!.EvidenceIds);
     }
 
     [Fact]
@@ -864,7 +954,7 @@ public class ExperienceFinalizationServiceTests
                 RunId: runId ?? RunId,
                 Authorization: authorization ?? Authorization,
                 ClosedRound: noRound ? null : closedRound ?? Round,
-                RequiredChecks: requiredChecks ?? [new RequiredCheck("tests")],
+                RequiredChecks: requiredChecks ?? [new RequiredCheck("tests", "TestResult")],
                 Evidence: evidence ?? [PassingEvidence()],
                 CurrentArtifactRevision: ArtifactRevision,
                 StorageDecision: decision ?? StorageDecision.Permit,
@@ -901,6 +991,40 @@ public class ExperienceFinalizationServiceTests
     {
         public Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("the reflector template failed");
+    }
+
+    /// <summary>A host reflector that returns the default reflection with one field changed.</summary>
+    private sealed class MismatchingReflector(string field) : IExperienceReflector
+    {
+        private readonly DefaultExperienceReflector _inner = new();
+
+        public async Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
+        {
+            var reflection = await _inner.ReflectAsync(request, cancellationToken);
+            return field switch
+            {
+                nameof(Reflection.ExperienceRunId) => reflection with { ExperienceRunId = Guid.NewGuid() },
+                nameof(Reflection.ReflectionId) => reflection with { ReflectionId = Guid.NewGuid() },
+                nameof(Reflection.VerificationStatus) => reflection with { VerificationStatus = TaskVerificationStatus.Failed },
+                nameof(Reflection.EvidenceIds) => reflection with { EvidenceIds = [.. reflection.EvidenceIds, Guid.NewGuid()] },
+                _ => reflection with { Lesson = "a host's own lesson" },
+            };
+        }
+    }
+
+    /// <summary>A host reflector whose evidence-ID list changes after its first enumeration.</summary>
+    private sealed class FlippingEvidenceReflector(Guid extra) : IExperienceReflector
+    {
+        private readonly DefaultExperienceReflector _inner = new();
+
+        public async Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
+        {
+            var reflection = await _inner.ReflectAsync(request, cancellationToken);
+            return reflection with
+            {
+                EvidenceIds = new FlippingList<Guid>(reflection.EvidenceIds, [.. reflection.EvidenceIds, extra]),
+            };
+        }
     }
 
     /// <summary>A lenient custom reflector that declines rather than throwing.</summary>

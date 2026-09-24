@@ -21,6 +21,14 @@ namespace AgentExperience.Core.Reflections;
 /// <item><description><see cref="Reflection.Producer"/> identifies the implementation and its version.</description></item>
 /// <item><description>Invalid input throws <see cref="ArgumentNullException"/>/<see cref="ArgumentException"/>; a cancelled token throws <see cref="OperationCanceledException"/>. In both cases no <see cref="Reflection"/> is produced.</description></item>
 /// </list>
+/// <para>
+/// <b>Binding.</b> A reflector never has to check that the run and the evaluation it is handed belong
+/// together: a <see cref="ReflectionRequest"/> cannot be constructed otherwise (see its remarks). What
+/// a reflector returns is checked against its request by <see cref="ReflectionRequest.EnsureMatches"/>
+/// (contract items 1 and 2). Finalization applies that check to every reflection, and a reflection
+/// that fails it is handled exactly like a reflector that threw: the record is kept, quarantined,
+/// with no lesson.
+/// </para>
 /// </remarks>
 public interface IExperienceReflector
 {
@@ -30,7 +38,7 @@ public interface IExperienceReflector
     /// </summary>
     /// <param name="request">The finished run, its evaluation, and the caller-supplied reflection identity/timestamp.</param>
     /// <param name="cancellationToken">A cancelled token throws <see cref="OperationCanceledException"/> before anything is produced.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="request"/>, its run, or its evaluation is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="request"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">The run is still in progress, or its own outcome status disagrees with the evaluation's, or the request is otherwise malformed.</exception>
     Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default);
 }

@@ -157,8 +157,9 @@ internal sealed class ExperienceLoop
         // the finalization below performs as a step of its own. The evidence it aggregates carries the
         // marker in both of its free-form fields.
         var verified = VerificationAggregator.Aggregate(
+            runId,
             [Evidence()],
-            [new RequiredCheck("tests")],
+            [new RequiredCheck("tests", "TestResult")],
             Round,
             ArtifactRevision,
             Now,
@@ -175,7 +176,7 @@ internal sealed class ExperienceLoop
                 RunId: runId,
                 Authorization: Authorization,
                 ClosedRound: Round,
-                RequiredChecks: [new RequiredCheck("tests")],
+                RequiredChecks: [new RequiredCheck("tests", "TestResult")],
                 Evidence: [Evidence()],
                 CurrentArtifactRevision: ArtifactRevision,
                 StorageDecision: StorageDecision.Permit,

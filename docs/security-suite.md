@@ -114,6 +114,10 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.More_eligible_records_than_the_record_limit_injects_the_top_two_and_records_the_rest` | Bounded: whole records dropped, never cut |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_retrieval_failure_injects_nothing_and_is_reported_never_rethrown` | A failure never fabricates context |
 | MicrosoftAgentFramework.Tests | `ExperienceCaptureTests.Row3_a_continuation_id_naming_a_different_task_or_scope_is_refused_and_runs_uncaptured` | A run cannot be continued into another task or scope |
+| Core.Tests | `VerificationAggregatorTests.KL5_a_null_ExpectedKind_is_refused_rather_than_read_as_any_kind` | Evidence from a producer the task did not name (an approval, an agent's own report) cannot verify a check by default: "any kind" must be declared |
+| Core.Tests | `VerificationAggregatorTests.A_required_check_naming_an_ExpectedKind_ignores_evidence_of_any_other_kind` | A mismatched evaluator leaves the check `Unknown`, never `Pass` |
+| Core.Tests | `DefaultExperienceReflectorTests.KL6_a_request_pairing_a_run_with_another_runs_evaluation_cannot_be_constructed` | An evaluation made under one run ID cannot be paired with another run: no reflector, default or host, receives the pair |
+| Core.Tests | `ExperienceFinalizationServiceTests.KL6_a_host_reflection_that_does_not_match_its_request_quarantines_the_record_without_a_lesson` | A host reflector that re-judges the verdict, swaps the run, or adds evidence gets no validated lesson stored |
 
 ## What this suite does not prove
 
