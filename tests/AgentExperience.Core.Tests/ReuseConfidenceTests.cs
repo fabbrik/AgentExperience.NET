@@ -498,6 +498,7 @@ public class ReuseConfidenceTests
     [InlineData(ExperienceStoreOutcome.NotFound, ConfidenceUpdateOutcome.NotFound)]
     [InlineData(ExperienceStoreOutcome.Denied, ConfidenceUpdateOutcome.Denied)]
     [InlineData(ExperienceStoreOutcome.Invalid, ConfidenceUpdateOutcome.Invalid)]
+    [InlineData(ExperienceStoreOutcome.Deleted, ConfidenceUpdateOutcome.Deleted)]
     public async Task A_store_refusal_is_surfaced_one_to_one_and_reports_no_movement(
         ExperienceStoreOutcome stored,
         ConfidenceUpdateOutcome expected)
@@ -533,6 +534,24 @@ public class ReuseConfidenceTests
         Assert.Equal(ConfidenceUpdateOutcome.NotFound, result.Outcome);
         Assert.Empty(store.Commits);
         Assert.False(string.IsNullOrWhiteSpace(result.Reason));
+    }
+
+    [Fact]
+    public async Task A_record_erased_before_the_read_is_a_terminal_refusal_and_nothing_is_committed()
+    {
+        // The read is the first port call, and for its own scope the store answers Deleted for a
+        // tombstone. That is a typed refusal, not a store failure, and nothing reaches the commit.
+        var store = new EvidenceStore(record: null) { ReadOutcome = ExperienceStoreOutcome.Deleted };
+
+        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+            Authorization, Machine(Guid.NewGuid()), CancellationToken.None);
+
+        Assert.Equal(ConfidenceUpdateOutcome.Deleted, result.Outcome);
+        Assert.True(store.Reads);
+        Assert.Empty(store.Commits);
+        Assert.Null(result.Event);
+        Assert.Null(result.Update);
+        Assert.False(result.Counted);
     }
 
     [Fact]
@@ -669,6 +688,9 @@ public class ReuseConfidenceTests
 
         public ExperienceLifecycleCommitResult? CommitResult { get; init; }
 
+        /// <summary>When set, the read answers this outcome with no record, whatever <see cref="Record"/> holds.</summary>
+        public ExperienceStoreOutcome? ReadOutcome { get; init; }
+
         public bool Reads { get; private set; }
 
         public List<(Scope Scope, LifecycleEvent Event)> Commits { get; } = [];
@@ -685,6 +707,11 @@ public class ReuseConfidenceTests
             if (FoundWithNoRecord)
             {
                 return Task.FromResult(new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, null, []));
+            }
+
+            if (ReadOutcome is { } outcome)
+            {
+                return Task.FromResult(new ExperienceRecordGetResult(outcome, null, []));
             }
 
             return Task.FromResult(Record is { } record

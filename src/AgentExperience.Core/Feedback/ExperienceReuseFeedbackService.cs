@@ -461,6 +461,21 @@ public sealed class ExperienceReuseFeedbackService
                 Retryable: true,
                 "The record moved between the read and the commit; resubmit the same feedback ID."),
 
+            // The record was erased after this submission's exposure was written (the ledger refuses a
+            // submission that names a tombstone up front, so only a later erasure reaches here).
+            // ExperienceExposureDisposition has no erased member, and Refused is already its terminal
+            // one -- "nothing was written and repeating the call changes nothing" -- which is exactly
+            // what a tombstone means. It must never be Failed: that disposition promises a retry can land.
+            ConfidenceUpdateOutcome.Deleted => new(
+                exposure.ExperienceId,
+                ExperienceExposureDisposition.Refused,
+                evidenceId,
+                Counted: false,
+                ReuseConfidence: null,
+                Status: null,
+                Retryable: false,
+                applied.Reason ?? "The record was erased after this exposure was recorded; no evidence can be applied to it."),
+
             _ => new(
                 exposure.ExperienceId,
                 ExperienceExposureDisposition.Refused,

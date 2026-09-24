@@ -10,7 +10,9 @@ verified lesson, keeps that lesson's lifecycle and confidence honest, and finds 
 **Dependencies:** `AgentExperience.Abstractions`, `Microsoft.Extensions.Compliance.Redaction`, and
 `Microsoft.Extensions.DependencyInjection.Abstractions` (abstractions only — no container, no hosting). No Microsoft
 Agent Framework, EF Core, Npgsql, DbUp, OpenTelemetry SDK, or model-provider package. Telemetry is emitted through the
-BCL's `ActivitySource` and `Meter` named `AgentExperience.Core`; the host subscribes and exports.
+BCL's `ActivitySource` and `Meter` named `AgentExperience.Core`; the host subscribes and exports. Every span, instrument,
+dimension and attribute is listed in the
+[telemetry contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/telemetry.md).
 
 ## What is in it
 

@@ -550,6 +550,8 @@ public sealed class ExperienceRetrievalService
         if (result.Outcome != ExperienceStoreOutcome.Found)
         {
             // Denied or Invalid from the source is still a refusal to answer, not an empty answer.
+            // Deleted is not a search outcome -- a search never returns a tombstone, it leaves it out --
+            // so a source answering it broke its contract and is reported like any other refusal.
             return SearchOutcome.Failed(new RetrievalFailure(
                 $"The candidate source returned '{result.Outcome}' rather than '{ExperienceStoreOutcome.Found}'.",
                 Exception: null));

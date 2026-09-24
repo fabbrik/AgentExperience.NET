@@ -685,6 +685,8 @@ public class ExperienceReuseFeedbackServiceTests
     [InlineData(ExperienceStoreOutcome.StatusMismatch, ExperienceExposureDisposition.Failed, true)]
     [InlineData(ExperienceStoreOutcome.Conflict, ExperienceExposureDisposition.Refused, false)]
     [InlineData(ExperienceStoreOutcome.Invalid, ExperienceExposureDisposition.Refused, false)]
+    // A record erased after its exposure was written: terminal, so never Failed-and-retryable.
+    [InlineData(ExperienceStoreOutcome.Deleted, ExperienceExposureDisposition.Refused, false)]
     public async Task Every_confidence_refusal_maps_onto_a_disposition_that_says_whether_to_retry(
         ExperienceStoreOutcome commitOutcome,
         ExperienceExposureDisposition expected,

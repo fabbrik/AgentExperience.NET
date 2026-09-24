@@ -1729,6 +1729,13 @@ Infrastructure IAM    -> final enforcement
 
 # 24. Observability
 
+> **Superseded (note added after implementation).** The span names in §24.1 and the metric names in §24.2 were a
+> pre-implementation proposal and never shipped. The library emits one span per operation, named
+> `agentexperience.<operation>`, and three instruments shared by every operation
+> (`agentexperience.operation.count`, `agentexperience.operation.duration`, `agentexperience.operation.failures`),
+> sliced by the bounded dimensions `operation`, `outcome`, `error.class` and `nested`. It writes no structured logs.
+> The shipped contract is [`docs/telemetry.md`](telemetry.md). The rest of this section is kept as it was written.
+
 AgentExperience.NET should emit OpenTelemetry traces, metrics, and structured logs.
 
 ## 24.1 Suggested activities/spans

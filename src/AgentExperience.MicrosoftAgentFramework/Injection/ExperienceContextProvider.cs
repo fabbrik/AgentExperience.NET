@@ -450,6 +450,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
             // Denied, NotFound, Invalid, a null record, a record that came back under another ID, and a
             // record outside the requested scope are all one thing here: not readable in this scope.
+            // So is Deleted -- a record erased since retrieval returned it. InjectionOmissionReason has
+            // no erased member and Unreadable is already the terminal one (the record is omitted and
+            // never injected), so a tombstone deliberately lands here rather than in a case of its own.
             //
             // The scope check stays strict equality unless the store itself declared the record shared
             // through an active grant -- only it applied the predicate, so only it can say -- and even

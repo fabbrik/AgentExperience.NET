@@ -391,6 +391,7 @@ public class ExperienceLifecycleServiceTests
     [InlineData(ExperienceStoreOutcome.NotFound, LifecycleTransitionOutcome.NotFound)]
     [InlineData(ExperienceStoreOutcome.Denied, LifecycleTransitionOutcome.Denied)]
     [InlineData(ExperienceStoreOutcome.Invalid, LifecycleTransitionOutcome.Invalid)]
+    [InlineData(ExperienceStoreOutcome.Deleted, LifecycleTransitionOutcome.Deleted)]
     public async Task The_store_outcome_is_surfaced_unchanged(ExperienceStoreOutcome stored, LifecycleTransitionOutcome expected)
     {
         var store = new RecordingStore
@@ -420,6 +421,25 @@ public class ExperienceLifecycleServiceTests
 
         Assert.Equal(LifecycleTransitionOutcome.Invalid, result.Outcome);
         Assert.Equal("CurrentStatus", Assert.Single(result.Errors).Path);
+        Assert.Single(store.Commits);
+    }
+
+    [Fact]
+    public async Task A_commit_against_an_erased_record_is_a_terminal_refusal_rather_than_a_store_failure()
+    {
+        // Since erasure shipped the store answers Deleted for a tombstone, and the port documents it as
+        // a commit outcome. It must come back as a typed refusal, never as ExperienceStoreException --
+        // which telemetry would count as an infrastructure failure -- and must not de-index anything.
+        var index = new FakeEmbeddingIndex();
+        var store = new RecordingStore { Result = new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Deleted, 4, null, []) };
+
+        var result = await new ExperienceLifecycleService(store, Indexing(index))
+            .CommitAsync(Authorization, Request(ExperienceStatus.Validated, ExperienceStatus.Revoked, 3), CancellationToken.None);
+
+        Assert.Equal(LifecycleTransitionOutcome.Deleted, result.Outcome);
+        Assert.Equal(4, result.Revision);
+        Assert.Null(result.Deindexing);
+        Assert.Empty(index.Removals);
         Assert.Single(store.Commits);
     }
 

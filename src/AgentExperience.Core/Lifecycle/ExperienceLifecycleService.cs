@@ -844,6 +844,11 @@ public sealed class ExperienceLifecycleService
         ExperienceStoreOutcome.NotFound => LifecycleTransitionOutcome.NotFound,
         ExperienceStoreOutcome.Denied => LifecycleTransitionOutcome.Denied,
         ExperienceStoreOutcome.Invalid => LifecycleTransitionOutcome.Invalid,
+
+        // A commit against a tombstone. An expected refusal the port documents, not a store fault: it
+        // is surfaced like NotFound -- a returned outcome, so it is counted under its own name and never
+        // reaches the failure counter -- and it is terminal, which is why it is not StaleRevision.
+        ExperienceStoreOutcome.Deleted => LifecycleTransitionOutcome.Deleted,
         _ => throw new ExperienceStoreException(
             $"The Experience Record store returned '{outcome}', which is not a lifecycle commit outcome."),
     };
@@ -862,6 +867,10 @@ public sealed class ExperienceLifecycleService
         ExperienceStoreOutcome.NotFound => ConfidenceUpdateOutcome.NotFound,
         ExperienceStoreOutcome.Denied => ConfidenceUpdateOutcome.Denied,
         ExperienceStoreOutcome.Invalid => ConfidenceUpdateOutcome.Invalid,
+
+        // The read or the commit found a tombstone. Surfaced like NotFound (a returned refusal, never
+        // an infrastructure failure), and terminal: no resubmission can land against an erased record.
+        ExperienceStoreOutcome.Deleted => ConfidenceUpdateOutcome.Deleted,
         _ => throw new ExperienceStoreException(
             $"The Experience Record store returned '{outcome}', which is not a confidence-update outcome."),
     };

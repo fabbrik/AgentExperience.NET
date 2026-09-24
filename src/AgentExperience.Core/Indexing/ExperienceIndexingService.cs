@@ -477,6 +477,9 @@ public sealed class ExperienceIndexingService
                         scan.Errors ?? NoErrors,
                         Exception: null));
 
+            // Deleted is not a scan outcome: a scan filters tombstones out, so an erased record named in
+            // ExperienceIds is simply absent from the targets and ends as Missing, which is already
+            // terminal. A port that answered Deleted here broke its contract, and is reported as such.
             default:
                 return Ended(
                     ExperienceReindexOutcome.Failed,

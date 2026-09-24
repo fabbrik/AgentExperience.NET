@@ -51,14 +51,22 @@ Fixtures, each named as one in its own first documentation line:
 
 ## Why run A does not use `UseExperienceCapture`
 
-`UseExperienceCapture(...)` records one MAF invocation as one Experience Run with **one** attempt.
-Run A is deliberately one run with **two** attempts, which is what the capture contract models for
-a second try at the same task: two `AppendAttemptAsync` calls on the same run, before it is
-completed. So the sample's host opens run A itself and drives capture directly, and
-`AttemptToolRecorder` buffers each attempt's tool calls the way the adapter buffers an
-invocation's. Run B is wrapped with `UseExperienceCapture(...)` in the ordinary way, and that is
-also where run B's run ID comes from: the session state key `AgentExperience.RunId`, never agent
-output.
+By default, `UseExperienceCapture(...)` records one MAF invocation as one Experience Run with **one**
+attempt. Since story 4.6 the adapter can also record a retry as a further attempt of the same run.
+This is opt-in: an invocation whose `ExperienceRunDescriptor` carries `ContinuesRunId` appends its
+attempt to that run, and `ShouldCompleteRun` decides which invocation closes it. See the adapter
+README's
+[retries as attempts of one run](../../src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run).
+Nothing changes for a host that does not opt in.
+
+Run A is one run with **two** attempts, and the sample still drives it directly rather than through
+the adapter. That is deliberate: it keeps the contract underneath the adapter visible. The host
+opens run A itself and makes two `AppendAttemptAsync` calls on the same run before completing it,
+and `AttemptToolRecorder` buffers each attempt's tool calls the way the adapter buffers an
+invocation's. The adapter's continuation path produces the same shape of run, and its tests cover
+it; this demo does not exercise it. Run B is wrapped with `UseExperienceCapture(...)` in its
+ordinary single-invocation form, and that is also where run B's run ID comes from: the session
+state key `AgentExperience.RunId`, never agent output.
 
 ## Why stage 3 has two verification rounds, and what that costs
 

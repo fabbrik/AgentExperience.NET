@@ -122,6 +122,18 @@ public enum ConfidenceUpdateOutcome
 
     /// <summary>The request was malformed. See <c>Errors</c>. No counter moved.</summary>
     Invalid,
+
+    /// <summary>
+    /// The record was erased: only a payload-free tombstone remains under its ID, and the store reported
+    /// it as <see cref="ExperienceStoreOutcome.Deleted"/> -- either when Core read the record or when it
+    /// committed the evidence. Nothing was written and no counter moved.
+    /// <para>
+    /// This is terminal and never retryable. A tombstone is never resurrected, so resubmitting the same
+    /// evidence can never land. It is reported only within the scope that owned the record; any other
+    /// scope sees <see cref="NotFound"/>, whether or not the ID was ever erased.
+    /// </para>
+    /// </summary>
+    Deleted,
 }
 
 /// <summary>
