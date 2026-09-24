@@ -101,9 +101,17 @@ internal static class ExperienceRecordValidator
     /// refused rather than read as "delete everything": retention is indefinite until a host names a
     /// span, and a zero or negative one is the shape a misconfigured setting takes.
     /// </summary>
-    public static IReadOnlyList<StoreValidationError> ValidateRetentionSweep(Scope scope, TimeSpan retentionAge, int batchSize)
+    public static IReadOnlyList<StoreValidationError> ValidateRetentionSweep(Scope scope, TimeSpan retentionAge, int batchSize) =>
+        ValidateRetentionSweep(scope, retentionAge, batchSize, ScopeMatch.Exact);
+
+    /// <summary>
+    /// The same, with the scope match. A value <see cref="ScopeMatch"/> does not define is refused rather
+    /// than read as either member: a destructive operation never guesses how wide it was asked to reach.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateRetentionSweep(Scope scope, TimeSpan retentionAge, int batchSize, ScopeMatch match)
     {
         var errors = new List<StoreValidationError>();
+        ValidateScopeMatch(match, errors);
 
         if (retentionAge <= TimeSpan.Zero)
         {
@@ -119,6 +127,40 @@ internal static class ExperienceRecordValidator
 
         ValidateScope(scope, "Scope", errors);
         return errors;
+    }
+
+    /// <summary>
+    /// Validates an access-log purge: the owner scope, the scope match, the cutoff, and the batch bound.
+    /// Whether the cutoff is old enough is the database's decision, on its own clock; here it only has
+    /// to be set.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateGrantAccessPurge(Scope recordScope, DateTimeOffset cutoff, ScopeMatch match, int batchSize)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScopeMatch(match, errors);
+
+        if (cutoff == default)
+        {
+            errors.Add(new("Cutoff", "must be set; there is no cutoff that means 'delete everything'."));
+        }
+
+        if (batchSize is < PostgresExperienceRecordStore.MinSweepBatchSize or > PostgresExperienceRecordStore.MaxSweepBatchSize)
+        {
+            errors.Add(new(
+                "BatchSize",
+                $"must be between {PostgresExperienceRecordStore.MinSweepBatchSize} and {PostgresExperienceRecordStore.MaxSweepBatchSize}."));
+        }
+
+        ValidateScope(recordScope, "RecordScope", errors);
+        return errors;
+    }
+
+    private static void ValidateScopeMatch(ScopeMatch match, List<StoreValidationError> errors)
+    {
+        if (!Enum.IsDefined(match))
+        {
+            errors.Add(new("Match", $"must be {nameof(ScopeMatch.Exact)} or {nameof(ScopeMatch.Subtree)}."));
+        }
     }
 
     /// <summary>

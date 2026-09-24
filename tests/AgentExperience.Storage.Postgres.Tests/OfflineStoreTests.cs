@@ -380,6 +380,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.GrantAccessLogScriptName,
                 PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
                 PostgresExperienceRecordSchema.GrantDisclosureScriptName,
+                PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -599,7 +600,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^6]);
+            PostgresExperienceRecordSchema.ScriptNames[^7]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -661,7 +662,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^5]);
+            PostgresExperienceRecordSchema.ScriptNames[^6]);
     }
 
     [Fact]
@@ -739,7 +740,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^4]);
+            PostgresExperienceRecordSchema.ScriptNames[^5]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -961,10 +962,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
         Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
 
-        // 0010 is applied immediately before 0011, which the migrator relies on for ordinal name ordering.
+        // 0010 is applied immediately before 0011 and 0012, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1002,7 +1003,91 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantDisclosureScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    [Fact]
+    public void Grant_access_retention_script_is_applied_last_and_restates_0010s_guard_with_one_narrow_exception()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantAccessRetentionScriptName);
+        var deleteAndExpire = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.DeleteAndExpireScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // One SECURITY DEFINER function, with PostgreSQL's default EXECUTE to PUBLIC revoked and granted
+        // back only to the migrating role, and its search_path pinned so nothing resolves through a
+        // caller's.
+        const string Signature = "agent_experience.purge_grant_access(\n    text, text, text, text, text, text, boolean, timestamptz, integer)";
+        Assert.Equal(1, CountOccurrences(statements, "SECURITY DEFINER"));
+        Assert.Contains($"REVOKE ALL ON FUNCTION {Signature} FROM PUBLIC;", statements, StringComparison.Ordinal);
+        Assert.Contains($"GRANT EXECUTE ON FUNCTION {Signature} TO CURRENT_USER;", statements, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(statements, "FROM PUBLIC;"));
+        Assert.Equal(1, CountOccurrences(statements, "TO CURRENT_USER;"));
+        Assert.Contains("SET search_path = pg_catalog, agent_experience", statements, StringComparison.Ordinal);
+
+        // Its own marker, reset at function exit, and never 0010's.
+        Assert.Contains("SET agent_experience.access_purge_authorized = 'off'", statements, StringComparison.Ordinal);
+        Assert.Contains("SET LOCAL agent_experience.access_purge_authorized = 'on';", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SET LOCAL agent_experience.purge_authorized", statements, StringComparison.Ordinal);
+
+        // The guard is replaced in place, with 0010's exception list carried over verbatim and the
+        // access ledger still absent from it.
+        Assert.Contains("CREATE OR REPLACE FUNCTION agent_experience.reject_event_log_mutation()", statements, StringComparison.Ordinal);
+        const string ZeroTenList =
+            "        AND TG_TABLE_NAME IN (\n" +
+            "            'lifecycle_events',\n" +
+            "            'experience_grant_events',\n" +
+            "            'confidence_evidence',\n" +
+            "            'reuse_feedback',\n" +
+            "            'reuse_feedback_exposures')";
+        Assert.Contains(ZeroTenList, deleteAndExpire, StringComparison.Ordinal);
+        Assert.Contains(ZeroTenList, statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("DISABLE TRIGGER", statements, StringComparison.Ordinal);
+
+        // The floor, twice, on the database's clock and on recorded_at; bounded; refused rather than clamped.
+        Assert.Equal(
+            2,
+            CountOccurrences(statements, $"pg_catalog.clock_timestamp() - interval '{PostgresExperienceGrantAccessLog.MinimumRetentionDays} days'"));
+        Assert.DoesNotContain("interval '", statements.Replace($"interval '{PostgresExperienceGrantAccessLog.MinimumRetentionDays} days'", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Contains("SET search_path = pg_catalog, agent_experience;", statements, StringComparison.Ordinal);
+        Assert.Contains("TG_TABLE_SCHEMA = 'agent_experience' AND TG_TABLE_NAME = 'experience_grant_access'", statements, StringComparison.Ordinal);
+        Assert.Contains("OLD.recorded_at <=", statements, StringComparison.Ordinal);
+        Assert.Contains("a.recorded_at < p_cutoff", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("occurred_at <", statements, StringComparison.Ordinal);
+        Assert.Contains("least(greatest(coalesce(p_limit, 500), 1), 500)", statements, StringComparison.Ordinal);
+        Assert.Contains("'CutoffTooRecent'", statements, StringComparison.Ordinal);
+
+        // The out-of-band index runbook is in the header.
+        Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_grant_access_retention", script, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public async Task A_subtree_sweep_or_access_purge_outside_the_authorization_is_Denied_before_any_connection_opens()
+    {
+        var auth = Authorize("tenant-a");
+        var foreignRoot = new Scope("tenant-b", "app-1", "project-1");
+        var access = new PostgresExperienceGrantAccessLog(_dataSource);
+
+        var swept = await Store.SweepExpiredAsync(auth, foreignRoot, TimeSpan.FromDays(1), 10, ScopeMatch.Subtree, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Denied, swept.Outcome);
+
+        var purged = await access.PurgeOlderThanAsync(
+            auth, new GrantAdministration("admin", DateTimeOffset.UtcNow), foreignRoot, DateTimeOffset.UtcNow.AddDays(-400), ScopeMatch.Subtree, 10, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Denied, purged.Outcome);
+
+        // A team-bounded authorization cannot take a project root, so a subtree cannot widen it.
+        var teamOnly = new AuthorizationContext("tenant-a", "host-principal", ["experience:write"], DateTimeOffset.UtcNow, TeamId: "t1");
+        var projectRoot = new Scope("tenant-a", "app-1", "project-1");
+        Assert.Equal(ExperienceStoreOutcome.Denied, (await Store.SweepExpiredAsync(teamOnly, projectRoot, TimeSpan.FromDays(1), 10, ScopeMatch.Subtree, CancellationToken.None)).Outcome);
+        Assert.Equal(
+            ExperienceStoreOutcome.Denied,
+            (await access.PurgeOlderThanAsync(teamOnly, new GrantAdministration("admin", DateTimeOffset.UtcNow), projectRoot, DateTimeOffset.UtcNow.AddDays(-400), ScopeMatch.Subtree, 10, CancellationToken.None)).Outcome);
     }
 
     /// <summary>

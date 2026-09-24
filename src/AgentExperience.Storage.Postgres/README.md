@@ -620,7 +620,8 @@ The `dataSource` overloads exist largely for this: pointing `PostgresExperienceG
 depend on.
 
 `experience_grant_access` is append-only in the database, like every other ledger here, so a delivery cannot be
-edited or deleted out of the trail afterwards. Wire nothing and auditing is off entirely: no extra write, no extra
+edited or deleted out of the trail afterwards — except by its one retention path, `PurgeOlderThanAsync`, which never
+removes a row younger than 30 days (see [Retention for the grant access log](#retention-for-the-grant-access-log)). Wire nothing and auditing is off entirely: no extra write, no extra
 round trip, no extra failure mode, `0009`'s table simply stays empty, and reads behave exactly as they did before.
 
 **Auditing binds the implementation that was registered.** Every registration here uses `TryAdd`, so a host that
@@ -761,45 +762,89 @@ host knows its obligations.
 var sweep = await store.SweepExpiredAsync(hostAuthorization, scope, TimeSpan.FromDays(90), batchSize: 200, cancellationToken);
 // sweep.DeletedCount, and sweep.MoreRemain when another pass would find more.
 
+// The same, for the scope and every scope beneath it. Opt-in; the overload above is always exact.
+var wide = await store.SweepExpiredAsync(hostAuthorization, projectScope, TimeSpan.FromDays(90), batchSize: 200, ScopeMatch.Subtree, cancellationToken);
+
 // Expired sharing grants, with their audit events. Administrator authority, like every other grant mutation.
 var grants = new PostgresExperienceGrantStore(dataSource);
 var purged = await grants.PurgeExpiredAsync(hostAuthorization, administration, scope, batchSize: 200, cancellationToken);
+
+// Grant access rows the database recorded more than a year ago, for the project and everything beneath it.
+var accessLog = new PostgresExperienceGrantAccessLog(dataSource);
+var pruned = await accessLog.PurgeOlderThanAsync(
+    hostAuthorization, administration, projectScope, DateTimeOffset.UtcNow.AddDays(-365), ScopeMatch.Subtree, batchSize: 200, cancellationToken);
 ```
 
 Age is measured from `CreatedAt` on the store's own `TimeProvider`, never from `UpdatedAt`: age is how long this
 library has held the data, and a record that is read, ranked, or re-scored does not thereby become younger. Each
 record in a batch is erased in its own transaction, so an interrupted sweep leaves every record it reached wholly
 erased and every record it did not reach wholly untouched. A non-positive age is `Invalid` — there is no retention
-age that means "delete everything" — and so is a batch outside 1…500.
+age that means "delete everything" — and so is a batch outside 1…500. `DeletedCount` counts only the records *this*
+call erased: when two sweeps race over the same records, the one that finds a record already a tombstone does not
+count it again, so their counts sum to exactly what was erased.
 
-#### A sweep reaches one scope, exactly, and says nothing about the scopes beneath it
+#### A sweep reaches one scope, or everything beneath it, and you choose which
 
 This is the one operation here whose failure mode is **a missed retention obligation reported as success**, so it
 gets its own heading rather than a clause.
 
-`SweepExpiredAsync` matches `scope` field for field, exactly as every other operation in this library matches it.
-A sweep of `new Scope(tenant, app, project)` — team, agent and user all null — reaches only the records stored
-with all three of those fields null. Every record the same tenant holds under a team, an agent or a user is a
-**different scope**: it is not swept, it is not counted, and the call comes back
-`Outcome: Deleted, DeletedCount: 0, MoreRemain: false` — which reads exactly like "there was nothing to delete".
+**`ScopeMatch.Exact` — the default, and what the five-argument overload does.** `scope` is matched field for field,
+exactly as every other operation in this library matches it. A sweep of `new Scope(tenant, app, project)` — team,
+agent and user all null — reaches only the records stored with all three of those fields null. Every record the same
+project holds under a team, an agent or a user is a **different scope**: it is not swept, it is not counted, and the
+call comes back `Outcome: Deleted, DeletedCount: 0, MoreRemain: false` — which reads exactly like "there was nothing
+to delete".
+
+**`ScopeMatch.Subtree` — the scope and everything beneath it.** A host whose policy is "everything in this project
+older than N days" says so:
 
 ```csharp
-// WRONG, if this tenant ever wrote records under a team, an agent, or a user.
-await store.SweepExpiredAsync(auth, new Scope(tenant, app, project), TimeSpan.FromDays(90), 200, ct);
-
-// Right: the host enumerates every leaf scope it has written under, and sweeps each one.
-foreach (var leaf in hostOwnedScopes)   // only the host knows which of these exist
+var sweep = await store.SweepExpiredAsync(auth, new Scope(tenant, app, project), TimeSpan.FromDays(90), 200, ScopeMatch.Subtree, ct);
+while (sweep.MoreRemain)
 {
-    var sweep = await store.SweepExpiredAsync(auth, leaf, TimeSpan.FromDays(90), 200, ct);
-    while (sweep.MoreRemain) { sweep = await store.SweepExpiredAsync(auth, leaf, TimeSpan.FromDays(90), 200, ct); }
+    sweep = await store.SweepExpiredAsync(auth, new Scope(tenant, app, project), TimeSpan.FromDays(90), 200, ScopeMatch.Subtree, ct);
 }
 ```
 
-The library cannot enumerate those scopes for you. A scope is the host's own partitioning; nothing here knows
-which team, agent or user values exist, and inventing a prefix match would silently widen a *destructive*
-operation, which is the one direction this library never widens anything. A host with a tenant-wide retention
-policy has to keep its own list of the leaf scopes it writes under, and a host that cannot must not read
-`MoreRemain: false` as "this tenant is clean".
+**What "beneath" means, exactly.** A stored scope is at or beneath a root when:
+
+- its `TenantId`, `ApplicationId` and `ProjectId` equal the root's — always exactly; these three are never a
+  wildcard, and a blank one is `Invalid` as everywhere else;
+- and, for each of `TeamId`, `AgentId` and `UserId`, the root's value is `null` **or** equals the stored one.
+
+Comparisons are ordinal and case-sensitive. A `null` root field matches any stored value, `null` included; a set
+one matches only itself — never `null`, never a prefix, never a different case. A blank root field (`""`, `" "`) is
+`Invalid`, never "any": only `null` widens. Concretely, under one project:
+
+| Root (team / agent / user) | Reaches | Never reaches |
+| --- | --- | --- |
+| `– / – / –` (the project) | every record in the project | another tenant, application or project |
+| `t1 / – / –` | `t1`, `t1/a1`, `t1/a1/u1`, `t1/–/u1` | the project root (an ancestor), `t2`, `t2/a1` (siblings) |
+| `t1 / a1 / –` | `t1/a1`, `t1/a1/u1`, `t1/a1/u2` | `t1` (an ancestor), `t1/a2`, `t2/a1` |
+| `t1 / a1 / u1` | `t1/a1/u1` only | `t1/a1`, `t1/a1/u2` |
+| `– / a1 / –` | `a1` under any team or none: `–/a1`, `t1/a1`, `t2/a1`, `t1/a1/u1` | `t1`, `t1/a2`, the project root |
+| `– / – / u1` | `u1` under any team and agent: `–/–/u1`, `t1/–/u1`, `t1/a1/u1` | `t1/a1/u2`, `t1/a1` |
+
+The three optional fields are independent dimensions, not a chain: a root that names only a user reaches that
+user's records under every team and agent in the project, which is what a per-user erasure needs. It is the same
+reading `AuthorizationContext` gives a `null` bound ("a `null` bound leaves that field unrestricted").
+
+**Authorizing the root authorizes the subtree — provably, and with no new authorization shape.** The sweep checks
+`authorization.Permits(root)` once, before any connection opens, exactly as before. If an authorization permits the
+root, every non-null bound on it equals the root's field; for a field the root leaves `null`, a non-null bound
+cannot equal it, so that bound is `null` too — unrestricted. So the same authorization permits every scope beneath
+the root. The converse is the protection: a caller bounded to team `t1` is `Denied` a project root outright, so a
+subtree can never be used to widen what it may erase. Each candidate is also checked in process against the root
+and the authorization before it is erased, and is erased through the unchanged `purge_experience_record` **in its
+own exact stored scope**, one record per transaction.
+
+**Bounded and truthful across the subtree.** One page of at most `batchSize + 1` candidates across the whole
+subtree, oldest `CreatedAt` first, so `MoreRemain` means "more past the cutoff anywhere beneath the root". The page
+is served by `0010`'s `ix_experience_records_live_by_age`; nothing new is indexed.
+
+**What it still cannot do: span projects.** `Scope` has no way to say "any project", and adding one would change the
+port and the authorization shape. A host with several projects sweeps each project root — a short list it
+configures, rather than the leaf scopes Subtree exists so that nobody has to discover.
 
 #### Stopping early
 
@@ -821,6 +866,38 @@ clock so a host whose clock is wrong cannot widen a permission, and this is the 
 *destroys* rows — a host skewed a day forward must not be able to erase grants the database still considers live.
 The batch bound is applied inside the function too, not only by the validator, because `LIMIT NULL` means "no
 limit" in PostgreSQL and a hand-caller passing `NULL` would otherwise get an unbounded destructive sweep.
+
+### Retention for the grant access log
+
+Erasing a record keeps its `experience_grant_access` rows on purpose — they answer "who read this before it was
+deleted" — so the ledger needs its own retention path, and `0012` is it:
+
+```csharp
+var pruned = await accessLog.PurgeOlderThanAsync(
+    auth, administration, ownerScope, cutoff: DateTimeOffset.UtcNow.AddDays(-365), ScopeMatch.Subtree, batchSize: 200, ct);
+// pruned.PurgedCount, and pruned.MoreRemain when another pass would find more.
+```
+
+- **Authorized like the expired-grant purge.** Administrator authority is required — it removes an audit trail —
+  and `auth` must permit the owner scope; both are checked before a connection opens. `ScopeMatch` means exactly
+  what it means for the sweep, over the rows' **owner** scope; the recipient scope plays no part.
+- **Age is `recorded_at`, the database's clock when the row landed** — never `occurred_at`, the reader's clock,
+  which a skewed reader could backdate into the purge window.
+- **A row is kept at least 30 days (`MinimumRetentionDays`), by the database's clock.** The purge must not be
+  usable, through this library, to erase a read the moment after it happened — a bug, a careless script, or a
+  misused call covering one. It does not bind the tables' owner, which can disable the trigger or insert rows with
+  any `recorded_at` (see the honesty statement below, and KL-4). A cutoff later than that floor is **refused, not clamped**: `Invalid` on `Cutoff`, nothing removed. A
+  clamp would report a clean purge while rows the host asked about survived, which is the failure mode the sweep
+  heading above is about. The append-only guard re-checks the floor on every row it admits, so even a session that
+  sets the marker by hand cannot delete a younger row. Thirty days is a floor, not a policy; the host's retention
+  is the cutoff it passes.
+- **Bounded, and one transaction per batch.** At most `batchSize` rows (1…500, and clamped to that inside the
+  function too, so a hand-caller's `NULL` is never "no limit"), oldest `recorded_at` first, locked in a fixed order
+  so two concurrent purges neither deadlock nor count a row twice. `MoreRemain` is asked after the delete, in the
+  same transaction, with the same predicate.
+- **Its own marker.** `purge_grant_access` sets `agent_experience.access_purge_authorized`, not `0010`'s
+  `purge_authorized`, and the guard admits a `DELETE` on this ledger only under it. `0010`'s marker still admits
+  nothing here, so "erasing a record keeps its access rows" stays a property of the schema.
 
 ### The honesty statement, and the limits
 
@@ -857,7 +934,12 @@ GRANT EXECUTE ON FUNCTION agent_experience.purge_experience_record(
     uuid, text, text, text, text, text, text, bigint, timestamptz) TO <application_role>;
 GRANT EXECUTE ON FUNCTION agent_experience.purge_expired_grants(
     text, text, text, text, text, text, timestamptz, integer) TO <application_role>;
+GRANT EXECUTE ON FUNCTION agent_experience.purge_grant_access(
+    text, text, text, text, text, text, boolean, timestamptz, integer) TO <application_role>;
 ```
+
+`0012` does the same for its one function, `purge_grant_access`: `SECURITY DEFINER`, `search_path` pinned,
+`EXECUTE` revoked from `PUBLIC` and granted to the migrating role.
 
 **A record whose run was erased can never be finalized again.** `ExperienceFinalizationService.ExperienceIdFor`
 derives a record's ID from the run *and the scope*, deterministically, so replaying finalization for that run
@@ -1194,6 +1276,21 @@ its triggers as to `0006`'s: read them above before relying on them.
 - `enforce_grant_monotonicity()` replaced in place with `0006`'s whole body plus `disclosure` among the identity
   pins, so a live grant's level cannot be changed by `UPDATE` (`42501`); revoke it and issue a new one instead.
 
+`0012_grant_access_retention.sql` adds the access ledger's retention path (see
+[Retention for the grant access log](#retention-for-the-grant-access-log)):
+
+- `agent_experience.purge_grant_access`, `SECURITY DEFINER` with `search_path` pinned, `EXECUTE` revoked from
+  `PUBLIC` and granted to the migrating role: bounded (1…500, `NULL` is 500), scoped to an owner scope exactly or
+  as a subtree, age on `recorded_at`, and refusing (`CutoffTooRecent`) any cutoff later than 30 days before
+  `clock_timestamp()`, or a `NULL` one.
+- `agent_experience.access_purge_authorized()`, its own marker (reset when the function returns), and `reject_event_log_mutation()`
+  replaced in place with `0010`'s body unchanged plus one exception: a `DELETE` on `experience_grant_access` under
+  that marker of a row at least 30 days old. `UPDATE` and `TRUNCATE` stay refused; `0010`'s marker still admits
+  nothing on that table; nothing is dropped, disabled or recreated.
+- `ix_experience_grant_access_retention (tenant_id, application_id, project_id, recorded_at, access_id)`, built with
+  plain `CREATE INDEX` inside the migrator's transaction, which blocks appends to the ledger while it builds; the
+  header carries the `CONCURRENTLY` runbook for building it out of band first.
+
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package
 [`AgentExperience.Storage.Postgres.Vectors`](../AgentExperience.Storage.Postgres.Vectors/README.md) and is applied
@@ -1285,15 +1382,16 @@ what a script does; they are comments only.
 | `0007` | Listing the evidence ledger, a foreign key to `experience_records`, and retention over `confidence_evidence` "all belong to roadmap story 4.5" | Retention shipped in `0010`: erasing a record removes every evidence row naming it, with the index that needs. The foreign key was deliberately **not** added (`0010` explains why). Listing the ledger through the port was decided against in story 4.3 (AD-C): lifecycle history already carries each counted update's prior and new values, and no acceptance criterion needs uncounted duplicates |
 | `0008` | Retention of the feedback ledger is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Shipped in `0010`: erasing a record removes its exposure rows and any submission left empty, with the index that needs. `0006`'s runbook is superseded as above |
 | `0008` | The aggregations "roadmap story 4.4 needs — by run, by trial label, by scope" will come with their own indexes | Story 4.4 measured reuse through in-memory port doubles, not SQL over this ledger, so no aggregation query and no index was added. Add one with the first query that needs it |
-| `0009` | Retention of the grant access log is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Story 4.5 decided to **keep** access rows when a record is erased — they carry no payload and answer "who read this before it was deleted". The library ships no retention for this ledger; it is listed in the root README's Known limits |
+| `0009` | Retention of the grant access log is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Story 4.5 decided to **keep** access rows when a record is erased — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` (story 5.4) as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](#retention-for-the-grant-access-log) |
 
 ## Data semantics
 
 - **One write path per change.** Each create is a single `INSERT`. The only update is a lifecycle commit, which is
   always paired with its event in one transaction (see above). The only deletion is `DeleteAsync` and the retention
   sweep that runs it, which erase payload and leave a tombstone (see
-  [Deleting and expiring data](#deleting-and-expiring-data)); no other path *in this library* removes a record, an
-  event, or a ledger row, and for the record row itself `0010`'s removal guard makes that true of the schema
+  [Deleting and expiring data](#deleting-and-expiring-data)); apart from the two purges — expired grants with their
+  events, and grant access rows past their retention (`0012`) — no other path *in this library* removes a record,
+  an event, or a ledger row, and for the record row itself `0010`'s removal guard makes that true of the schema
   rather than only of the library — a bare `DELETE` or `TRUNCATE` is refused from every session, marker or not.
 - **UTC timestamps.** Every timestamp is stored and returned in UTC. `CreatedAt`, `UpdatedAt`, and a lifecycle
   event's `OccurredAt` are columns, and PostgreSQL keeps microsecond precision, so sub-microsecond ticks are

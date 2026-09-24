@@ -46,7 +46,7 @@ telemetry, such as a listener callback that throws, is swallowed and never reach
 | --- | --- | --- | --- |
 | `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the thirteen Core operations below |
 | `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject` only |
-| `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge` (erasure) only |
+| `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention) only |
 
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
   the `AgentExperience.*` wildcard subscribes to all three.
@@ -97,7 +97,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 
 | Dimension | Values |
 | --- | --- |
-| `operation` | one of the seventeen values in [Operations](#operations) |
+| `operation` | one of the eighteen values in [Operations](#operations) |
 | `outcome` | an enum member name from that operation's own outcome enum, verbatim, or `Faulted` when it threw. See [Operations](#operations) |
 | `error.class` | `Cancelled`, `Timeout`, `Infrastructure`, `Unexpected`. See [`error.class`](#errorclass). Only on `agentexperience.operation.failures` |
 | `nested` | `true` or `false` (a boolean). See [`nested`](#nested) |
@@ -105,7 +105,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 **`outcome` is not unique across operations.** `verify` and `reflect` have no outcome enum of their own and both
 report `TaskVerificationStatus`, so they share one value space (`Unknown`, `Verified`, `Failed`). Other operations
 also reuse member names such as `Denied`, `Conflict` or `Failed`. `Deleted` even means opposite things: on
-`delete`, `retention.sweep` and `grant.purge` it is the success outcome, while on `lifecycle.commit` and
+`delete`, `retention.sweep`, `grant.purge` and `grant.access.purge` it is the success outcome, while on `lifecycle.commit` and
 `confidence.apply` it is a refusal. Always slice `outcome` together with `operation`.
 
 ### `error.class`
@@ -137,7 +137,7 @@ the **same assembly** called it. Nesting is read from ambient `AsyncLocal` state
 - In Core, `sum by (operation)` over `nested=false` is what the host asked Core to do. The unfiltered sum is
   everything Core did.
 - `inject` is always `nested=false`, because only the agent pipeline calls it.
-- `delete`, `retention.sweep` and `grant.purge` are always `nested=false`. None of them calls another operation that
+- `delete`, `retention.sweep`, `grant.purge` and `grant.access.purge` are always `nested=false`. None of them calls another operation that
   the storage adapter instruments, and nothing in the library calls them. A sweep erases each record through the
   store's private erasure step, not through `DeleteAsync`, so one sweep call is one `retention.sweep` span and never
   a `delete` per record.
@@ -166,8 +166,9 @@ These are the only span attributes the library writes.
 | `agentexperience.stage` | a `FinalizationStage` member: `Load`, `Evaluate`, `Authorize`, `Reflect`, `CreateRecord`, `CommitInitialEvent` | `finalize`, on every outcome, and on a throw (the stage it had reached) |
 | `agentexperience.correlation_id` | the host-supplied correlation identifier, verbatim | `retrieve`, `inject`; omitted when the host supplied none |
 | `agentexperience.omitted_count` | integer: how many ranked records the injection left out. The omission reasons stay on the typed result | `inject` |
-| `agentexperience.erased_count` | integer: how many records the sweep erased, or how many grants the purge removed. Which ones stays in the database | `retention.sweep`, `grant.purge`, on every returned result (0 on a refusal); `retention.sweep` also when it threw `ExperienceRetentionSweepInterruptedException`, taken from its `Partial` |
+| `agentexperience.erased_count` | integer: how many records the sweep erased, how many grants the purge removed, or how many access rows the access purge removed. Which ones stays in the database | `retention.sweep`, `grant.purge`, `grant.access.purge`, on every returned result (0 on a refusal); `retention.sweep` also when it threw `ExperienceRetentionSweepInterruptedException`, taken from its `Partial` |
 | `agentexperience.interrupted` | boolean: whether the sweep stopped before the end of its batch | `retention.sweep`, where `erased_count` is written |
+| `agentexperience.scope_match` | `Exact` or `Subtree`: how wide the call was asked to reach (the `ScopeMatch` member's name, never the scope) | `retention.sweep`, `grant.access.purge`, whenever the caller passed a defined `ScopeMatch`; the five-argument `SweepExpiredAsync` reports `Exact` |
 
 Identifiers that come from the request are written before the operation runs, so they are present on a span that
 threw as well.
@@ -184,16 +185,17 @@ exceptions. A failing span carries the exception's type name and its `error.clas
 **Erasure telemetry does not re-leak what was erased.** `delete` carries the record ID the caller passed in. Like
 every identifier from a request, it is written before the operation runs, so it also appears on a `Denied`,
 `NotFound` or `Invalid` span. For a record that was erased, it is the ID the tombstone itself keeps and the one the
-Core operations on that record already emitted. `retention.sweep` and `grant.purge` carry a count
-and a flag. None of them writes a scope identifier, a task ID, record content, the IDs of swept records or purged
-grants, a grant's reason or recipient scope, or an administrator principal. `ErasureTelemetryTests` plants a marker
+Core operations on that record already emitted. `retention.sweep`, `grant.purge` and `grant.access.purge` carry a
+count, and a sweep also a flag; the sweep and the access purge also say whether they reached `Exact` or `Subtree`.
+None of them writes a scope identifier, a task ID, record content, the IDs of swept records, purged grants or purged
+access rows, a grant's reason or recipient scope, a reading principal, or an administrator principal. `ErasureTelemetryTests` plants a marker
 in all of those and asserts that it reaches no span or measurement. Telemetry that a host already exported before a
 record was erased is out of the library's reach: see KL-2.
 
 ## Operations
 
-There are seventeen `operation` values: thirteen emitted on `AgentExperience.Core`, one on
-`AgentExperience.MicrosoftAgentFramework`, and three on `AgentExperience.Storage.Postgres`. The set is closed: adding
+There are eighteen `operation` values: thirteen emitted on `AgentExperience.Core`, one on
+`AgentExperience.MicrosoftAgentFramework`, and four on `AgentExperience.Storage.Postgres`. The set is closed: adding
 a value is a deliberate change that widens every instrument's cardinality.
 
 | `operation` | Emitted by | `outcome` values (besides `Faulted`) | Span attributes beyond the common ones | Nested operations it emits |
@@ -213,8 +215,9 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `reuse_feedback` | `ExperienceReuseFeedbackService.RecordAsync` | `ExperienceReuseFeedbackOutcome`: `Recorded`, `AlreadyRecorded`, `Conflict`, `Denied`, `Invalid` | `feedback_id`, `run_id` | `confidence.apply` (once per attributed exposed record) |
 | `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed` | `correlation_id`, `omitted_count` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
 | `delete` | `PostgresExperienceRecordStore.DeleteAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `StaleRevision`, `NotFound`, `Denied`, `Invalid` | `experience_id` | — |
-| `retention.sweep` | `PostgresExperienceRecordStore.SweepExpiredAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count`, `interrupted` | — (one span per batch, never one per record) |
+| `retention.sweep` | `PostgresExperienceRecordStore.SweepExpiredAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count`, `interrupted`, `scope_match` | — (one span per batch, never one per record, whether `Exact` or `Subtree`) |
 | `grant.purge` | `PostgresExperienceGrantStore.PurgeExpiredAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count` | — |
+| `grant.access.purge` | `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` (including a cutoff inside the 30-day minimum retention, which the database refuses) | `erased_count`, `scope_match` | — |
 
 Notes:
 
@@ -225,7 +228,7 @@ Notes:
   holds only its tombstone. It is terminal and never retryable. Like `NotFound`, it is a refusal. It is reported only
   within the scope that owned the record, and every other scope sees `NotFound`.
 - **Erasure outcomes.** `delete` reports `Deleted` both when it erased the record and when the record was already a
-  tombstone. `retention.sweep` and `grant.purge` report `Deleted` whenever the batch ran, including a batch that found
+  tombstone. `retention.sweep`, `grant.purge` and `grant.access.purge` report `Deleted` whenever the batch ran, including a batch that found
   nothing, so read `erased_count` to see how much went. A sweep that the caller cancelled after it started erasing
   *returns*: its span is `Ok` with `Deleted` and `interrupted=true`, and `failures` does not move. A cancellation
   that arrives before the first erasure, while the sweep is still reading its candidates, throws
@@ -243,7 +246,7 @@ Notes:
 
 ## What is not instrumented
 
-- **Storage-adapter internals.** Apart from the three erasure operations above, the storage adapter's methods are
+- **Storage-adapter internals.** Apart from the four erasure and retention operations above, the storage adapter's methods are
   not wrapped in library spans, and nor are Npgsql commands and connection events. A storage failure surfaces as
   `ExperienceStoreException` from the Core operation that called the store, and is classified `Infrastructure` on
   that operation's span and failure counter.

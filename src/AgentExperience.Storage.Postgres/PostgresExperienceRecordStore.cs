@@ -47,11 +47,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <summary>The canonical record table. Shared with <see cref="PostgresExperienceCandidateSource"/>, which reads from it.</summary>
     internal const string Table = "agent_experience.experience_records";
 
-    /// <summary>The smallest batch <see cref="SweepExpiredAsync"/> accepts. There is no "sweep everything".</summary>
+    /// <summary>The smallest batch <see cref="SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/> accepts. There is no "sweep everything".</summary>
     public const int MinSweepBatchSize = 1;
 
     /// <summary>
-    /// The largest batch <see cref="SweepExpiredAsync"/> accepts. Each record in a batch is erased in
+    /// The largest batch <see cref="SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/> accepts. Each record in a batch is erased in
     /// its own transaction across seven tables, so the bound is what keeps one sweep call from becoming
     /// an unbounded amount of destructive work the host cannot interrupt.
     /// </summary>
@@ -576,14 +576,40 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "@expected_revision, @deleted_at)";
 
     /// <summary>
+    /// "at or beneath this scope": the three required fields exactly, and each optional field either
+    /// unconstrained (the root's is null) or exactly the root's. This is the definition
+    /// <see cref="ScopeMatch"/> documents, and the reading <see cref="AuthorizationContext.Permits"/>
+    /// already gives a null bound. The required fields are never a wildcard: a null parameter there
+    /// matches nothing.
+    /// </summary>
+    internal const string SubtreeScopePredicate =
+        "tenant_id = @tenant_id AND application_id = @application_id AND project_id = @project_id " +
+        "AND (@team_id IS NULL OR team_id = @team_id) AND (@agent_id IS NULL OR agent_id = @agent_id) " +
+        "AND (@user_id IS NULL OR user_id = @user_id)";
+
+    /// <summary>The columns a sweep candidate is read with: its ID, and the exact scope it is erased in.</summary>
+    private const string SweepCandidateColumns =
+        "experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id";
+
+    /// <summary>
     /// One bounded page of a scope's records that are older than the retention cutoff, oldest first.
-    /// Deliberately only the IDs: the sweep erases what it finds and never reads a payload it is about
-    /// to destroy. One row beyond the batch is selected so the result can say whether more remain
-    /// without a second count.
+    /// Deliberately only the IDs and their scope: the sweep erases what it finds and never reads a
+    /// payload it is about to destroy. One row beyond the batch is selected so the result can say
+    /// whether more remain without a second count.
     /// </summary>
     private const string SweepCandidatesSql =
-        $"SELECT experience_id FROM {Table} " +
+        $"SELECT {SweepCandidateColumns} FROM {Table} " +
         $"WHERE {ScopePredicate} AND {LivePredicate} AND created_at < @cutoff " +
+        "ORDER BY created_at, experience_id LIMIT @limit";
+
+    /// <summary>
+    /// The same page across the scope and every scope beneath it (<see cref="ScopeMatch.Subtree"/>).
+    /// Served by <c>0010</c>'s <c>ix_experience_records_live_by_age</c>, whose leading columns are the
+    /// three required fields and then <c>created_at</c>.
+    /// </summary>
+    private const string SweepSubtreeCandidatesSql =
+        $"SELECT {SweepCandidateColumns} FROM {Table} " +
+        $"WHERE {SubtreeScopePredicate} AND {LivePredicate} AND created_at < @cutoff " +
         "ORDER BY created_at, experience_id LIMIT @limit";
 
     /// <summary>The purge function's outcome for a record it erased.</summary>
@@ -1343,7 +1369,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            return await PurgeAsync(connection, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
+            var (result, _) = await PurgeAsync(connection, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
+            return result;
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
@@ -1352,8 +1379,38 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <summary>
-    /// Erases the records in one scope that are older than <paramref name="retentionAge"/>, in one
-    /// bounded batch, through exactly the same erasure as <see cref="DeleteAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>.
+    /// Erases the records in exactly one scope that are older than <paramref name="retentionAge"/>, in
+    /// one bounded batch. The same as
+    /// <see cref="SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/>
+    /// with <see cref="ScopeMatch.Exact"/>.
+    /// </summary>
+    /// <remarks>
+    /// <b>This sweeps the exact scope and no scope under it.</b> A sweep of <c>(tenant, app, project)</c>
+    /// with no team, agent or user reaches only the records stored with all three of those null, and
+    /// reports <see cref="ExperienceRetentionSweepResult.MoreRemain"/> <see langword="false"/> while
+    /// team-, agent- and user-scoped records under it survive. A host whose policy covers everything
+    /// under a scope passes <see cref="ScopeMatch.Subtree"/> to the other overload.
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope to sweep, matched field for field. Never treated as authority.</param>
+    /// <param name="retentionAge">How long a record may be kept, measured from <see cref="ExperienceRecord.CreatedAt"/>. Must be strictly positive.</param>
+    /// <param name="batchSize">The most records this call may erase, from <see cref="MinSweepBatchSize"/> to <see cref="MaxSweepBatchSize"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation between records; records already erased stay erased, and the count comes back on the result rather than being lost.</param>
+    /// <returns>See the other overload.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ExperienceRetentionSweepInterruptedException">A storage failure stopped the batch part-way; the count of what was erased is on the exception.</exception>
+    public Task<ExperienceRetentionSweepResult> SweepExpiredAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        TimeSpan retentionAge,
+        int batchSize,
+        CancellationToken cancellationToken) =>
+        SweepExpiredAsync(authorization, scope, retentionAge, batchSize, ScopeMatch.Exact, cancellationToken);
+
+    /// <summary>
+    /// Erases the records in a scope -- or, with <see cref="ScopeMatch.Subtree"/>, in that scope and
+    /// every scope beneath it -- that are older than <paramref name="retentionAge"/>, in one bounded
+    /// batch, through exactly the same erasure as <see cref="DeleteAsync(AuthorizationContext, Scope, Guid, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1364,10 +1421,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// <para>
     /// <b>Bounded, and resumable.</b> At most <paramref name="batchSize"/> records are erased per call,
-    /// oldest <see cref="ExperienceRecord.CreatedAt"/> first, and
+    /// oldest <see cref="ExperienceRecord.CreatedAt"/> first across everything the match reaches, and
     /// <see cref="ExperienceRetentionSweepResult.MoreRemain"/> says whether another call would find
-    /// more. Each record is erased in its own transaction, so an interrupted sweep leaves every record
+    /// more -- across the whole subtree under <see cref="ScopeMatch.Subtree"/>. Each record is erased in
+    /// its own transaction, in its own exact stored scope, so an interrupted sweep leaves every record
     /// it reached wholly erased and every record it did not reach wholly untouched.
+    /// <see cref="ExperienceRetentionSweepResult.DeletedCount"/> counts only the records this call
+    /// erased: one another caller erased first is not counted again.
     /// </para>
     /// <para>
     /// The cutoff is measured on this store's <see cref="TimeProvider"/> against the record's stored
@@ -1376,17 +1436,22 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// does not thereby become younger.
     /// </para>
     /// <para>
-    /// <b>It sweeps the EXACT scope and no scope under it, and that is the one failure mode here that
-    /// looks like success.</b> <paramref name="scope"/> is matched field for field, exactly as every
-    /// other operation in this library matches it, so a sweep of
-    /// <c>(tenant, app, project)</c> with no team, agent or user reaches only the records stored with
-    /// those three fields and all three of the others null. Records the same tenant holds under a team,
-    /// an agent or a user are a <em>different</em> scope: they are not swept, they are not counted, and
-    /// <see cref="ExperienceRetentionSweepResult.MoreRemain"/> comes back <see langword="false"/> --
-    /// a retention obligation quietly unmet, reported as a clean sweep. A host whose policy is
-    /// "delete everything in this tenant older than N days" must enumerate every leaf scope it has
-    /// written under and call this once per scope; the library cannot enumerate them for it, because a
-    /// scope is the host's own partitioning and nothing here knows which of them exist.
+    /// <b><see cref="ScopeMatch.Exact"/> sweeps the exact scope and no scope under it, and that is the
+    /// one failure mode here that looks like success.</b> A sweep of <c>(tenant, app, project)</c> with
+    /// no team, agent or user reaches only the records stored with all three of those null; records the
+    /// same project holds under a team, an agent or a user are a <em>different</em> scope and are not
+    /// swept, not counted, and not reflected in <see cref="ExperienceRetentionSweepResult.MoreRemain"/>.
+    /// <see cref="ScopeMatch.Subtree"/> is how a host whose policy covers everything under a scope says
+    /// so. What it reaches is defined exactly on <see cref="ScopeMatch"/>: never another tenant,
+    /// application or project, never an ancestor or a sibling of <paramref name="scope"/>.
+    /// </para>
+    /// <para>
+    /// <b>Authorization is decided on <paramref name="scope"/>, and that covers the subtree.</b> An
+    /// <see cref="AuthorizationContext"/> that permits the root has no bound on any field the root
+    /// leaves null, so it permits every scope beneath it; one bounded to a team does not permit a
+    /// project root at all, and is <see cref="ExperienceStoreOutcome.Denied"/> before any connection
+    /// opens. Every candidate is checked again, against the root and the authorization, before it is
+    /// erased.
     /// </para>
     /// <para>
     /// <b>Stopping early.</b> Cancelling between records returns what the call had already erased, with
@@ -1397,9 +1462,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>
-    /// <param name="scope">The exact scope to sweep, matched field for field. Never treated as authority, and never widened to the scopes beneath it.</param>
+    /// <param name="scope">The scope to sweep, or the root of the subtree to sweep. Never treated as authority.</param>
     /// <param name="retentionAge">How long a record may be kept, measured from <see cref="ExperienceRecord.CreatedAt"/>. Must be strictly positive.</param>
     /// <param name="batchSize">The most records this call may erase, from <see cref="MinSweepBatchSize"/> to <see cref="MaxSweepBatchSize"/>.</param>
+    /// <param name="match">Whether to sweep <paramref name="scope"/> alone or everything beneath it too. A value the enum does not define is <see cref="ExperienceStoreOutcome.Invalid"/>.</param>
     /// <param name="cancellationToken">Cancels the operation between records; records already erased stay erased, and the count comes back on the result rather than being lost.</param>
     /// <returns>
     /// <see cref="ExperienceStoreOutcome.Deleted"/> when the sweep ran (possibly erasing nothing, and
@@ -1413,17 +1479,20 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         Scope scope,
         TimeSpan retentionAge,
         int batchSize,
+        ScopeMatch match,
         CancellationToken cancellationToken)
     {
         // One span for the whole batch, never one per record: the records are erased through PurgeAsync,
         // not through DeleteAsync, and a span attribute is not a place for a list that grows with the
-        // batch. What reaches the trace is how many were erased and whether the batch stopped early.
+        // batch. What reaches the trace is how many were erased, whether the batch stopped early, and
+        // how wide it was asked to reach -- never which scope.
         using var operation = ErasureDiagnostics.Start(ErasureDiagnostics.RetentionSweep);
+        ErasureDiagnostics.TagScopeMatch(operation, match);
 
         ExperienceRetentionSweepResult result;
         try
         {
-            result = await SweepExpiredCoreAsync(authorization, scope, retentionAge, batchSize, cancellationToken)
+            result = await SweepExpiredCoreAsync(authorization, scope, retentionAge, batchSize, match, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (ExperienceRetentionSweepInterruptedException ex)
@@ -1457,12 +1526,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         Scope scope,
         TimeSpan retentionAge,
         int batchSize,
+        ScopeMatch match,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(scope);
 
-        var errors = ExperienceRecordValidator.ValidateRetentionSweep(scope, retentionAge, batchSize);
+        var errors = ExperienceRecordValidator.ValidateRetentionSweep(scope, retentionAge, batchSize, match);
         if (errors.Count > 0)
         {
             return new(ExperienceStoreOutcome.Invalid, 0, false, errors);
@@ -1481,8 +1551,9 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-            var candidates = new List<Guid>(batchSize + 1);
-            await using (var command = new NpgsqlCommand(SweepCandidatesSql, connection))
+            var candidates = new List<(Guid ExperienceId, Scope Scope)>(batchSize + 1);
+            var candidatesSql = match == ScopeMatch.Subtree ? SweepSubtreeCandidatesSql : SweepCandidatesSql;
+            await using (var command = new NpgsqlCommand(candidatesSql, connection))
             {
                 AddScopeParameters(command.Parameters, scope);
                 command.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", cutoff));
@@ -1494,7 +1565,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    candidates.Add(reader.GetGuid(0));
+                    candidates.Add((
+                        reader.GetGuid(0),
+                        new Scope(
+                            reader.GetString(1),
+                            reader.GetString(2),
+                            reader.GetString(3),
+                            reader.IsDBNull(4) ? null : reader.GetString(4),
+                            reader.IsDBNull(5) ? null : reader.GetString(5),
+                            reader.IsDBNull(6) ? null : reader.GetString(6))));
                 }
             }
 
@@ -1506,14 +1585,33 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             var deleted = 0;
             try
             {
-                foreach (var experienceId in candidates.Take(batchSize))
+                foreach (var (experienceId, candidateScope) in candidates.Take(batchSize))
                 {
+                    // Defence in depth over the page the database returned: the candidate must lie at or
+                    // beneath the root this call was authorized for, and the authorization must permit
+                    // it on its own. Both hold by construction (see ScopeMatch), so neither can fail
+                    // unless the predicate above is wrong. If it is, the sweep stops loudly without
+                    // erasing that record: silently skipping it would leave it at the head of every later
+                    // page, so every call would erase nothing and report MoreRemain forever.
+                    if (!IsAtOrBeneath(candidateScope, scope, match) || !authorization.Permits(candidateScope))
+                    {
+                        throw new ExperienceRetentionSweepInterruptedException(
+                            new(ExperienceStoreOutcome.Deleted, deleted, true, NoErrors, Interrupted: true),
+                            new ExperienceStoreException(
+                                "A retention sweep candidate lay outside the requested scope or authorization; "
+                                + "the sweep stopped without erasing it."));
+                    }
+
                     // No expected revision: a sweep deletes a record for its age, not for the version it
-                    // happened to be at when the page was read.
-                    var result = await PurgeAsync(connection, scope, experienceId, expectedRevision: null, cancellationToken)
+                    // happened to be at when the page was read. The candidate's own exact scope, so the
+                    // purge function's scope guard is the same exact-match guard DeleteAsync relies on.
+                    var (_, erasedNow) = await PurgeAsync(connection, candidateScope, experienceId, expectedRevision: null, cancellationToken)
                         .ConfigureAwait(false);
 
-                    if (result.Outcome == ExperienceStoreOutcome.Deleted)
+                    // Only what this call erased. A record another sweep or delete erased first comes back
+                    // as already a tombstone, and counting it here too would let two racing sweeps report
+                    // more erasures than there were records.
+                    if (erasedNow)
                     {
                         deleted++;
                     }
@@ -1555,7 +1653,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// Runs the purge function and maps its outcome. One statement, so the whole erasure is one
     /// transaction whether or not the caller opened one.
     /// </summary>
-    private async Task<ExperienceRecordDeleteResult> PurgeAsync(
+    private async Task<(ExperienceRecordDeleteResult Result, bool ErasedNow)> PurgeAsync(
         NpgsqlConnection connection,
         Scope scope,
         Guid experienceId,
@@ -1577,7 +1675,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             // The function always returns exactly one row; treat the impossible case the way a missing
             // record is treated, which writes nothing and claims nothing.
-            return new(ExperienceStoreOutcome.NotFound, 0, NoErrors);
+            return (new(ExperienceStoreOutcome.NotFound, 0, NoErrors), false);
         }
 
         var outcome = reader.GetString(0);
@@ -1585,11 +1683,42 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         return outcome switch
         {
-            // Erased now, or erased earlier: deleting twice is a success that touches nothing.
-            PurgedOutcome or AlreadyPurgedOutcome => new(ExperienceStoreOutcome.Deleted, currentRevision, NoErrors),
-            PurgeStaleOutcome => new(ExperienceStoreOutcome.StaleRevision, currentRevision, NoErrors),
-            PurgeNotFoundOutcome => new(ExperienceStoreOutcome.NotFound, 0, NoErrors),
+            // Erased now, or erased earlier: deleting twice is a success that touches nothing. Only the
+            // first is this call's erasure, which is what a sweep counts.
+            PurgedOutcome => (new(ExperienceStoreOutcome.Deleted, currentRevision, NoErrors), true),
+            AlreadyPurgedOutcome => (new(ExperienceStoreOutcome.Deleted, currentRevision, NoErrors), false),
+            PurgeStaleOutcome => (new(ExperienceStoreOutcome.StaleRevision, currentRevision, NoErrors), false),
+            PurgeNotFoundOutcome => (new(ExperienceStoreOutcome.NotFound, 0, NoErrors), false),
             _ => throw new ExperienceStoreException("The erasure function reported an unrecognized outcome."),
+        };
+    }
+
+    /// <summary>
+    /// Whether <paramref name="candidate"/> is <paramref name="root"/> itself (<see cref="ScopeMatch.Exact"/>),
+    /// or at or beneath it (<see cref="ScopeMatch.Subtree"/>), exactly as <see cref="ScopeMatch"/> defines
+    /// it: the three required fields equal, and each optional field of the root either null or equal.
+    /// Ordinal throughout, like <see cref="AuthorizationContext.Permits"/>.
+    /// </summary>
+    internal static bool IsAtOrBeneath(Scope candidate, Scope root, ScopeMatch match)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentNullException.ThrowIfNull(root);
+
+        var required = string.Equals(candidate.TenantId, root.TenantId, StringComparison.Ordinal)
+            && string.Equals(candidate.ApplicationId, root.ApplicationId, StringComparison.Ordinal)
+            && string.Equals(candidate.ProjectId, root.ProjectId, StringComparison.Ordinal);
+
+        return match switch
+        {
+            ScopeMatch.Exact => required
+                && string.Equals(candidate.TeamId, root.TeamId, StringComparison.Ordinal)
+                && string.Equals(candidate.AgentId, root.AgentId, StringComparison.Ordinal)
+                && string.Equals(candidate.UserId, root.UserId, StringComparison.Ordinal),
+            ScopeMatch.Subtree => required
+                && (root.TeamId is null || string.Equals(candidate.TeamId, root.TeamId, StringComparison.Ordinal))
+                && (root.AgentId is null || string.Equals(candidate.AgentId, root.AgentId, StringComparison.Ordinal))
+                && (root.UserId is null || string.Equals(candidate.UserId, root.UserId, StringComparison.Ordinal)),
+            _ => false,
         };
     }
 

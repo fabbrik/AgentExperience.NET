@@ -27,12 +27,10 @@ preview.
 | --- | --- | --- |
 | KL-1 | **Serial round trips on two paths, one of them the invocation's critical path.** `IExperienceEmbeddingGenerator.GenerateAsync` takes one string, so a re-index pass makes one provider call per record, in sequence. Injection re-reads each kept candidate with its own `GetAsync`, in sequence, before the invocation proceeds — up to `MaxRecords` (default 8) round trips inside `EligibilityCheckTimeout` (default 2 s). Story 4.4 charges both to the memory-enabled condition only, so it reports `elapsed_ms` and keeps it out of its gate. Batching is a breaking change to a public port, deliberately not made in the release that introduces the API baseline | [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check); [Indexing](#indexing-experience-for-semantic-reuse); the 4.4 report (`tests/AgentExperience.ReuseBaseline`) |
 | KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
-| KL-3 | **A retention sweep matches one scope exactly.** A sweep of a tenant reports a clean `MoreRemain: false` while every team-, agent- and user-scoped record under it stays; a tenant-wide policy has to enumerate its own leaf scopes | [Store: a sweep reaches one scope, exactly](src/AgentExperience.Storage.Postgres/README.md#a-sweep-reaches-one-scope-exactly-and-says-nothing-about-the-scopes-beneath-it) |
-| KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the two purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
+| KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the three purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
 | KL-5 | **Default-deny on evidence kind is opt-in per check.** A `RequiredCheck` with a null `ExpectedKind` accepts evidence of any kind | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here); `RequiredCheck` |
 | KL-6 | **A reflection can be paired with the wrong evaluation by a host that calls `IExperienceReflector` directly.** Finalization computes the evaluation itself, so it cannot mismatch; a direct caller can | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here) |
 | KL-8 | **An approach is its tool names only.** Approaches that differ by argument render identically in the `Approach:` line; a host whose lessons turn on arguments needs its own reflector to say so in the lesson | [Adapter: the payload](src/AgentExperience.MicrosoftAgentFramework/README.md#the-payload) |
-| KL-10 | **The grant access log has no retention path.** Erasure deliberately keeps access rows, and the ledger is append-only, so it grows until the tables' owner prunes it | [Store: schema, `0009`](src/AgentExperience.Storage.Postgres/README.md#script-comments-that-were-written-before-the-work-they-point-at-shipped) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
 | KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
@@ -57,6 +55,21 @@ Resolved, shipping in the next preview:
 - KL-16 (erasure emitting no library telemetry) is resolved by story 5.2. Deletion, the retention sweep and the grant
   purge are now the `delete`, `retention.sweep` and `grant.purge` operations on the `AgentExperience.Storage.Postgres`
   source and meter, and they carry nothing that was erased; see [`docs/telemetry.md`](docs/telemetry.md#operations).
+- KL-3 (a retention sweep matching one scope exactly) is resolved by `ScopeMatch.Subtree` (story 5.4).
+  `SweepExpiredAsync(auth, scope, age, batch, ScopeMatch.Subtree, ct)` sweeps the scope and every scope beneath it,
+  bounded, one record per transaction, with `MoreRemain` true across the whole subtree. "Beneath" means the same
+  tenant, application and project, and each team, agent or user field either left null on the root or equal to it,
+  which is the reading `AuthorizationContext` already gives a null bound, so authorizing the root authorizes the
+  subtree. The five-argument overload is unchanged and still exact. A subtree never spans projects: a host with
+  several sweeps each project root, a list it configures rather than one it has to discover. See
+  [Store: a sweep reaches one scope, or everything beneath it](src/AgentExperience.Storage.Postgres/README.md#a-sweep-reaches-one-scope-or-everything-beneath-it-and-you-choose-which).
+- KL-10 (no retention path for the grant access log) is resolved by `0012` and
+  `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` (story 5.4): a bounded, administrator-authorized purge of
+  access rows the database recorded before a host-given cutoff, within an owner scope or its subtree, through a
+  `SECURITY DEFINER` function whose `EXECUTE` is revoked from `PUBLIC`. It never removes a row younger than
+  30 days, by the database's clock: a later cutoff is refused rather than clamped, and the append-only guard
+  re-checks every row. Erasing a record still keeps its access rows. It is the `grant.access.purge` telemetry
+  operation. See [Store: retention for the access log](src/AgentExperience.Storage.Postgres/README.md#retention-for-the-grant-access-log).
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -360,6 +373,9 @@ var deleted = await store.DeleteAsync(hostAuthorization, scope, experienceId, ca
 
 // Or on a schedule the host owns: this library ships no timer.
 var sweep = await store.SweepExpiredAsync(hostAuthorization, scope, TimeSpan.FromDays(90), batchSize: 200, cancellationToken);
+
+// The scope and every team, agent and user scope beneath it -- opt-in, never the default.
+var wide = await store.SweepExpiredAsync(hostAuthorization, projectScope, TimeSpan.FromDays(90), batchSize: 200, ScopeMatch.Subtree, cancellationToken);
 ```
 
 - **A tombstone, never a vanishing row.** What is retained is exactly the opaque `ExperienceId`, the six scope
@@ -377,15 +393,16 @@ var sweep = await store.SweepExpiredAsync(hostAuthorization, scope, TimeSpan.Fro
   claiming the stronger version of both.
 - **Retention is indefinite by default.** A sweep runs only when a host passes a positive age, in bounded batches,
   through the same delete. The library ships no timer, no background service, and no hosted service: scheduling
-  belongs to the host — **and a sweep matches one exact scope**, so a host with a tenant-wide policy has to
-  enumerate its own leaf scopes and sweep each one. A sweep of the tenant alone reports a clean `MoreRemain:
-  false` while every team-, agent- and user-scoped record stays put.
+  belongs to the host. **By default a sweep matches one exact scope**, and a sweep of the project root alone
+  reports a clean `MoreRemain: false` while every team-, agent- and user-scoped record stays put; pass
+  `ScopeMatch.Subtree` to sweep the root and everything beneath it. The grant access trail has its own
+  retention path, `PurgeOlderThanAsync`, which never removes a row younger than 30 days.
 - **It is an auditability mechanism, not a privilege boundary.** The purge path buys one code path, one
   transaction, and a guard that is never switched off — not protection from an administrator. A custom GUC is
   settable by any session, and the guards still do not bind a role that can `ALTER TABLE`, which the application
-  role can. There is one real privilege boundary: `0010` revokes `EXECUTE` on both `SECURITY DEFINER` purge
-  functions from `PUBLIC`, because PostgreSQL's default would otherwise let any role that can connect erase any
-  tenant's record.
+  role can. There is one real privilege boundary: `0010` and `0012` revoke `EXECUTE` on the three `SECURITY DEFINER`
+  purge functions from `PUBLIC`, because PostgreSQL's default would otherwise let any role that can connect erase any
+  tenant's record or access trail.
 - **The limits are stated, including the uncomfortable one.** Backups, replicas, WAL, exported telemetry and
   external artifacts are host-owned and out of reach — and *inside* this database the erased text survives in the
   dead heap tuple until `VACUUM` reclaims it, which is a schedule nobody promised. The

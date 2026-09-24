@@ -29,10 +29,12 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     private const string DeleteOperation = "delete";
     private const string SweepOperation = "retention.sweep";
     private const string PurgeOperation = "grant.purge";
+    private const string AccessPurgeOperation = "grant.access.purge";
 
     private const string DeleteSpan = "agentexperience.delete";
     private const string SweepSpan = "agentexperience.retention.sweep";
     private const string PurgeSpan = "agentexperience.grant.purge";
+    private const string AccessPurgeSpan = "agentexperience.grant.access.purge";
 
     private const string OperationAttribute = "agentexperience.operation";
     private const string OutcomeAttribute = "agentexperience.outcome";
@@ -41,13 +43,14 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     private const string ExperienceIdAttribute = "agentexperience.experience_id";
     private const string ErasedCountAttribute = "agentexperience.erased_count";
     private const string InterruptedAttribute = "agentexperience.interrupted";
+    private const string ScopeMatchAttribute = "agentexperience.scope_match";
 
     private const string Administrator = "sharing-administrator";
 
     /// <summary>Planted in everything an erasure touches or removes; it must surface nowhere in telemetry.</summary>
     private const string Marker = "ERASED-7f3a9c-MARKER";
 
-    /// <summary>Every span attribute the three erasure operations may write, and nothing else.</summary>
+    /// <summary>Every span attribute the four erasure operations may write, and nothing else.</summary>
     private static readonly string[] AllowedSpanAttributes =
     [
         OperationAttribute,
@@ -57,6 +60,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         ExperienceIdAttribute,
         ErasedCountAttribute,
         InterruptedAttribute,
+        ScopeMatchAttribute,
     ];
 
     private static readonly string[] AllowedDimensions = ["operation", "outcome", "error.class", "nested"];
@@ -116,6 +120,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         var grants = new PostgresExperienceGrantStore(_fixture.DataSource);
         var administration = new GrantAdministration(Administrator, DateTimeOffset.UtcNow);
         var denied = Authorize(NewTenant());
+        var access = new PostgresExperienceGrantAccessLog(_fixture.DataSource);
         var id = await SeedAsync(store, auth, scope, ColumnTime);
 
         using var probe = TelemetryProbe.All();
@@ -130,6 +135,8 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
             (SweepOperation, (await store.SweepExpiredAsync(auth, scope, TimeSpan.Zero, 10, CancellationToken.None)).Outcome),
             (PurgeOperation, (await grants.PurgeExpiredAsync(auth, administration: null, scope, 10, CancellationToken.None)).Outcome),
             (PurgeOperation, (await grants.PurgeExpiredAsync(auth, administration, scope, 0, CancellationToken.None)).Outcome),
+            (AccessPurgeOperation, (await access.PurgeOlderThanAsync(auth, administration: null, scope, DateTimeOffset.UtcNow.AddDays(-400), ScopeMatch.Subtree, 10, CancellationToken.None)).Outcome),
+            (AccessPurgeOperation, (await access.PurgeOlderThanAsync(auth, administration, scope, DateTimeOffset.UtcNow, ScopeMatch.Subtree, 10, CancellationToken.None)).Outcome),
         };
 
         // The calls really did reach each refusal; otherwise the assertions below would be about Deleted.
@@ -137,6 +144,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
             [
                 ExperienceStoreOutcome.NotFound, ExperienceStoreOutcome.StaleRevision, ExperienceStoreOutcome.Denied,
                 ExperienceStoreOutcome.Invalid, ExperienceStoreOutcome.Denied, ExperienceStoreOutcome.Invalid,
+                ExperienceStoreOutcome.Denied, ExperienceStoreOutcome.Invalid,
                 ExperienceStoreOutcome.Denied, ExperienceStoreOutcome.Invalid,
             ],
             expected.Select(entry => entry.Outcome));
@@ -151,7 +159,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
             Assert.Equal(expected[i].Outcome.ToString(), spans[i].GetTagItem(OutcomeAttribute));
         }
 
-        foreach (var operation in new[] { DeleteOperation, SweepOperation, PurgeOperation })
+        foreach (var operation in new[] { DeleteOperation, SweepOperation, PurgeOperation, AccessPurgeOperation })
         {
             Assert.Equal(
                 expected.Where(entry => entry.Operation == operation).Select(entry => entry.Outcome.ToString()).Order(),
@@ -243,6 +251,48 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         Assert.Empty(probe.For(FailuresInstrument, PurgeOperation));
     }
 
+    [Fact]
+    public async Task An_access_purge_reports_how_many_rows_it_removed_and_how_wide_it_reached_and_nothing_else()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var root = Scope(tenant);
+        var access = new PostgresExperienceGrantAccessLog(_fixture.DataSource);
+        var rows = new[]
+        {
+            await SeedAgedAccessAsync(Scope(tenant, team: "team-a"), "reading-principal"),
+            await SeedAgedAccessAsync(Scope(tenant, team: "team-b"), "reading-principal"),
+        };
+        var sweeper = new PostgresExperienceRecordStore(_fixture.DataSource, onGrantsUnavailable: null, auditing: null, timeProvider: new FrozenClock(ColumnTime));
+
+        using var probe = TelemetryProbe.All();
+
+        var purged = await access.PurgeOlderThanAsync(auth, new GrantAdministration(Administrator, DateTimeOffset.UtcNow), root, DateTimeOffset.UtcNow.AddDays(-90), ScopeMatch.Subtree, 10, CancellationToken.None);
+        Assert.Equal(2, purged.PurgedCount);
+        Assert.Equal(0, (await sweeper.SweepExpiredAsync(auth, root, TimeSpan.FromDays(90), 10, CancellationToken.None)).DeletedCount);
+
+        var span = Assert.Single(probe.Spans(AccessPurgeSpan));
+        Assert.Equal(Source, span.Source.Name);
+        Assert.Equal(ActivityStatusCode.Ok, span.Status);
+        Assert.Equal(AccessPurgeOperation, span.GetTagItem(OperationAttribute));
+        Assert.Equal(nameof(ExperienceStoreOutcome.Deleted), span.GetTagItem(OutcomeAttribute));
+        Assert.Equal(2, span.GetTagItem(ErasedCountAttribute));
+        Assert.Equal(nameof(ScopeMatch.Subtree), span.GetTagItem(ScopeMatchAttribute));
+
+        // The five-argument sweep is Exact, and says so.
+        Assert.Equal(nameof(ScopeMatch.Exact), Assert.Single(probe.Spans(SweepSpan)).GetTagItem(ScopeMatchAttribute));
+
+        // Which rows went, whose they were and who had read them stays on the database.
+        Assert.All(rows, row => Assert.DoesNotContain(probe.EverySpanValue, value => value.Contains(row.ToString("D"), StringComparison.OrdinalIgnoreCase)));
+        Assert.DoesNotContain(probe.EverySpanValue, value => value.Contains("reading-principal", StringComparison.Ordinal));
+        Assert.DoesNotContain(probe.EverySpanValue, value => value.Contains(tenant, StringComparison.Ordinal));
+
+        var counted = Assert.Single(probe.For(CountInstrument, AccessPurgeOperation));
+        Assert.Equal(nameof(ExperienceStoreOutcome.Deleted), counted.Tags["outcome"]);
+        Assert.Single(probe.For(DurationInstrument, AccessPurgeOperation));
+        Assert.Empty(probe.For(FailuresInstrument, AccessPurgeOperation));
+    }
+
     // ------------------------------------------------------------------ a sweep that stops early
 
     [Fact]
@@ -319,6 +369,9 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     [InlineData(DeleteOperation, "null-argument", "Unexpected")]
     [InlineData(SweepOperation, "null-argument", "Unexpected")]
     [InlineData(PurgeOperation, "null-argument", "Unexpected")]
+    [InlineData(AccessPurgeOperation, "unreachable", "Infrastructure")]
+    [InlineData(AccessPurgeOperation, "cancelled", "Cancelled")]
+    [InlineData(AccessPurgeOperation, "null-argument", "Unexpected")]
     public async Task A_thrown_erasure_is_classified_and_counted_as_a_failure(string operation, string kind, string expectedClass)
     {
         var tenant = NewTenant();
@@ -327,6 +380,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         var dataSource = kind == "unreachable" ? unreachable : _fixture.DataSource;
         var store = new PostgresExperienceRecordStore(dataSource);
         var grants = new PostgresExperienceGrantStore(dataSource);
+        var access = new PostgresExperienceGrantAccessLog(dataSource);
         var auth = kind == "null-argument" ? null! : Authorize(tenant);
         using var cancellation = new CancellationTokenSource();
         if (kind == "cancelled")
@@ -340,6 +394,8 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         {
             DeleteOperation => store.DeleteAsync(auth, scope, Guid.NewGuid(), cancellation.Token),
             SweepOperation => store.SweepExpiredAsync(auth, scope, TimeSpan.FromDays(1), 10, cancellation.Token),
+            AccessPurgeOperation => access.PurgeOlderThanAsync(
+                auth, new GrantAdministration(Administrator, DateTimeOffset.UtcNow), scope, DateTimeOffset.UtcNow.AddDays(-400), ScopeMatch.Subtree, 10, cancellation.Token),
             _ => grants.PurgeExpiredAsync(auth, new GrantAdministration(Administrator, DateTimeOffset.UtcNow), scope, 10, cancellation.Token),
         });
 
@@ -378,11 +434,15 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         await using var unreachable = Unreachable();
         var offline = new PostgresExperienceRecordStore(unreachable);
         var offlineGrants = new PostgresExperienceGrantStore(unreachable);
+        var access = new PostgresExperienceGrantAccessLog(_fixture.DataSource);
+        var offlineAccess = new PostgresExperienceGrantAccessLog(unreachable);
+        var administration = new GrantAdministration(administrator, DateTimeOffset.UtcNow);
 
         var erased = await SeedMarkedAsync(store, auth, scope, ColumnTime);
         var swept = await SeedMarkedAsync(store, auth, scope, ColumnTime.AddDays(-400));
         var granted = await SeedMarkedAsync(store, auth, scope, ColumnTime);
         await SeedExpiredGrantAsync(granted, scope, recipient, $"reason-{Marker}", administrator);
+        await SeedAgedAccessAsync(Scope(tenant, team: $"reader-of-{Marker}"), $"principal-{Marker}");
 
         // The marker really is in the stored record, or the sweep below proves nothing.
         var stored = await store.GetAsync(auth, scope, erased, CancellationToken.None);
@@ -404,10 +464,14 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         Assert.Equal(ExperienceStoreOutcome.Invalid, (await store.SweepExpiredAsync(auth, scope, TimeSpan.Zero, 10, CancellationToken.None)).Outcome);
         Assert.Equal(ExperienceStoreOutcome.Denied, (await grants.PurgeExpiredAsync(Authorize(NewTenant()), new GrantAdministration(administrator, DateTimeOffset.UtcNow), scope, 10, CancellationToken.None)).Outcome);
         Assert.Equal(ExperienceStoreOutcome.Invalid, (await grants.PurgeExpiredAsync(auth, new GrantAdministration(administrator, DateTimeOffset.UtcNow), scope, 0, CancellationToken.None)).Outcome);
+        Assert.Equal(1, (await access.PurgeOlderThanAsync(auth, administration, Scope(tenant), DateTimeOffset.UtcNow.AddDays(-90), ScopeMatch.Subtree, 10, CancellationToken.None)).PurgedCount);
+        Assert.Equal(ExperienceStoreOutcome.Denied, (await access.PurgeOlderThanAsync(Authorize(NewTenant()), administration, scope, DateTimeOffset.UtcNow.AddDays(-90), ScopeMatch.Subtree, 10, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Invalid, (await access.PurgeOlderThanAsync(auth, administration, scope, DateTimeOffset.UtcNow, ScopeMatch.Subtree, 10, CancellationToken.None)).Outcome);
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => offlineAccess.PurgeOlderThanAsync(auth, administration, scope, DateTimeOffset.UtcNow.AddDays(-90), ScopeMatch.Subtree, 10, CancellationToken.None));
 
-        // Every path of all three operations -- success, refusal and fault -- saw the marked inputs.
+        // Every path of all four operations -- success, refusal and fault -- saw the marked inputs.
         var spans = probe.Activities.Where(activity => activity.Source.Name == Source).ToList();
-        Assert.Equal(12, spans.Count);
+        Assert.Equal(16, spans.Count);
 
         Assert.All(probe.EverySpanValue, value => Assert.DoesNotContain(Marker, value, StringComparison.Ordinal));
 
@@ -626,6 +690,31 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         }
 
         return grantId;
+    }
+
+    /// <summary>
+    /// An access row a year old by <c>recorded_at</c>, written straight into the ledger: the adapter
+    /// always stamps the database's clock, so this is the only way to stage one past the minimum
+    /// retention. The owner scope and the reading principal carry whatever the caller plants in them.
+    /// </summary>
+    private async Task<Guid> SeedAgedAccessAsync(Scope owner, string principal)
+    {
+        var accessId = Guid.NewGuid();
+        await using var command = _fixture.DataSource.CreateCommand(
+            "INSERT INTO agent_experience.experience_grant_access (access_id, grant_id, experience_id, record_revision, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
+            "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, principal_id, correlation_id, " +
+            "occurred_at, recorded_at, disclosure) VALUES (@access_id, gen_random_uuid(), gen_random_uuid(), 0, " +
+            "@tenant, @app, @project, @team, NULL, NULL, @tenant, @app, @project, @team, NULL, 'reader-user', " +
+            "@principal, @principal, now() - interval '400 days', now() - interval '400 days', 'LessonOnly')");
+        command.Parameters.Add(new NpgsqlParameter<Guid>("access_id", accessId));
+        command.Parameters.Add(new NpgsqlParameter<string>("tenant", NpgsqlDbType.Text) { TypedValue = owner.TenantId });
+        command.Parameters.Add(new NpgsqlParameter<string>("app", NpgsqlDbType.Text) { TypedValue = owner.ApplicationId });
+        command.Parameters.Add(new NpgsqlParameter<string>("project", NpgsqlDbType.Text) { TypedValue = owner.ProjectId });
+        command.Parameters.Add(new NpgsqlParameter<string>("team", NpgsqlDbType.Text) { TypedValue = owner.TeamId! });
+        command.Parameters.Add(new NpgsqlParameter<string>("principal", NpgsqlDbType.Text) { TypedValue = principal });
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        return accessId;
     }
 
     /// <summary>A row lock held open on its own connection, released by rolling back.</summary>
