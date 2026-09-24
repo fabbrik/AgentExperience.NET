@@ -155,6 +155,30 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string GrantDisclosureScriptName = "0011_grant_disclosure.sql";
 
+    /// <summary>
+    /// The script that gives the grant access log a retention path:
+    /// <c>agent_experience.purge_grant_access</c>, which removes access rows older than a host-given
+    /// cutoff in bounded batches, within one owner scope or that scope and everything beneath it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The function is <c>SECURITY DEFINER</c>, so the script revokes <c>EXECUTE</c> from <c>PUBLIC</c>
+    /// and grants it to the migrating role, exactly as <c>0010</c> does for its two purge functions. It
+    /// sets its own marker, <c>agent_experience.access_purge_authorized</c> (transaction-local, and reset
+    /// when the function returns), which
+    /// <c>reject_event_log_mutation()</c> -- restated in place with <c>0010</c>'s body unchanged --
+    /// recognises for a <c>DELETE</c> on <c>experience_grant_access</c> only. <c>0010</c>'s marker still
+    /// admits nothing on that table, so erasing a record still keeps its access rows.
+    /// </para>
+    /// <para>
+    /// A row younger than 30 days (by the database's clock, on <c>recorded_at</c>) is never removed:
+    /// the function refuses a later cutoff outright, and the guard re-checks every row. See
+    /// <see cref="PostgresExperienceGrantAccessLog.MinimumRetentionDays"/> and the script's header,
+    /// which carries the <c>CONCURRENTLY</c> runbook for its one index.
+    /// </para>
+    /// </remarks>
+    public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -176,6 +200,7 @@ public static class PostgresExperienceRecordSchema
         GrantAccessLogScriptName,
         DeleteAndExpireScriptName,
         GrantDisclosureScriptName,
+        GrantAccessRetentionScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

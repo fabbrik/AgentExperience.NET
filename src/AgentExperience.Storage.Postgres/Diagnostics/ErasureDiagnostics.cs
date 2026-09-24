@@ -8,7 +8,8 @@ namespace AgentExperience.Storage.Postgres.Diagnostics;
 /// <summary>
 /// The storage adapter's one emission seam: the <see cref="ActivitySource"/> and <see cref="Meter"/>
 /// named <c>AgentExperience.Storage.Postgres</c>, the same three instruments Core emits, and the three
-/// operations this assembly owns -- erasure, the retention sweep, and the expired-grant purge.
+/// operations this assembly owns -- erasure, the retention sweep, the expired-grant purge, and the
+/// grant-access-log purge.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,8 +32,9 @@ namespace AgentExperience.Storage.Postgres.Diagnostics;
 /// <b>Nothing that was erased is ever a telemetry value.</b> An erasure's span carries the record ID
 /// the caller passed -- written before the call runs, as every request identifier is, so a refusal
 /// carries it too; for an erased record it is the ID the tombstone keeps -- and nothing else about it. A sweep and a purge carry a count and, for a sweep, whether it stopped
-/// early. No scope identifier, task ID, grant ID, grant reason, recipient scope, administrator, record
-/// content, or exception message is written, on the span or anywhere else.
+/// early; a sweep and an access purge also carry how wide they reached (<c>Exact</c> or <c>Subtree</c>).
+/// No scope identifier, task ID, grant ID, access ID, grant reason, recipient scope, reading principal,
+/// administrator, record content, or exception message is written, on the span or anywhere else.
 /// </para>
 /// <para>
 /// <b>None of these operations is ever nested.</b> None calls another operation this assembly
@@ -56,11 +58,20 @@ internal static class ErasureDiagnostics
     /// <summary>One bounded expired-grant purge batch (<c>PostgresExperienceGrantStore.PurgeExpiredAsync</c>).</summary>
     internal const string GrantPurge = "grant.purge";
 
-    /// <summary>How many records a sweep, or grants a purge, removed. A count: which ones stays on the database.</summary>
+    /// <summary>One bounded grant-access-log purge batch (<c>PostgresExperienceGrantAccessLog.PurgeOlderThanAsync</c>).</summary>
+    internal const string GrantAccessPurge = "grant.access.purge";
+
+    /// <summary>How many records a sweep, grants a purge, or access rows an access purge removed. A count: which ones stays on the database.</summary>
     internal const string ErasedCountAttribute = "agentexperience.erased_count";
 
     /// <summary>Whether a sweep stopped before the end of its batch, leaving records past the cutoff untouched.</summary>
     internal const string InterruptedAttribute = "agentexperience.interrupted";
+
+    /// <summary>
+    /// How wide a sweep or an access purge was asked to reach: <c>Exact</c> or <c>Subtree</c>, the
+    /// <c>ScopeMatch</c> member's name. Never the scope itself.
+    /// </summary>
+    internal const string ScopeMatchAttribute = "agentexperience.scope_match";
 
     // ---------------------------------------------------------------------------------------------
     // Restated from Core. Every one of these is asserted equal to Core's own value by
@@ -152,7 +163,7 @@ internal static class ErasureDiagnostics
     /// wants one. The <see cref="ActivitySource.HasListeners"/> check comes first so an unsubscribed
     /// process does not even pay for composing the span name.
     /// </summary>
-    /// <param name="operation">One of <see cref="Delete"/>, <see cref="RetentionSweep"/>, or <see cref="GrantPurge"/>.</param>
+    /// <param name="operation">One of <see cref="Delete"/>, <see cref="RetentionSweep"/>, <see cref="GrantPurge"/>, or <see cref="GrantAccessPurge"/>.</param>
     /// <returns>The trace to tag, to report through, and to dispose when the operation ends.</returns>
     internal static ErasureTrace Start(string operation)
     {
@@ -210,6 +221,21 @@ internal static class ErasureDiagnostics
         catch (Exception)
         {
             // Frozen rule 6: instrumentation failure is never propagated to the caller.
+        }
+    }
+
+    /// <summary>
+    /// Writes how wide the operation was asked to reach. Only a defined member is written, by name, so
+    /// the value set stays exactly <c>Exact</c> and <c>Subtree</c>; an undefined value is refused as
+    /// <c>Invalid</c> by the operation and writes nothing here.
+    /// </summary>
+    /// <param name="trace">The trace <see cref="Start"/> produced.</param>
+    /// <param name="match">The match the caller passed.</param>
+    internal static void TagScopeMatch(in ErasureTrace trace, ScopeMatch match)
+    {
+        if (Enum.IsDefined(match))
+        {
+            Tag(trace, ScopeMatchAttribute, match == ScopeMatch.Subtree ? nameof(ScopeMatch.Subtree) : nameof(ScopeMatch.Exact));
         }
     }
 

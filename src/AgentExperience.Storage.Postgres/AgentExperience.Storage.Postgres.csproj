@@ -37,6 +37,7 @@
     <EmbeddedResource Include="Migrations\0009_grant_access_log.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0009_grant_access_log.sql" />
     <EmbeddedResource Include="Migrations\0010_delete_and_expire.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0010_delete_and_expire.sql" />
     <EmbeddedResource Include="Migrations\0011_grant_disclosure.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0011_grant_disclosure.sql" />
+    <EmbeddedResource Include="Migrations\0012_grant_access_retention.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0012_grant_access_retention.sql" />
   </ItemGroup>
 
   <ItemGroup>

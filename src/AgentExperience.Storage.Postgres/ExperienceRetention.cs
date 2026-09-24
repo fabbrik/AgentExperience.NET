@@ -31,7 +31,7 @@ public sealed record ExperienceRecordDeleteResult(
     IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>
-/// The result of one call to <see cref="PostgresExperienceRecordStore.SweepExpiredAsync"/>.
+/// The result of one call to <see cref="PostgresExperienceRecordStore.SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/>.
 /// </summary>
 /// <param name="Outcome">
 /// <see cref="ExperienceStoreOutcome.Deleted"/> when the sweep ran -- including when it found nothing to
@@ -118,6 +118,55 @@ public sealed class ExperienceRetentionSweepInterruptedException : ExperienceSto
 /// <param name="MoreRemain">Whether another call with the same arguments would find more.</param>
 /// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
 public sealed record ExperienceGrantPurgeResult(
+    ExperienceStoreOutcome Outcome,
+    int PurgedCount,
+    bool MoreRemain,
+    IReadOnlyList<StoreValidationError> Errors);
+
+/// <summary>
+/// How a retention operation matches its <see cref="Scope"/>: the scope alone, or the scope and every
+/// scope beneath it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>What "beneath" means, exactly.</b> A stored scope is at or beneath a root when its
+/// <see cref="Scope.TenantId"/>, <see cref="Scope.ApplicationId"/> and <see cref="Scope.ProjectId"/>
+/// equal the root's, and for each of <see cref="Scope.TeamId"/>, <see cref="Scope.AgentId"/> and
+/// <see cref="Scope.UserId"/> the root's value is <see langword="null"/> or equals the stored one. All
+/// comparisons are ordinal. A <see langword="null"/> root field matches any value, including
+/// <see langword="null"/>; a set one matches only itself. The three required fields are never a
+/// wildcard, so a subtree never reaches another tenant, application or project, and never an ancestor
+/// or a sibling of the root. The optional fields are independent, not a chain: a root that names only a
+/// user reaches that user's records under every team and agent in the project.
+/// </para>
+/// <para>
+/// This is the reading <see cref="AuthorizationContext"/> already gives a <see langword="null"/> bound,
+/// which is why authorizing the root authorizes the whole subtree: an authorization that permits the
+/// root has no bound on any field the root leaves <see langword="null"/>.
+/// </para>
+/// </remarks>
+public enum ScopeMatch
+{
+    /// <summary>The scope itself, matched field for field, and nothing under it. The default.</summary>
+    Exact = 0,
+
+    /// <summary>The scope and every scope beneath it, as defined on <see cref="ScopeMatch"/>.</summary>
+    Subtree = 1,
+}
+
+/// <summary>
+/// The result of one call to <see cref="PostgresExperienceGrantAccessLog.PurgeOlderThanAsync"/>.
+/// </summary>
+/// <param name="Outcome">
+/// <see cref="ExperienceStoreOutcome.Deleted"/> when the purge ran -- including when it found nothing --
+/// or <see cref="ExperienceStoreOutcome.Denied"/> or <see cref="ExperienceStoreOutcome.Invalid"/>. A
+/// cutoff inside the database's minimum retention is <see cref="ExperienceStoreOutcome.Invalid"/> on
+/// <c>Cutoff</c>, decided by the database's clock, and removes nothing.
+/// </param>
+/// <param name="PurgedCount">How many access rows this call removed.</param>
+/// <param name="MoreRemain">Whether another call with the same arguments would find more, asked after this call's delete.</param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceGrantAccessPurgeResult(
     ExperienceStoreOutcome Outcome,
     int PurgedCount,
     bool MoreRemain,
