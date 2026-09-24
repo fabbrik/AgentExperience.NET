@@ -308,7 +308,11 @@ namespace AgentExperience.Core.Indexing
     }
     public sealed class ReindexExperienceRequest : System.IEquatable<AgentExperience.Core.Indexing.ReindexExperienceRequest>
     {
+        public const int DefaultEmbeddingBatchSize = 16;
+        public const int MaxEmbeddingBatchSize = 128;
+        public const int MinEmbeddingBatchSize = 1;
         public ReindexExperienceRequest(AgentExperience.Abstractions.Scope Scope, System.Collections.Generic.IReadOnlyList<System.Guid>? ExperienceIds = null, int Limit = 100, System.Guid? StartAfterId = default) { }
+        public int EmbeddingBatchSize { get; init; }
         public System.Collections.Generic.IReadOnlyList<System.Guid>? ExperienceIds { get; init; }
         public int Limit { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }

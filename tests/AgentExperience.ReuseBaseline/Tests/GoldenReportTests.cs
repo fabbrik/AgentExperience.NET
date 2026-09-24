@@ -159,9 +159,11 @@ public class GoldenReportTests(Xunit.Abstractions.ITestOutputHelper output)
         output.WriteLine(elapsed);
 
         Assert.Contains("excluded from the gate", elapsed, StringComparison.Ordinal);
-        Assert.Contains("ExperienceIndex.cs:231", elapsed, StringComparison.Ordinal);
-        Assert.Contains("ExperienceIndexingService.cs:502-511", elapsed, StringComparison.Ordinal);
-        Assert.Contains("ExperienceContextProvider.cs:404-422", elapsed, StringComparison.Ordinal);
+        // Story 5.6 batched both asymmetries the pre-registration names; the section says so, and says
+        // why this harness's numbers are unaffected, rather than citing source lines that moved.
+        Assert.Contains("GenerateBatchAsync", elapsed, StringComparison.Ordinal);
+        Assert.Contains("GetManyAsync", elapsed, StringComparison.Ordinal);
+        Assert.Contains("KL-1", elapsed, StringComparison.Ordinal);
         Assert.Contains("Stopwatch", elapsed, StringComparison.Ordinal);
 
         // Every trial's elapsed time is there, and every one of them is a real measurement.

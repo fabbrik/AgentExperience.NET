@@ -145,6 +145,15 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// </summary>
     public HashSet<Guid> Foreign { get; } = [];
 
+    /// <summary>
+    /// Records that have been erased: a read in the owning scope answers <c>Deleted</c>, and any other
+    /// read <c>NotFound</c> -- the real adapter's tombstone rule.
+    /// </summary>
+    public HashSet<Guid> Erased { get; } = [];
+
+    /// <summary>Records whose single read throws, while every other read succeeds -- a store whose failures are per record.</summary>
+    public HashSet<Guid> ThrowsFor { get; } = [];
+
     /// <summary>Whether <paramref name="scope"/> may read <paramref name="record"/>: its own scope, or an active grant.</summary>
     private bool Readable(ExperienceRecord record, Scope scope) =>
         record.Scope == scope || Grants.Contains((record.ExperienceId, scope));
@@ -278,6 +287,11 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             throw exception;
         }
 
+        if (ThrowsFor.Contains(experienceId))
+        {
+            throw new ExperienceStoreException("this one record cannot be read.");
+        }
+
         if (!authorization.Permits(scope) || Denied.Contains(experienceId))
         {
             return new ExperienceRecordGetResult(ExperienceStoreOutcome.Denied, null, []);
@@ -291,6 +305,16 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         ExperienceRecordGetResult result;
         lock (_stored)
         {
+            if (Erased.Contains(experienceId))
+            {
+                return new ExperienceRecordGetResult(
+                    _stored.TryGetValue(experienceId, out var erased) && erased.Scope == scope
+                        ? ExperienceStoreOutcome.Deleted
+                        : ExperienceStoreOutcome.NotFound,
+                    null,
+                    []);
+            }
+
             if (Unreadable.Contains(experienceId)
                 || !_stored.TryGetValue(experienceId, out var record)
                 || !Readable(record, scope))
@@ -357,6 +381,90 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             return auditing.Mode == ExperienceGrantAuditingMode.Required
                 ? new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, [])
                 : result;
+        }
+    }
+
+    /// <summary>Every batched re-read, in order, with the IDs it named: one entry per store round trip.</summary>
+    public IReadOnlyList<IReadOnlyList<Guid>> BatchReads
+    {
+        get
+        {
+            lock (_batchReads)
+            {
+                return _batchReads.ToList();
+            }
+        }
+    }
+
+    private readonly List<IReadOnlyList<Guid>> _batchReads = [];
+
+    /// <summary>When set, answers every batched read instead of the per-record logic -- to script a store that breaks the batch contract.</summary>
+    public Func<IReadOnlyList<Guid>, ExperienceRecordGetManyResult>? OnGetMany { get; set; }
+
+    /// <summary>
+    /// When <see langword="true"/>, <see cref="GetManyAsync"/> is the port's sequential default, as a
+    /// store written before story 5.6 has; otherwise it is one "round trip" that answers every ID.
+    /// </summary>
+    public bool SequentialGetMany { get; set; }
+
+    /// <summary>
+    /// One batched re-read. The delay and the failure are applied once, for the whole batch, as a store
+    /// that answers a batch with one statement would apply them; each ID is then answered exactly as
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// answers it, access rows included.
+    /// </summary>
+    public async Task<ExperienceRecordGetManyResult> GetManyAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        ExperienceReadOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (SequentialGetMany)
+        {
+            return await this.GetManySequentiallyAsync(authorization, scope, experienceIds, options, cancellationToken);
+        }
+
+        lock (_batchReads)
+        {
+            _batchReads.Add(experienceIds.ToArray());
+        }
+
+        if (OnGetMany is { } scripted)
+        {
+            return scripted(experienceIds);
+        }
+
+        Entered.TrySetResult();
+
+        if (GetDelay is { } delay)
+        {
+            await delay(cancellationToken);
+        }
+
+        if (GetThrows is { } exception)
+        {
+            throw exception;
+        }
+
+        // The per-record answers, without re-applying the batch-wide delay and failure above.
+        var (heldDelay, heldThrows) = (GetDelay, GetThrows);
+        GetDelay = null;
+        GetThrows = null;
+        try
+        {
+            var results = new ExperienceRecordGetResult[experienceIds.Count];
+            for (var i = 0; i < results.Length; i++)
+            {
+                results[i] = await GetAsync(authorization, scope, experienceIds[i], options, cancellationToken);
+            }
+
+            return new ExperienceRecordGetManyResult(ExperienceStoreOutcome.Found, results, []);
+        }
+        finally
+        {
+            GetDelay = heldDelay;
+            GetThrows = heldThrows;
         }
     }
 

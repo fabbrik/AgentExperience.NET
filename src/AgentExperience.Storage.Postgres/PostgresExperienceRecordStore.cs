@@ -142,10 +142,28 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// other than the one the database used. See <see cref="PermittingGrantJoin"/>.
     /// </para>
     /// </summary>
-    private const string GetSql =
+    internal const string GetSql = GetSelectFrom + $"WHERE r.experience_id = @experience_id AND {GetReadablePredicate}";
+
+    /// <summary>
+    /// Everything <see cref="GetSql"/> says before its <c>WHERE</c>: the columns, the shared flag, the
+    /// permitting grant and its disclosure, the tombstone marker, and the lateral join that names the
+    /// grant. <see cref="GetManySql"/> is built from the same text, so the single and the batched read
+    /// cannot drift apart on any of it.
+    /// </summary>
+    internal const string GetSelectFrom =
         $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {PermittingDisclosureColumn}, {DeletedAtColumn} FROM {Table} r " +
-        $"{PermittingGrantJoin} " +
-        $"WHERE r.experience_id = @experience_id AND {ReadableWithNamedGrantPredicate}";
+        $"{PermittingGrantJoin} ";
+
+    /// <summary>The readability rule <see cref="GetSql"/> and <see cref="GetManySql"/> share, byte for byte.</summary>
+    internal const string GetReadablePredicate = ReadableWithNamedGrantPredicate;
+
+    /// <summary>
+    /// <see cref="GetSql"/> for several records in one statement (story 5.6, KL-1): the identical select,
+    /// join and readability predicate, with only the ID match widened from one parameter to an array.
+    /// The lateral join is evaluated per row, so each row names its own permitting grant exactly as a
+    /// single read of it would; and the whole batch is read from one snapshot.
+    /// </summary>
+    internal const string GetManySql = GetSelectFrom + $"WHERE r.experience_id = ANY(@experience_ids) AND {GetReadablePredicate}";
 
     /// <summary>
     /// The same read with the grant branch removed, for a database that has no
@@ -153,11 +171,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// Nothing is shared on this path, so nothing is audited either: the read returns only records the
     /// requesting scope already owns.
     /// </summary>
-    private const string GetExactSql =
+    internal const string GetExactSql = GetExactSelectFrom + $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate}";
+
+    /// <summary>Everything <see cref="GetExactSql"/> says before its <c>WHERE</c>, shared with <see cref="GetManyExactSql"/>.</summary>
+    internal const string GetExactSelectFrom =
         $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, " +
         $"NULL::text AS {PermittingDisclosureAlias}, {DeletedAtColumn} " +
-        $"FROM {Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate}";
+        $"FROM {Table} r ";
+
+    /// <summary><see cref="GetExactSql"/> for several records in one statement: the fallback <see cref="GetManySql"/> takes when grants are unavailable.</summary>
+    internal const string GetManyExactSql = GetExactSelectFrom + $"WHERE r.experience_id = ANY(@experience_ids) AND {RecordScopePredicate}";
 
     private const string QuerySql = $"SELECT {SelectColumns} FROM {Table} WHERE {ScopePredicate} AND {LivePredicate}";
 
@@ -821,6 +844,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
         }
 
+        return ResultFromRow(reader);
+    }
+
+    /// <summary>
+    /// What one row of <see cref="GetSql"/>, <see cref="GetExactSql"/>, <see cref="GetManySql"/> or
+    /// <see cref="GetManyExactSql"/> means. The single and the batched read both decide through here, so
+    /// the tombstone rule and the grant columns are read the same way for both.
+    /// </summary>
+    private static ExperienceRecordGetResult ResultFromRow(DbDataReader reader)
+    {
         var sharedByGrant = ReadSharedByGrant(reader);
 
         if (ReadDeleted(reader))
@@ -891,6 +924,161 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         return await GrantAuditing.RecordAsync(auditing, [access], cancellationToken).ConfigureAwait(false)
             ? result
             : new(ExperienceStoreOutcome.NotFound, null, NoErrors);
+    }
+
+    /// <summary>
+    /// Reads several records by ID in <em>one</em> statement, each answered exactly as
+    /// <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
+    /// answers it: the same exact-scope-or-active-grant predicate (the SQL shares its select, join and
+    /// predicate text with the single read), the same tombstone rule, the same permitting grant and
+    /// disclosure, and the same grant fallback. Grant-delivered positions are audited in one append of
+    /// one row each, under the same mode.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Round trips.</b> One statement for the reads, and -- only when auditing is wired and at least
+    /// one position was delivered through a grant -- one statement for the access rows. The per-record
+    /// path it replaces was one statement per record, plus one per grant-delivered record.
+    /// </para>
+    /// <para>
+    /// <b>Required auditing fails closed for the whole batch's grant deliveries.</b> The rows go in one
+    /// statement, so they land together or not at all; when they cannot be written under
+    /// <see cref="ExperienceGrantAuditingMode.Required"/>, every grant-delivered position becomes
+    /// <see cref="ExperienceStoreOutcome.NotFound"/> and every owner-scope position is returned as
+    /// read, which is what a failing ledger does to each single read.
+    /// </para>
+    /// </remarks>
+    /// <inheritdoc />
+    public async Task<ExperienceRecordGetManyResult> GetManyAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        ExperienceReadOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(experienceIds);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var errors = ExperienceRecordValidator.ValidateGetMany(scope, experienceIds.Count);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, [], errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, [], NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // An empty GUID is answered per position, with exactly the errors a single read of it gets, and
+        // is never sent to the database -- the single read never sends it either.
+        var wanted = experienceIds.Where(id => id != Guid.Empty).Distinct().ToArray();
+
+        Dictionary<Guid, ExperienceRecordGetResult> found;
+        if (wanted.Length == 0)
+        {
+            found = [];
+        }
+        else
+        {
+            try
+            {
+                try
+                {
+                    found = await ReadManyAsync(_grants.Available ? GetManySql : GetManyExactSql, scope, wanted, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (_grants.ShouldFallBack(ex, "get", cancellationToken))
+                {
+                    // Exactly the single read's fallback: narrower, never wider.
+                    found = await ReadManyAsync(GetManyExactSql, scope, wanted, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+            {
+                throw Translate(ex, "get", cancellationToken);
+            }
+        }
+
+        var notFound = new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, NoErrors);
+        var results = new ExperienceRecordGetResult[experienceIds.Count];
+        for (var i = 0; i < results.Length; i++)
+        {
+            var id = experienceIds[i];
+            results[i] = id == Guid.Empty
+                ? new(ExperienceStoreOutcome.Invalid, null, ExperienceRecordValidator.ValidateGet(scope, id))
+                : found.TryGetValue(id, out var result) ? result : notFound;
+        }
+
+        if (_auditing is not null && options.Purpose != ExperienceReadPurpose.ScopeCheck)
+        {
+            await RecordGrantAccessAsync(authorization, scope, options, results, cancellationToken).ConfigureAwait(false);
+        }
+
+        return new(ExperienceStoreOutcome.Found, results, NoErrors);
+    }
+
+    private async Task<Dictionary<Guid, ExperienceRecordGetResult>> ReadManyAsync(
+        string sql,
+        Scope scope,
+        Guid[] experienceIds,
+        CancellationToken cancellationToken)
+    {
+        await using var command = _dataSource.CreateCommand(sql);
+        command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", experienceIds));
+        AddScopeParameters(command.Parameters, scope);
+
+        var found = new Dictionary<Guid, ExperienceRecordGetResult>(experienceIds.Length);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // experience_id is the primary key, so a row per ID at most; the lateral join is LIMIT 1.
+            found[reader.GetGuid(0)] = ResultFromRow(reader);
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The batched form of the single read's access-row append: one row per position a grant delivered,
+    /// in request order, written in one statement, with the single read's failure policy applied to
+    /// every one of those positions. Positions are rewritten in place.
+    /// </summary>
+    private async Task RecordGrantAccessAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ExperienceReadOptions options,
+        ExperienceRecordGetResult[] results,
+        CancellationToken cancellationToken)
+    {
+        var auditing = _auditing!;
+        var accesses = new List<ExperienceGrantAccess>();
+        for (var i = 0; i < results.Length; i++)
+        {
+            if (results[i] is { Outcome: ExperienceStoreOutcome.Found, Record: { } record, SharedByGrant: true } delivered)
+            {
+                accesses.Add(GrantAuditing.Access(
+                    auditing, authorization, scope, options.CorrelationId, record, delivered.PermittingGrantId, delivered.GrantDisclosure));
+            }
+        }
+
+        if (await GrantAuditing.RecordAsync(auditing, accesses, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var refused = new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, NoErrors);
+        for (var i = 0; i < results.Length; i++)
+        {
+            if (results[i] is { Outcome: ExperienceStoreOutcome.Found, Record: not null, SharedByGrant: true })
+            {
+                results[i] = refused;
+            }
+        }
     }
 
     /// <inheritdoc />

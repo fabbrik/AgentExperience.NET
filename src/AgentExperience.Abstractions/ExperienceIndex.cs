@@ -229,6 +229,46 @@ public interface IExperienceEmbeddingGenerator
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>A vector of exactly <see cref="Dimension"/> finite components.</returns>
     Task<ReadOnlyMemory<float>> GenerateAsync(string text, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Embeds several already-sanitized, already-normalized summaries in one provider call, shaped
+    /// like <c>Microsoft.Extensions.AI</c>'s <c>IEmbeddingGenerator</c>: a list in, one vector per
+    /// input out, in input order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>All or nothing.</b> A provider batch either returns every vector or fails, so this throws for
+    /// the whole batch rather than reporting per input. The caller -- Core's indexing pass -- retries a
+    /// failed batch one input at a time, so a failure still lands on the record that caused it, and writes
+    /// each record that did get a vector with its own conditional, revision-checked write.
+    /// </para>
+    /// <para>
+    /// <b>The default implementation calls <see cref="GenerateAsync"/> once per input, in order.</b>
+    /// An existing generator therefore keeps working, with the same per-record outcomes, but saves no
+    /// round trips (and a failed batch is re-asked one text at a time, so a failure costs up to one extra
+    /// call per text already embedded in that batch). A generator
+    /// over a batch-capable provider should override it. The caller bounds the batch size itself
+    /// (see <c>ReindexExperienceRequest.EmbeddingBatchSize</c> in <c>AgentExperience.Core</c>); an
+    /// implementation whose provider accepts fewer inputs per request must split the batch itself.
+    /// </para>
+    /// </remarks>
+    /// <param name="texts">The texts to embed. Never raw payloads: only <see cref="ExperienceRetrievalSummary"/> output reaches here. Non-empty.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>Exactly one vector per input, in input order, each of exactly <see cref="Dimension"/> finite components. A result of any other count is rejected by the caller.</returns>
+    async Task<IReadOnlyList<ReadOnlyMemory<float>>> GenerateBatchAsync(
+        IReadOnlyList<string> texts,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(texts);
+
+        var vectors = new ReadOnlyMemory<float>[texts.Count];
+        for (var i = 0; i < vectors.Length; i++)
+        {
+            vectors[i] = await GenerateAsync(texts[i], cancellationToken).ConfigureAwait(false);
+        }
+
+        return vectors;
+    }
 }
 
 /// <summary>

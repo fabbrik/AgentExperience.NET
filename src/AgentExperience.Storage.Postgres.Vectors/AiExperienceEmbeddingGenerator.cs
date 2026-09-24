@@ -129,11 +129,68 @@ public sealed class AiExperienceEmbeddingGenerator : IExperienceEmbeddingGenerat
             throw new InvalidOperationException("The embedding generator returned no embedding for the requested text.");
         }
 
-        var vector = generated[0].Vector;
-        return vector.Length == Dimension
+        return CheckWidth(generated[0].Vector);
+    }
+
+    /// <summary>
+    /// Embeds every text in <paramref name="texts"/> with <em>one</em> call to the underlying
+    /// generator, which is already batch-shaped: this is the method that turns a re-index pass from one
+    /// provider round trip per record into one per batch.
+    /// </summary>
+    /// <remarks>
+    /// The batch is forwarded as it stands; this adapter does not split it. Core's indexing pass
+    /// bounds it (<c>ReindexExperienceRequest.EmbeddingBatchSize</c>), and a provider with a smaller
+    /// per-request limit is the underlying generator's to honour -- several
+    /// <c>Microsoft.Extensions.AI</c> clients split a large input list themselves.
+    /// </remarks>
+    /// <param name="texts">The texts to embed, in order.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>One vector per text, in input order.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="texts"/>, or any element of it, is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The generator returned a different number of embeddings than texts, or one of the wrong width.</exception>
+    public async Task<IReadOnlyList<ReadOnlyMemory<float>>> GenerateBatchAsync(
+        IReadOnlyList<string> texts,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(texts);
+        for (var i = 0; i < texts.Count; i++)
+        {
+            ArgumentNullException.ThrowIfNull(texts[i], $"{nameof(texts)}[{i}]");
+        }
+
+        if (texts.Count == 0)
+        {
+            return [];
+        }
+
+        var generated = await _generator
+            .GenerateAsync(texts, _options, cancellationToken)
+            .ConfigureAwait(false);
+
+        // The pairing is positional, so a response of the wrong length cannot be matched to its inputs
+        // at all: every vector in it is refused rather than guessing which record each one describes.
+        if (generated is null || generated.Count != texts.Count)
+        {
+            throw new InvalidOperationException(
+                $"The embedding generator returned {generated?.Count ?? 0} embedding(s) for {texts.Count} text(s); " +
+                "a batch whose vectors cannot be paired with their inputs is refused whole.");
+        }
+
+        var vectors = new ReadOnlyMemory<float>[texts.Count];
+        for (var i = 0; i < vectors.Length; i++)
+        {
+            vectors[i] = generated[i] is { } embedding
+                ? CheckWidth(embedding.Vector)
+                : throw new InvalidOperationException("The embedding generator returned a null embedding inside a batch.");
+        }
+
+        return vectors;
+    }
+
+    private ReadOnlyMemory<float> CheckWidth(ReadOnlyMemory<float> vector) =>
+        vector.Length == Dimension
             ? vector
             : throw new InvalidOperationException(
                 $"The embedding generator returned a {vector.Length}-component vector where {Dimension} were declared; " +
                 "a stored descriptor must never disagree with its own vector.");
-    }
 }

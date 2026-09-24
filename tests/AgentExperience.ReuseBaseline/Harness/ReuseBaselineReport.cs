@@ -102,12 +102,18 @@ public static class ReuseBaselineReport
         Line(text, "  stepping clock advances on every clock read, which makes a captured duration a function of how");
         Line(text, "  many reads happened rather than of time.");
         Line(text, string.Empty);
-        Line(text, "  Two known asymmetries are charged only to the memory-enabled condition, so this measure is");
-        Line(text, "  biased by construction and the pre-registration forbids it from entering the gate:");
-        Line(text, "    - the embedding port takes one string at a time (ExperienceIndex.cs:231, serial at");
-        Line(text, "      ExperienceIndexingService.cs:502-511);");
-        Line(text, "    - injection re-reads each candidate serially on the critical path");
-        Line(text, "      (ExperienceContextProvider.cs:404-422).");
+        Line(text, "  The pre-registration named two asymmetries charged only to the memory-enabled condition, so");
+        Line(text, "  this measure is biased by construction and the pre-registration forbids it from entering the");
+        Line(text, "  gate:");
+        Line(text, "    - the embedding port took one string at a time, one provider call per record;");
+        Line(text, "    - injection re-read each candidate serially on the critical path.");
+        Line(text, "  Story 5.6 (KL-1) batched both: IExperienceEmbeddingGenerator.GenerateBatchAsync embeds a");
+        Line(text, "  re-index pass a batch per provider call, and the re-read is one");
+        Line(text, "  IExperienceRecordStore.GetManyAsync call. This harness indexes nothing, and its in-memory record");
+        Line(text, "  store keeps the port's sequential GetManyAsync default, which is the same in-process loop the");
+        Line(text, "  provider made before, so the numbers below measure the same work they always did. The");
+        Line(text, "  re-read is still charged to the memory-enabled condition only, and the pre-registration, which");
+        Line(text, "  is frozen, still excludes the measure from the gate.");
         Line(text, "  Letting a biased measure decide the verdict would let the library's own inefficiency vote.");
         Line(text, string.Empty);
 

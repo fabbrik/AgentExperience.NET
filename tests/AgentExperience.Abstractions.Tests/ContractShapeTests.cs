@@ -303,7 +303,7 @@ public class ContractShapeTests
         // with the record. Only auditing looks at the difference, so the second has a default
         // implementation and an existing store keeps compiling.
         Assert.Equal(
-            ["CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "QueryAsync"],
+            ["CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "GetManyAsync", "QueryAsync"],
             methods.Select(m => m.Name));
         Assert.All(methods, method =>
         {
@@ -334,8 +334,34 @@ public class ContractShapeTests
 
         Assert.Equal(typeof(Task<ExperienceRecordHistoryResult>), methods[5].ReturnType);
         Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordHistoryQuery), typeof(CancellationToken)], methods[5].GetParameters().Select(p => p.ParameterType));
-        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[6].ReturnType);
-        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[6].GetParameters().Select(p => p.ParameterType));
+
+        // Story 5.6: the batched read, with a default implementation that loops over the purpose-carrying
+        // GetAsync, so an existing store keeps compiling and keeps its exact per-record behaviour.
+        Assert.Equal(typeof(Task<ExperienceRecordGetManyResult>), methods[6].ReturnType);
+        Assert.Equal(
+            [typeof(AuthorizationContext), typeof(Scope), typeof(IReadOnlyList<Guid>), typeof(ExperienceReadOptions), typeof(CancellationToken)],
+            methods[6].GetParameters().Select(p => p.ParameterType));
+        Assert.False(methods[6].IsAbstract);
+
+        Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[7].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[7].GetParameters().Select(p => p.ParameterType));
+    }
+
+    // Story 5.6: the embedding port's batch call is additive, so a generator written before it still compiles.
+    [Fact]
+    public void Embedding_generator_port_batches_through_a_default_implementation()
+    {
+        var methods = typeof(IExperienceEmbeddingGenerator).GetMethods()
+            .Where(m => !m.IsSpecialName)
+            .OrderBy(m => m.Name, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(["GenerateAsync", "GenerateBatchAsync"], methods.Select(m => m.Name));
+        Assert.True(methods[0].IsAbstract);
+        Assert.False(methods[1].IsAbstract);
+        Assert.Equal(typeof(Task<IReadOnlyList<ReadOnlyMemory<float>>>), methods[1].ReturnType);
+        Assert.Equal([typeof(IReadOnlyList<string>), typeof(CancellationToken)], methods[1].GetParameters().Select(p => p.ParameterType));
+        Assert.False(methods[1].GetParameters()[^1].HasDefaultValue);
     }
 
     // Story 2.2: the retrieval candidate-source port.
