@@ -37,7 +37,6 @@ preview.
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
 | KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
-| KL-16 | **Erasure emits no library telemetry.** Deletion, the retention sweep and the grant purge are not in the operation table and emit no span, count, duration or failure classification; the host observes them through the results they return and through the database | [Telemetry: what is not instrumented](docs/telemetry.md#what-is-not-instrumented) |
 
 Resolved, shipping in the next preview:
 
@@ -51,6 +50,9 @@ Resolved, shipping in the next preview:
 - KL-15 (Core's redaction dependency a floor) is resolved by exact-pinning `Microsoft.Extensions.Compliance.Redaction`
   at `[10.10.0]` (story 5.1). Every `PackageReference` a shipping project declares is now exact, and a release test
   fails on a new floor; the dependencies those packages declare in turn are still whatever NuGet floors they carry.
+- KL-16 (erasure emitting no library telemetry) is resolved by story 5.2. Deletion, the retention sweep and the grant
+  purge are now the `delete`, `retention.sweep` and `grant.purge` operations on the `AgentExperience.Storage.Postgres`
+  source and meter, and they carry nothing that was erased; see [`docs/telemetry.md`](docs/telemetry.md#operations).
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -1150,8 +1152,9 @@ the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#final
 
 ## Telemetry
 
-Core and the MAF adapter emit OpenTelemetry-compatible spans and metrics through the BCL's `ActivitySource` and
-`Meter`, under `AgentExperience.Core` and `AgentExperience.MicrosoftAgentFramework`. The library references no
+Core, the MAF adapter and the PostgreSQL adapter's erasure paths emit OpenTelemetry-compatible spans and metrics
+through the BCL's `ActivitySource` and `Meter`, under `AgentExperience.Core`, `AgentExperience.MicrosoftAgentFramework`
+and `AgentExperience.Storage.Postgres`. The library references no
 OpenTelemetry package and never exports anything itself: a host subscribes with `AddSource("AgentExperience.*")` and
 `AddMeter("AgentExperience.*")`. Each operation emits one span (`agentexperience.<operation>`) and one count and
 duration. A counter of failures, classified into four alertable classes, moves only when an operation throws. Metric
@@ -1159,7 +1162,8 @@ dimensions are bounded, and identifiers appear on spans only. No captured conten
 reaches either.
 
 The full contract lists every source, span, instrument, unit, dimension value and span attribute, and what each
-operation emits: [`docs/telemetry.md`](docs/telemetry.md). Erasure is not instrumented (KL-16).
+operation emits: [`docs/telemetry.md`](docs/telemetry.md). Erasure is instrumented too (`delete`,
+`retention.sweep`, `grant.purge`), and its telemetry carries nothing that was erased.
 
 ## Design principles
 

@@ -68,7 +68,7 @@ internal static class InjectionDiagnostics
     /// <summary>The <see cref="ActivitySource"/> and <see cref="Meter"/> name this assembly emits under.</summary>
     internal const string SourceName = "AgentExperience.MicrosoftAgentFramework";
 
-    /// <summary>The only <c>operation</c> value this assembly emits. Core owns the other thirteen.</summary>
+    /// <summary>The only <c>operation</c> value this assembly emits. Core owns thirteen, and the storage adapter's erasure paths three.</summary>
     internal const string Inject = "inject";
 
     /// <summary>How many ranked records this injection left out. A count: the omission reasons themselves stay on the typed result.</summary>

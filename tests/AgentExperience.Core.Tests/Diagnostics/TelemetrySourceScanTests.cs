@@ -123,8 +123,9 @@ public partial class TelemetrySourceScanTests
             .Where(file => file.Path.EndsWith("Diagnostics.cs", StringComparison.Ordinal))
             .ToList();
 
-        // Core's holder and the adapter's. A third would have to be added here deliberately.
-        Assert.Equal(2, holders.Count);
+        // Core's holder, the MAF adapter's, and the storage adapter's erasure holder (story 5.2). A
+        // fourth would have to be added here deliberately.
+        Assert.Equal(3, holders.Count);
 
         foreach (var (path, code) in holders)
         {
