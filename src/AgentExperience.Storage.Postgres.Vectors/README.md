@@ -25,8 +25,8 @@ failure translation the two channels must share.
 | --- | --- | --- |
 | `Npgsql` | `[10.0.3]` | Every statement, on the host's own data source |
 | `Pgvector` | `[0.3.2]` | The `vector` literal format |
-| `Microsoft.Extensions.AI.Abstractions` | `[10.9.0]` | Adapting an `IEmbeddingGenerator` to this library's own port |
-| `Microsoft.Extensions.DependencyInjection.Abstractions` | `[10.0.11]` | This package's own `Add…` registrations |
+| `Microsoft.Extensions.AI.Abstractions` | `[10.10.0]` | Adapting an `IEmbeddingGenerator` to this library's own port |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | `[10.0.12]` | This package's own `Add…` registrations |
 
 Every version was verified by Story 1.7's executable PostgreSQL/pgvector compatibility proof before this package
 was written.

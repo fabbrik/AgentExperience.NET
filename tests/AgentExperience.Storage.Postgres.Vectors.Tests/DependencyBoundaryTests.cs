@@ -62,8 +62,8 @@ public class DependencyBoundaryTests
         // Postgres/pgvector proof before this package was written.
         Assert.Equal(
             [
-                "Microsoft.Extensions.AI.Abstractions [10.9.0]",
-                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+                "Microsoft.Extensions.AI.Abstractions [10.10.0]",
+                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
                 "Npgsql [10.0.3]",
                 "Pgvector [0.3.2]",
             ],

@@ -30,7 +30,7 @@ namespace AgentExperience.CompatibilityProof;
 /// A custom <see cref="AIContextProvider"/> at the simple tier is the documented, supported path for arbitrary
 /// metadata and full control over injection content, while still inheriting MAF's message-source stamping and
 /// instructions/messages/tools merging for free.
-/// Sources: https://github.com/microsoft/agent-framework/blob/dotnet-1.20.0/dotnet/src/Microsoft.Agents.AI/TextSearchProvider.cs ,
+/// Sources: https://github.com/microsoft/agent-framework/blob/dotnet-1.22.0/dotnet/src/Microsoft.Agents.AI/TextSearchProvider.cs ,
 /// https://learn.microsoft.com/en-us/dotnet/api/microsoft.agents.ai.textsearchprovider.textsearchresult ,
 /// https://learn.microsoft.com/en-us/agent-framework/concepts/agents/conversations/context-providers
 /// </para>

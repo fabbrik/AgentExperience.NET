@@ -6,9 +6,9 @@ namespace AgentExperience.CompatibilityProof;
 
 /// <summary>
 /// Story 1.7, Track 4 (AC4): proves a purely deterministic check composes with
-/// <c>Microsoft.Extensions.AI.Evaluation</c> 10.9.0 as a custom <see cref="IEvaluator"/> returning
+/// <c>Microsoft.Extensions.AI.Evaluation</c> 10.10.0 as a custom <see cref="IEvaluator"/> returning
 /// <see cref="BooleanMetric"/>, and that a custom <see cref="Redactor"/> subclass over
-/// <c>Microsoft.Extensions.Compliance.Redaction</c> 10.9.0 only ever performs a flat per-value transform --
+/// <c>Microsoft.Extensions.Compliance.Redaction</c> 10.10.0 only ever performs a flat per-value transform --
 /// nested-payload traversal, field classification, and rejection of unknown fields all stay
 /// AgentExperience.NET's own code, never the library's.
 /// </summary>

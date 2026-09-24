@@ -17,7 +17,7 @@
     <PackageReference Include="dbup-core" Version="[6.1.1]" />
     <!-- DI abstractions only (no container, no hosting): lets this adapter ship its own
          AddAgentExperiencePostgresStore registration extension. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.11]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.12]" />
   </ItemGroup>
 
   <ItemGroup>

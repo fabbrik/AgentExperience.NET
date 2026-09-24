@@ -4,18 +4,19 @@ using Microsoft.Extensions.AI;
 namespace AgentExperience.CompatibilityProof;
 
 /// <summary>
-/// Story 1.7, Track 1 (AC1): proves <c>Microsoft.Agents.AI</c> 1.20.0's <see cref="AIContextProvider"/>
+/// Story 1.7, Track 1 (AC1): proves <c>Microsoft.Agents.AI</c> 1.22.0's <see cref="AIContextProvider"/>
 /// invocation hooks observe both successful and failing <see cref="ChatClientAgent"/> invocations, using a
 /// deterministic fake <see cref="IChatClient"/> so the proof needs no live model credentials.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Grounding: <c>story-1-7-research-digest.md</c>, Track 1. Package: <c>Microsoft.Agents.AI</c> 1.20.0 (GA).
+/// Grounding: <c>story-1-7-research-digest.md</c>, Track 1. Package: <c>Microsoft.Agents.AI</c> 1.22.0 (GA).
+/// The digest was written against 1.20.0; story 5.1 moved the pin and re-checked the call sites below at 1.22.0.
 /// Source: https://www.nuget.org/packages/Microsoft.Agents.AI/ .
 /// </para>
 /// <para>
 /// <strong>Which agent types this hook actually fires for</strong> (confirmed against
-/// <c>ChatClientAgent.cs</c> at tag <c>dotnet-1.20.0</c> for the types below; the digest's finding on
+/// <c>ChatClientAgent.cs</c> at tag <c>dotnet-1.22.0</c> for the types below; the digest's finding on
 /// <c>A2AAgent</c>/custom subclasses is a documented, not independently re-verified, observation since
 /// those types are out of scope for this proof project's dependencies):
 /// <list type="bullet">
@@ -28,7 +29,7 @@ namespace AgentExperience.CompatibilityProof;
 /// invoking-side half is proven end-to-end by <c>ContextProviderFitProof.cs</c>'s tests, which inspect the
 /// exact messages a fake <c>IChatClient</c> receives after <c>InvokingCoreAsync</c>/<c>ProvideAIContextAsync</c>
 /// ran.
-/// Source: https://github.com/microsoft/agent-framework/blob/dotnet-1.20.0/dotnet/src/Microsoft.Agents.AI/ChatClient/ChatClientAgent.cs</description></item>
+/// Source: https://github.com/microsoft/agent-framework/blob/dotnet-1.22.0/dotnet/src/Microsoft.Agents.AI/ChatClient/ChatClientAgent.cs</description></item>
 /// <item><description>Hand-rolled <see cref="AIAgent"/> subclasses: <see cref="AIContextProvider"/> hooks are
 /// <em>not</em> automatic -- they fire only if the subclass's own <c>RunCoreAsync</c> override chooses to call
 /// <see cref="AIContextProvider.InvokingAsync"/>/<see cref="AIContextProvider.InvokedAsync"/> itself, the way
@@ -88,14 +89,16 @@ public class MafHooksProof
 
         public List<int> ObservedResponseMessageCounts { get; } = [];
 
-#pragma warning disable MAAI001 // InvokedContext/InvokedCoreAsync are still tagged [Experimental] at 1.20.0 GA.
+        // No MAAI001 suppression. The one this file used to carry was dead code: at both 1.20.0 and 1.22.0,
+        // only the InvokingContext/InvokedContext constructors in AIContextProvider.cs are [Experimental], and
+        // overriding InvokedCoreAsync/StoreAIContextAsync constructs neither. If a later pin marks these
+        // members experimental, the build (warnings as errors) says so.
         protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             ObservedInvokeExceptions.Add(context.InvokeException);
             ObservedResponseMessageCounts.Add(context.ResponseMessages?.Count() ?? 0);
             return default;
         }
-#pragma warning restore MAAI001
     }
 
     /// <summary>
@@ -107,13 +110,11 @@ public class MafHooksProof
     {
         public int StoreAIContextAsyncCallCount { get; private set; }
 
-#pragma warning disable MAAI001
         protected override ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             StoreAIContextAsyncCallCount++;
             return default;
         }
-#pragma warning restore MAAI001
     }
 
     private static ChatClientAgent CreateAgent(AIContextProvider provider) =>

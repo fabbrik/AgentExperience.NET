@@ -533,14 +533,92 @@ public class ExperienceCaptureTests
     // ---- Additional checks -----------------------------------------------------------------------
 
     [Fact]
-    public void Resolved_Microsoft_Agents_AI_assembly_is_version_1_20_0()
+    public void Resolved_Microsoft_Agents_AI_assembly_is_version_1_22_0()
     {
         var assembly = typeof(ChatClientAgent).Assembly;
         var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
         Assert.NotNull(informational);
-        Assert.StartsWith("1.20.0", informational, StringComparison.Ordinal);
-        Assert.True(informational.Length == "1.20.0".Length || informational["1.20.0".Length] is '+', $"Unexpected informational version '{informational}'.");
+        Assert.StartsWith("1.22.0", informational, StringComparison.Ordinal);
+        Assert.True(informational.Length == "1.22.0".Length || informational["1.22.0".Length] is '+', $"Unexpected informational version '{informational}'.");
+    }
+
+    [Fact]
+    public async Task A_reused_ChatClientAgentRunOptions_instance_is_not_changed_and_each_run_records_its_own_tool_call_once()
+    {
+        // At 1.20.0, MAF's function middleware wrote its ChatClientFactory onto the options instance it
+        // was given, so reusing one instance stacked a middleware layer per invocation and the adapter's
+        // README told hosts not to. 1.22.0 works on a per-run clone. This pins that behaviour: if a later
+        // pin reintroduces the mutation, this fails and the README caveat has to come back.
+        var harness = new Harness();
+        var agent = harness.Capture(CreateAgent(new ScriptedChatClient { Calls = [EchoCall()] }));
+        var shared = new ChatClientAgentRunOptions();
+
+        await agent.RunAsync("task-reuse-1", options: shared);
+        await agent.RunAsync("task-reuse-2", options: shared);
+
+        Assert.Null(shared.ChatClientFactory);
+        Assert.Equal(2, harness.Service.StartedRunIds.Count);
+        foreach (var runId in harness.Service.StartedRunIds)
+        {
+            Assert.True(harness.Service.TryGetRun(runId, out var run));
+            var toolCall = Assert.Single(Assert.Single(run.Attempts).ToolCalls);
+            Assert.Equal($"echo:{run.TaskId}", toolCall.Result);
+        }
+
+        Assert.Empty(harness.Failures);
+    }
+
+    [Fact]
+    public async Task A_reused_ChatClientAgentRunOptions_instance_keeps_the_hosts_own_ChatClientFactory()
+    {
+        // Assert.Null above only catches mutation from a null start. A host that sets its own factory must get
+        // that same delegate back, still applied, and not wrapped again on each invocation.
+        var harness = new Harness();
+        var agent = harness.Capture(CreateAgent(new ScriptedChatClient { Calls = [EchoCall()] }));
+        var hostFactoryCalls = 0;
+        Func<IChatClient, IChatClient> hostFactory = client =>
+        {
+            Interlocked.Increment(ref hostFactoryCalls);
+            return client;
+        };
+        var shared = new ChatClientAgentRunOptions { ChatClientFactory = hostFactory };
+
+        await agent.RunAsync("task-host-factory-1", options: shared);
+        await agent.RunAsync("task-host-factory-2", options: shared);
+
+        Assert.Same(hostFactory, shared.ChatClientFactory);
+        Assert.True(hostFactoryCalls >= 2, $"The host's factory ran {hostFactoryCalls} time(s) across two runs.");
+        foreach (var runId in harness.Service.StartedRunIds)
+        {
+            Assert.True(harness.Service.TryGetRun(runId, out var run));
+            Assert.Single(Assert.Single(run.Attempts).ToolCalls);
+        }
+
+        Assert.Empty(harness.Failures);
+    }
+
+    [Fact]
+    public async Task A_reused_ChatClientAgentRunOptions_instance_is_not_changed_across_streaming_runs()
+    {
+        // The streaming sibling of the test above: the README's reuse claim covers both paths, so both are pinned.
+        var harness = new Harness();
+        var agent = harness.Capture(CreateAgent(new ScriptedChatClient { Calls = [EchoCall()] }));
+        var shared = new ChatClientAgentRunOptions();
+
+        await CollectAsync(agent.RunStreamingAsync("task-stream-reuse-1", options: shared));
+        await CollectAsync(agent.RunStreamingAsync("task-stream-reuse-2", options: shared));
+
+        Assert.Null(shared.ChatClientFactory);
+        Assert.Equal(2, harness.Service.StartedRunIds.Count);
+        foreach (var runId in harness.Service.StartedRunIds)
+        {
+            Assert.True(harness.Service.TryGetRun(runId, out var run));
+            var toolCall = Assert.Single(Assert.Single(run.Attempts).ToolCalls);
+            Assert.Equal($"echo:{run.TaskId}", toolCall.Result);
+        }
+
+        Assert.Empty(harness.Failures);
     }
 
     [Fact]

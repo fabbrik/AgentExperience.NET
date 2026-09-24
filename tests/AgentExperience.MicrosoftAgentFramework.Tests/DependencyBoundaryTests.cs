@@ -90,7 +90,7 @@ public class DependencyBoundaryTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        Assert.Equal(["Microsoft.Agents.AI [1.20.0]"], declared);
+        Assert.Equal(["Microsoft.Agents.AI [1.22.0]"], declared);
     }
 
     [Fact]

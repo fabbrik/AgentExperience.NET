@@ -57,7 +57,7 @@ public class DependencyBoundaryTests
 
         Assert.Equal(
             [
-                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.11]",
+                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
                 "Npgsql [10.0.3]",
                 "dbup-core [6.1.1]",
                 "dbup-postgresql [7.0.1]",

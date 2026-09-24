@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Preview, not production ready. Microsoft Agent Framework (MAF) adapter for AgentExperience.NET: one AIAgentBuilder.UseExperienceCapture(...) call records every MAF invocation (ordinary, streaming, failed, cancelled, or abandoned mid-stream) and its tool calls as a sanitized Experience Run through AgentExperience.Core's IExperienceCaptureService. Pinned to Microsoft.Agents.AI 1.20.0.</Description>
+    <Description>Preview, not production ready. Microsoft Agent Framework (MAF) adapter for AgentExperience.NET: one AIAgentBuilder.UseExperienceCapture(...) call records every MAF invocation (ordinary, streaming, failed, cancelled, or abandoned mid-stream) and its tool calls as a sanitized Experience Run through AgentExperience.Core's IExperienceCaptureService. Pinned to Microsoft.Agents.AI 1.22.0.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Exact pin: MAF compatibility is verified against this version only (Story 1.7 Track 1, Story 1.6). -->
-    <PackageReference Include="Microsoft.Agents.AI" Version="[1.20.0]" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="[1.22.0]" />
   </ItemGroup>
 
   <ItemGroup>
