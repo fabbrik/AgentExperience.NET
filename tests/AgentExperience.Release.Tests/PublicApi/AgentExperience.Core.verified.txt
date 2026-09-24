@@ -1,0 +1,657 @@
+﻿namespace AgentExperience.Core.Capture
+{
+    public enum AppendAttemptOutcome
+    {
+        Recorded = 0,
+        DuplicateNoOp = 1,
+        Conflict = 2,
+        SanitizationRejected = 3,
+        RunNotFound = 4,
+        CapacityExceeded = 5,
+    }
+    public sealed class AppendAttemptRequest : System.IEquatable<AgentExperience.Core.Capture.AppendAttemptRequest>
+    {
+        public AppendAttemptRequest(System.Guid AttemptId, System.DateTimeOffset StartedAt, System.TimeSpan Duration, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Capture.RawToolCall> ToolCalls, string? Result, string? Error) { }
+        public System.Guid AttemptId { get; init; }
+        public System.TimeSpan Duration { get; init; }
+        public string? Error { get; init; }
+        public string? Result { get; init; }
+        public System.DateTimeOffset StartedAt { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Capture.RawToolCall> ToolCalls { get; init; }
+    }
+    public sealed class AppendAttemptResult : System.IEquatable<AgentExperience.Core.Capture.AppendAttemptResult>
+    {
+        public AppendAttemptResult(AgentExperience.Core.Capture.AppendAttemptOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Capture.TruncatedField> TruncatedFields, string? Reason) { }
+        public AgentExperience.Core.Capture.AppendAttemptOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Capture.TruncatedField> TruncatedFields { get; init; }
+    }
+    public sealed class CaptureLimits : System.IEquatable<AgentExperience.Core.Capture.CaptureLimits>
+    {
+        public CaptureLimits(int MaxAttemptsPerRun, int MaxToolCallsPerAttempt, int MaxResultLength, int MaxErrorLength) { }
+        public int MaxAttemptsPerRun { get; init; }
+        public int MaxErrorLength { get; init; }
+        public int MaxResultLength { get; init; }
+        public int MaxToolCallsPerAttempt { get; init; }
+    }
+    public enum CompleteRunOutcome
+    {
+        Recorded = 0,
+        DuplicateNoOp = 1,
+        Conflict = 2,
+        RunNotFound = 3,
+    }
+    public sealed class CompleteRunResult : System.IEquatable<AgentExperience.Core.Capture.CompleteRunResult>
+    {
+        public CompleteRunResult(AgentExperience.Core.Capture.CompleteRunOutcome Outcome, string? Reason) { }
+        public AgentExperience.Core.Capture.CompleteRunOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+    }
+    public interface IExperienceCaptureService
+    {
+        System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default);
+        AgentExperience.Core.Capture.StartRunResult StartRun(System.Guid runId, string taskId, string? taskDescription, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.EnvironmentFingerprint environment, AgentExperience.Abstractions.Provenance provenance, System.DateTimeOffset startedAt);
+        bool TryGetRun(System.Guid runId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out AgentExperience.Abstractions.ExperienceRun? run);
+    }
+    public sealed class InMemoryExperienceCaptureService : AgentExperience.Core.Capture.IExperienceCaptureService
+    {
+        public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default) { }
+        public AgentExperience.Core.Capture.StartRunResult StartRun(System.Guid runId, string taskId, string? taskDescription, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.EnvironmentFingerprint environment, AgentExperience.Abstractions.Provenance provenance, System.DateTimeOffset startedAt) { }
+        public bool TryGetRun(System.Guid runId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out AgentExperience.Abstractions.ExperienceRun? run) { }
+    }
+    public sealed class RawToolCall : System.IEquatable<AgentExperience.Core.Capture.RawToolCall>
+    {
+        public RawToolCall(System.Guid ToolCallId, string ToolName, System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments, System.DateTimeOffset StartedAt, System.TimeSpan Duration, string? Result, string? Error) { }
+        public System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments { get; init; }
+        public System.TimeSpan Duration { get; init; }
+        public string? Error { get; init; }
+        public string? Result { get; init; }
+        public System.DateTimeOffset StartedAt { get; init; }
+        public System.Guid ToolCallId { get; init; }
+        public string ToolName { get; init; }
+    }
+    public enum StartRunOutcome
+    {
+        Started = 0,
+        Continued = 1,
+        Conflict = 2,
+    }
+    public sealed class StartRunResult : System.IEquatable<AgentExperience.Core.Capture.StartRunResult>
+    {
+        public StartRunResult(AgentExperience.Core.Capture.StartRunOutcome Outcome, AgentExperience.Abstractions.ExperienceRun? Run, string? Reason) { }
+        public AgentExperience.Core.Capture.StartRunOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public AgentExperience.Abstractions.ExperienceRun? Run { get; init; }
+    }
+    public sealed class TruncatedField : System.IEquatable<AgentExperience.Core.Capture.TruncatedField>
+    {
+        public TruncatedField(string FieldPath, string Reason) { }
+        public string FieldPath { get; init; }
+        public string Reason { get; init; }
+    }
+}
+namespace AgentExperience.Core.Confidence
+{
+    public readonly struct ConfidenceIndependenceKey : System.IEquatable<AgentExperience.Core.Confidence.ConfidenceIndependenceKey>
+    {
+        public ConfidenceIndependenceKey(AgentExperience.Abstractions.ConfidenceEvidenceSource Source, string Value) { }
+        public AgentExperience.Abstractions.ConfidenceEvidenceSource Source { get; init; }
+        public string Value { get; init; }
+        public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey ForHuman(string reviewerIdentity, System.Guid runId) { }
+        public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey ForMachine(System.Guid runId, System.Guid verificationRoundId) { }
+    }
+    public static class ReuseConfidenceHeuristic
+    {
+        public const string RuleVersion = "1.0.0";
+        public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> AcceptsEvidence { get; }
+        public static bool AcceptsEvidenceIn(AgentExperience.Abstractions.ExperienceStatus status) { }
+        public static AgentExperience.Abstractions.ConfidenceUpdate Apply(AgentExperience.Abstractions.ExperienceRecord record, System.Guid evidenceId, AgentExperience.Abstractions.ConfidenceEvidenceKind kind, AgentExperience.Abstractions.ConfidenceEvidenceSource source, System.Guid runId, System.Guid? verificationRoundId, string? reviewerIdentity, string? detail = null) { }
+        public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey IndependenceKeyFor(AgentExperience.Abstractions.ConfidenceUpdate update) { }
+        public static double Score(int supportingValidations, int contradictions) { }
+        public static AgentExperience.Abstractions.ExperienceStatus StatusAfter(AgentExperience.Abstractions.ExperienceStatus currentStatus, AgentExperience.Abstractions.ConfidenceEvidenceKind kind) { }
+    }
+}
+namespace AgentExperience.Core.DependencyInjection
+{
+    public static class AgentExperienceCoreServiceCollectionExtensions
+    {
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceCore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, AgentExperience.Core.Sanitization.SanitizationOptions sanitizationOptions, AgentExperience.Core.Capture.CaptureLimits captureLimits) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceIndexing(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceRetrieval(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, AgentExperience.Core.Retrieval.RetrievalPolicy? policy = null, AgentExperience.Core.Retrieval.RankingWeights? weights = null) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceReuseFeedback(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
+    }
+}
+namespace AgentExperience.Core.Diagnostics
+{
+    public enum ExperienceOperationErrorClass
+    {
+        Cancelled = 0,
+        Timeout = 1,
+        Infrastructure = 2,
+        Unexpected = 3,
+    }
+}
+namespace AgentExperience.Core.Feedback
+{
+    public sealed class ExperienceReuseFeedbackService
+    {
+        public const string HumanAssessmentProducer = "experience-reuse-feedback/human-assessment";
+        public ExperienceReuseFeedbackService(AgentExperience.Abstractions.IExperienceReuseFeedbackStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken) { }
+        public static System.Guid EventIdFor(System.Guid feedbackId, System.Guid experienceId) { }
+        public static System.Guid EvidenceIdFor(System.Guid feedbackId, System.Guid experienceId) { }
+    }
+}
+namespace AgentExperience.Core.Finalization
+{
+    public sealed class ExperienceFinalizationService
+    {
+        public const AgentExperience.Abstractions.ExperienceStatus CreatedStatus = 0;
+        public const int InitialSupportingValidations = 1;
+        public const double InitialValidatedReuseConfidence = 0.6666666666666666D;
+        public const string ProducerIdentity = "AgentExperience.ExperienceFinalizationService/1.0.0";
+        public static readonly System.TimeSpan DefaultIndexingTimeout;
+        public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService) { }
+        public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout = default) { }
+        public System.TimeSpan IndexingTimeout { get; }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Finalization.FinalizeExperienceResult> FinalizeAsync(AgentExperience.Core.Finalization.FinalizeExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Guid ExperienceIdFor(System.Guid runId, AgentExperience.Abstractions.Scope scope) { }
+        public static System.Guid InitialEventIdFor(System.Guid runId) { }
+        public static System.Guid ReflectionIdFor(System.Guid runId) { }
+    }
+    public sealed class FinalizationFailure : System.IEquatable<AgentExperience.Core.Finalization.FinalizationFailure>
+    {
+        public FinalizationFailure(AgentExperience.Core.Finalization.FinalizationStage Stage, string Reason, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, System.Exception? Exception) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Exception? Exception { get; init; }
+        public string Reason { get; init; }
+        public AgentExperience.Core.Finalization.FinalizationStage Stage { get; init; }
+    }
+    public enum FinalizationOutcome
+    {
+        Validated = 0,
+        Quarantined = 1,
+        AlreadyFinalized = 2,
+        StorageDenied = 3,
+        NotAuthorized = 4,
+        RunNotFound = 5,
+        RunNotFinished = 6,
+        Failed = 7,
+    }
+    public enum FinalizationStage
+    {
+        Load = 0,
+        Evaluate = 1,
+        Authorize = 2,
+        Reflect = 3,
+        CreateRecord = 4,
+        CommitInitialEvent = 5,
+    }
+    public sealed class FinalizeExperienceRequest : System.IEquatable<AgentExperience.Core.Finalization.FinalizeExperienceRequest>
+    {
+        public FinalizeExperienceRequest(System.Guid RunId, AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Core.Verification.ClosedVerificationRound? ClosedRound, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> RequiredChecks, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> Evidence, string CurrentArtifactRevision, AgentExperience.Core.Finalization.StorageDecision StorageDecision, System.DateTimeOffset FinalizedAt) { }
+        public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
+        public AgentExperience.Core.Verification.ClosedVerificationRound? ClosedRound { get; init; }
+        public string CurrentArtifactRevision { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> Evidence { get; init; }
+        public System.DateTimeOffset FinalizedAt { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> RequiredChecks { get; init; }
+        public System.Guid RunId { get; init; }
+        public AgentExperience.Core.Finalization.StorageDecision StorageDecision { get; init; }
+    }
+    public sealed class FinalizeExperienceResult : System.IEquatable<AgentExperience.Core.Finalization.FinalizeExperienceResult>
+    {
+        public FinalizeExperienceResult(AgentExperience.Core.Finalization.FinalizationOutcome Outcome, AgentExperience.Core.Finalization.FinalizationStage Stage, AgentExperience.Abstractions.ExperienceRecord? Record, AgentExperience.Abstractions.LifecycleEvent? Event, long Revision, AgentExperience.Core.Verification.VerificationResult? Evaluation, AgentExperience.Abstractions.Reflection? Reflection, AgentExperience.Core.Finalization.FinalizationFailure? Failure, string? Reason, AgentExperience.Core.Indexing.ExperienceIndexingResult? Indexing = null) { }
+        public AgentExperience.Core.Verification.VerificationResult? Evaluation { get; init; }
+        public AgentExperience.Abstractions.LifecycleEvent? Event { get; init; }
+        public System.Guid? ExperienceId { get; }
+        public AgentExperience.Core.Finalization.FinalizationFailure? Failure { get; init; }
+        public AgentExperience.Core.Indexing.ExperienceIndexingResult? Indexing { get; init; }
+        public bool IsDurable { get; }
+        public AgentExperience.Core.Finalization.FinalizationOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecord? Record { get; init; }
+        public AgentExperience.Abstractions.Reflection? Reflection { get; init; }
+        public long Revision { get; init; }
+        public AgentExperience.Core.Finalization.FinalizationStage Stage { get; init; }
+        public AgentExperience.Abstractions.ExperienceStatus? Status { get; }
+    }
+    public sealed class StorageDecision : System.IEquatable<AgentExperience.Core.Finalization.StorageDecision>
+    {
+        public StorageDecision(bool Permitted, string? Reason = null) { }
+        public bool Permitted { get; init; }
+        public string? Reason { get; init; }
+        public static AgentExperience.Core.Finalization.StorageDecision Permit { get; }
+        public static AgentExperience.Core.Finalization.StorageDecision Deny(string? reason = null) { }
+    }
+}
+namespace AgentExperience.Core.Indexing
+{
+    public enum ExperienceDeindexingOutcome
+    {
+        Removed = 0,
+        NotIndexed = 1,
+        Denied = 2,
+        Failed = 3,
+    }
+    public sealed class ExperienceDeindexingResult : System.IEquatable<AgentExperience.Core.Indexing.ExperienceDeindexingResult>
+    {
+        public ExperienceDeindexingResult(AgentExperience.Core.Indexing.ExperienceDeindexingOutcome Outcome, System.Guid ExperienceId, AgentExperience.Core.Indexing.ExperienceIndexingFailure? Failure) { }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Core.Indexing.ExperienceIndexingFailure? Failure { get; init; }
+        public bool IsRemoved { get; }
+        public bool IsRetryable { get; }
+        public AgentExperience.Core.Indexing.ExperienceDeindexingOutcome Outcome { get; init; }
+    }
+    public sealed class ExperienceIndexingFailure : System.IEquatable<AgentExperience.Core.Indexing.ExperienceIndexingFailure>
+    {
+        public ExperienceIndexingFailure(string Reason, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, System.Exception? Exception) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Exception? Exception { get; init; }
+        public string Reason { get; init; }
+    }
+    public enum ExperienceIndexingOutcome
+    {
+        Indexed = 0,
+        Skipped = 1,
+        Stale = 2,
+        Missing = 3,
+        Denied = 4,
+        Ineligible = 5,
+        ProviderFailed = 6,
+        IndexFailed = 7,
+    }
+    public sealed class ExperienceIndexingResult : System.IEquatable<AgentExperience.Core.Indexing.ExperienceIndexingResult>
+    {
+        public ExperienceIndexingResult(AgentExperience.Core.Indexing.ExperienceIndexingOutcome Outcome, System.Guid ExperienceId, AgentExperience.Abstractions.ExperienceEmbeddingDescriptor? Descriptor, AgentExperience.Core.Indexing.ExperienceIndexingFailure? Failure) { }
+        public AgentExperience.Abstractions.ExperienceEmbeddingDescriptor? Descriptor { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Core.Indexing.ExperienceIndexingFailure? Failure { get; init; }
+        public bool IsIndexed { get; }
+        public bool IsRetryable { get; }
+        public AgentExperience.Core.Indexing.ExperienceIndexingOutcome Outcome { get; init; }
+    }
+    public sealed class ExperienceIndexingService
+    {
+        public ExperienceIndexingService(AgentExperience.Abstractions.IExperienceEmbeddingIndex index, AgentExperience.Abstractions.IExperienceEmbeddingGenerator generator, AgentExperience.Core.Retrieval.RetrievalPolicy? policy = null) { }
+        public int Dimension { get; }
+        public double MinimumConfidence { get; }
+        public string ModelId { get; }
+        public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> IndexableStatuses { get; }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Indexing.ExperienceIndexingResult> IndexAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken = default) { }
+        public bool IsIndexable(AgentExperience.Abstractions.ExperienceStatus status, double reuseConfidence) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Indexing.ExperienceReindexResult> ReindexAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Indexing.ReindexExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Indexing.ExperienceDeindexingResult> RemoveAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public enum ExperienceReindexOutcome
+    {
+        Completed = 0,
+        Denied = 1,
+        Invalid = 2,
+        Failed = 3,
+    }
+    public sealed class ExperienceReindexResult : System.IEquatable<AgentExperience.Core.Indexing.ExperienceReindexResult>
+    {
+        public ExperienceReindexResult(AgentExperience.Core.Indexing.ExperienceReindexOutcome Outcome, int Examined, int Indexed, int Skipped, int Rejected, int Failed, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Indexing.ExperienceIndexingResult> Records, AgentExperience.Core.Indexing.ExperienceIndexingFailure? Failure, System.Guid? LastExaminedId = default) { }
+        public int Examined { get; init; }
+        public int Failed { get; init; }
+        public AgentExperience.Core.Indexing.ExperienceIndexingFailure? Failure { get; init; }
+        public int Indexed { get; init; }
+        public System.Guid? LastExaminedId { get; init; }
+        public AgentExperience.Core.Indexing.ExperienceReindexOutcome Outcome { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Indexing.ExperienceIndexingResult> Records { get; init; }
+        public int Rejected { get; init; }
+        public int Skipped { get; init; }
+    }
+    public sealed class ReindexExperienceRequest : System.IEquatable<AgentExperience.Core.Indexing.ReindexExperienceRequest>
+    {
+        public ReindexExperienceRequest(AgentExperience.Abstractions.Scope Scope, System.Collections.Generic.IReadOnlyList<System.Guid>? ExperienceIds = null, int Limit = 100, System.Guid? StartAfterId = default) { }
+        public System.Collections.Generic.IReadOnlyList<System.Guid>? ExperienceIds { get; init; }
+        public int Limit { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public System.Guid? StartAfterId { get; init; }
+    }
+}
+namespace AgentExperience.Core.Lifecycle
+{
+    public sealed class ApplyConfidenceEvidenceRequest : System.IEquatable<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest>
+    {
+        public ApplyConfidenceEvidenceRequest(System.Guid EventId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope Scope, System.Guid EvidenceId, AgentExperience.Abstractions.ConfidenceEvidenceKind Kind, AgentExperience.Abstractions.ConfidenceEvidenceSource Source, System.Guid RunId, System.Guid? VerificationRoundId, string Reason, string Producer, System.DateTimeOffset OccurredAt, string? Detail = null) { }
+        public string? Detail { get; init; }
+        public System.Guid EventId { get; init; }
+        public System.Guid EvidenceId { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Abstractions.ConfidenceEvidenceKind Kind { get; init; }
+        public System.DateTimeOffset OccurredAt { get; init; }
+        public string Producer { get; init; }
+        public string Reason { get; init; }
+        public System.Guid RunId { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public AgentExperience.Abstractions.ConfidenceEvidenceSource Source { get; init; }
+        public System.Guid? VerificationRoundId { get; init; }
+    }
+    public sealed class ApplyConfidenceEvidenceResult : System.IEquatable<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult>
+    {
+        public ApplyConfidenceEvidenceResult(AgentExperience.Core.Lifecycle.ConfidenceUpdateOutcome Outcome, AgentExperience.Abstractions.LifecycleEvent? Event, AgentExperience.Abstractions.ConfidenceUpdate? Update, long Revision, AgentExperience.Abstractions.ExperienceStatus? Status, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, string? Reason = null, AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing = null) { }
+        public int? Contradictions { get; }
+        public bool Counted { get; }
+        public AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.LifecycleEvent? Event { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceUpdateOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public double? ReuseConfidence { get; }
+        public long Revision { get; init; }
+        public AgentExperience.Abstractions.ExperienceStatus? Status { get; init; }
+        public int? SupportingValidations { get; }
+        public AgentExperience.Abstractions.ConfidenceUpdate? Update { get; init; }
+    }
+    public sealed class CommitLifecycleTransitionRequest : System.IEquatable<AgentExperience.Core.Lifecycle.CommitLifecycleTransitionRequest>
+    {
+        public CommitLifecycleTransitionRequest(System.Guid EventId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStatus? PriorStatus, AgentExperience.Abstractions.ExperienceStatus CurrentStatus, string Reason, string Producer, System.DateTimeOffset OccurredAt, long ExpectedRevision, System.Guid? ReplacementExperienceId = default) { }
+        public AgentExperience.Abstractions.ExperienceStatus CurrentStatus { get; init; }
+        public System.Guid EventId { get; init; }
+        public long ExpectedRevision { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public System.DateTimeOffset OccurredAt { get; init; }
+        public AgentExperience.Abstractions.ExperienceStatus? PriorStatus { get; init; }
+        public string Producer { get; init; }
+        public string Reason { get; init; }
+        public System.Guid? ReplacementExperienceId { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public sealed class CommitLifecycleTransitionResult : System.IEquatable<AgentExperience.Core.Lifecycle.CommitLifecycleTransitionResult>
+    {
+        public CommitLifecycleTransitionResult(AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome Outcome, AgentExperience.Abstractions.LifecycleEvent? Event, long Revision, AgentExperience.Abstractions.ExperienceStatus? CurrentStatus, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, string? Reason, AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing = null) { }
+        public AgentExperience.Abstractions.ExperienceStatus? CurrentStatus { get; init; }
+        public AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.LifecycleEvent? Event { get; init; }
+        public AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public long Revision { get; init; }
+    }
+    public enum ConfidenceUpdateOutcome
+    {
+        Applied = 0,
+        Ineligible = 1,
+        StaleRevision = 2,
+        StatusMismatch = 3,
+        Conflict = 4,
+        NotFound = 5,
+        Denied = 6,
+        Invalid = 7,
+    }
+    public sealed class ExperienceLifecycleService
+    {
+        public const AgentExperience.Abstractions.ExperienceStatus FirstEventStatus = 0;
+        public static readonly System.TimeSpan DefaultDeindexingTimeout;
+        public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store) { }
+        public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? deindexingTimeout = default) { }
+        public System.TimeSpan DeindexingTimeout { get; }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest request, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.CommitLifecycleTransitionResult> CommitAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.CommitLifecycleTransitionRequest request, System.Threading.CancellationToken cancellationToken) { }
+        public static bool IsEligible(AgentExperience.Abstractions.ExperienceStatus status) { }
+        public static bool IsTransitionAllowed(AgentExperience.Abstractions.ExperienceStatus priorStatus, AgentExperience.Abstractions.ExperienceStatus currentStatus) { }
+    }
+    public enum LifecycleTransitionOutcome
+    {
+        Committed = 0,
+        TransitionNotAllowed = 1,
+        ReplacementNotAllowed = 2,
+        StaleRevision = 3,
+        StatusMismatch = 4,
+        Conflict = 5,
+        NotFound = 6,
+        Denied = 7,
+        Invalid = 8,
+    }
+}
+namespace AgentExperience.Core.Reflections
+{
+    public sealed class DefaultExperienceReflector : AgentExperience.Core.Reflections.IExperienceReflector
+    {
+        public const string ProducerIdentity = "AgentExperience.DefaultExperienceReflector/1.0.0";
+        public const string TemplateVersion = "1.0.0";
+        public DefaultExperienceReflector() { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.Reflection> ReflectAsync(AgentExperience.Core.Reflections.ReflectionRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public interface IExperienceReflector
+    {
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.Reflection> ReflectAsync(AgentExperience.Core.Reflections.ReflectionRequest request, System.Threading.CancellationToken cancellationToken = default);
+    }
+    public sealed class ReflectionRequest : System.IEquatable<AgentExperience.Core.Reflections.ReflectionRequest>
+    {
+        public ReflectionRequest(AgentExperience.Abstractions.ExperienceRun Run, AgentExperience.Core.Verification.VerificationResult Evaluation, System.Guid ReflectionId, System.DateTimeOffset CreatedAt) { }
+        public System.DateTimeOffset CreatedAt { get; init; }
+        public AgentExperience.Core.Verification.VerificationResult Evaluation { get; init; }
+        public System.Guid ReflectionId { get; init; }
+        public AgentExperience.Abstractions.ExperienceRun Run { get; init; }
+    }
+}
+namespace AgentExperience.Core.Retrieval
+{
+    public sealed class ExcludedExperience : System.IEquatable<AgentExperience.Core.Retrieval.ExcludedExperience>
+    {
+        public ExcludedExperience(System.Guid ExperienceId, AgentExperience.Core.Retrieval.RetrievalExclusionReason Reason) { }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Core.Retrieval.RetrievalExclusionReason Reason { get; init; }
+    }
+    public sealed class ExperienceRetrievalResult : System.IEquatable<AgentExperience.Core.Retrieval.ExperienceRetrievalResult>
+    {
+        public ExperienceRetrievalResult(AgentExperience.Core.Retrieval.RetrievalOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> Records, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.ExcludedExperience> Excluded, bool Truncated, bool EnvironmentUnrestricted, string? CorrelationId, System.TimeSpan Elapsed, AgentExperience.Core.Retrieval.RetrievalFailure? Failure, AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback = null) { }
+        public string? CorrelationId { get; init; }
+        public System.TimeSpan Elapsed { get; init; }
+        public bool EnvironmentUnrestricted { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.ExcludedExperience> Excluded { get; init; }
+        public AgentExperience.Core.Retrieval.RetrievalFailure? Failure { get; init; }
+        public AgentExperience.Core.Retrieval.RetrievalOutcome Outcome { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> Records { get; init; }
+        public bool TextOnly { get; }
+        public bool TimedOut { get; }
+        public bool Truncated { get; init; }
+        public AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback { get; init; }
+    }
+    public sealed class ExperienceRetrievalService
+    {
+        public const double CompatibleEnvironmentScore = 1D;
+        public const double ReinforcedStatusScore = 1D;
+        public const double ValidatedStatusScore = 0.5D;
+        public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider) { }
+        public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceEmbeddingIndex? embeddingIndex, AgentExperience.Abstractions.IExperienceEmbeddingGenerator? embeddingGenerator) { }
+        public bool HybridEnabled { get; }
+        public AgentExperience.Core.Retrieval.RetrievalPolicy Policy { get; }
+        public AgentExperience.Core.Retrieval.RankingWeights Weights { get; }
+        public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.ExperienceRetrievalResult> RetrieveAsync(AgentExperience.Core.Retrieval.RetrieveExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class RankedExperience : System.IEquatable<AgentExperience.Core.Retrieval.RankedExperience>
+    {
+        public RankedExperience(AgentExperience.Abstractions.ExperienceRecord Record, double Score, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components, bool SharedByGrant = false, System.Guid? PermittingGrantId = default) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components { get; init; }
+        public System.Guid? PermittingGrantId { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
+        public double Score { get; init; }
+        public bool SharedByGrant { get; init; }
+    }
+    public sealed class RankingComponent : System.IEquatable<AgentExperience.Core.Retrieval.RankingComponent>
+    {
+        public RankingComponent(AgentExperience.Core.Retrieval.RankingComponentKind Kind, double Value, double Weight) { }
+        public double Contribution { get; }
+        public AgentExperience.Core.Retrieval.RankingComponentKind Kind { get; init; }
+        public double Value { get; init; }
+        public double Weight { get; init; }
+    }
+    public enum RankingComponentKind
+    {
+        Relevance = 0,
+        Confidence = 1,
+        Recency = 2,
+        Status = 3,
+        EnvironmentCompatibility = 4,
+    }
+    public sealed class RankingWeights : System.IEquatable<AgentExperience.Core.Retrieval.RankingWeights>
+    {
+        public const double SumTolerance = 1E-06D;
+        public RankingWeights(double Relevance, double Confidence, double Recency, double Status, double EnvironmentCompatibility) { }
+        public double Confidence { get; }
+        public double EnvironmentCompatibility { get; }
+        public double Recency { get; }
+        public double Relevance { get; }
+        public double Status { get; }
+        public double Sum { get; }
+        public static AgentExperience.Core.Retrieval.RankingWeights Default { get; }
+    }
+    public enum RetrievalExclusionReason
+    {
+        IneligibleStatus = 0,
+        Expired = 1,
+        EnvironmentMismatch = 2,
+    }
+    public sealed class RetrievalFailure : System.IEquatable<AgentExperience.Core.Retrieval.RetrievalFailure>
+    {
+        public RetrievalFailure(string Reason, System.Exception? Exception) { }
+        public System.Exception? Exception { get; init; }
+        public string Reason { get; init; }
+    }
+    public enum RetrievalOutcome
+    {
+        Completed = 0,
+        TimedOut = 1,
+        Denied = 2,
+        Failed = 3,
+    }
+    public sealed class RetrievalPolicy : System.IEquatable<AgentExperience.Core.Retrieval.RetrievalPolicy>
+    {
+        public const int DefaultCandidateLimit = 50;
+        public const double DefaultMinimumConfidence = 0.5D;
+        public const int MaxCandidateLimit = 199;
+        public static readonly System.TimeSpan DefaultRecencyHalfLife;
+        public static readonly System.TimeSpan DefaultTimeout;
+        public static readonly System.TimeSpan MaxTimeout;
+        public RetrievalPolicy(System.TimeSpan Timeout, double MinimumConfidence, System.TimeSpan? MaxAge, System.TimeSpan RecencyHalfLife, int CandidateLimit) { }
+        public int CandidateLimit { get; init; }
+        public System.TimeSpan? MaxAge { get; init; }
+        public double MinimumConfidence { get; init; }
+        public System.TimeSpan RecencyHalfLife { get; init; }
+        public System.TimeSpan Timeout { get; init; }
+        public static AgentExperience.Core.Retrieval.RetrievalPolicy Default { get; }
+    }
+    public sealed class RetrieveExperienceRequest : System.IEquatable<AgentExperience.Core.Retrieval.RetrieveExperienceRequest>
+    {
+        public RetrieveExperienceRequest(AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Abstractions.Scope Scope, string TaskText, System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes = null, string? CorrelationId = null, int? Limit = default) { }
+        public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
+        public string? CorrelationId { get; init; }
+        public int? Limit { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public string TaskText { get; init; }
+    }
+    public enum TextOnlyReason
+    {
+        NotConfigured = 0,
+        ProviderUnavailable = 1,
+        ModelMismatch = 2,
+        DimensionMismatch = 3,
+        VectorSearchFailed = 4,
+    }
+    public sealed class VectorChannelFallback : System.IEquatable<AgentExperience.Core.Retrieval.VectorChannelFallback>
+    {
+        public VectorChannelFallback(AgentExperience.Core.Retrieval.TextOnlyReason Reason, string Detail, System.Exception? Exception) { }
+        public string Detail { get; init; }
+        public System.Exception? Exception { get; init; }
+        public AgentExperience.Core.Retrieval.TextOnlyReason Reason { get; init; }
+    }
+}
+namespace AgentExperience.Core.Sanitization
+{
+    public sealed class DefaultSanitizer : AgentExperience.Abstractions.ISanitizer
+    {
+        public DefaultSanitizer(AgentExperience.Core.Sanitization.SanitizationOptions options, Microsoft.Extensions.Compliance.Redaction.Redactor? redactor = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.SanitizedPayload> SanitizeAsync(AgentExperience.Abstractions.RawPayload payload, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class SanitizationFailureException : System.Exception
+    {
+        public SanitizationFailureException(string kind, AgentExperience.Core.Sanitization.SanitizationFailureReason failureReason, string? fieldPath = null) { }
+        public AgentExperience.Core.Sanitization.SanitizationFailureReason FailureReason { get; }
+        public string? FieldPath { get; }
+        public string Kind { get; }
+    }
+    public enum SanitizationFailureReason
+    {
+        NoPolicyConfigured = 0,
+        DepthLimitExceeded = 1,
+        FieldCountLimitExceeded = 2,
+        ValueLengthLimitExceeded = 3,
+        FieldNameLengthExceeded = 4,
+        UnsafeFieldName = 5,
+        RedactorFailed = 6,
+    }
+    public sealed class SanitizationOptions : System.IEquatable<AgentExperience.Core.Sanitization.SanitizationOptions>
+    {
+        public SanitizationOptions(System.Collections.Generic.IReadOnlyDictionary<string, AgentExperience.Core.Sanitization.SanitizationPolicy> Policies) { }
+        public System.Collections.Generic.IReadOnlyDictionary<string, AgentExperience.Core.Sanitization.SanitizationPolicy> Policies { get; init; }
+        public static AgentExperience.Core.Sanitization.SanitizationOptions Empty { get; }
+    }
+    public sealed class SanitizationPolicy : System.IEquatable<AgentExperience.Core.Sanitization.SanitizationPolicy>
+    {
+        public SanitizationPolicy(System.Collections.Generic.IReadOnlySet<string> AllowedFieldNames, System.Collections.Generic.IReadOnlySet<string> SecretFieldNames, int MaxDepth, int MaxFieldCount, int MaxValueLength, int MaxFieldNameLength) { }
+        public System.Collections.Generic.IReadOnlySet<string> AllowedFieldNames { get; init; }
+        public int MaxDepth { get; init; }
+        public int MaxFieldCount { get; init; }
+        public int MaxFieldNameLength { get; init; }
+        public int MaxValueLength { get; init; }
+        public System.Collections.Generic.IReadOnlySet<string> SecretFieldNames { get; init; }
+    }
+}
+namespace AgentExperience.Core.Verification
+{
+    public sealed class ClosedVerificationRound : System.IEquatable<AgentExperience.Core.Verification.ClosedVerificationRound>
+    {
+        public ClosedVerificationRound(System.Guid RoundId, string ArtifactRevision) { }
+        public string ArtifactRevision { get; init; }
+        public System.Guid RoundId { get; init; }
+    }
+    public enum HumanDecision
+    {
+        Approved = 0,
+        Rejected = 1,
+        Pending = 2,
+    }
+    public sealed class RequiredCheck : System.IEquatable<AgentExperience.Core.Verification.RequiredCheck>
+    {
+        public RequiredCheck(string CheckId, string? ExpectedKind = null) { }
+        public string CheckId { get; init; }
+        public string? ExpectedKind { get; init; }
+        public bool Accepts(string? evidenceKind) { }
+    }
+    public static class TaskCheckEvaluators
+    {
+        public static AgentExperience.Abstractions.Evidence ExitCode(System.Guid evidenceId, string checkId, System.Guid verificationRoundId, string artifactRevision, string producer, System.DateTimeOffset capturedAt, int? exitCode, int expected = 0) { }
+        public static AgentExperience.Abstractions.Evidence HumanApproval(System.Guid evidenceId, string checkId, System.Guid verificationRoundId, string artifactRevision, string producer, System.DateTimeOffset capturedAt, AgentExperience.Core.Verification.HumanDecision decision) { }
+        public static AgentExperience.Abstractions.Evidence HumanCorrection(System.Guid evidenceId, string checkId, System.Guid verificationRoundId, string artifactRevision, string producer, System.DateTimeOffset capturedAt, AgentExperience.Core.Verification.HumanDecision decision) { }
+        public static AgentExperience.Abstractions.Evidence TestResult(System.Guid evidenceId, string checkId, System.Guid verificationRoundId, string artifactRevision, string producer, System.DateTimeOffset capturedAt, bool? passed) { }
+        public static AgentExperience.Abstractions.Evidence WorkflowCompletion(System.Guid evidenceId, string checkId, System.Guid verificationRoundId, string artifactRevision, string producer, System.DateTimeOffset capturedAt, AgentExperience.Core.Verification.WorkflowCompletionStatus status) { }
+    }
+    public static class VerificationAggregator
+    {
+        public const string RuleVersion = "1.0.0";
+        public static AgentExperience.Core.Verification.VerificationResult Aggregate(System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> evidence, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> requiredChecks, AgentExperience.Core.Verification.ClosedVerificationRound? closedRound, string currentArtifactRevision, System.DateTimeOffset evaluatedAt, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class VerificationResult : System.IEquatable<AgentExperience.Core.Verification.VerificationResult>
+    {
+        public VerificationResult(AgentExperience.Abstractions.Outcome Outcome, double CompletionScore, string RuleVersion) { }
+        public double CompletionScore { get; init; }
+        public AgentExperience.Abstractions.Outcome Outcome { get; init; }
+        public string RuleVersion { get; init; }
+    }
+    public enum WorkflowCompletionStatus
+    {
+        Completed = 0,
+        Failed = 1,
+        Unknown = 2,
+    }
+}

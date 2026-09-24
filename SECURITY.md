@@ -2,7 +2,12 @@
 
 ## Supported versions
 
-AgentExperience.NET is in early development and has no released versions yet. Security fixes land on the `main` branch.
+AgentExperience.NET is a **preview** (`0.1.0-preview.N`) and is not production ready: the
+[Known limits](README.md#known-limits) table lists every unresolved item, several of them security-relevant. Only the
+latest preview is supported, and security fixes land on the `main` branch.
+
+The tests behind the four security properties this library claims — tenant isolation, sanitization, revoked records,
+and untrusted injected context — are mapped in one place in [`docs/security-suite.md`](docs/security-suite.md).
 
 ## Reporting a vulnerability
 

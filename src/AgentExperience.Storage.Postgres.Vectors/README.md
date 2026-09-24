@@ -1,5 +1,9 @@
 # AgentExperience.Storage.Postgres.Vectors
 
+> **Preview — not production ready.** This is a `0.1.0-preview` package. Public APIs may change between previews,
+> and the [Known limits](https://github.com/fabbrik/AgentExperience.NET#known-limits) table in the repository README
+> lists every unresolved item. Any unresolved item blocks a production-readiness claim.
+
 The pgvector half of AgentExperience.NET's PostgreSQL adapter: one derived embedding per Experience Record, a
 conditional write that can never overwrite newer state or resurrect a deleted record, an explicit scoped re-index,
 and a scoped nearest-neighbour search that applies exactly the same eligibility filters as the text channel.

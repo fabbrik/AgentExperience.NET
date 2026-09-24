@@ -196,6 +196,53 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     }
 
     [Fact]
+    public async Task A_revoked_and_a_superseded_record_are_unreachable_through_both_channels_even_with_their_vectors_left_in_place()
+    {
+        // Story 4.3's security suite, matrix row 9, over the real database: leaving eligibility makes a
+        // record unreachable through the text channel *and* the vector channel. The lifecycle service is
+        // built with no indexing hook on purpose, so both vectors survive the transitions -- which is
+        // what proves that the status predicate in SQL, not de-indexing hygiene, is the boundary.
+        var world = await TestWorld.CreateAsync(DataSource);
+        var lifecycle = new AgentExperience.Core.Lifecycle.ExperienceLifecycleService(world.Store);
+
+        var revoked = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice");
+        var superseded = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Retry the stuck invoice");
+        var replacement = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Void and reissue the invoice");
+        foreach (var id in new[] { revoked, superseded, replacement })
+        {
+            await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
+        }
+
+        const string WordsTask = "Reimburse a blocked payment";
+        Assert.Equal(3, (await world.Retrieval().RetrieveAsync(Request(world, WordsTask))).Records.Count);
+        Assert.Equal(3, (await world.Retrieval().RetrieveAsync(Request(world, SemanticTaskText))).Records.Count);
+
+        Assert.Equal(
+            AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome.Committed,
+            (await lifecycle.CommitAsync(world.Authorization, Transition(world, revoked, ExperienceStatus.Revoked, null), CancellationToken.None)).Outcome);
+        Assert.Equal(
+            AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome.Committed,
+            (await lifecycle.CommitAsync(world.Authorization, Transition(world, superseded, ExperienceStatus.Superseded, replacement), CancellationToken.None)).Outcome);
+
+        // Both vectors are still stored...
+        Assert.Equal(1L, await world.CountEmbeddingsAsync(revoked));
+        Assert.Equal(1L, await world.CountEmbeddingsAsync(superseded));
+
+        // ...and neither record is reachable by words, by meaning, or by both at once.
+        var byWordsOnly = await world.Retrieval(hybrid: false).RetrieveAsync(Request(world, WordsTask));
+        var byMeaningOnly = await world.Retrieval().RetrieveAsync(Request(world, SemanticTaskText));
+        var byBoth = await world.Retrieval().RetrieveAsync(Request(world, WordsTask));
+
+        foreach (var result in new[] { byWordsOnly, byMeaningOnly, byBoth })
+        {
+            Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+            Assert.Equal(replacement, Assert.Single(result.Records).Record.ExperienceId);
+        }
+
+        Assert.False(byMeaningOnly.TextOnly);
+    }
+
+    [Fact]
     public async Task The_registration_extensions_resolve_a_hybrid_retrieval_service_from_a_real_container()
     {
         var services = new ServiceCollection();
@@ -264,6 +311,22 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
 
     private static RetrieveExperienceRequest Request(TestWorld world, string taskText) =>
         new(world.Authorization, world.Scope, taskText);
+
+    private static AgentExperience.Core.Lifecycle.CommitLifecycleTransitionRequest Transition(
+        TestWorld world,
+        Guid experienceId,
+        ExperienceStatus current,
+        Guid? replacement) => new(
+            EventId: Guid.NewGuid(),
+            ExperienceId: experienceId,
+            Scope: world.Scope,
+            PriorStatus: ExperienceStatus.Validated,
+            CurrentStatus: current,
+            Reason: $"moved to {current}",
+            Producer: "tests",
+            OccurredAt: new DateTimeOffset(2026, 9, 22, 10, 0, 0, TimeSpan.Zero),
+            ExpectedRevision: 0,
+            ReplacementExperienceId: replacement);
 
     /// <summary>A generator that is always down, for the provider-outage fallback.</summary>
     private sealed class UnavailableGenerator(Exception failure) : IExperienceEmbeddingGenerator

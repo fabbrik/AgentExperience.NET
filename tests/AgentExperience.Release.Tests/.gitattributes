@@ -1,0 +1,2 @@
+# Verify baselines are compared byte for byte. Keep them LF and UTF-8 on every platform.
+*.verified.txt text eol=lf working-tree-encoding=UTF-8

@@ -152,6 +152,9 @@ public static class ExperienceSchemaMigrator
                 .JournalToPostgresqlTable(PostgresExperienceRecordSchema.SchemaName, JournalTable)
                 .WithTransactionPerScript()
                 .WithVariablesDisabled()
+                // Explicit, not merely DbUp 6's default: a migration must reach none of the host's log
+                // sinks, because DbUp's loggers print script names and, on a failure, the database's error
+                // text. MigratorLogSilenceTests captures the console, Trace, an ILogger, and activities.
                 .LogToNowhere()
                 .Build();
 

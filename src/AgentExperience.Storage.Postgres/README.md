@@ -1,5 +1,9 @@
 # AgentExperience.Storage.Postgres
 
+> **Preview — not production ready.** This is a `0.1.0-preview` package. Public APIs may change between previews,
+> and the [Known limits](https://github.com/fabbrik/AgentExperience.NET#known-limits) table in the repository README
+> lists every unresolved item. Any unresolved item blocks a production-readiness claim.
+
 Stores AgentExperience.NET Experience Records in PostgreSQL through the `IExperienceRecordStore` port, searches
 them by task text through the `IExperienceCandidateSource` port, administers explicit sharing grants through the
 `IExperienceGrantStore` port, and records reuse feedback through the `IExperienceReuseFeedbackStore` port, using
@@ -1207,7 +1211,12 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
 | Caller cancellation once scripts are running | ignored: DbUp's upgrade has no cancellation point, so the run finishes and returns normally |
 
 Scripts are selected only from this package's embedded `Migrations/*.sql` resources, in name order. DbUp variable
-substitution is off, so `$body$` and `$1` in a script are left alone, and the runner does not log.
+substitution is off, so `$body$` and `$1` in a script are left alone, and the runner does not log: nothing reaches
+the console, a `Trace`/`Debug` listener, an `ILogger`, or an `AgentExperience.*` activity source, on a clean run or a
+failing script (`MigratorLogSilenceTests` captures all four). The one thing outside the runner's reach is your own
+driver logging: if you built the data source with `NpgsqlDataSourceBuilder.UseLoggerFactory`, Npgsql's
+`Npgsql.Command` category logs each script's SQL text at `Information`, exactly as it logs every other command on
+that data source. The scripts carry no row data; filter that category if you do not want DDL in your logs.
 
 `PostgresExperienceRecordSchema.ScriptNames` and `GetScript` remain available for reading a script's SQL (for review
 or for applying it through your own change-management tooling), but the migrator is the supported way to apply it.
@@ -1218,6 +1227,20 @@ Scripts are **append-only**. Each is named with a zero-padded numeric prefix (`0
 description, and they run in ordinal name order. The journal records a script by name, so **a script that has been
 journaled anywhere must never be edited or renamed**: databases that already applied it would silently keep the old
 definition, and a rename would reapply it. Change the schema by adding the next-numbered script instead.
+
+### Script comments that were written before the work they point at shipped
+
+Because a journaled script is never edited, a few script *comments* still describe later roadmap stories as future
+work. They ship inside this package as embedded resources, so here is what each one now means. None of them changes
+what a script does; they are comments only.
+
+| Script | Its comment says | What actually shipped |
+| --- | --- | --- |
+| `0006` | Purging an event is an operator action (`ALTER TABLE … DISABLE TRIGGER`) "until the library ships a purge path (roadmap story 4.5 …)" | Story 4.5 shipped it as `0010`, whose header says so and supersedes that runbook: one `SECURITY DEFINER` purge function under a transaction-scoped marker, no trigger ever disabled. Do not use `0006`'s runbook — see [Deleting and expiring data](#deleting-and-expiring-data) |
+| `0007` | Listing the evidence ledger, a foreign key to `experience_records`, and retention over `confidence_evidence` "all belong to roadmap story 4.5" | Retention shipped in `0010`: erasing a record removes every evidence row naming it, with the index that needs. The foreign key was deliberately **not** added (`0010` explains why). Listing the ledger through the port was decided against in story 4.3 (AD-C): lifecycle history already carries each counted update's prior and new values, and no acceptance criterion needs uncounted duplicates |
+| `0008` | Retention of the feedback ledger is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Shipped in `0010`: erasing a record removes its exposure rows and any submission left empty, with the index that needs. `0006`'s runbook is superseded as above |
+| `0008` | The aggregations "roadmap story 4.4 needs — by run, by trial label, by scope" will come with their own indexes | Story 4.4 measured reuse through in-memory port doubles, not SQL over this ledger, so no aggregation query and no index was added. Add one with the first query that needs it |
+| `0009` | Retention of the grant access log is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Story 4.5 decided to **keep** access rows when a record is erased — they carry no payload and answer "who read this before it was deleted". The library ships no retention for this ledger; it is listed in the root README's Known limits |
 
 ## Data semantics
 

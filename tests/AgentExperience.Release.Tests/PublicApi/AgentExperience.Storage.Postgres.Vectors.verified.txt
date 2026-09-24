@@ -1,0 +1,43 @@
+﻿namespace AgentExperience.Storage.Postgres.Vectors
+{
+    public sealed class AiExperienceEmbeddingGenerator : AgentExperience.Abstractions.IExperienceEmbeddingGenerator
+    {
+        public AiExperienceEmbeddingGenerator(Microsoft.Extensions.AI.IEmbeddingGenerator<string, Microsoft.Extensions.AI.Embedding<float>> generator, string? modelId = null, int? dimension = default) { }
+        public int Dimension { get; }
+        public string ModelId { get; }
+        public System.Threading.Tasks.Task<System.ReadOnlyMemory<float>> GenerateAsync(string text, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public static class ExperienceVectorIndexMaintenance
+    {
+        public static System.Threading.Tasks.Task DropHnswIndexAsync(Npgsql.NpgsqlDataSource dataSource, int dimension, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.Task EnsureHnswIndexAsync(Npgsql.NpgsqlDataSource dataSource, int dimension, System.Threading.CancellationToken cancellationToken = default) { }
+        public static string IndexNameFor(int dimension) { }
+    }
+    public static class ExperienceVectorSchema
+    {
+        public const string EmbeddingsScriptName = "0004_add_experience_embeddings.sql";
+        public static System.Collections.Generic.IReadOnlyList<string> ScriptNames { get; }
+        public static string GetScript(string scriptName) { }
+    }
+    public static class ExperienceVectorSchemaMigrator
+    {
+        public static System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceSchemaMigrationResult> MigrateAsync(Npgsql.NpgsqlDataSource dataSource, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class PostgresExperienceEmbeddingIndex : AgentExperience.Abstractions.IExperienceEmbeddingIndex
+    {
+        public PostgresExperienceEmbeddingIndex(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, System.TimeProvider? timeProvider = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceIndexRemoveResult> RemoveAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceIndexScanResult> ScanAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceIndexScan scan, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceVectorSearchResult> SearchAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceVectorQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceIndexWriteResult> WriteAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceIndexWrite write, System.Threading.CancellationToken cancellationToken) { }
+    }
+}
+namespace AgentExperience.Storage.Postgres.Vectors.DependencyInjection
+{
+    public static class AgentExperiencePostgresVectorsServiceCollectionExtensions
+    {
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceEmbeddingGenerator(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, string? modelId = null, int? dimension = default) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresEmbeddingIndex(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresEmbeddingIndex(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
+    }
+}

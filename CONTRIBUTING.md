@@ -31,5 +31,12 @@ Package versions are locked with `packages.lock.json`. Commit lock-file changes 
 - Keep each PR to one concern, and explain the *why* in the description.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages (`feat:`, `fix:`, `docs:`, `chore:`).
 - Make sure `dotnet build` and `dotnet test` pass locally. CI runs both on every PR.
+- **Changing a public API is a reviewed diff.** `tests/AgentExperience.Release.Tests` holds an approval baseline of all
+  five packages' public surface, and any change fails it. If the change is deliberate, regenerate the baseline with
+  `AGENTEXPERIENCE_ACCEPT_API_CHANGES=true dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~PublicApi"`
+  and commit the resulting `PublicApi/*.verified.txt` diff with your change, so reviewers see it.
+- **Moving a package pin** means updating `docs/compatibility-evidence.md` in the same PR; the release tests fail if
+  the compatibility proof and the shipping packages disagree on a version. Releasing is described in
+  [RELEASING.md](RELEASING.md).
 
 By contributing, you agree that your contributions are licensed under the [Apache-2.0 License](LICENSE).

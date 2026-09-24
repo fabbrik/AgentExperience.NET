@@ -1,0 +1,202 @@
+﻿namespace AgentExperience.MicrosoftAgentFramework
+{
+    public static class ExperienceCaptureAgentBuilderExtensions
+    {
+        public const string RunIdStateKey = "AgentExperience.RunId";
+        public static Microsoft.Agents.AI.AIAgentBuilder UseExperienceCapture(this Microsoft.Agents.AI.AIAgentBuilder builder, AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.MicrosoftAgentFramework.ExperienceCaptureOptions options) { }
+        public static Microsoft.Agents.AI.AIAgentBuilder UseExperienceCapture(this Microsoft.Agents.AI.AIAgentBuilder builder, AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.MicrosoftAgentFramework.ExperienceCaptureOptions options, out System.IDisposable captureLifetime) { }
+    }
+    public sealed class ExperienceCaptureFailure : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>
+    {
+        public ExperienceCaptureFailure(AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailureStage Stage, System.Guid? RunId, string Reason, System.Exception? Exception) { }
+        public System.Exception? Exception { get; init; }
+        public string Reason { get; init; }
+        public System.Guid? RunId { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailureStage Stage { get; init; }
+    }
+    public enum ExperienceCaptureFailureStage
+    {
+        ResolveRun = 0,
+        StartRun = 1,
+        Finalize = 2,
+        ToolCall = 3,
+        Finalization = 4,
+    }
+    public sealed class ExperienceCaptureOptions
+    {
+        public ExperienceCaptureOptions() { }
+        public bool CaptureToolCalls { get; init; }
+        public AgentExperience.Abstractions.EnvironmentFingerprint Environment { get; init; }
+        public AgentExperience.Core.Finalization.ExperienceFinalizationService? FinalizationService { get; init; }
+        public System.TimeSpan FinalizationTimeout { get; init; }
+        public int MaxAttemptsPerOpenRun { get; init; }
+        public System.TimeSpan MaxOpenRunDuration { get; init; }
+        public System.Func<System.Guid> NewId { get; init; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>? OnCaptureFailure { get; init; }
+        public System.Action<AgentExperience.Core.Finalization.FinalizeExperienceResult>? OnRunFinalized { get; init; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, AgentExperience.Core.Finalization.FinalizeExperienceRequest?>? ResolveFinalization { get; init; }
+        public required System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext, AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor> ResolveRun { get; init; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; init; }
+        public System.TimeProvider TimeProvider { get; init; }
+    }
+    public sealed class ExperienceFinalizationContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext>
+    {
+        public ExperienceFinalizationContext(AgentExperience.Abstractions.ExperienceRun Run) { }
+        public AgentExperience.Abstractions.ExperienceRun Run { get; init; }
+    }
+    public sealed class ExperienceRunCompletionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext>
+    {
+        public ExperienceRunCompletionContext(System.Guid RunId, string TaskId, AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.RunExecutionStatus ExecutionStatus, int AttemptCount, System.TimeSpan OpenFor, string? Result, string? Error) { }
+        public int AttemptCount { get; init; }
+        public string? Error { get; init; }
+        public AgentExperience.Abstractions.RunExecutionStatus ExecutionStatus { get; init; }
+        public System.TimeSpan OpenFor { get; init; }
+        public string? Result { get; init; }
+        public System.Guid RunId { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public string TaskId { get; init; }
+    }
+    public sealed class ExperienceRunContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext>
+    {
+        public ExperienceRunContext(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> Messages, Microsoft.Agents.AI.AgentSession? Session, Microsoft.Agents.AI.AIAgent Agent) { }
+        public Microsoft.Agents.AI.AIAgent Agent { get; init; }
+        public System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> Messages { get; init; }
+        public Microsoft.Agents.AI.AgentSession? Session { get; init; }
+    }
+    public sealed class ExperienceRunDescriptor : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor>
+    {
+        public ExperienceRunDescriptor(string TaskId, AgentExperience.Abstractions.Scope Scope, string? TaskDescription = null, System.Guid? ContinuesRunId = default) { }
+        public System.Guid? ContinuesRunId { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public string? TaskDescription { get; init; }
+        public string TaskId { get; init; }
+    }
+}
+namespace AgentExperience.MicrosoftAgentFramework.Injection
+{
+    public sealed class ExperienceContextProvider : Microsoft.Agents.AI.AIContextProvider
+    {
+        public const string HistoricalReferenceKey = "AgentExperience.HistoricalReference";
+        public ExperienceContextProvider(AgentExperience.Core.Retrieval.ExperienceRetrievalService retrieval, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions options) { }
+        protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ExperienceInjectionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext>
+    {
+        public ExperienceInjectionContext(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages, Microsoft.Agents.AI.AgentSession? Session, Microsoft.Agents.AI.AIAgent Agent) { }
+        public Microsoft.Agents.AI.AIAgent Agent { get; init; }
+        public System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages { get; init; }
+        public Microsoft.Agents.AI.AgentSession? Session { get; init; }
+    }
+    public sealed class ExperienceInjectionDecisionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext>
+    {
+        public ExperienceInjectionDecisionContext(AgentExperience.Core.Retrieval.RankedExperience Candidate, AgentExperience.Abstractions.ExperienceRecord Current, bool SharedByGrant = false, System.Guid? PermittingGrantId = default) { }
+        public AgentExperience.Core.Retrieval.RankedExperience Candidate { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecord Current { get; init; }
+        public System.Guid? PermittingGrantId { get; init; }
+        public bool SharedByGrant { get; init; }
+    }
+    public sealed class ExperienceInjectionLimits : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits>
+    {
+        public const int DefaultMaxBytes = 16384;
+        public const int DefaultMaxRecords = 8;
+        public static readonly System.TimeSpan DefaultEligibilityCheckTimeout;
+        public static readonly System.TimeSpan MaxEligibilityCheckTimeout;
+        public ExperienceInjectionLimits(int MaxRecords, int MaxBytes) { }
+        public System.TimeSpan EligibilityCheckTimeout { get; init; }
+        public int MaxBytes { get; init; }
+        public int MaxRecords { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Default { get; }
+    }
+    public sealed class ExperienceInjectionOptions
+    {
+        public ExperienceInjectionOptions() { }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
+        public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
+        public System.TimeProvider TimeProvider { get; init; }
+    }
+    public sealed class ExperienceInjectionResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>
+    {
+        public ExperienceInjectionResult(AgentExperience.MicrosoftAgentFramework.Injection.InjectionOutcome Outcome, System.Collections.Generic.IReadOnlyList<System.Guid> InjectedExperienceIds, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.ExcludedExperience> Excluded, bool Truncated, bool EnvironmentUnrestricted, int PayloadBytes, string? CorrelationId, AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure? Failure, AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback = null) { }
+        public string? CorrelationId { get; init; }
+        public bool EnvironmentUnrestricted { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.ExcludedExperience> Excluded { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure? Failure { get; init; }
+        public bool Injected { get; }
+        public int InjectedCount { get; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> InjectedExperienceIds { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionOutcome Outcome { get; init; }
+        public int PayloadBytes { get; init; }
+        public bool TextOnly { get; }
+        public bool Truncated { get; init; }
+        public AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback { get; init; }
+    }
+    public sealed class HistoricalReferencePayload : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload>
+    {
+        public HistoricalReferencePayload(string Text, int ByteCount, System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted) { }
+        public int ByteCount { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds { get; init; }
+        public bool IsEmpty { get; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
+        public string Text { get; init; }
+    }
+    public static class HistoricalReferenceWriter
+    {
+        public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
+        public const string ApproachPrefix = "the verified run\'s final attempt called these tools, in order: ";
+        public const string ApproachSeparator = " -> ";
+        public const string ApproachSuffix = " Tool names only -- no arguments, no results, no error text.";
+        public const string BlockBegin = "=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===";
+        public const string BlockEnd = "=== END HISTORICAL REFERENCE ===";
+        public const string ClampedName = "[...]";
+        public const int MaxApproachToolNames = 20;
+        public const int MaxToolNameLength = 96;
+        public const string NeutralizedMarker = "[delimiter removed]";
+        public const string NoToolsUsed = "the verified run\'s final attempt completed without calling any tool.";
+        public const string NoValue = "(none recorded)";
+        public const string NotANumber = "(unavailable)";
+        public static int BlockOverheadBytes { get; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits) { }
+    }
+    public sealed class InjectionDecision : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>
+    {
+        public InjectionDecision(bool Permitted, string? Reason = null) { }
+        public bool Permitted { get; init; }
+        public string? Reason { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision Permit { get; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision Deny(string? reason = null) { }
+    }
+    public sealed class InjectionFailure : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure>
+    {
+        public InjectionFailure(string Reason, System.Exception? Exception) { }
+        public System.Exception? Exception { get; init; }
+        public string Reason { get; init; }
+    }
+    public enum InjectionOmissionReason
+    {
+        Ineligible = 0,
+        Unreadable = 1,
+        HostDenied = 2,
+        OverRecordLimit = 3,
+        OverByteBudget = 4,
+    }
+    public enum InjectionOutcome
+    {
+        Injected = 0,
+        NothingToInject = 1,
+        Skipped = 2,
+        RetrievalTimedOut = 3,
+        RetrievalDenied = 4,
+        RetrievalFailed = 5,
+        Failed = 6,
+    }
+    public sealed class OmittedExperience : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience>
+    {
+        public OmittedExperience(System.Guid ExperienceId, AgentExperience.MicrosoftAgentFramework.Injection.InjectionOmissionReason Reason, string? Detail = null) { }
+        public string? Detail { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionOmissionReason Reason { get; init; }
+    }
+}

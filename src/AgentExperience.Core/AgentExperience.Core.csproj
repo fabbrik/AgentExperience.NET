@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>AgentExperience.NET's first production Core package: the default sanitization pipeline (per-Kind allowlists, secret-field classification, recursive traversal, fail-closed rejection) built on AgentExperience.Abstractions' ISanitizer port. No dependency on MAF, EF Core, PostgreSQL, model providers, or OpenTelemetry -- only the BCL, Abstractions, Microsoft.Extensions.Compliance.Redaction, and Microsoft.Extensions.DependencyInjection.Abstractions (AD-1).</Description>
+    <Description>Preview, not production ready. AgentExperience.NET's Core: sanitization (per-Kind allowlists, secret-field classification, recursive traversal, fail-closed rejection), in-memory run capture, deterministic verification, auditable reflection, finalization, lifecycle and confidence updates, indexing, bounded retrieval with explainable ranking, and reuse feedback, built on AgentExperience.Abstractions' ports. No dependency on MAF, EF Core, PostgreSQL, model providers, or OpenTelemetry -- only the BCL, Abstractions, Microsoft.Extensions.Compliance.Redaction, and Microsoft.Extensions.DependencyInjection.Abstractions (AD-1).</Description>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,6 +15,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentExperience.Abstractions\AgentExperience.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

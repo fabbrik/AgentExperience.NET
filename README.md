@@ -7,7 +7,45 @@
 
 AgentExperience.NET captures what an AI agent actually tried, verifies whether it worked, and turns the result into an auditable lesson that future runs can reuse safely. It sits between [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) execution and durable storage, without replacing either.
 
-> **Status: early development.** Epic 1 (capture and explain agent experience) is implemented and tested, and so is Epic 2 (reuse relevant experience): a completed run can now be finalized into a durable Experience Record in PostgreSQL in one call, moved through its lifecycle with atomic, audited commits, indexed as an embedding after the fact, retrieved by task text *and* by meaning with bounded, explainable ranking, and injected back into a later MAF invocation as a labeled, bounded Historical Reference. Governance is planned (see [Roadmap](#roadmap)). Nothing is published to NuGet yet, and APIs may change.
+> **Status: preview (`0.1.0-preview.1`). Not production ready** — the [Known limits](#known-limits) below are unresolved, and any unresolved item blocks a production-readiness claim.
+
+All four epics are implemented and tested: capture and explain agent experience, reuse it (PostgreSQL persistence,
+atomic audited lifecycle, text and hybrid retrieval, Historical Reference injection into MAF), govern it (sharing
+grants, confidence from evidence, reuse feedback, deletion and expiry), and operate and measure it (telemetry, an
+end-to-end sample, a controlled reuse baseline). Nothing is published to NuGet yet; the packages build, and their
+release checks run, from [`RELEASING.md`](RELEASING.md). Public APIs may change between previews — every change to
+them is a reviewed diff against a checked-in baseline.
+
+## Known limits
+
+Every unresolved limit this release knows about, one row each, with where the detail lives. **A row leaves this table
+only by fixing the limit.** A release that claims production readiness requires this table to be empty and every
+item on the maintainers' deferred-work ledger closed; this one ships with the table non-empty, which is why it is a
+preview.
+
+| # | Limit | Where the detail lives |
+| --- | --- | --- |
+| KL-1 | **Serial round trips on two paths, one of them the invocation's critical path.** `IExperienceEmbeddingGenerator.GenerateAsync` takes one string, so a re-index pass makes one provider call per record, in sequence. Injection re-reads each kept candidate with its own `GetAsync`, in sequence, before the invocation proceeds — up to `MaxRecords` (default 8) round trips inside `EligibilityCheckTimeout` (default 2 s). Story 4.4 charges both to the memory-enabled condition only, so it reports `elapsed_ms` and keeps it out of its gate. Batching is a breaking change to a public port, deliberately not made in the release that introduces the API baseline | [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check); [Indexing](#indexing-experience-for-semantic-reuse); the 4.4 report (`tests/AgentExperience.ReuseBaseline`) |
+| KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
+| KL-3 | **A retention sweep matches one scope exactly.** A sweep of a tenant reports a clean `MoreRemain: false` while every team-, agent- and user-scoped record under it stays; a tenant-wide policy has to enumerate its own leaf scopes | [Store: a sweep reaches one scope, exactly](src/AgentExperience.Storage.Postgres/README.md#a-sweep-reaches-one-scope-exactly-and-says-nothing-about-the-scopes-beneath-it) |
+| KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the two purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
+| KL-5 | **Default-deny on evidence kind is opt-in per check.** A `RequiredCheck` with a null `ExpectedKind` accepts evidence of any kind | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here); `RequiredCheck` |
+| KL-6 | **A reflection can be paired with the wrong evaluation by a host that calls `IExperienceReflector` directly.** Finalization computes the evaluation itself, so it cannot mismatch; a direct caller can | [Core README](src/AgentExperience.Core/README.md#known-limits-that-live-here) |
+| KL-7 | **An invocation that opens a run and never returns holds it with no bound.** The open-run duration bound is armed when an invocation releases a run it keeps open, not when the run opens | [Adapter: retries as attempts of one run](src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run) |
+| KL-8 | **An approach is its tool names only.** Approaches that differ by argument render identically in the `Approach:` line; a host whose lessons turn on arguments needs its own reflector to say so in the lesson | [Adapter: the payload](src/AgentExperience.MicrosoftAgentFramework/README.md#the-payload) |
+| KL-9 | **A borrowed lesson discloses the lending scope's tool names to the borrowing scope's model.** A grant has no field that permits the lesson while withholding the `Approach:` line; the only control is denying the whole record in the injection risk policy | [Sharing experience across scopes](#sharing-experience-across-scopes) |
+| KL-10 | **The grant access log has no retention path.** Erasure deliberately keeps access rows, and the ledger is append-only, so it grows until the tables' owner prunes it | [Store: schema, `0009`](src/AgentExperience.Storage.Postgres/README.md#script-comments-that-were-written-before-the-work-they-point-at-shipped) |
+| KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth) |
+| KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
+| KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.20.0 only | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
+| KL-14 | **Exact pins block a newer MAF.** `Microsoft.Agents.AI` 1.22.0 needs `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.12, which Core's exact `[10.0.11]` pin refuses, so a host cannot move to it without a new preview. CI's MAF probe reports this on every run | [Compatibility evidence: the MAF matrix](docs/compatibility-evidence.md#the-maf-compatibility-matrix) |
+| KL-15 | **Core's redaction dependency is a floor, not an exact pin.** `Microsoft.Extensions.Compliance.Redaction` is referenced as `10.9.0` (≥), so a consumer may resolve a later, unverified version | [Compatibility evidence: core and shared](docs/compatibility-evidence.md#core-and-shared) |
+
+`0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
+`0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
+are never edited, so this and the similar forward references in `0007`–`0009` are corrected in the
+[store README](src/AgentExperience.Storage.Postgres/README.md#script-comments-that-were-written-before-the-work-they-point-at-shipped)
+instead.
 
 ## Why
 
@@ -44,6 +82,7 @@ AgentExperience.NET records observable evidence (tool calls, results, errors, ve
 | Explicit sharing grants: an administrator the host names lets one named record be *read* by a sibling scope until it expires or is revoked; the grant and its audit event commit together, and reads honour it in SQL, never in application code. A grant's lifetime is bounded by a host-configured maximum, so there is no permanent grant | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
 | An optional access log answering "who read our team's experience, and when": one append-only row per record a grant *delivered*, naming that grant and the revision disclosed, written outside the read's own statement and batched per search, best-effort or fail-closed as the host chooses, with an owner-scoped reader for the trail | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
 | Deleting and expiring library-owned data: one authorized, atomic, scope-safe erasure across seven tables leaving a payload-free tombstone, a bounded retention sweep the host schedules, and expired sharing grants collected with their events — with the append-only guards never disabled and the limits stated rather than overclaimed | `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
+| Release verification: preview versioning, SourceLinked deterministic packages checked from their built nuspecs, an approval baseline of every public API, source-backed evidence for every pin, and a MAF compatibility matrix — nothing published by automation | [`RELEASING.md`](RELEASING.md) |
 | Dependency-injection registration for each package, so a host wires capture, finalization, storage, indexing, and retrieval without knowing concrete types. Injection is the one piece the host constructs itself, because the resolver and risk decision are per-host | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 
 ## Quick look
@@ -1100,9 +1139,12 @@ tests/
   AgentExperience.Storage.Postgres.Vectors.Tests/  embedding index and hybrid retrieval, against a pgvector container
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
   AgentExperience.Sample.EndToEnd.Tests/    asserts the sample's seven stages, its determinism, and what it does not claim
+  AgentExperience.ReuseBaseline/            the controlled reuse experiment and its golden reports
+  AgentExperience.Release.Tests/            release gates: the public API baseline, pin agreement, the security-suite map, workflow guards
 samples/
   AgentExperience.Sample.EndToEnd/          one runnable command: capture a wrong approach and a right one, verify, reflect, persist, retrieve, inject, record reuse
-docs/                                       original production architecture research
+eng/                                        release tooling: package verification and the MAF compatibility probe
+docs/                                       compatibility evidence for every pin, the security-suite map, and the original architecture research
 _sdlc/                                      product brief, PRD, architecture, epics, and specs
 ```
 
@@ -1116,11 +1158,22 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests`, `MigratorLogSilenceTests`, and `PostgresDeletionTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
+
+To accept a deliberate public API change, regenerate the baseline and review the diff it leaves before committing
+it — the baseline never updates itself:
+
+```bash
+AGENTEXPERIENCE_ACCEPT_API_CHANGES=true dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~PublicApi"
+git diff tests/AgentExperience.Release.Tests/PublicApi/
+```
+
+Release verification — packing, package inspection, the pin evidence, and the order the checks run in — is in
+[`RELEASING.md`](RELEASING.md).
 
 ### Run the sample
 
@@ -1135,7 +1188,13 @@ Seven stages, exit code 0, on a fresh clone: no Docker, no PostgreSQL, no model 
 1. **Capture and explain agent experience** ✅ contracts, sanitization, capture, verification, reflection, MAF adapter
 2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
 3. **Govern experience safely** ✅ explicit sharing grants, the full audited lifecycle transition table with supersession and database-enforced append-only logs, evidence-based confidence updates, and recording experience reuse feedback
-4. **Operate and measure the learning loop:** OpenTelemetry instrumentation, an end-to-end demo, measured reuse against a baseline, data deletion and expiry
+4. **Operate and measure the learning loop** — the preview release
+   - 4.1 ✅ OpenTelemetry-compatible instrumentation through the BCL's `ActivitySource` and `Meter`
+   - 4.2 ✅ the end-to-end MAF demonstration (`samples/AgentExperience.Sample.EndToEnd`)
+   - 4.4 ✅ reuse measured against a controlled, pre-registered baseline, with a negative control
+   - 4.5 ✅ deletion and expiry of library-owned data
+   - 4.6 ✅ learn-from-failure through the adapter: retries as attempts of one run, and the approach in the injected block
+   - 4.3 (this release) release hardening: versioning, package verification, the public API baseline, pin evidence, the security suite, and the MAF compatibility matrix — **as a preview**. The production-readiness claim is blocked by the [Known limits](#known-limits), by design
 
 Full requirements and acceptance criteria are in [`_sdlc/planning-artifacts/epics.md`](_sdlc/planning-artifacts/epics.md).
 
