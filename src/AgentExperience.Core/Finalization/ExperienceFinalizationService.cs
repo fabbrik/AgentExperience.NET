@@ -619,6 +619,24 @@ public sealed class ExperienceFinalizationService
             return PortFailed(FinalizationStage.CreateRecord, ex, evaluation, record: null, attempted.Reflection);
         }
 
+        if (stored.Outcome == ExperienceStoreOutcome.Deleted)
+        {
+            // This run was finalized before, into this scope, and the record was then erased: the create
+            // collided with the tombstone under the derived ID. FinalizationOutcome has no erased member,
+            // and Failed is its terminal refusal here; the reason says plainly that no retry can succeed,
+            // because re-finalizing the run would recreate exactly what the erasure removed.
+            return Ended(
+                FinalizationOutcome.Failed,
+                FinalizationStage.CreateRecord,
+                "This run's Experience Record was erased; a run whose record was deleted is never finalized again, so nothing was stored and no retry can succeed.",
+                new FinalizationFailure(
+                    FinalizationStage.CreateRecord,
+                    $"CreateAsync conflicted with the tombstone of an erased record in this scope ({stored.Outcome}).",
+                    stored.Errors,
+                    Exception: null),
+                evaluation);
+        }
+
         if (stored.Outcome != ExperienceStoreOutcome.Found || stored.Record is null)
         {
             // The derived ID is taken by a record this caller's scope cannot see. Nothing was written,
@@ -691,6 +709,23 @@ public sealed class ExperienceFinalizationService
         catch (Exception ex)
         {
             return PortFailed(FinalizationStage.CommitInitialEvent, ex, evaluation, record, record.Reflection);
+        }
+
+        if (commit.Outcome == LifecycleTransitionOutcome.Deleted)
+        {
+            // The record was erased between its create and this initial commit. There is no Candidate
+            // left to report and nothing to converge on, so unlike every other refusal below this is not
+            // a state a retry can finish: Failed, terminal, with no record attached.
+            return Ended(
+                FinalizationOutcome.Failed,
+                FinalizationStage.CommitInitialEvent,
+                "The Experience Record was erased before its initial lifecycle event committed; nothing is durable and no retry can succeed.",
+                new FinalizationFailure(
+                    FinalizationStage.CommitInitialEvent,
+                    $"Committing the record's initial lifecycle event returned {commit.Outcome}.",
+                    commit.Errors,
+                    Exception: null),
+                evaluation);
         }
 
         if (commit.Outcome != LifecycleTransitionOutcome.Committed)

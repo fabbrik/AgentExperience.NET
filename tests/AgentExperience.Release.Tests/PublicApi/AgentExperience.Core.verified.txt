@@ -384,6 +384,7 @@ namespace AgentExperience.Core.Lifecycle
         NotFound = 5,
         Denied = 6,
         Invalid = 7,
+        Deleted = 8,
     }
     public sealed class ExperienceLifecycleService
     {
@@ -408,6 +409,7 @@ namespace AgentExperience.Core.Lifecycle
         NotFound = 6,
         Denied = 7,
         Invalid = 8,
+        Deleted = 9,
     }
 }
 namespace AgentExperience.Core.Reflections

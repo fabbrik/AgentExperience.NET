@@ -352,6 +352,7 @@ internal sealed class LoopRecordStore : IExperienceRecordStore
 {
     private readonly Dictionary<Guid, ExperienceRecord> _records = [];
     private readonly Dictionary<Guid, (LifecycleEvent Event, long Revision)> _events = [];
+    private readonly HashSet<Guid> _erased = [];
 
     /// <summary>When set, every call throws this, which is how an infrastructure failure is driven through the loop.</summary>
     internal Func<Exception>? Throws { get; set; }
@@ -366,6 +367,13 @@ internal sealed class LoopRecordStore : IExperienceRecordStore
     /// <summary>The record as it now stands, or <see langword="null"/> when nothing was ever created for that ID.</summary>
     /// <param name="experienceId">The record to read.</param>
     internal ExperienceRecord? Find(Guid experienceId) => _records.GetValueOrDefault(experienceId);
+
+    /// <summary>
+    /// Erases a stored record the way the Postgres adapter does: its ID stays taken, and within its own
+    /// scope both a read and a lifecycle commit answer <see cref="ExperienceStoreOutcome.Deleted"/>.
+    /// </summary>
+    /// <param name="experienceId">The record to erase.</param>
+    internal void Erase(Guid experienceId) => _erased.Add(experienceId);
 
     public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken)
     {
@@ -389,9 +397,14 @@ internal sealed class LoopRecordStore : IExperienceRecordStore
     {
         Fail(cancellationToken);
 
-        return Task.FromResult(_records.TryGetValue(experienceId, out var record) && record.Scope == scope
-            ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, [])
-            : new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, []));
+        if (_records.TryGetValue(experienceId, out var record) && record.Scope == scope)
+        {
+            return Task.FromResult(_erased.Contains(experienceId)
+                ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Deleted, null, [])
+                : new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, []));
+        }
+
+        return Task.FromResult(new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, []));
     }
 
     public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
@@ -412,6 +425,11 @@ internal sealed class LoopRecordStore : IExperienceRecordStore
         if (!_records.TryGetValue(lifecycleEvent.ExperienceRecordId, out var record) || record.Scope != scope)
         {
             return Task.FromResult(new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.NotFound, 0, null, []));
+        }
+
+        if (_erased.Contains(record.ExperienceId))
+        {
+            return Task.FromResult(new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Deleted, record.Revision, null, []));
         }
 
         if (record.Revision != lifecycleEvent.ExpectedRevision)

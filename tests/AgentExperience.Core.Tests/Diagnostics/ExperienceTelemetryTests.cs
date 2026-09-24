@@ -478,6 +478,59 @@ public class ExperienceTelemetryTests
     }
 
     /// <summary>
+    /// A write against an erased record is a refusal the store port documents, classified exactly like
+    /// <c>NotFound</c>: counted and timed under its own outcome name on an Ok span, and never an
+    /// infrastructure failure. Before the lifecycle service mapped it, both operations threw
+    /// <see cref="ExperienceStoreException"/> and paged whoever watches <c>error.class=Infrastructure</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_write_against_an_erased_record_is_a_refusal_and_never_an_infrastructure_failure()
+    {
+        var loop = new ExperienceLoop();
+        var arranged = await loop.DriveAsync();
+        var record = loop.Store.Find(arranged.ExperienceId)!;
+        loop.Store.Erase(arranged.ExperienceId);
+
+        using var probe = TelemetryProbe.All();
+
+        var transitioned = await loop.Lifecycle.CommitAsync(
+            ExperienceLoop.Authorization,
+            new CommitLifecycleTransitionRequest(
+                Guid.NewGuid(), arranged.ExperienceId, ExperienceLoop.Scope, record.Status,
+                ExperienceStatus.Revoked, "revoking a record that was erased meanwhile", "tests",
+                ExperienceLoop.Now, record.Revision),
+            CancellationToken.None);
+
+        var applied = await loop.Lifecycle.ApplyEvidenceAsync(
+            ExperienceLoop.Authorization,
+            new ApplyConfidenceEvidenceRequest(
+                Guid.NewGuid(),
+                arranged.ExperienceId,
+                ExperienceLoop.Scope,
+                Guid.NewGuid(),
+                ConfidenceEvidenceKind.Supporting,
+                ConfidenceEvidenceSource.Machine,
+                arranged.RunId,
+                ExperienceLoop.Round.RoundId,
+                "evidence about a record that was erased meanwhile",
+                "tests",
+                ExperienceLoop.Now),
+            CancellationToken.None);
+
+        Assert.Equal(LifecycleTransitionOutcome.Deleted, transitioned.Outcome);
+        Assert.Equal(ConfidenceUpdateOutcome.Deleted, applied.Outcome);
+
+        Assert.Equal(
+            nameof(LifecycleTransitionOutcome.Deleted),
+            Assert.Single(probe.For(CountInstrument, "lifecycle.commit")).Tags[OutcomeDimension]);
+        Assert.Equal(
+            nameof(ConfidenceUpdateOutcome.Deleted),
+            Assert.Single(probe.For(CountInstrument, "confidence.apply")).Tags[OutcomeDimension]);
+        Assert.All(probe.LibraryActivities, activity => Assert.Equal(ActivityStatusCode.Ok, activity.Status));
+        Assert.Empty(probe.For(FailuresInstrument));
+    }
+
+    /// <summary>
     /// The <c>outcome</c> dimension is the operation's own enum member, on the paths that did
     /// <em>not</em> succeed as well as on the ones that did. Verified only on success, three
     /// hardcoded success literals in place of <c>result.Outcome.ToString()</c> went undetected.

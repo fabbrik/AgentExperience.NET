@@ -83,6 +83,12 @@ public enum FinalizationOutcome
     /// had already been created but its initial event was refused, <c>Record</c> carries that record --
     /// still a <see cref="ExperienceStatus.Candidate"/>, so it is not reusable -- and <c>Failure</c>
     /// carries either the commit's own refusal or the reason the record was going to be quarantined.
+    /// <para>
+    /// One case is terminal rather than retryable: the run's record was erased (the store reported
+    /// <see cref="ExperienceStoreOutcome.Deleted"/>), whether before this call or between its create and
+    /// its initial commit. <c>Reason</c> says so, <c>Record</c> is <see langword="null"/>, and a retry
+    /// ends the same way, because re-finalizing the run would recreate what the erasure removed.
+    /// </para>
     /// </summary>
     Failed,
 }

@@ -40,6 +40,7 @@ preview.
 | KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.20.0 only | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 | KL-14 | **Exact pins block a newer MAF.** `Microsoft.Agents.AI` 1.22.0 needs `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.12, which Core's exact `[10.0.11]` pin refuses, so a host cannot move to it without a new preview. CI's MAF probe reports this on every run | [Compatibility evidence: the MAF matrix](docs/compatibility-evidence.md#the-maf-compatibility-matrix) |
 | KL-15 | **Core's redaction dependency is a floor, not an exact pin.** `Microsoft.Extensions.Compliance.Redaction` is referenced as `10.9.0` (≥), so a consumer may resolve a later, unverified version | [Compatibility evidence: core and shared](docs/compatibility-evidence.md#core-and-shared) |
+| KL-16 | **Erasure emits no library telemetry.** Deletion, the retention sweep and the grant purge are not in the operation table and emit no span, count, duration or failure classification; the host observes them through the results they return and through the database | [Telemetry: what is not instrumented](docs/telemetry.md#what-is-not-instrumented) |
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -1113,6 +1114,19 @@ The MAF adapter can drive finalization for you: set `FinalizationService` and `R
 `ExperienceCaptureOptions` and every successfully captured invocation is finalized right after it is completed. See
 the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#finalizing-captured-runs).
 
+## Telemetry
+
+Core and the MAF adapter emit OpenTelemetry-compatible spans and metrics through the BCL's `ActivitySource` and
+`Meter`, under `AgentExperience.Core` and `AgentExperience.MicrosoftAgentFramework`. The library references no
+OpenTelemetry package and never exports anything itself: a host subscribes with `AddSource("AgentExperience.*")` and
+`AddMeter("AgentExperience.*")`. Each operation emits one span (`agentexperience.<operation>`) and one count and
+duration. A counter of failures, classified into four alertable classes, moves only when an operation throws. Metric
+dimensions are bounded, and identifiers appear on spans only. No captured content, payload or exception message
+reaches either.
+
+The full contract lists every source, span, instrument, unit, dimension value and span attribute, and what each
+operation emits: [`docs/telemetry.md`](docs/telemetry.md). Erasure is not instrumented (KL-16).
+
 ## Design principles
 
 - **Hexagonal core.** `Abstractions` depends only on the BCL; `Core` adds a redaction primitive and the dependency-injection *abstractions* it needs to register its own services. MAF, databases, models, and telemetry stay in adapters. Dependency-boundary tests enforce this in CI.
@@ -1189,7 +1203,7 @@ Seven stages, exit code 0, on a fresh clone: no Docker, no PostgreSQL, no model 
 2. **Reuse relevant experience** ✅ PostgreSQL persistence, atomic audited lifecycle commits, one-call finalization of captured runs, bounded text retrieval with explainable ranking, revision-safe embedding ingestion with hybrid retrieval, and historical-reference injection into MAF
 3. **Govern experience safely** ✅ explicit sharing grants, the full audited lifecycle transition table with supersession and database-enforced append-only logs, evidence-based confidence updates, and recording experience reuse feedback
 4. **Operate and measure the learning loop** — the preview release
-   - 4.1 ✅ OpenTelemetry-compatible instrumentation through the BCL's `ActivitySource` and `Meter`
+   - 4.1 ✅ OpenTelemetry-compatible instrumentation through the BCL's `ActivitySource` and `Meter` ([contract](docs/telemetry.md))
    - 4.2 ✅ the end-to-end MAF demonstration (`samples/AgentExperience.Sample.EndToEnd`)
    - 4.4 ✅ reuse measured against a controlled, pre-registered baseline, with a negative control
    - 4.5 ✅ deletion and expiry of library-owned data

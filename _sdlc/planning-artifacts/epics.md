@@ -25,8 +25,8 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 
 - Epic 1: 1.1 → 1.7 → 1.4 → 1.2 → 1.5 → 1.3 → 1.6.
 - Epic 2: 2.1 → 2.4 → 2.5 → 2.2 → 2.6 → 2.3. Minimum storage and retrieval policy is implemented here, without depending on Epic 3.
-- Epic 3: 3.1 → 3.2 → 3.4 → 3.3.
-- Epic 4: 4.1 → 4.2 → 4.4 → 4.5 → 4.3.
+- Epic 3: 3.1 → 3.2 → 3.4 → 3.3 → 3.5.
+- Epic 4: 4.1 → 4.2 → 4.4 → 4.5 → 4.6 → 4.3.
 
 Every implementation story includes automated happy-path and failure tests, safe correlated diagnostics, and documented public behavior. Tests and diagnostics are delivered with their owning behavior, not postponed to Epic 4. Schemas and entities are introduced only when their story needs them.
 
@@ -691,6 +691,32 @@ So that confidence reflects real reuse outcomes.
 **When** feedback is accepted
 **Then** the originating experience receives a contradiction or warning event without silently deleting it.
 
+### Story 3.5: Audit Grant Access and Bound Grant Lifetime
+
+**Traces:** FR9, NFR1, NFR7 · **AD:** AD-4, AD-5 · **Depends on:** 3.1, 3.3
+
+As an enterprise platform engineer,
+I want every read a sharing grant delivers to be recorded, and every grant to expire within a host-set bound,
+So that "who read our team's experience, and when" is answerable and no grant is permanent.
+
+**Acceptance Criteria:**
+
+**Given** a recipient reads a record through a grant, by ID or through a search channel
+**When** the read returns the record
+**Then** an append-only access row names the permitting grant, the record, the recipient scope, the reading principal and the time, and the read tells the caller which grant permitted it; an owner reading its own record, a candidate the caller never received, and a read refused after the fetch produce no row.
+
+**Given** a host that requires auditing
+**When** an access row cannot be written
+**Then** the read fails closed and returns nothing; under the default best-effort mode the read returns and the failure is reported to the host. A deployment that wires no access log behaves exactly as before.
+
+**Given** access rows are written
+**When** a read or a search delivers records
+**Then** the row is written outside the read's own statement, and a search writes its rows in one batched statement.
+
+**Given** a host-configured maximum grant lifetime
+**When** a grant is requested with a longer expiry
+**Then** it is refused with a field path and nothing is written; an expiry may still only shrink, and the maximum cannot be raised for a grant already issued.
+
 ## Epic 4: Operate and Measure the Learning Loop
 
 Developers and operators can observe, test, and validate the complete production learning loop.
@@ -804,9 +830,35 @@ So that revocation is not mistaken for removal of stored payloads.
 **When** deletion is documented and tested
 **Then** the guarantee is limited to the library's live store, tombstone exceptions are stated, and host-owned backup/external-artifact cleanup is explicit; audit history is append-only during normal operation but payload erasure is an authorized exception.
 
+### Story 4.6: Make Learn-from-Failure Work Through the Adapter
+
+**Traces:** FR1, FR2, FR5, FR7, NFR8 · **AD:** AD-1, AD-3, AD-9 · **Depends on:** 4.5
+
+As a platform engineer,
+I want a retry through the MAF adapter to be recorded as a further attempt of the same run, and the verified approach to reach a later agent,
+So that an agent that fails and tries again produces a lesson a later run can use.
+
+**Acceptance Criteria:**
+
+**Given** a host that does not opt in
+**When** an invocation is captured
+**Then** behaviour is unchanged: one invocation, one attempt, run closed.
+
+**Given** an invocation whose run descriptor names an open run to continue
+**When** it is captured
+**Then** its attempt is appended to that run, a host predicate decides whether this invocation closes the run, a continued run must match on task and scope or it is a conflict, and a run that has completed can never be continued.
+
+**Given** a run is left open
+**When** the host's maximum open duration or maximum attempt count is reached
+**Then** the adapter completes the run and reports it through the existing capture-failure channel; no run stays open indefinitely.
+
+**Given** a record is injected as Historical Reference
+**When** the block is written
+**Then** it carries the ordered tool names of the verified approach, derived from the record's attempts rather than from reflection prose, and nothing else from the captured run: no tool arguments, tool results, attempt results, attempt errors or evidence detail, whatever a host reflector wrote. The block's framing is unchanged, and the injected-content authorization boundary still denies a guarded call induced by an injected approach line.
+
 ### Story 4.3: Harden Compatibility, Security, and Release Verification
 
-**Traces:** NFR1, NFR6, NFR8 · **AD:** AD-1, AD-12 · **Depends on:** 4.5
+**Traces:** NFR1, NFR6, NFR8 · **AD:** AD-1, AD-12 · **Depends on:** 4.5, 4.6
 
 As an open-source maintainer,
 I want automated quality gates for compatibility, isolation, reliability, and packaging,

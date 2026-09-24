@@ -104,6 +104,18 @@ public enum LifecycleTransitionOutcome
 
     /// <summary>The request was malformed. See <c>Errors</c>. No storage was accessed.</summary>
     Invalid,
+
+    /// <summary>
+    /// The record was erased: only a payload-free tombstone remains under its ID, and the store refused
+    /// the event (<see cref="ExperienceStoreOutcome.Deleted"/>). Nothing was written.
+    /// <para>
+    /// This is terminal and never retryable. A tombstone is never resurrected, so no revision, status,
+    /// or later retry can make a transition on this record land. It is reported only within the scope
+    /// that owned the record; any other scope sees <see cref="NotFound"/>, whether or not the ID was
+    /// ever erased.
+    /// </para>
+    /// </summary>
+    Deleted,
 }
 
 /// <summary>

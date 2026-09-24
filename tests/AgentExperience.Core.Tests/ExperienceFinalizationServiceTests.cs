@@ -565,6 +565,47 @@ public class ExperienceFinalizationServiceTests
     }
 
     [Fact]
+    public async Task Re_finalizing_a_run_whose_record_was_erased_is_a_terminal_failure_that_says_so()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+
+        var first = await harness.FinalizeAsync();
+        Assert.Equal(FinalizationOutcome.Validated, first.Outcome);
+        harness.Store.Erase(first.ExperienceId!.Value);
+
+        var second = await harness.FinalizeAsync(finalizedAt: Now.AddMinutes(5));
+
+        // The create collides with the tombstone and the owning scope's read answers Deleted. That is
+        // not "a record outside the requested scope", and not a failure a retry could finish.
+        Assert.Equal(FinalizationOutcome.Failed, second.Outcome);
+        Assert.Equal(FinalizationStage.CreateRecord, second.Stage);
+        Assert.Null(second.Record);
+        Assert.False(second.IsDurable);
+        Assert.Contains("erased", second.Reason!, StringComparison.Ordinal);
+        Assert.Contains("no retry can succeed", second.Reason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("outside the requested scope", second.Reason!, StringComparison.Ordinal);
+        Assert.Single(harness.Store.Creates);
+        Assert.Single(harness.Store.Commits);
+    }
+
+    [Fact]
+    public async Task A_record_erased_before_its_initial_commit_is_reported_as_erased_not_as_a_retryable_candidate()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+        harness.Store.CommitResult = new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Deleted, 0, null, []);
+
+        var result = await harness.FinalizeAsync();
+
+        // Before the lifecycle service mapped Deleted this threw inside the commit and came back as a
+        // port failure; it must be a typed, terminal refusal with no Candidate left to report.
+        Assert.Equal(FinalizationOutcome.Failed, result.Outcome);
+        Assert.Equal(FinalizationStage.CommitInitialEvent, result.Stage);
+        Assert.Null(result.Record);
+        Assert.Null(result.Failure!.Exception);
+        Assert.Contains("erased", result.Reason!, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_record_finalized_concurrently_converges_on_AlreadyFinalized_rather_than_failing_forever()
     {
         var harness = await Harness.WithCompletedRunAsync();
@@ -902,6 +943,7 @@ public class ExperienceFinalizationServiceTests
     {
         private readonly Dictionary<Guid, ExperienceRecord> _records = [];
         private readonly Dictionary<Guid, (LifecycleEvent Event, long AppliedRevision)> _events = [];
+        private readonly HashSet<Guid> _erased = [];
 
         public List<ExperienceRecord> Creates { get; } = [];
 
@@ -919,6 +961,9 @@ public class ExperienceFinalizationServiceTests
         public Action<FakeStore>? BeforeCommit { get; set; }
 
         public void Seed(ExperienceRecord record) => _records[record.ExperienceId] = record;
+
+        /// <summary>Erases a stored record the way the Postgres adapter does: its ID stays taken, and its own scope reads it as Deleted.</summary>
+        public void Erase(Guid experienceId) => _erased.Add(experienceId);
 
         public long RevisionOf(Guid experienceId) => _records[experienceId].Revision;
 
@@ -970,10 +1015,15 @@ public class ExperienceFinalizationServiceTests
             Assert.NotNull(authorization);
             cancellationToken.ThrowIfCancellationRequested();
 
-            // A record in another scope is indistinguishable from a missing one.
-            return Task.FromResult(_records.TryGetValue(experienceId, out var record) && record.Scope == scope
-                ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, [])
-                : new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, []));
+            // A record in another scope is indistinguishable from a missing one, erased or not.
+            if (_records.TryGetValue(experienceId, out var record) && record.Scope == scope)
+            {
+                return Task.FromResult(_erased.Contains(experienceId)
+                    ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Deleted, null, [])
+                    : new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, []));
+            }
+
+            return Task.FromResult(new ExperienceRecordGetResult(ExperienceStoreOutcome.NotFound, null, []));
         }
 
         public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(

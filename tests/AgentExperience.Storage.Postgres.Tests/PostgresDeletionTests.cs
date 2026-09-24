@@ -378,6 +378,54 @@ public sealed class PostgresDeletionTests
     }
 
     [Fact]
+    public async Task Core_reports_a_late_write_against_a_tombstone_as_a_terminal_refusal_rather_than_throwing()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+
+        Assert.Equal(
+            ExperienceStoreOutcome.Deleted,
+            (await _store.DeleteAsync(auth, scope, record.ExperienceId, CancellationToken.None)).Outcome);
+
+        // The store's Deleted answer reaches Core's lifecycle service through the real adapter. Before
+        // Core mapped it, both calls threw ExperienceStoreException -- an "infrastructure failure" for
+        // what is an ordinary late write against an erased record.
+        var transitioned = await _lifecycle.CommitAsync(
+            auth,
+            new CommitLifecycleTransitionRequest(
+                Guid.NewGuid(), record.ExperienceId, scope, record.Status, ExperienceStatus.Revoked,
+                "revoking a record that was erased meanwhile", "tests", DateTimeOffset.UtcNow, record.Revision),
+            CancellationToken.None);
+        Assert.Equal(LifecycleTransitionOutcome.Deleted, transitioned.Outcome);
+
+        var applied = await _lifecycle.ApplyEvidenceAsync(
+            auth,
+            new ApplyConfidenceEvidenceRequest(
+                Guid.NewGuid(), record.ExperienceId, scope, Guid.NewGuid(),
+                ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine,
+                Guid.NewGuid(), Guid.NewGuid(), "evidence about a record that was erased meanwhile", "tests",
+                DateTimeOffset.UtcNow),
+            CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Deleted, applied.Outcome);
+
+        // Neither answer moved the tombstone or wrote anything against it.
+        Assert.Equal(0, await CountAsync("lifecycle_events", record.ExperienceId));
+        Assert.Equal(0, await CountAsync("confidence_evidence", record.ExperienceId));
+
+        // Another scope is still told nothing: the same calls there are NotFound.
+        var foreign = Scope(tenant, team: "team-z");
+        var foreignCommit = await _lifecycle.CommitAsync(
+            auth,
+            new CommitLifecycleTransitionRequest(
+                Guid.NewGuid(), record.ExperienceId, foreign, record.Status, ExperienceStatus.Revoked,
+                "from another scope", "tests", DateTimeOffset.UtcNow, record.Revision),
+            CancellationToken.None);
+        Assert.Equal(LifecycleTransitionOutcome.NotFound, foreignCommit.Outcome);
+    }
+
+    [Fact]
     public async Task Every_read_path_reports_the_tombstone_as_erased_or_not_at_all()
     {
         var tenant = NewTenant();
