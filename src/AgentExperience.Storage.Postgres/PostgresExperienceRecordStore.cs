@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Net.Sockets;
 using AgentExperience.Abstractions;
+using AgentExperience.Storage.Postgres.Diagnostics;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -1293,6 +1294,35 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         long? expectedRevision,
         CancellationToken cancellationToken)
     {
+        // Opened before the arguments are checked, exactly as Core's operations are, so even a refused
+        // or malformed erasure is counted. The record ID is the only identifier written: the tombstone
+        // keeps it, and nothing the erasure removed ever reaches telemetry.
+        using var operation = ErasureDiagnostics.Start(ErasureDiagnostics.Delete);
+        ErasureDiagnostics.Tag(operation, ErasureDiagnostics.ExperienceIdAttribute, experienceId.ToString("D"));
+
+        ExperienceRecordDeleteResult result;
+        try
+        {
+            result = await DeleteCoreAsync(authorization, scope, experienceId, expectedRevision, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ErasureDiagnostics.Faulted(operation, ex, cancellationToken);
+            throw;
+        }
+
+        ErasureDiagnostics.Succeeded(operation, result.Outcome);
+        return result;
+    }
+
+    private async Task<ExperienceRecordDeleteResult> DeleteCoreAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        long? expectedRevision,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(scope);
 
@@ -1379,6 +1409,50 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
     /// <exception cref="ExperienceRetentionSweepInterruptedException">A storage failure stopped the batch part-way; the count of what was erased is on the exception.</exception>
     public async Task<ExperienceRetentionSweepResult> SweepExpiredAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        TimeSpan retentionAge,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        // One span for the whole batch, never one per record: the records are erased through PurgeAsync,
+        // not through DeleteAsync, and a span attribute is not a place for a list that grows with the
+        // batch. What reaches the trace is how many were erased and whether the batch stopped early.
+        using var operation = ErasureDiagnostics.Start(ErasureDiagnostics.RetentionSweep);
+
+        ExperienceRetentionSweepResult result;
+        try
+        {
+            result = await SweepExpiredCoreAsync(authorization, scope, retentionAge, batchSize, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (ExperienceRetentionSweepInterruptedException ex)
+        {
+            // How much a failed sweep irreversibly erased is the one fact a compliance log needs, so it
+            // reaches the trace as well as the exception.
+            TagSweep(operation, ex.Partial);
+            ErasureDiagnostics.Faulted(operation, ex, cancellationToken);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            ErasureDiagnostics.Faulted(operation, ex, cancellationToken);
+            throw;
+        }
+
+        TagSweep(operation, result);
+        ErasureDiagnostics.Succeeded(operation, result.Outcome);
+        return result;
+    }
+
+    /// <summary>Writes what a sweep did -- a count and a flag, never which records -- onto its span.</summary>
+    private static void TagSweep(in ErasureTrace operation, ExperienceRetentionSweepResult result)
+    {
+        ErasureDiagnostics.Tag(operation, ErasureDiagnostics.ErasedCountAttribute, result.DeletedCount);
+        ErasureDiagnostics.Tag(operation, ErasureDiagnostics.InterruptedAttribute, result.Interrupted);
+    }
+
+    private async Task<ExperienceRetentionSweepResult> SweepExpiredCoreAsync(
         AuthorizationContext authorization,
         Scope scope,
         TimeSpan retentionAge,

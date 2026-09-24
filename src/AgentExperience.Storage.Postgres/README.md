@@ -877,7 +877,7 @@ re-derived.)
 - **Backups, replicas, WAL, and logical-replication streams.** Host-owned, and out of reach of this schema. A
   deployment with a retention obligation has to reach them itself.
 - **Exported telemetry.** Spans and metrics this library emitted carry record IDs; erasing a record does not
-  retract them.
+  retract them. The erasure's own telemetry adds nothing that was erased (see below).
 - **External artifacts a record merely named.** Tickets, logs, commits: the library never held them.
 - **The dead heap tuple — until `VACUUM`, the erased text is still in this database.** The tombstone is written
   with an `UPDATE`, and an `UPDATE` in PostgreSQL writes a new row version and leaves the old one in the heap.
@@ -892,6 +892,19 @@ re-derived.)
   `experience_embeddings`, persist until `VACUUM` reclaims them. *These* really do point at row versions that no
   longer carry the erased text, so they cannot return it — the distinction from the bullet above is exact, and
   was worth stating both ways round.
+
+### Telemetry
+
+Erasure is the one part of this package that emits telemetry, on the `AgentExperience.Storage.Postgres`
+`ActivitySource` and `Meter`, which a host subscribed to `AgentExperience.*` already receives. `DeleteAsync` is the
+`delete` operation, `SweepExpiredAsync` is `retention.sweep`, and `PurgeExpiredAsync` is `grant.purge`. Each call
+produces one span, one count and one duration under the result's `ExperienceStoreOutcome` name, and
+`agentexperience.operation.failures` moves only when the call throws. These are the same instruments and dimensions
+Core uses. A `delete` span carries the record's ID. A sweep or purge span carries `erased_count`, and a sweep span
+also carries `interrupted`. None of them carries a scope, task ID, payload, grant ID, grant reason, recipient scope or
+administrator. The full contract is in
+[`docs/telemetry.md`](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/telemetry.md).
+The package still references no OpenTelemetry package: `ActivitySource` and `Meter` are part of the BCL.
 
 ## Schema
 

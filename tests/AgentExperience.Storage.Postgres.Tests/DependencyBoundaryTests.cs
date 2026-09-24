@@ -24,6 +24,8 @@ public class DependencyBoundaryTests
         "OpenAI",
         "Azure.AI",
         "Anthropic",
+        "OpenTelemetry", // the library emits through the BCL; exporting is the host's decision
+        "AgentExperience.Core", // this adapter depends on the ports in Abstractions, never on Core
     ];
 
     [Fact]

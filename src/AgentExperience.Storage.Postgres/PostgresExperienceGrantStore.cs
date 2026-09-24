@@ -1,5 +1,6 @@
 using System.Data.Common;
 using AgentExperience.Abstractions;
+using AgentExperience.Storage.Postgres.Diagnostics;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -516,6 +517,34 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="recordScope"/> is <see langword="null"/>.</exception>
     public async Task<ExperienceGrantPurgeResult> PurgeExpiredAsync(
+        AuthorizationContext authorization,
+        GrantAdministration? administration,
+        Scope recordScope,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        // A count and nothing else: the grant IDs, recipient scopes, reasons and administrators this
+        // removes are exactly what the purge exists to stop keeping, so none of them is written here.
+        using var operation = ErasureDiagnostics.Start(ErasureDiagnostics.GrantPurge);
+
+        ExperienceGrantPurgeResult result;
+        try
+        {
+            result = await PurgeExpiredCoreAsync(authorization, administration, recordScope, batchSize, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ErasureDiagnostics.Faulted(operation, ex, cancellationToken);
+            throw;
+        }
+
+        ErasureDiagnostics.Tag(operation, ErasureDiagnostics.ErasedCountAttribute, result.PurgedCount);
+        ErasureDiagnostics.Succeeded(operation, result.Outcome);
+        return result;
+    }
+
+    private async Task<ExperienceGrantPurgeResult> PurgeExpiredCoreAsync(
         AuthorizationContext authorization,
         GrantAdministration? administration,
         Scope recordScope,
