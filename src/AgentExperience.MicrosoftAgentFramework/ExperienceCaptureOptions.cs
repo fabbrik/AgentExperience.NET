@@ -212,11 +212,24 @@ public sealed class ExperienceCaptureOptions
     /// Must be positive and at most <see cref="uint.MaxValue"/> - 1 milliseconds.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Enforced two ways, so neither a host that keeps invoking nor a host that walks away can defeat
     /// it: it is checked when each invocation finishes, and a timer armed on
-    /// <see cref="TimeProvider"/> closes a run that no further invocation ever arrives for. It has no
-    /// effect at all on the default behaviour, where every invocation completes its own run and no
-    /// run is ever left open.
+    /// <see cref="TimeProvider"/> the moment the run is opened closes a run that no further invocation
+    /// ever arrives for -- or whose invocation never comes back.
+    /// </para>
+    /// <para>
+    /// If the bound is reached while an invocation is still in flight on the run, the close is handed
+    /// to that invocation and the timer re-arms for one further period of this length; if the
+    /// invocation has still not returned when that period ends, the run is closed underneath it. So a
+    /// run is never held for more than twice this duration (plus the close's own
+    /// <see cref="FinalizationTimeout"/>) by an invocation that does not return -- unless
+    /// <see cref="TimeProvider"/> cannot create the timer at all, which is reported when the run opens.
+    /// This applies on the default behaviour too, where every invocation completes its own run: there
+    /// the only effect is that an invocation still running at twice this duration has its run
+    /// completed as <see cref="RunExecutionStatus.Cancelled"/> underneath it, reported, and its own
+    /// attempt is then refused when it returns. Set it above the longest invocation you expect.
+    /// </para>
     /// </remarks>
     public TimeSpan MaxOpenRunDuration { get; init; } = TimeSpan.FromMinutes(5);
 
@@ -273,8 +286,9 @@ public sealed class ExperienceCaptureOptions
     /// <c>RunAsync</c> returns. A run closed by <see cref="MaxOpenRunDuration"/> is the exception:
     /// that close runs from a <see cref="TimeProvider"/> timer callback on a thread-pool thread,
     /// after the invocation that opened the run has returned and after any number of later
-    /// invocations. The callback must therefore be thread-safe and must tolerate being called when no
-    /// invocation is in flight. Dispose the <c>captureLifetime</c> handle
+    /// invocations -- or while an invocation that never returned is still hung on the run. The
+    /// callback must therefore be thread-safe and must tolerate being called when no invocation is in
+    /// flight. Dispose the <c>captureLifetime</c> handle
     /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions, out IDisposable)"/>
     /// hands back to stop those late calls before tearing down whatever the callback writes to.
     /// </remarks>

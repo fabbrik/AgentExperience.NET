@@ -107,6 +107,10 @@ internal sealed class CaptureScope
     /// the session as soon as the run is open, so a concurrent invocation can read it and name it
     /// while this one is still capturing.
     /// </para>
+    /// <para>
+    /// Once the run is open its duration bound is armed, before the inner agent runs, so a run is
+    /// bounded even when the invocation that opened it never returns. See <see cref="OpenRunRegistry"/>.
+    /// </para>
     /// </remarks>
     internal static CaptureScope? TryBegin(
         IExperienceCaptureService service,
@@ -207,6 +211,11 @@ internal sealed class CaptureScope
             Unclaim(registry, claimed, createdEntry);
             return null;
         }
+
+        // Bounded from here, while this invocation is still in flight, not only once it releases the
+        // run: an invocation that opens a run and never returns would otherwise hold it with no bound.
+        // A continued run's entry already carries its bound, and this leaves it as it is.
+        registry.ArmAtOpen(claimed, runStartedAt);
 
         var scope = new CaptureScope(service, options, registry, claimed, descriptor, runId, runStartedAt, startedAt, startTimestamp);
 
@@ -415,6 +424,10 @@ internal sealed class CaptureScope
         switch (_registry.TryLeaveOpen(_openRun, RunStartedAt))
         {
             case LeaveOpenResult.LeftOpen:
+            case LeaveOpenResult.AlreadyClosed:
+                // AlreadyClosed: the bound completed the run underneath this invocation, which did not
+                // come back in time, and that close was reported; this invocation's own refused attempt
+                // was reported by finalization. Nothing is left to release.
                 return;
 
             case LeaveOpenResult.Disposed:
