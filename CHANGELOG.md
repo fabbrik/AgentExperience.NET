@@ -5,8 +5,39 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Upgrade, in this order
+
+Stop the application first and run steps 1 to 3 in one maintenance window: once ownership moves, the application's
+role cannot read or write any table until step 3 grants it the manifest.
+
+1. **Create an owner role and move ownership to it**, as a superuser: the SQL is in
+   [Store: upgrading an existing single-role database](src/AgentExperience.Storage.Postgres/README.md#upgrading-an-existing-single-role-database).
+   It includes the one superuser-only grant a non-superuser owner needs to migrate: `SET` on the parameters
+   `agent_experience.purge_authorized` and `agent_experience.access_purge_authorized`. The role your application
+   uses today stays the application role, with the same credentials.
+2. **Run the schema migrator as the owner.** It applies `0013_role_separation_hardening`, which only pins
+   `search_path` on functions and restates a `REVOKE`. No journaled script is edited.
+3. **Call `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` as the owner**, after the vectors migrator
+   if you use it, and again on every deploy. Set `AllowErasure` if the application deletes records, sweeps
+   retention or purges expired grants, and `AllowAccessLogPurge` if it purges the access log. Without them, those
+   calls now fail with a permission error.
+4. **Start the application again.** From here on the migrator never runs with the application's credentials.
+
+A host that skips all of this keeps working exactly as before, as a single-role deployment.
+
 ### Added
 
+- `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` and `ExperienceApplicationRoleOptions`: in one
+  transaction, the call does four things.
+  - It refuses a missing role, an unmigrated schema, a superuser, the caller itself, any role that is or is a
+    member of an owner of the database, the schema or an object in it, and any role that reaches a superuser, a
+    server-file role or `SET` on `session_replication_role`.
+  - It revokes everything the application role holds in the schema.
+  - It grants the stores' manifest. Every `UPDATE` is column-level, including on `experience_embeddings`.
+  - It verifies the role's effective privileges, including `CREATE` on the schema and grant options, across every
+    role the application role can `SET ROLE` to, and rolls back on any difference.
+- `0013_role_separation_hardening`: `search_path = pg_catalog, agent_experience, pg_temp` on the three purge
+  functions and on every guard trigger function.
 - **`ExperienceInjectionOptions.ApproachArguments`: selected argument values on the `Approach:` line** (story 6.2,
   KL-8). A host can allowlist, per tool name, the argument keys whose values the injected `Approach:` line shows, for
   example `ApproachArguments = { ["run_incident_check"] = ["strategy"] }`, which renders
@@ -23,6 +54,25 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   - A record borrowed through a sharing grant never shows an argument value, under either disclosure level. No
     migration is needed.
   - A malformed allowlist is refused when `ExperienceContextProvider` is constructed, and the provider keeps a copy.
+
+### Fixed
+
+- **The store README said the migrator never needs a superuser.** A non-superuser migrating role has always failed
+  at `0010`, with "permission denied to set parameter", until a superuser grants it `SET` on the two marker
+  parameters. The README now documents that one grant.
+
+### Resolved
+
+- **KL-4: the purge path was auditability, not a privilege boundary** (story 6.1). The two-role deployment is now
+  the documented and supported one. An owner role owns the schema and runs the migrators. A separate application
+  role, which the stores connect as, owns nothing and holds exactly what the stores need:
+  - no `ALTER TABLE`, so it cannot disable a trigger or replace a guard function;
+  - no `DELETE`, `TRUNCATE` or `UPDATE` on any ledger, so a purge marker it sets by hand admits nothing;
+  - `UPDATE` only on the columns the store moves, so it cannot write a tombstone by hand;
+  - `EXECUTE` on the purge functions only when the host opts in.
+
+  The owner role and superusers remain unbound, which is inherent in PostgreSQL. A single-role deployment still
+  works for development, but gets none of this.
 
 ### Known limits
 

@@ -381,6 +381,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
                 PostgresExperienceRecordSchema.GrantDisclosureScriptName,
                 PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
+                PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -600,7 +601,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^7]);
+            PostgresExperienceRecordSchema.ScriptNames[^8]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -662,7 +663,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^6]);
+            PostgresExperienceRecordSchema.ScriptNames[^7]);
     }
 
     [Fact]
@@ -740,7 +741,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^5]);
+            PostgresExperienceRecordSchema.ScriptNames[^6]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -962,17 +963,17 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
         Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
 
-        // 0010 is applied immediately before 0011 and 0012, which the migrator relies on for ordinal name ordering.
+        // 0010 is applied immediately before 0011, 0012 and 0013, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
     }
 
     [Fact]
-    public void Grant_disclosure_script_is_applied_last_and_restates_0006s_monotonicity_with_the_level_pinned()
+    public void Grant_disclosure_script_follows_0010_and_restates_0006s_monotonicity_with_the_level_pinned()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantDisclosureScriptName);
         var original = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName);
@@ -1003,11 +1004,11 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantDisclosureScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
     }
 
     [Fact]
-    public void Grant_access_retention_script_is_applied_last_and_restates_0010s_guard_with_one_narrow_exception()
+    public void Grant_access_retention_script_follows_0011_and_restates_0010s_guard_with_one_narrow_exception()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantAccessRetentionScriptName);
         var deleteAndExpire = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.DeleteAndExpireScriptName);
@@ -1061,10 +1062,139 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Role_separation_script_is_applied_last_pins_every_guard_and_purge_search_path_and_grants_nothing_to_a_named_role()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // pg_temp explicitly last, on the three SECURITY DEFINER purges and on every guard trigger function.
+        foreach (var function in new[]
+        {
+            "agent_experience.purge_experience_record(\n    uuid, text, text, text, text, text, text, bigint, timestamptz)",
+            "agent_experience.purge_expired_grants(\n    text, text, text, text, text, text, timestamptz, integer)",
+            "agent_experience.purge_grant_access(\n    text, text, text, text, text, text, boolean, timestamptz, integer)",
+            "agent_experience.reject_event_log_mutation()",
+            "agent_experience.enforce_grant_monotonicity()",
+            "agent_experience.reject_audited_grant_delete()",
+            "agent_experience.enforce_record_projection()",
+            "agent_experience.reject_record_removal()",
+            "agent_experience.reject_future_grant_issue()",
+        })
+        {
+            Assert.Contains($"ALTER FUNCTION {function}\n    SET search_path = pg_catalog, agent_experience, pg_temp;", statements, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(9, CountOccurrences(statements, "SET search_path = pg_catalog, agent_experience, pg_temp;"));
+        Assert.Equal(3, CountOccurrences(statements, "FROM PUBLIC;"));
+
+        // No body is restated and no trigger recreated, so no table is ever unguarded while it applies.
+        Assert.DoesNotContain("CREATE OR REPLACE FUNCTION", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("TRIGGER", statements, StringComparison.Ordinal);
+
+        // The role name is configuration: no script grants to a named role, and nothing is granted at all.
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("CURRENT_USER", statements, StringComparison.Ordinal);
+
+        // The residual is stated, not implied.
+        Assert.Contains("A superuser bypasses every privilege check", script, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public async Task Applying_application_role_privileges_refuses_bad_arguments_before_any_connection_opens()
+    {
+        Assert.Throws<ArgumentNullException>(() => new ExperienceApplicationRoleOptions(null!));
+        Assert.Throws<ArgumentException>(() => new ExperienceApplicationRoleOptions(""));
+        Assert.Throws<ArgumentException>(() => new ExperienceApplicationRoleOptions("   "));
+        Assert.Throws<ArgumentException>(() => new ExperienceApplicationRoleOptions("app\0role"));
+        Assert.Throws<ArgumentException>(() => new ExperienceApplicationRoleOptions(new string('r', 64)));
+        Assert.Equal(new string('r', 63), new ExperienceApplicationRoleOptions(new string('r', 63)).RoleName);
+
+        var options = new ExperienceApplicationRoleOptions("app");
+        Assert.False(options.AllowErasure);
+        Assert.False(options.AllowAccessLogPurge);
+
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(null!, options, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(_dataSource, null!, CancellationToken.None));
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(_dataSource, options, cancelled.Token));
+    }
+
+    [Fact]
+    public void The_privilege_manifest_grants_no_ledger_a_DELETE_and_only_the_projection_columns_an_UPDATE()
+    {
+        var byName = ApplicationRolePrivileges.Tables.ToDictionary(t => t.Name);
+
+        foreach (var ledger in new[]
+        {
+            "lifecycle_events", "experience_grant_events", "confidence_evidence",
+            "reuse_feedback", "reuse_feedback_exposures", "experience_grant_access",
+        })
+        {
+            var table = byName[ledger];
+            Assert.False(table.Delete);
+            Assert.Empty(table.UpdateColumns);
+            Assert.False(table.Optional);
+        }
+
+        var records = byName["experience_records"];
+        Assert.False(records.Delete);
+        Assert.Equal(
+            ["contradictions", "reuse_confidence", "revision", "status", "supporting_validations", "updated_at"],
+            records.UpdateColumns.Order(StringComparer.Ordinal));
+
+        var grants = byName["experience_grants"];
+        Assert.False(grants.Delete);
+        Assert.Equal(["revocation_reason", "revoked_at"], grants.UpdateColumns.Order(StringComparer.Ordinal));
+
+        // The only DELETE: the vectors package's derived table, and only when it exists.
+        Assert.Equal(["experience_embeddings"], ApplicationRolePrivileges.Tables.Where(t => t.Delete).Select(t => t.Name));
+        Assert.True(byName["experience_embeddings"].Optional);
+        Assert.Equal(
+            ["content_hash", "dimension", "embedding", "model_id", "source_revision", "updated_at"],
+            byName["experience_embeddings"].UpdateColumns.Order(StringComparer.Ordinal));
+        // Nothing but EXECUTE on an opted-in purge, and no statement can mention TRUNCATE, DELETE on a
+        // ledger, CREATE or ownership.
+        var statements = ApplicationRolePrivileges.Statements(
+            "\"app\"",
+            new HashSet<string>(byName.Keys, StringComparer.Ordinal),
+            new ExperienceApplicationRoleOptions("app")).ToArray();
+        Assert.DoesNotContain(statements, s => s.Contains("TRUNCATE", StringComparison.Ordinal));
+        Assert.DoesNotContain(statements, s => s.Contains("CREATE", StringComparison.Ordinal));
+        Assert.DoesNotContain(statements, s => s.Contains("OWNER", StringComparison.Ordinal));
+        Assert.DoesNotContain(statements, s => s.Contains("EXECUTE", StringComparison.Ordinal));
+        Assert.Single(statements, s => s.Contains("DELETE", StringComparison.Ordinal));
+
+        // No table-level UPDATE anywhere: every UPDATE names its columns.
+        Assert.All(
+            statements.Where(s => s.StartsWith("GRANT", StringComparison.Ordinal) && s.Contains("UPDATE", StringComparison.Ordinal)),
+            s => Assert.StartsWith("GRANT UPDATE (", s, StringComparison.Ordinal));
+        Assert.StartsWith("REVOKE ALL ON SCHEMA", statements[0], StringComparison.Ordinal);
+
+        var opted = ApplicationRolePrivileges.Statements(
+            "\"app\"",
+            new HashSet<string>(byName.Keys, StringComparer.Ordinal),
+            new ExperienceApplicationRoleOptions("app") { AllowErasure = true }).ToArray();
+        Assert.Equal(2, opted.Count(s => s.StartsWith("GRANT EXECUTE", StringComparison.Ordinal)));
+        Assert.DoesNotContain(opted, s => s.Contains("purge_grant_access", StringComparison.Ordinal));
     }
 
     [Fact]

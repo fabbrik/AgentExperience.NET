@@ -23,13 +23,15 @@ namespace AgentExperience.Storage.Postgres;
 /// <para>
 /// The caller's data source must allow at least two concurrent connections: one for the advisory lock
 /// and one for the scripts, and must not be multiplexing, because a multiplexed command does not stay
-/// on one physical connection and so cannot hold a session advisory lock. The migrating role needs
-/// <c>CREATE</c> on the database (to create the <c>agent_experience</c> schema) and on that schema (to
-/// create its tables). The store itself only needs <c>SELECT</c>, <c>INSERT</c>, and <c>UPDATE</c> on
-/// <c>agent_experience.experience_records</c> and <c>SELECT</c> and <c>INSERT</c> on
-/// <c>agent_experience.lifecycle_events</c>. No script here needs a superuser, and none creates an
-/// extension: this package's schema is text-only, and the derived embedding schema -- which does need
-/// <c>CREATE EXTENSION vector</c> -- is applied separately by
+/// on one physical connection and so cannot hold a session advisory lock. Run it as the <em>owner</em>
+/// role of the two-role deployment, never as the role the stores connect as, and follow it with
+/// <see cref="ApplyApplicationRolePrivilegesAsync"/>: a table's owner is not bound by the append-only
+/// guards. The migrating role needs <c>CREATE</c> on the database (to create the <c>agent_experience</c>
+/// schema) and on that schema (to create its tables), and -- unless it is a superuser -- one grant a
+/// superuser makes once: <c>SET</c> on the parameters <c>agent_experience.purge_authorized</c> and
+/// <c>agent_experience.access_purge_authorized</c>, which <c>0010</c> and <c>0012</c> name in a function's
+/// <c>SET</c> clause. No script here creates an extension: this package's schema is text-only, and the
+/// derived embedding schema -- which does need <c>CREATE EXTENSION vector</c> -- is applied separately by
 /// <c>AgentExperience.Storage.Postgres.Vectors</c>'s own migrator, only by hosts that enable it.
 /// </para>
 /// <para>
@@ -94,10 +96,115 @@ public static class ExperienceSchemaMigrator
     /// package. Journal entries record DbUp's script name, which is the full resource name, so two
     /// prefixes can never claim each other's entries.
     /// </summary>
-    internal static async Task<ExperienceSchemaMigrationResult> MigrateAsync(
+    internal static Task<ExperienceSchemaMigrationResult> MigrateAsync(
         NpgsqlDataSource dataSource,
         Assembly scriptAssembly,
         string resourcePrefix,
+        CancellationToken cancellationToken) =>
+        RunUnderLockAsync(
+            dataSource,
+            // A cancellation request can lose the race with the server granting the lock. The upgrade
+            // cannot be interrupted once it starts, so the check just before it is the last point at which
+            // a cancelled caller can still be told nothing ran.
+            () => RunUpgradeAsync(dataSource, scriptAssembly, resourcePrefix, cancellationToken),
+            cancellationToken);
+
+    /// <summary>
+    /// Gives the application role exactly the privileges this package's stores need, and nothing else,
+    /// so the append-only guards and the single erasure path bind the role the application runs as. Run
+    /// it as the <em>owner</em> role, on every deploy, after <see cref="MigrateAsync(NpgsqlDataSource, CancellationToken)"/>
+    /// (and after the vectors package's migrator, when the host uses it).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the supported production deployment: an owner role owns the <c>agent_experience</c>
+    /// schema and runs the migrators, and a separate application role -- which owns nothing -- is the one
+    /// the stores connect as. In one transaction, under the migrator's advisory lock, the call refuses a
+    /// role that does not exist, is a superuser, is the role running the call, or is a member of any
+    /// role that owns the schema or an object in it; then revokes every privilege the role holds on the
+    /// schema and on every table, sequence and function in it; then grants exactly this set:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><c>USAGE</c> on the schema, never <c>CREATE</c>.</description></item>
+    /// <item><description><c>experience_records</c>: <c>SELECT</c>, <c>INSERT</c>, and <c>UPDATE</c> on
+    /// <c>status</c>, <c>revision</c>, <c>updated_at</c>, <c>reuse_confidence</c>,
+    /// <c>supporting_validations</c> and <c>contradictions</c> only.</description></item>
+    /// <item><description><c>experience_grants</c>: <c>SELECT</c>, <c>INSERT</c>, and <c>UPDATE</c> on
+    /// <c>revoked_at</c> and <c>revocation_reason</c> only.</description></item>
+    /// <item><description><c>lifecycle_events</c>, <c>experience_grant_events</c>, <c>confidence_evidence</c>,
+    /// <c>reuse_feedback</c>, <c>reuse_feedback_exposures</c>, <c>experience_grant_access</c>:
+    /// <c>SELECT</c> and <c>INSERT</c>.</description></item>
+    /// <item><description><c>experience_embeddings</c>, when the vectors package's table exists:
+    /// <c>SELECT</c>, <c>INSERT</c>, <c>DELETE</c>, and <c>UPDATE</c> only on the columns the upsert
+    /// rewrites -- it is derived, rebuildable data, not a ledger.</description></item>
+    /// <item><description><c>EXECUTE</c> on the purge functions only as
+    /// <see cref="ExperienceApplicationRoleOptions.AllowErasure"/> and
+    /// <see cref="ExperienceApplicationRoleOptions.AllowAccessLogPurge"/> say.</description></item>
+    /// </list>
+    /// <para>
+    /// Finally it checks the role's <em>effective</em> privileges -- which also see grants to
+    /// <c>PUBLIC</c>, grants made by other grantors, role memberships and predefined roles such as
+    /// <c>pg_write_all_data</c> -- and throws, rolling the whole call back, on any difference from that
+    /// set, including <c>CREATE</c> on the schema and any privilege held <c>WITH GRANT OPTION</c>. What must
+    /// be absent is checked on every role the application role is a member of, inheriting or not, so a
+    /// privilege one <c>SET ROLE</c> away fails the check too. Any object in the schema the set does not
+    /// name gets nothing, and a <c>SECURITY DEFINER</c> function in the schema that the role could execute
+    /// without an opt-in fails the check. Re-running it is safe and is how a later migration's objects are
+    /// covered.
+    /// </para>
+    /// <para>
+    /// With that set, the role cannot <c>ALTER TABLE</c>, disable or drop a trigger, or replace a guard
+    /// function (it owns nothing); cannot <c>UPDATE</c>, <c>DELETE</c> or <c>TRUNCATE</c> a ledger, whatever
+    /// purge marker it sets by hand (the privilege check refuses the statement before any trigger runs);
+    /// and cannot write the tombstone shape into <c>experience_records</c> itself (it cannot update those
+    /// columns). The owner role and superusers remain unbound; that is inherent in PostgreSQL.
+    /// </para>
+    /// </remarks>
+    /// <param name="ownerDataSource">
+    /// A data source connecting as the role that owns the schema (or a superuser). Never disposed here.
+    /// It must allow at least two concurrent connections and must not be multiplexing.
+    /// </param>
+    /// <param name="options">The application role and its two opt-ins.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the call at any point; the privilege changes are one transaction, so a cancelled call
+    /// changes nothing.
+    /// </param>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    /// <exception cref="ExperienceStoreException">
+    /// The role was refused, the schema is not migrated, the calling role was refused a <c>GRANT</c> or
+    /// <c>REVOKE</c> (the data source does not connect as the owner of every object in the schema), the
+    /// effective privileges did not match, or the database was unreachable.
+    /// Nothing was changed.
+    /// </exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public static Task ApplyApplicationRolePrivilegesAsync(
+        NpgsqlDataSource ownerDataSource,
+        ExperienceApplicationRoleOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ownerDataSource);
+        ArgumentNullException.ThrowIfNull(options);
+        return RunUnderLockAsync(
+            ownerDataSource,
+            async () =>
+            {
+                try
+                {
+                    await ApplicationRolePrivileges.ApplyAsync(ownerDataSource, options, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+                {
+                    throw TranslatePrivilegeFailure(ex, cancellationToken);
+                }
+
+                return true;
+            },
+            cancellationToken);
+    }
+
+    private static async Task<T> RunUnderLockAsync<T>(
+        NpgsqlDataSource dataSource,
+        Func<Task<T>> body,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -116,12 +223,10 @@ public static class ExperienceSchemaMigrator
         {
             await AcquireLockAsync(lockConnection, cancellationToken).ConfigureAwait(false);
 
-            // A cancellation request can lose the race with the server granting the lock. The upgrade
-            // cannot be interrupted once it starts, so this is the last point at which a cancelled
-            // caller can still be told nothing ran.
+            // A cancellation request can lose the race with the server granting the lock.
             cancellationToken.ThrowIfCancellationRequested();
 
-            return await RunUpgradeAsync(dataSource, scriptAssembly, resourcePrefix, cancellationToken).ConfigureAwait(false);
+            return await body().ConfigureAwait(false);
         }
         finally
         {
@@ -253,6 +358,29 @@ public static class ExperienceSchemaMigrator
         NpgsqlException or SocketException or TimeoutException => true,
         _ => false,
     };
+
+    private static Exception TranslatePrivilegeFailure(Exception ex, CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested
+            ? new OperationCanceledException("Applying the application role's privileges was cancelled.", ex, cancellationToken)
+            : ex switch
+            {
+                // The server refused a GRANT or REVOKE: the caller is not the owner of the schema and of every
+                // object in it (a vectors table created by a superuser is the usual one).
+                PostgresException { SqlState: PostgresErrorCodes.InsufficientPrivilege } => new ExperienceStoreException(
+                    "The application role's privileges were not applied: the calling role was refused a GRANT or REVOKE. " +
+                    "Run this as the role that owns the agent_experience schema and every object in it, including " +
+                    "experience_embeddings when the vectors package created it. Nothing was changed.", ex),
+
+                // REVOKE is RESTRICT: the application role passed a privilege it held WITH GRANT OPTION on to
+                // another role, and revoking it would orphan that grant.
+                PostgresException { SqlState: PostgresErrorCodes.DependentPrivilegeDescriptorsStillExist } => new ExperienceStoreException(
+                    "The application role's privileges were not applied: the application role has granted a privilege on the " +
+                    "schema to another role, which it could do only through a grant option. Revoke that grant from the other " +
+                    "role first. Nothing was changed.", ex),
+
+                _ => new ExperienceStoreException(
+                    "Applying the application role's privileges failed due to a storage infrastructure error. Nothing was changed.", ex),
+            };
 
     private static Exception Translate(Exception ex, CancellationToken cancellationToken)
     {

@@ -22,10 +22,18 @@ using AgentExperience.Abstractions;
 using AgentExperience.Storage.Postgres;
 using Npgsql;
 
-await using var dataSource = NpgsqlDataSource.Create(connectionString);
+// Two roles: see "Deploying with two roles" below. The owner migrates; the application role is what the stores use.
+await using (var ownerDataSource = NpgsqlDataSource.Create(ownerConnectionString))
+{
+    // On every deploy, before the store is used. See "Schema" below.
+    await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);
+    await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+        ownerDataSource,
+        new ExperienceApplicationRoleOptions("agent_experience_app") { AllowErasure = true },
+        cancellationToken);
+}
 
-// Once at startup, before the store is used. See "Schema" below.
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);
+await using var dataSource = NpgsqlDataSource.Create(applicationConnectionString);
 
 IExperienceRecordStore store = new PostgresExperienceRecordStore(dataSource);
 
@@ -112,12 +120,200 @@ register the grant store — the reads that honour grants do so in SQL either wa
 reuse feedback never has to register its ledger. Every registration is `TryAdd`-based, so a host that has already
 registered its own `IExperienceRecordStore`, `IExperienceCandidateSource`, `IExperienceGrantStore`, or
 `IExperienceReuseFeedbackStore` keeps it.
-It does **not** apply the schema: call `ExperienceSchemaMigrator.MigrateAsync` once at startup (see
-[Schema](#schema)).
+It does **not** apply the schema: call `ExperienceSchemaMigrator.MigrateAsync` and then
+`ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` as the owner role on every deploy (see
+[Deploying with two roles](#deploying-with-two-roles) and [Schema](#schema)).
 
 Records are normally written by Core's `ExperienceFinalizationService`, which creates the record and commits its
 initial lifecycle event; `CreateAsync` and `CommitLifecycleEventAsync` stay available for hosts that orchestrate that
 themselves.
+
+## Deploying with two roles
+
+This is the supported deployment, and the one every guarantee in this README about append-only history and erasure
+is stated for. It takes two PostgreSQL roles:
+
+- an **owner** role, which owns the `agent_experience` schema and everything in it and runs the migrators. The
+  application never holds its credentials;
+- an **application** role, which is what every store, search and ledger in this package connects as. It owns
+  nothing and holds exactly the privileges the stores need.
+
+Why it matters: PostgreSQL's triggers do not bind a table's owner, who can `ALTER TABLE … DISABLE TRIGGER`, drop a
+trigger or replace a function and then write freely; and the purge markers are custom settings any session can set.
+If the application runs as the owner — which it does whenever it runs the migrator itself — the append-only guards
+and the single erasure path are only as strong as the application's own code. With two roles they bind the
+application's own credentials.
+
+### Creating the roles
+
+Once, as a superuser (rename to taste; the passwords are placeholders):
+
+```sql
+-- The owner: runs the migrators. Never configured in the application.
+CREATE ROLE agent_experience_owner LOGIN PASSWORD 'change-me';
+-- The application: what the stores connect as. Owns nothing.
+CREATE ROLE agent_experience_app LOGIN PASSWORD 'change-me-too';
+
+-- A database the owner owns. On an existing database, GRANT CREATE ON DATABASE ... TO agent_experience_owner
+-- instead -- and the database's own owner must not be the application role either: a database owner can drop it.
+CREATE DATABASE agent_experience OWNER agent_experience_owner;
+
+-- 0010 and 0012 create functions whose SET clause names the two purge markers, and PostgreSQL 15+ lets a
+-- non-superuser name a custom setting there only when granted SET on it. This is the one superuser-only step
+-- the base schema has.
+GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized
+    TO agent_experience_owner;
+
+-- Only with the vector channel: pgvector is not a trusted extension, so a superuser creates it, in that database.
+-- The vectors migrator's own CREATE EXTENSION IF NOT EXISTS is then a no-op.
+\c agent_experience
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+Do not make the application role a member of the owner role, of `pg_write_all_data`, of a superuser role, of
+`pg_write_server_files`, `pg_read_server_files` or `pg_execute_server_program`, or of any role that owns something in
+the schema, and do not grant it `SET` on `session_replication_role`. The call below refuses each of these or fails
+its verification. Do not give it `CREATEROLE` either: that is not checked, and a role that can create and grant roles
+is an administrator.
+
+### Applying the privileges, on every deploy
+
+As the owner, after `MigrateAsync` — and after `ExperienceVectorSchemaMigrator.MigrateAsync`, when the host uses the
+vector channel, so the embedding table is covered:
+
+```csharp
+await using var owner = NpgsqlDataSource.Create(ownerConnectionString);
+
+await ExperienceSchemaMigrator.MigrateAsync(owner, cancellationToken);
+await ExperienceVectorSchemaMigrator.MigrateAsync(owner, cancellationToken);   // only with the vector channel
+await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+    owner,
+    new ExperienceApplicationRoleOptions("agent_experience_app")
+    {
+        AllowErasure = true,          // DeleteAsync, SweepExpiredAsync, PurgeExpiredAsync
+        AllowAccessLogPurge = false,  // PurgeOlderThanAsync on the access log
+    },
+    cancellationToken);
+```
+
+In one transaction, under the migrator's advisory lock, the call revokes every privilege the application role holds
+on the schema and on every table, sequence and function in it, then grants exactly this:
+
+| Object | The application role gets |
+| --- | --- |
+| schema `agent_experience` | `USAGE` — never `CREATE` |
+| `experience_records` | `SELECT`, `INSERT`, and `UPDATE` on `status`, `revision`, `updated_at`, `reuse_confidence`, `supporting_validations`, `contradictions` only |
+| `experience_grants` | `SELECT`, `INSERT`, and `UPDATE` on `revoked_at`, `revocation_reason` only |
+| `lifecycle_events`, `experience_grant_events`, `confidence_evidence`, `reuse_feedback`, `reuse_feedback_exposures`, `experience_grant_access` | `SELECT`, `INSERT` |
+| `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
+| `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
+| `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
+| `schema_versions` (the journal), its sequence, and anything else | nothing |
+
+Then it checks the role's **effective** privileges — which also see grants to `PUBLIC`, grants made by another
+grantor, memberships and predefined roles — and throws `ExperienceStoreException`, rolling everything back, on any
+difference: `CREATE` on the schema, a `DELETE` or `TRUNCATE` on a ledger, an `UPDATE` on any other column, a
+`TRIGGER` or `REFERENCES` privilege, any privilege held `WITH GRANT OPTION`, a sequence, a `SECURITY DEFINER`
+function in the schema the role could execute without an opt-in, or a missing grant. What must be absent is checked
+on every role the application role is a member of, not only on the ones it inherits from, so a privilege one
+`SET ROLE` away (a `NOINHERIT` role, or a membership granted `WITH INHERIT FALSE`) is caught too.
+
+Before any of that it refuses a role that does not exist, an unmigrated schema, a superuser, the role running the
+call, any role that is — or is a member of — the owner of the database, the schema, or anything in it, and any role
+that is or reaches a superuser, one of the server-file roles, or `SET` on `session_replication_role`. The message
+names the violation; nothing is changed.
+
+**Why it is an API and not a migration.** A migration runs once and is journaled, so it could never re-grant on an
+object a later migration adds, and the role name is host configuration. Revoke-everything-then-grant-the-list is
+idempotent, so running it on every deploy is what keeps the set exact: an object a later migration adds gets nothing
+until this list names it, and a stray `GRANT ALL` an operator made is taken away on the next deploy. Between a
+later script committing and this call running, a host's own `ALTER DEFAULT PRIVILEGES` for the application role
+would be in effect — do not configure one.
+
+**Row locks and column grants.** The store takes `FOR UPDATE` and `FOR KEY SHARE` locks on `experience_records`,
+which PostgreSQL permits only to a role holding `UPDATE` on at least one column; the projection columns are that
+column. The column list is also what closes the last hand-written erasure path: `0010`'s projection guard admits
+one marked `UPDATE`, a live record into its tombstone, and a role that could run it by hand could erase a record's
+payload while leaving every ledger row that names it. The application role cannot write `deleted_at`, `payload`,
+`task_id`, `created_at` or `source_run_id` at all.
+
+### What this binds, and what it cannot
+
+With the two roles, **the application role** — and so a bug, a careless script, or a compromised application
+holding its credentials:
+
+- cannot `ALTER TABLE`, `DISABLE TRIGGER`, `DROP TRIGGER`, drop a constraint, or replace or re-pin a guard
+  function, because it owns nothing; and cannot create anything in the schema, because the verification fails on
+  `CREATE` from any source;
+- cannot `UPDATE`, `DELETE` or `TRUNCATE` any ledger, nor `DELETE` or `TRUNCATE` a record or a grant, **whatever
+  purge marker it sets by hand** — the privilege system refuses the statement (`42501`, `permission denied for
+  table …`) before any trigger is consulted, so the marker gains it nothing;
+- cannot write a tombstone, or any column of a record other than the six the store moves, or of a grant other than
+  its revocation;
+- cannot call a purge function unless the host opted in — and when it did, what it gets is exactly that function's
+  one bounded, scope-checked path.
+
+**What it cannot bind, stated precisely:** the owner role and any superuser. The owner can disable or drop a trigger,
+replace a function, or grant itself anything; a superuser bypasses privilege checks altogether. That is inherent in
+PostgreSQL, not a gap in this schema: keep the owner's credentials out of the application and its configuration,
+and treat them as the administrator credentials they are. The application role can also still `INSERT` a fabricated
+row into a ledger — append-only is not authenticity — and anyone who can reach backups, replicas or the data
+directory is out of reach entirely (see [the honesty statement](#the-honesty-statement-and-the-limits)).
+
+**A single-role deployment** — the application role runs the migrator and so owns the tables — still works, and is
+fine for local development and tests. It gets none of the above: the application is the owner, so every guard is
+only as strong as its code. It is not a supported production deployment.
+
+### Upgrading an existing single-role database
+
+The role the application used to migrate as owns the database, the schema and every object in it. Keep it as the
+application role — its credentials do not change — and move ownership to a new owner.
+
+**Stop the application first, and run everything below through the next deploy in one maintenance window.** The
+moment ownership moves, the old role loses the implicit rights it had as owner: it cannot read or write a single
+table until `ApplyApplicationRolePrivilegesAsync` grants the manifest, and an old build that still runs the migrator
+with its credentials fails. As a superuser, connected to that database (the transfer also takes a brief
+`ACCESS EXCLUSIVE` lock on each table):
+
+```sql
+CREATE ROLE agent_experience_owner LOGIN PASSWORD 'change-me';
+GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized
+    TO agent_experience_owner;
+
+DO $transfer$
+DECLARE
+    obj record;
+BEGIN
+    EXECUTE format('ALTER DATABASE %I OWNER TO %I', current_database(), 'agent_experience_owner');
+    EXECUTE format('ALTER SCHEMA agent_experience OWNER TO %I', 'agent_experience_owner');
+    FOR obj IN
+        SELECT c.oid::regclass AS name, c.relkind
+        FROM pg_class c
+        WHERE c.relnamespace = 'agent_experience'::regnamespace
+          AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype IN ('a', 'i'))
+    LOOP
+        EXECUTE format(
+            CASE WHEN obj.relkind = 'S' THEN 'ALTER SEQUENCE %s OWNER TO %I' ELSE 'ALTER TABLE %s OWNER TO %I' END,
+            obj.name, 'agent_experience_owner');
+    END LOOP;
+    FOR obj IN SELECT p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = 'agent_experience'::regnamespace
+    LOOP
+        EXECUTE format('ALTER FUNCTION %s OWNER TO %I', obj.name, 'agent_experience_owner');
+    END LOOP;
+END
+$transfer$;
+```
+
+Sequences owned by a column, and indexes, move with their table. The purge functions stay `SECURITY DEFINER` and now
+run as the new owner; the `EXECUTE` that `0010` and `0012` granted to the old owner moves to the new owner with the
+ownership, so the application role has none until the next step grants it. Then, still inside the window, run the
+migrator with the owner's credentials and the call above after it, naming the old role as the application role, and
+only then start the application again. From that
+deploy on, the migrator never runs with the application's credentials again. The package's tests run exactly this
+SQL against a database migrated by its application role and prove the old role can no longer disable a guard.
 
 ## Trusted host boundary
 
@@ -235,13 +431,14 @@ the transaction opens, exactly as for the store's other operations, and the scop
   **What they bind:** ordinary writes from any role, superusers included, and — because every trigger is created
   `ENABLE ALWAYS` — writes made under `session_replication_role = 'replica'`, which is how logical-replication
   appliers and several restore and ETL tools run and where an ordinary trigger is skipped silently.
-  **What they do not bind:** anyone who can `ALTER TABLE` these tables — a superuser, or the tables' own owner,
-  which the application role is since it created them — because an owner can `DISABLE TRIGGER`, drop the trigger, or
-  drop a constraint first. Row-level security and column-privilege `REVOKE` are no stronger; neither binds an owner
-  either. Nor do they say anything about backups, a restore that recreates the tables without `0006`, or filesystem
-  access. Treat this as a guard against a bug, a careless script, a compromised application path, or a replication
-  apply — not as tamper-proofing against an administrator. A deployment that needs more should ship the log off-box,
-  or own these tables with a role the application does not have.
+  **What they do not bind:** anyone who can `ALTER TABLE` these tables — a superuser, or the tables' own owner —
+  because an owner can `DISABLE TRIGGER`, drop the trigger, or drop a constraint first. In the supported
+  [two-role deployment](#deploying-with-two-roles) the application role is neither, and it holds no `UPDATE`,
+  `DELETE` or `TRUNCATE` on the logs either, so it is refused before a trigger is asked. Nor do they say anything
+  about backups, a restore that recreates the tables without `0006`, or filesystem access. Treat this as a guard
+  against a bug, a careless script, a compromised application path, or a replication apply — not as tamper-proofing
+  against an administrator holding the owner's or a superuser's credentials. A deployment that needs that should
+  ship the log off-box.
 - **Purging is the one exception, and it never disables anything.** The logs carry free-text `reason` and
   `producer` a host may have filled with personal data, so `0010` replaced `0006`'s manual
   `DISABLE TRIGGER` runbook with a single purge function whose transaction-scoped marker the guards themselves
@@ -900,7 +1097,8 @@ var pruned = await accessLog.PurgeOlderThanAsync(
 - **A row is kept at least 30 days (`MinimumRetentionDays`), by the database's clock.** The purge must not be
   usable, through this library, to erase a read the moment after it happened — a bug, a careless script, or a
   misused call covering one. It does not bind the tables' owner, which can disable the trigger or insert rows with
-  any `recorded_at` (see the honesty statement below, and KL-4). A cutoff later than that floor is **refused, not clamped**: `Invalid` on `Cutoff`, nothing removed. A
+  any `recorded_at` (see the honesty statement below); in the [two-role deployment](#deploying-with-two-roles) the
+  application role is not the owner and holds no `DELETE` on the ledger at all. A cutoff later than that floor is **refused, not clamped**: `Invalid` on `Cutoff`, nothing removed. A
   clamp would report a clean purge while rows the host asked about survived, which is the failure mode the sweep
   heading above is about. The append-only guard re-checks the floor on every row it admits, so even a session that
   sets the marker by hand cannot delete a younger row. Thirty days is a floor, not a policy; the host's retention
@@ -921,39 +1119,32 @@ themselves recognise one transaction-scoped marker, `SET LOCAL agent_experience.
 inside the purge function, and they go on refusing `UPDATE` and `TRUNCATE` unconditionally in every session,
 including the purging one. Nothing is ever disabled, and no other connection's window is widened for an instant.
 
-**This is an auditability mechanism, not a privilege boundary, and it must not be read as one.**
+**The marker is not the boundary; the application role's privileges are.** Be precise about which does what:
 
-- A custom GUC is settable by any session. Nothing stops a connection that already has `DELETE` on these tables
-  from issuing the same `SET LOCAL` itself and then deleting from them directly. The marker decides whether a
-  *permitted* delete is refused; it is not what decides permission.
-- The guards still do not bind a role that can `ALTER TABLE` — which is the application role, because it created
-  the tables. An owner can disable or drop a trigger and write what it likes.
+- A custom GUC is settable by any session. A connection that holds `DELETE` on these tables can issue the same
+  `SET LOCAL` itself and then delete from them directly. The marker decides whether a *permitted* delete is refused;
+  it never decides permission. That is why, in the [two-role deployment](#deploying-with-two-roles), the application
+  role holds **no** `DELETE` on any ledger and no `UPDATE` on the tombstone's columns: setting the marker by hand
+  gains it nothing, because the privilege system refuses the statement before a trigger runs. The tests prove this
+  from the application role's own connection, with each marker and both.
+- The guards do not bind a role that can `ALTER TABLE`. In the two-role deployment the application role owns
+  nothing and cannot; the owner role and superusers can, and that is inherent in PostgreSQL. In a single-role
+  deployment the application *is* the owner, and none of this binds it.
 
-What the purge path actually buys is narrower and real: erasure has exactly **one** code path, inside **one**
-transaction, with the guard never switched off, never left off across a failure, and never visible to another
-session. It is a guard against a bug, a careless script, or a compromised application path — not against an
-administrator who has decided to tamper. A deployment that needs more must own these tables with a role the
-application does not have.
+What the purge path buys on top of that is a single code path: erasure happens inside **one** transaction, with the
+guard never switched off, never left off across a failure, and never visible to another session. It guards against a
+bug, a careless script, or a compromised application path — including one holding the application role's
+credentials — but not against an administrator holding the owner's or a superuser's credentials.
 
-**There is exactly one real privilege boundary here, and `0010` creates it.** Both purge functions are
-`SECURITY DEFINER`, and PostgreSQL grants `EXECUTE` on a new function to `PUBLIC` by default — which would make
+**`EXECUTE` on the purge functions is the application role's only way to erase, and the host decides it.** All three
+are `SECURITY DEFINER`, and PostgreSQL grants `EXECUTE` on a new function to `PUBLIC` by default — which would make
 them a universally callable erasure primitive, reachable by any role that can connect, over any tenant whose
-`experience_id` and scope it can `SELECT`. `0010` therefore revokes `EXECUTE` from `PUBLIC` and grants it back
-only to the role that applied the migration, which owns these tables and is the role the application runs as. A
-deployment whose application role is *not* the migrating role must grant it once, explicitly, and to nothing
-else:
-
-```sql
-GRANT EXECUTE ON FUNCTION agent_experience.purge_experience_record(
-    uuid, text, text, text, text, text, text, bigint, timestamptz) TO <application_role>;
-GRANT EXECUTE ON FUNCTION agent_experience.purge_expired_grants(
-    text, text, text, text, text, text, timestamptz, integer) TO <application_role>;
-GRANT EXECUTE ON FUNCTION agent_experience.purge_grant_access(
-    text, text, text, text, text, text, boolean, timestamptz, integer) TO <application_role>;
-```
-
-`0012` does the same for its one function, `purge_grant_access`: `SECURITY DEFINER`, `search_path` pinned,
-`EXECUTE` revoked from `PUBLIC` and granted to the migrating role.
+`experience_id` and scope it can `SELECT`. `0010` and `0012` therefore revoke `EXECUTE` from `PUBLIC` (and `0013`
+restates it), and `ApplyApplicationRolePrivilegesAsync` grants it to the application role only when the host sets
+`AllowErasure` (`purge_experience_record`, `purge_expired_grants`) or `AllowAccessLogPurge` (`purge_grant_access`),
+and verifies that nothing else can reach a `SECURITY DEFINER` function in the schema. `0013` pins each function's
+`search_path` to `pg_catalog, agent_experience, pg_temp`, `pg_temp` last as PostgreSQL recommends for
+`SECURITY DEFINER`.
 
 **A record whose run was erased can never be finalized again.** `ExperienceFinalizationService.ExperienceIdFor`
 derives a record's ID from the run *and the scope*, deterministically, so replaying finalization for that run
@@ -1113,13 +1304,13 @@ of existing ones. `0006`'s header carries the reconciliation query and the `VALI
 once it comes back empty (`VALIDATE` takes only a `SHARE UPDATE EXCLUSIVE` lock, so it blocks neither reads nor
 writes).
 
-**Read the limits of those triggers before relying on them.** They bind every writer using the application role,
-including one that bypasses this library. They do not bind a superuser, and they do not bind the tables' own owner —
-which the application role is, because it created them — since an owner can disable or drop a trigger and then write
-freely. Row-level security and column-privilege `REVOKE` would be no stronger; neither binds an owner. This is a
-guard against a bug, a careless script, or a compromised application path, not tamper-proofing against an
-administrator. A deployment that needs more should ship the log off-box, or own these tables with a role the
-application does not have.
+**Read the limits of those triggers before relying on them.** They bind every writer that holds the privilege to
+write, including one that bypasses this library. They do not bind a superuser, and they do not bind the tables' own
+owner, since an owner can disable or drop a trigger and then write freely. In the
+[two-role deployment](#deploying-with-two-roles) the application role is not the owner and holds no `UPDATE`,
+`DELETE` or `TRUNCATE` on the logs, so it is refused by the privilege system first. This is a guard against a bug, a
+careless script, or a compromised application path, not tamper-proofing against an administrator holding the owner's
+or a superuser's credentials. A deployment that needs that should ship the log off-box.
 
 `0007_confidence_evidence.sql` adds the evidence ledger and guards the columns it starts moving:
 
@@ -1305,6 +1496,16 @@ its triggers as to `0006`'s: read them above before relying on them.
   plain `CREATE INDEX` inside the migrator's transaction, which blocks appends to the ledger while it builds; the
   header carries the `CONCURRENTLY` runbook for building it out of band first.
 
+`0013_role_separation_hardening.sql` hardens the schema for the [two-role deployment](#deploying-with-two-roles):
+
+- `ALTER FUNCTION … SET search_path = pg_catalog, agent_experience, pg_temp` on the three `SECURITY DEFINER` purge
+  functions and on every guard trigger function (`reject_event_log_mutation`, `enforce_grant_monotonicity`,
+  `reject_audited_grant_delete`, `enforce_record_projection`, `reject_record_removal`,
+  `reject_future_grant_issue`). No body is restated and no trigger recreated, so no table is unguarded while it
+  applies; the purge functions keep their marker-reset `SET` clauses.
+- `REVOKE ALL … FROM PUBLIC` on the three purge functions, restated so a hand-widened ACL is narrowed back.
+- It grants nothing to a named role: that is `ApplyApplicationRolePrivilegesAsync`'s job, on every deploy.
+
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package
 [`AgentExperience.Storage.Postgres.Vectors`](../AgentExperience.Storage.Postgres.Vectors/README.md) and is applied
@@ -1332,23 +1533,16 @@ var migration = await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancella
   applied and journaled.
 - **Serialized across processes.** The whole run holds a PostgreSQL session advisory lock on its own connection, so
   two hosts starting at once cannot apply the same script twice. The lock is always released.
-- **Permissions.** The migrating role needs `CREATE` on the database (for the `agent_experience` schema) and on that
-  schema (for its tables), and has to *own* `lifecycle_events`, `experience_grants`, and `experience_grant_events`
-  to create `0006`'s triggers and functions on them — which it does when it created them. It does **not** need to be
-  a superuser: no script here creates an extension. The store itself only needs `SELECT`, `INSERT`, and `UPDATE` on
-  `agent_experience.experience_records` and `SELECT` and `INSERT` on `agent_experience.lifecycle_events`; the
-  candidate source needs only `SELECT` on `agent_experience.experience_records`. To honour sharing grants, both also
-  need `SELECT` on `agent_experience.experience_grants` -- optional, because a role without it falls back to the
-  exact-scope predicate (see [Sharing grants](#sharing-grants)). Administering grants additionally needs `INSERT`
-  and `UPDATE` on `agent_experience.experience_grants` and `INSERT` on `agent_experience.experience_grant_events`.
-  Recording reuse feedback needs `SELECT` and `INSERT` on `agent_experience.reuse_feedback` and
-  `agent_experience.reuse_feedback_exposures`, and ownership of both to create `0008`'s triggers. Deleting needs
-  `EXECUTE` on `agent_experience.purge_experience_record` and `agent_experience.purge_expired_grants` — `0010`
-  revokes both from `PUBLIC` and grants them to the migrating role only, so an application role that is *not* the
-  migrating role has to be granted `EXECUTE` explicitly (see
-  [Deleting and expiring data](#the-honesty-statement-and-the-limits)) and nothing else should be. The migrating
-  role also has to own the tables whose guard functions `0010` replaces, and `experience_records` itself, to
-  create `0010`'s two removal-guard triggers on it — which it does when it created them.
+- **Permissions.** Run the migrator as the **owner** role of the [two-role deployment](#deploying-with-two-roles). It
+  needs `CREATE` on the database (for the `agent_experience` schema) and on that schema (for its tables), and it has
+  to *own* every table whose triggers and guard functions a script creates or replaces — which it does, because it
+  created them. It does **not** need to be a superuser, with one exception granted once by a superuser: `0010` and
+  `0012` create functions whose `SET` clause names the two purge markers, and PostgreSQL 15+ lets a non-superuser
+  name a custom setting there only with `GRANT SET ON PARAMETER agent_experience.purge_authorized,
+  agent_experience.access_purge_authorized TO <owner>`. No script here creates an extension. The stores never need
+  more than `ApplyApplicationRolePrivilegesAsync` grants the application role — the table there is exhaustive — and
+  a reader without `SELECT` on `experience_grants` falls back to the exact-scope predicate (see
+  [Sharing grants](#sharing-grants)).
 - **Connections.** The data source must allow at least two concurrent connections: one for the advisory lock and one
   for the scripts. A multiplexing data source (`NpgsqlDataSourceBuilder.EnableMultiplexing`) cannot hold a session
   advisory lock, because its commands do not stay on one physical connection, so it is not supported for migration.
@@ -1396,6 +1590,7 @@ what a script does; they are comments only.
 | `0007` | Listing the evidence ledger, a foreign key to `experience_records`, and retention over `confidence_evidence` "all belong to roadmap story 4.5" | Retention shipped in `0010`: erasing a record removes every evidence row naming it, with the index that needs. The foreign key was deliberately **not** added (`0010` explains why). Listing the ledger through the port was decided against in story 4.3 (AD-C): lifecycle history already carries each counted update's prior and new values, and no acceptance criterion needs uncounted duplicates |
 | `0008` | Retention of the feedback ledger is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Shipped in `0010`: erasing a record removes its exposure rows and any submission left empty, with the index that needs. `0006`'s runbook is superseded as above |
 | `0008` | The aggregations "roadmap story 4.4 needs — by run, by trial label, by scope" will come with their own indexes | Story 4.4 measured reuse through in-memory port doubles, not SQL over this ledger, so no aggregation query and no index was added. Add one with the first query that needs it |
+| `0006`, `0010`, `0012` | The guards do not bind the tables' owner, "which the application role is because it created them"; the purge path is "an auditability mechanism, not a privilege boundary"; an application role that is not the migrating role must be granted `EXECUTE` by hand | Story 6.1 made the two-role deployment the supported one: the application role owns nothing and holds no `DELETE` on any ledger, so neither the owner's escape hatch nor a hand-set marker is available to it, and `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` when the host opts in. The owner and superusers remain unbound. See [Deploying with two roles](#deploying-with-two-roles) |
 | `0009` | Retention of the grant access log is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Story 4.5 decided to **keep** access rows when a record is erased — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` (story 5.4) as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](#retention-for-the-grant-access-log) |
 
 ## Data semantics

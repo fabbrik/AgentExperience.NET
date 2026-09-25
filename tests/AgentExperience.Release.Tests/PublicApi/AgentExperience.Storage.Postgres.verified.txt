@@ -17,6 +17,13 @@
 }
 namespace AgentExperience.Storage.Postgres
 {
+    public sealed class ExperienceApplicationRoleOptions
+    {
+        public ExperienceApplicationRoleOptions(string roleName) { }
+        public bool AllowAccessLogPurge { get; init; }
+        public bool AllowErasure { get; init; }
+        public string RoleName { get; }
+    }
     public sealed class ExperienceGrantAccessPurgeResult : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceGrantAccessPurgeResult>
     {
         public ExperienceGrantAccessPurgeResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, int PurgedCount, bool MoreRemain, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
@@ -72,6 +79,7 @@ namespace AgentExperience.Storage.Postgres
     }
     public static class ExperienceSchemaMigrator
     {
+        public static System.Threading.Tasks.Task ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource ownerDataSource, AgentExperience.Storage.Postgres.ExperienceApplicationRoleOptions options, System.Threading.CancellationToken cancellationToken) { }
         public static System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceSchemaMigrationResult> MigrateAsync(Npgsql.NpgsqlDataSource dataSource, System.Threading.CancellationToken cancellationToken) { }
     }
     public sealed class PostgresExperienceCandidateSource : AgentExperience.Abstractions.IExperienceCandidateSource
@@ -117,6 +125,7 @@ namespace AgentExperience.Storage.Postgres
         public const string InitialScriptName = "0001_create_experience_records.sql";
         public const string LifecycleEventsScriptName = "0002_create_lifecycle_events.sql";
         public const string ReuseFeedbackScriptName = "0008_reuse_feedback.sql";
+        public const string RoleSeparationHardeningScriptName = "0013_role_separation_hardening.sql";
         public const string SchemaName = "agent_experience";
         public const string SearchScriptName = "0003_add_experience_search.sql";
         public const string SupersessionAndAppendOnlyScriptName = "0006_lifecycle_supersession_and_append_only.sql";

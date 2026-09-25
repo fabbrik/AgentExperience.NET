@@ -22,7 +22,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     public async Task Leaving_eligibility_removes_the_record_s_vector_and_the_vector_channel_stops_returning_it(
         ExperienceStatus exit)
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var lifecycle = new ExperienceLifecycleService(world.Store, world.Indexing);
 
         var id = await world.AddRecordAsync("deploy-rollback", "Roll back a bad deploy", "Drain traffic first.");
@@ -54,7 +54,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     [Fact]
     public async Task A_supersession_removes_the_superseded_vector_and_leaves_the_replacement_indexed()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var lifecycle = new ExperienceLifecycleService(world.Store, world.Indexing);
 
         var old = await world.AddRecordAsync("cache-warmup", "Warm the cache serially", "Serial warmup is safe.");
@@ -77,7 +77,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     [Fact]
     public async Task A_transition_that_keeps_the_record_eligible_keeps_its_vector()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var lifecycle = new ExperienceLifecycleService(world.Store, world.Indexing);
 
         var id = await world.AddRecordAsync("index-rebuild", "Rebuild the search index", "Rebuild off-peak.");
@@ -96,7 +96,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     [Fact]
     public async Task A_never_indexed_record_leaves_eligibility_without_the_removal_being_a_failure()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var lifecycle = new ExperienceLifecycleService(world.Store, world.Indexing);
 
         var id = await world.AddRecordAsync("never-embedded", "Never embedded", null);
@@ -114,8 +114,8 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     [Fact]
     public async Task Removal_is_idempotent_scoped_and_validated()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
-        var other = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
+        var other = await TestWorld.CreateAsync(fixture);
 
         var id = await world.AddRecordAsync("retry-backoff", "Back off exponentially", "Cap the backoff.");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
@@ -144,7 +144,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     [Fact]
     public async Task A_deleted_record_takes_its_vector_with_it_and_removing_it_afterwards_is_a_no_op()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
 
         var id = await world.AddRecordAsync("orphaned", "Orphaned row", "Nothing left.");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
@@ -162,7 +162,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
     [Fact]
     public async Task A_removal_against_an_unreachable_index_never_fails_the_transition()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var id = await world.AddRecordAsync("outage", "Index is down", "Nothing to see.");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
@@ -198,7 +198,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
         // Story 4.5's eighth erasure step, which lives in the base package's purge function and has to
         // reach a table the base package must not depend on. Here the vectors schema *is* applied, so
         // the to_regclass guard finds it and the embedding goes with the record's payload.
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
 
         var erased = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
         var kept = await world.AddRecordAsync("cache-stampede", "Avoid a cache stampede", "Lock the refill.");
@@ -241,7 +241,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
         // through the two statements that have no status filter at all: the conditional write, and the
         // probe that explains why it wrote nothing. A write at the tombstone's *own* revision is the one
         // a stale-revision guard cannot refuse on its own.
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
 
         var id = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
         var deleted = await world.Store.DeleteAsync(world.Authorization, world.Scope, id, CancellationToken.None);
@@ -271,7 +271,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
         // searchable derivative of exactly the summary and lesson the erasure was asked to destroy. The
         // foreign key's own FOR KEY SHARE parks this writer against the purge and then releases it
         // straight onto the tombstone; only a locking clause in the write's own SELECT makes it re-check.
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
 
         var id = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
 

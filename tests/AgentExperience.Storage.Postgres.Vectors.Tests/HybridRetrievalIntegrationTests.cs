@@ -25,7 +25,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task A_record_whose_words_do_not_overlap_the_task_text_is_still_found_through_the_vector_channel()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var id = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
@@ -46,7 +46,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task Both_channels_merge_into_one_ranked_answer_with_each_record_appearing_once()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var byWords = await world.AddRecordAsync("refund-ticket", "Resolve a chargeback contention case", "Check the ledger");
         var byMeaning = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice");
 
@@ -71,7 +71,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task Stored_embeddings_from_another_model_give_a_text_only_result_with_no_comparison_attempted()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
@@ -92,7 +92,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task Stored_embeddings_of_another_dimension_give_a_text_only_result()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
@@ -111,7 +111,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task A_query_model_that_nothing_was_indexed_under_is_a_model_mismatch_rather_than_an_empty_match()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
@@ -127,7 +127,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task A_provider_that_is_down_gives_a_text_only_result_and_the_text_candidates_still_come_back()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
@@ -146,7 +146,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task A_record_whose_indexing_failed_is_still_committed_durable_and_text_searchable()
     {
-        var world = await TestWorld.CreateAsync(DataSource, new TopicEmbeddingGenerator { Throws = new InvalidOperationException("provider down") });
+        var world = await TestWorld.CreateAsync(fixture, new TopicEmbeddingGenerator { Throws = new InvalidOperationException("provider down") });
         var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock");
 
         var indexing = await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
@@ -170,7 +170,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task Nothing_matching_either_channel_is_a_completed_empty_result()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
 
         var result = await world.Retrieval().RetrieveAsync(Request(world, "nothing at all like anything stored"));
 
@@ -183,8 +183,8 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task Hybrid_retrieval_never_crosses_a_scope_boundary()
     {
-        var mine = await TestWorld.CreateAsync(DataSource);
-        var theirs = await TestWorld.CreateAsync(DataSource);
+        var mine = await TestWorld.CreateAsync(fixture);
+        var theirs = await TestWorld.CreateAsync(fixture);
 
         var foreign = await theirs.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice");
         await theirs.Indexing.IndexAsync(theirs.Authorization, theirs.Scope, foreign);
@@ -202,7 +202,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
         // record unreachable through the text channel *and* the vector channel. The lifecycle service is
         // built with no indexing hook on purpose, so both vectors survive the transitions -- which is
         // what proves that the status predicate in SQL, not de-indexing hygiene, is the boundary.
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var lifecycle = new AgentExperience.Core.Lifecycle.ExperienceLifecycleService(world.Store);
 
         var revoked = await world.AddRecordAsync("billing-dispute", "Reimburse a blocked payment", "Release the stuck invoice");
@@ -265,7 +265,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [Fact]
     public async Task A_record_shared_by_a_grant_is_retrieved_through_both_channels_until_the_grant_is_revoked()
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var owner = world.Scope with { TeamId = "team-a" };
         var recipient = world.Scope with { TeamId = "team-b" };
 
@@ -314,7 +314,7 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
     public async Task A_vector_delivery_records_the_grants_disclosure_level_and_retrieval_carries_none(ExperienceGrantDisclosure level)
     {
-        var world = await TestWorld.CreateAsync(DataSource);
+        var world = await TestWorld.CreateAsync(fixture);
         var owner = world.Scope with { TeamId = "team-a" };
         var recipient = world.Scope with { TeamId = "team-b" };
 

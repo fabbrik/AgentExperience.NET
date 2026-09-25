@@ -52,7 +52,7 @@ public static class ExperienceVectorIndexMaintenance
     /// Creates the cosine HNSW index for <paramref name="dimension"/>-wide vectors if it does not
     /// already exist. Idempotent: calling it again once the index exists does nothing.
     /// </summary>
-    /// <param name="dataSource">The host-owned data source. Never disposed here.</param>
+    /// <param name="dataSource">The host-owned data source, connected as the role that owns the embedding table (in a two-role deployment, the owner role, not the application role). Never disposed here.</param>
     /// <param name="dimension">The vector width to index, which must be the dimension of the model the host embeds with.</param>
     /// <param name="cancellationToken">Cancels the operation. Cancelling does not necessarily stop an index build already running on the server.</param>
     /// <returns>A task that completes once the index exists.</returns>
@@ -90,7 +90,7 @@ public static class ExperienceVectorIndexMaintenance
     /// Drops the dimension-specific index if it exists, for a host retiring a model. Dropping it never
     /// changes a search's results, only its latency and whether it is approximate.
     /// </summary>
-    /// <param name="dataSource">The host-owned data source. Never disposed here.</param>
+    /// <param name="dataSource">The host-owned data source, connected as the role that owns the embedding table (in a two-role deployment, the owner role, not the application role). Never disposed here.</param>
     /// <param name="dimension">The vector width whose index to drop.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>A task that completes once the index is gone.</returns>

@@ -76,6 +76,11 @@ line — and so a gate that was accidentally filtered out of step 3 cannot hide.
 # Story 4.5: deletion and retention, against a real PostgreSQL 16.
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~PostgresDeletionTests"
 
+# Story 6.1: the two-role deployment. The application role owns nothing, cannot rewrite, remove or truncate a
+# ledger whatever marker it sets, and reaches a purge only when the host opts in. (Every other store test in that
+# project also runs as the application role.)
+dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~PostgresApplicationRoleTests"
+
 # The schema migrator reaches no console, Trace, ILogger or activity sink, on a clean run or a failing script.
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~MigratorLogSilenceTests"
 

@@ -437,7 +437,7 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
     }
 
     [Fact]
-    public async Task A_stored_lifecycle_event_cannot_be_updated_or_deleted_by_the_application_role()
+    public async Task A_stored_lifecycle_event_cannot_be_updated_or_deleted_by_a_writer_holding_the_privilege()
     {
         var tenant = NewTenant();
         var auth = Authorize(tenant);
@@ -577,7 +577,9 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
 
         // session_replication_role = 'replica' is what a logical-replication applier and several restore
         // and ETL tools run in, and it skips an ordinary ENABLE trigger silently. These are ENABLE ALWAYS.
-        await using var connection = await _fixture.DataSource.OpenConnectionAsync();
+        // Setting it needs a superuser, and a superuser holds every privilege, so what refuses the writes
+        // below is the trigger and nothing else.
+        await using var connection = await _fixture.SuperuserDataSource.OpenConnectionAsync();
         await using (var mode = new NpgsqlCommand("SET session_replication_role = 'replica'", connection))
         {
             await mode.ExecuteNonQueryAsync();
@@ -659,7 +661,7 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
             "UPDATE agent_experience.experience_grants SET reason = 'something else entirely' WHERE grant_id = @id",
         })
         {
-            await using var command = _fixture.DataSource.CreateCommand(sql);
+            await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", grantId));
             command.Parameters.Add(new NpgsqlParameter<Guid>("other", other.ExperienceId));
             var ex = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
@@ -899,9 +901,14 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
         await command.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Runs a hand-written statement as the tables' <em>owner</em>, which holds every table privilege: what
+    /// these tests prove is that the triggers refuse a writer that is allowed to write. The application
+    /// role is refused earlier, by the privilege system, which <c>PostgresApplicationRoleTests</c> proves.
+    /// </summary>
     private async Task<int> ExecuteAsync(string sql, Guid? id)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
         if (id is { } value)
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", value));

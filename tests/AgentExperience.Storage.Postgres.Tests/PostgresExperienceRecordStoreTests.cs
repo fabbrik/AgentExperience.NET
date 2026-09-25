@@ -280,7 +280,7 @@ public sealed class PostgresExperienceRecordStoreTests
         var record = Minimal(Scope(tenant));
         await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
-        await using (var command = _fixture.DataSource.CreateCommand(
+        await using (var command = _fixture.OwnerDataSource.CreateCommand(
             "UPDATE agent_experience.experience_records SET payload_version = 99 WHERE experience_id = @id"))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
@@ -306,7 +306,7 @@ public sealed class PostgresExperienceRecordStoreTests
         var record = Minimal(Scope(tenant), status: ExperienceStatus.Validated);
         await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
-        await using (var command = _fixture.DataSource.CreateCommand(
+        await using (var command = _fixture.OwnerDataSource.CreateCommand(
             $"UPDATE agent_experience.experience_records SET {corruption} WHERE experience_id = @id"))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
@@ -403,7 +403,7 @@ public sealed class PostgresExperienceRecordStoreTests
             }
             """;
 
-        await using (var command = _fixture.DataSource.CreateCommand(
+        await using (var command = _fixture.OwnerDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_records (experience_id, source_run_id, tenant_id, application_id, project_id, " +
             "team_id, agent_id, user_id, task_id, status, reuse_confidence, supporting_validations, contradictions, revision, " +
             "created_at, updated_at, payload_version, payload) VALUES (@id, '77777777-7777-7777-7777-777777777777', @tenant, " +

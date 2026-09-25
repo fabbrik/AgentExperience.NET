@@ -26,11 +26,28 @@ preview.
 | # | Limit | Where the detail lives |
 | --- | --- | --- |
 | KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
-| KL-4 | **The purge path is auditability, not a privilege boundary.** The custom GUC is settable by any session, and the append-only guards do not bind a role that can `ALTER TABLE` — which the application role can, because it owns the tables. The one real privilege boundary is `EXECUTE` on the three purge functions | [Deleting and expiring data](#deleting-and-expiring-data); [Append-only](#moving-a-record-through-its-lifecycle) |
 | KL-8 | **An approach shows argument values only for scalars the host allowlisted, and never for a borrowed record.** An object- or array-valued argument renders as a marker, and a record read through a sharing grant shows none — its approach is tool names only under `LessonAndApproach` and withheld under `LessonOnly`; a host whose lessons turn on either needs its own reflector to say so in the lesson | [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call. The same trust binds an evaluation to its run: the aggregator records the run ID it is given, and evidence carries none | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
 | KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
+
+Resolved since `0.1.0-preview.2` (unreleased):
+
+- KL-4 (the purge path being auditability, not a privilege boundary) is resolved by the two-role deployment (story
+  6.1), which is now the documented and supported one. An owner role owns the schema and runs the migrators; the
+  application role is given exactly what the stores need by `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync`,
+  run on every deploy: no ownership, so no `ALTER TABLE`, `DISABLE TRIGGER` or replaced guard function; no `DELETE`,
+  `TRUNCATE` or `UPDATE` on any ledger, so a purge marker it sets by hand admits nothing; `UPDATE` on
+  `experience_records` and `experience_grants` only on the columns the store moves, so it cannot write a tombstone
+  by hand either; and `EXECUTE` on the purge functions only when the host opts in. The call refuses a superuser, the
+  owner itself, and any member of an owning role, and verifies the role's effective privileges before it commits.
+  The tests prove each refusal from the application role's own connection, and every store test now runs as that
+  role. **What remains is inherent in PostgreSQL:** the owner role and superusers are not bound by any of it — they
+  can disable a trigger, replace a function, or bypass privileges altogether — so keep the owner's credentials out
+  of the application. A deployment that runs the application as the owner (the single-role shape, still fine for
+  local development) gets none of this. `0013` also pins `search_path` with `pg_temp` last on every purge and guard
+  function. See
+  [Store: deploying with two roles](src/AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles).
 
 Resolved in `0.1.0-preview.2`:
 
@@ -401,16 +418,20 @@ A tamperer gets SQLSTATE `42501`. Be precise about what that buys:
   created `ENABLE ALWAYS`, so they also fire under `session_replication_role = 'replica'` — the mode logical
   replication appliers and several restore and ETL tools run in, and the mode in which an ordinary trigger is
   skipped silently.
-- It does **not** bind anyone who can `ALTER TABLE` these tables: a superuser, or the tables' owner, which the
-  application role is because it created them. An owner can `DISABLE TRIGGER`, `DROP TRIGGER`, or drop a constraint
-  and then write freely. Row-level security and column-privilege `REVOKE` are no stronger — neither binds an owner.
+- It does **not** bind anyone who can `ALTER TABLE` these tables: a superuser, or the tables' owner. An owner can
+  `DISABLE TRIGGER`, `DROP TRIGGER`, or drop a constraint and then write freely. That is why the supported
+  deployment has two roles: an owner that runs the migrators and a separate application role that owns nothing,
+  holds no `UPDATE`, `DELETE` or `TRUNCATE` on any log, and so is refused by the privilege system before a trigger is
+  even asked (see
+  [Store: deploying with two roles](src/AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles)). The
+  owner and superusers remain unbound; that is inherent in PostgreSQL.
 - It says nothing about backups, about a restore that recreates the tables without `0006`, or about filesystem
   access to the data directory.
 
-So it is a guard against a bug, a careless script, a compromised application path, or a replication apply that would
-otherwise rewrite history — not against an administrator who has decided to tamper. A deployment that needs
-tamper-evidence beyond this should ship the log off-box, or own these tables with a role the application does not
-have.
+So, with the two roles, it is a guard against a bug, a careless script, a compromised application path — including
+one holding the application role's own credentials — or a replication apply that would otherwise rewrite history.
+It is not a guard against an administrator holding the owner's or a superuser's credentials who has decided to
+tamper. A deployment that needs tamper-evidence against those should ship the log off-box.
 
 **There is exactly one exception, and it is the subject of the next section.** Migration `0010` gives the guards a
 transaction-scoped marker that one `SECURITY DEFINER` purge function sets, so erasing a record can remove the rows
@@ -453,12 +474,13 @@ var wide = await store.SweepExpiredAsync(hostAuthorization, projectScope, TimeSp
   reports a clean `MoreRemain: false` while every team-, agent- and user-scoped record stays put; pass
   `ScopeMatch.Subtree` to sweep the root and everything beneath it. The grant access trail has its own
   retention path, `PurgeOlderThanAsync`, which never removes a row younger than 30 days.
-- **It is an auditability mechanism, not a privilege boundary.** The purge path buys one code path, one
-  transaction, and a guard that is never switched off — not protection from an administrator. A custom GUC is
-  settable by any session, and the guards still do not bind a role that can `ALTER TABLE`, which the application
-  role can. There is one real privilege boundary: `0010` and `0012` revoke `EXECUTE` on the three `SECURITY DEFINER`
-  purge functions from `PUBLIC`, because PostgreSQL's default would otherwise let any role that can connect erase any
-  tenant's record or access trail.
+- **With two roles, the application's own role cannot get round it.** The purge path is one code path, one
+  transaction, and a guard that is never switched off. The marker it sets is a custom GUC any session can set, so on
+  its own it decides nothing; what binds the application role is that it holds no `DELETE` on any ledger and no
+  `UPDATE` on the tombstone's columns, so only the `SECURITY DEFINER` purge functions, running as the owner, can
+  erase — and it can call those only when the host opts in (`AllowErasure`, `AllowAccessLogPurge`). `EXECUTE` on them
+  is revoked from `PUBLIC`, because PostgreSQL's default would otherwise let any role that can connect erase any
+  tenant's record or access trail. The owner role and superusers are not bound, which is inherent in PostgreSQL.
 - **The limits are stated, including the uncomfortable one.** Backups, replicas, WAL, exported telemetry and
   external artifacts are host-owned and out of reach — and *inside* this database the erased text survives in the
   dead heap tuple until `VACUUM` reclaims it, which is a schedule nobody promised. The
@@ -1225,9 +1247,17 @@ services.AddAgentExperienceReuseFeedback();                     // ExperienceReu
 Schema comes in two calls, matching that split:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005-0009, always
-await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, only with the vector channel
+// As the owner role, on every deploy. The stores themselves connect as the application role.
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0013, always
+await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004, only with the vector channel
+await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(                     // last, so it covers both
+    ownerDataSource,
+    new ExperienceApplicationRoleOptions("agent_experience_app") { AllowErasure = true },
+    cancellationToken);
 ```
+
+Creating the two roles, and moving an existing single-role database to them, is in
+[Store: deploying with two roles](src/AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles).
 
 The vector registrations and the second migration are optional, and genuinely so: leave them out and everything
 still works — finalization commits records with no indexing hook, and retrieval answers from text alone with
@@ -1303,10 +1333,10 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests`, `MigratorLogSilenceTests`, and `PostgresDeletionTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests`, `MigratorLogSilenceTests`, `PostgresDeletionTests`, and `PostgresApplicationRoleTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PostgresApplicationRoleTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
 ```
 
 To accept a deliberate public API change, regenerate the baseline and review the diff it leaves before committing
