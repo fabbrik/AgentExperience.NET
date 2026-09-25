@@ -9,6 +9,14 @@ latest preview is supported, and security fixes land on the `main` branch.
 The tests behind the four security properties this library claims — tenant isolation, sanitization, revoked records,
 and untrusted injected context — are mapped in one place in [`docs/security-suite.md`](docs/security-suite.md).
 
+## How releases are published
+
+Packages reach nuget.org only through `.github/workflows/release.yml`, and only when a maintainer pushes a version
+tag on a commit already on `main` and a required reviewer approves the `nuget-release` deployment. The workflow
+re-runs the release checks on the tagged commit and pushes the packages it verified with a short-lived key from
+NuGet Trusted Publishing (GitHub OIDC). No NuGet API key is stored in the repository or its secrets, and every other
+workflow is read-only; a release test fails if either changes. [`RELEASING.md`](RELEASING.md) step 10 has the detail.
+
 ## Reporting a vulnerability
 
 Please **do not open a public issue** for security problems.

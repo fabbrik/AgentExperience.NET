@@ -1,0 +1,248 @@
+name: Release
+
+# The one workflow in this repository that may publish (RELEASING.md step 10). A maintainer starts it by pushing a
+# version tag, and nothing else can: no branch push, pull request, schedule or manual dispatch. The verify job
+# re-runs the release checks on the tagged commit and uploads the packages it verified; the publish job pushes
+# exactly those files to nuget.org, and only after a reviewer approves the `nuget-release` environment.
+#
+# No NuGet API key is stored anywhere. The publish job exchanges its GitHub OIDC token for a short-lived nuget.org
+# key through NuGet/login (NuGet Trusted Publishing), under a policy on nuget.org that names this repository, this
+# file and that environment. AgentExperience.Release.Tests' WorkflowTests hold every constraint here in place, and
+# fail if any other workflow gains a publish step.
+on:
+  push:
+    tags: ['v*']
+
+# Read-only by default. Only the publish job is granted more, and only what it uses.
+permissions:
+  contents: read
+
+# One release per tag at a time; a second push of the same tag waits rather than racing the first.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      sdk: ${{ steps.sdk.outputs.sdk }}
+    steps:
+      # Full history, so the ancestry check below can see main.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # RELEASING.md: the version is set once, in Directory.Build.props. The tag must name exactly that version.
+      - name: Check the tag names the version in Directory.Build.props
+        id: version
+        run: |
+          set -euo pipefail
+          prefix="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)"
+          suffix="$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+          test -n "$prefix" || { echo "::error::Directory.Build.props has no VersionPrefix"; exit 1; }
+          version="$prefix${suffix:+-$suffix}"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but Directory.Build.props versions this commit as $version (expected tag v$version)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -n "$suffix" ]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+          echo "Tag $GITHUB_REF_NAME names version $version"
+
+      # Only a commit that is already on main may be released: a tag on a feature branch, or on a commit main
+      # never took, is refused.
+      - name: Check the tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA ($GITHUB_REF_NAME) is not reachable from origin/main"
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main"
+
+      # RELEASING.md step 9: while the Known limits table is non-empty, the version must say preview.
+      - name: Check the Known limits table still justifies the version
+        run: |
+          set -euo pipefail
+          limits="$(grep -cE '^\| KL-[0-9]+ \|' README.md || true)"
+          if [ "$limits" -gt 0 ]; then
+            if grep -qE '<VersionSuffix>preview\.[1-9][0-9]*</VersionSuffix>' Directory.Build.props; then
+              echo "$limits known limit(s): this is a preview release, and it is versioned as one."
+            else
+              echo "::error::$limits known limit(s), but Directory.Build.props does not version this as a preview."
+              exit 1
+            fi
+          else
+            echo "::warning::No known limits. Confirm the deferred-work ledger is closed before dropping the preview suffix."
+          fi
+
+      # The release notes: this version's CHANGELOG section, then the Known limits table. Built and checked here,
+      # before anything is published, so a missing section stops the release instead of the GitHub release step.
+      - name: Build the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release-notes
+          notes=artifacts/release-notes/notes.md
+          awk -v heading="## $VERSION" '$0 == heading { found = 1; next } found && /^## / { exit } found' CHANGELOG.md > "$notes"
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            echo "::error::CHANGELOG.md has no '## $VERSION' section"
+            exit 1
+          fi
+          {
+            echo
+            echo "## Known limits"
+            echo
+            echo "This release does not claim production readiness. Every unresolved limit, as the README lists it:"
+            echo
+            awk '/^## Known limits/ { section = 1; next } section && /^## / { exit } section && /^\|/ { print; table = 1; next } table { exit }' README.md
+          } >> "$notes"
+          grep -qE '^\| KL-[0-9]+ \|' "$notes" || grep -qE '^\| # \|' "$notes" \
+            || { echo "::error::The Known limits table was not found in README.md"; exit 1; }
+
+      # As ci.yml: the runner image ships newer SDK bands, which would otherwise win over global.json's pin.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
+      # As ci.yml: the 8.0 and 9.0 SDKs are installed for their runtimes, so the net8.0 and net9.0 test runs have a
+      # runtime to run on.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Assert the exact pinned SDK
+        id: sdk
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "sdk=$actual" >> "$GITHUB_OUTPUT"
+          echo "SDK $actual, as pinned"
+
+      # RELEASING.md step 2.
+      - name: Restore
+        run: dotnet restore --locked-mode
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild=true
+
+      # RELEASING.md step 3: the full suite, every target framework, against the default PostgreSQL major. Docker is
+      # available on the runner for Testcontainers, as in ci.yml.
+      - name: Test
+        run: dotnet test --no-build --configuration Release
+
+      # RELEASING.md step 7: pack, and assert against the built packages themselves.
+      - name: Pack
+        run: |
+          rm -rf artifacts/packages
+          dotnet pack --no-build --configuration Release --output artifacts/packages -p:AgentExperienceReleaseBuild=true
+
+      - name: Verify the packages
+        run: dotnet run eng/verify-packages.cs -- artifacts/packages
+
+      - name: Upload the verified packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: artifacts/release-notes/
+          if-no-files-found: error
+          retention-days: 30
+
+  # Pushes exactly what verify uploaded. The job does not check out the repository: it builds nothing, and runs no
+  # code from the tree while it holds a nuget.org key. Re-running it is safe: --skip-duplicate skips a version
+  # nuget.org already has, and an existing GitHub release is left as it is.
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: nuget-release
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Download the verified packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages
+
+      - name: Download the release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: artifacts/release-notes
+
+      # Five packages and five symbol packages, all at the version the tag names, and nothing else.
+      - name: Check the packages are the tagged version
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -l artifacts/packages
+          total="$(find artifacts/packages -type f | wc -l)"
+          nupkg="$(find artifacts/packages -type f -name "*.$VERSION.nupkg" | wc -l)"
+          snupkg="$(find artifacts/packages -type f -name "*.$VERSION.snupkg" | wc -l)"
+          if [ "$nupkg" -ne 5 ] || [ "$snupkg" -ne 5 ] || [ "$total" -ne 10 ]; then
+            echo "::error::Expected 5 .nupkg and 5 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
+            exit 1
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ needs.verify.outputs.sdk }}
+
+      # NuGet Trusted Publishing: the GitHub OIDC token is exchanged for a short-lived nuget.org API key. The user is
+      # the nuget.org profile that owns the Trusted Publishing policy; it is not a secret.
+      - name: Log in to nuget.org (Trusted Publishing)
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: fabbrik76
+
+      # The key reaches the command through the environment, so it never appears in the rendered script; the runner
+      # masks it in the log. The .snupkg next to each .nupkg is pushed with it.
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+
+      # Only after the push. An existing release (a re-run) is left untouched.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "The GitHub release $TAG already exists; leaving it as it is."
+            exit 0
+          fi
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --verify-tag --title "AgentExperience.NET $VERSION" \
+            --notes-file artifacts/release-notes/notes.md "${flags[@]}"

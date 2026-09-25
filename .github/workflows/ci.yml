@@ -11,8 +11,9 @@ on:
   workflow_dispatch:
 
 # Read-only, everywhere. Nothing in this workflow publishes a package, pushes a tag, or creates a release:
-# publishing is the maintainer's manual step in RELEASING.md. AgentExperience.Release.Tests' WorkflowTests
-# fail if a publish step, a NuGet API key, or a write permission ever appears in a workflow.
+# only release.yml publishes, from a pushed version tag and after a reviewer approves (RELEASING.md step 10).
+# AgentExperience.Release.Tests' WorkflowTests fail if a publish step, a NuGet API key, or a write permission
+# ever appears in any other workflow.
 permissions:
   contents: read
 
