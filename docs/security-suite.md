@@ -192,6 +192,26 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.A_replayed_token_is_refused_by_the_database_and_an_identical_retry_still_replays` | Single use is the database's unique index, atomic with the evidence; a replay writes not even an uncounted row **(DB)** |
 | Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.The_assessment_index_refuses_a_second_use_even_where_the_independence_key_is_free` | A writer that bypasses Core's token check still cannot spend one assessment twice on a record **(DB)** |
 | Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.A_second_feedback_presenting_a_spent_token_lands_nothing_while_retrying_the_first_converges` | A token cannot be reused through a second feedback submission **(DB)** |
+| Core.Tests | `VerifiedIndependenceTests.A_real_run_that_was_never_exposed_to_the_record_is_refused_for_machine_and_human_evidence` | KL-11 (7.3): a real, finalized or captured run that was never given the record is not a key, for machine or human evidence, and a token it presented is not spent |
+| Core.Tests | `VerifiedIndependenceTests.An_exposed_run_is_admitted_once_per_independence_key_and_a_caller_choosing_among_runs_gets_one_key_per_exposed_run` | A caller that can name every real run in the scope gets one key per run that saw the lesson, not one per real run |
+| Core.Tests | `VerifiedIndependenceTests.Exposure_at_a_revision_after_the_one_the_evidence_is_computed_against_is_refused_and_an_earlier_one_admits` | An exposure claiming a revision the record has not reached yet is refused, fail-closed |
+| Core.Tests | `VerifiedIndependenceTests.A_hand_written_record_under_a_runs_derived_id_vouches_for_nothing_until_marked_finalized` | A record written through `CreateAsync` without finalization, under the derived ID and with a forged round and exposure, vouches for no run by default |
+| Core.Tests | `VerifiedIndependenceTests.Feedback_attributing_a_record_the_run_was_never_exposed_to_is_degraded_before_the_ledger` | Reuse feedback cannot record an attributed benefit for a record the run was never given |
+| Core.Tests | `VerifiedIndependenceTests.The_capture_service_keeps_the_earliest_revision_once_per_record_and_closes_exposure_with_the_run` | A host cannot pre-seed exposure through `StartRun` (not even with an empty list it fills afterwards), and nothing can add exposure to a completed run whose provenance finalization may already have copied |
+| Core.Tests | `VerifiedIndependenceTests.Opt_out_evidence_is_flagged_host_trusted_and_a_confidence_read_can_leave_it_out` | Evidence the trust-the-host opt-out admitted is labelled as such and can be left out of a read score |
+| Core.Tests | `VerifiedIndependenceTests.Verified_only_also_leaves_out_evidence_stored_before_admission_was_recorded` | A verified-only read also drops evidence with no recorded admission and a hand-written record's self-chosen initial counters |
+| Core.Tests | `Diagnostics.ExperienceTelemetryTests.Span_attributes_are_only_the_documented_keys` | The admission (`Verified` and `HostTrusted`) and the refusal reach telemetry as closed-set member names, and nothing else was added |
+| MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.Inject_capture_finalize_then_feedback_is_admitted_for_the_exposed_run_and_refused_for_one_that_never_saw_the_lesson` | End to end through the adapter: exposure is recorded where the library injects, survives finalization, and is what feedback is checked against |
+| MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.A_capture_service_that_fails_to_record_exposure_is_reported_and_costs_the_invocation_nothing` | A failure to record exposure fails closed for evidence and never costs the invocation its context |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.Exposure_and_origin_survive_finalization_and_the_store_and_an_unexposed_run_is_refused` | Exposure and origin round-trip through the payload (sealed in crypto-shredding mode), and an unexposed run writes nothing **(DB)** |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.A_record_written_by_hand_under_a_runs_derived_id_reads_back_host_written_and_vouches_for_nothing` | A hand-written record reads back unverified and vouches for no run **(DB)** |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.The_database_refuses_an_unknown_admission_and_the_application_role_cannot_relabel_one` | The application role cannot relabel host-trusted evidence as verified on either ledger (`42501`), and each ledger's CHECK refuses an unknown admission **(DB)** |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.Admission_is_stored_on_the_ledger_and_the_event_and_a_confidence_read_can_leave_host_trusted_evidence_out` | The admission is kept on both ledgers, a replay cannot relabel it, and a read over the real history leaves host-trusted evidence out **(DB)** |
+| Storage.Postgres.Tests | `OfflineStoreTests.A_malformed_exposure_list_or_origin_is_Invalid_with_no_database_call` | A hand-written record cannot store an empty, negative, duplicated or oversized exposure list, or an undefined origin |
+| MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.An_uncaptured_agent_running_inside_a_captured_invocation_does_not_expose_the_outer_run` | A nested agent's injected block is never recorded as delivered to the outer captured run |
+| MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.A_later_run_in_the_same_session_is_not_credited_with_what_earlier_turns_delivered` | Unauthenticated session state is never turned into exposure: a later run in a reused session is credited only with what it is given itself |
+| MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.A_capture_service_that_does_not_record_exposure_is_reported_once_and_the_injection_still_happens` | A capture service that cannot record exposure is reported, and its runs are exposed to nothing |
+| Core.Tests | `VerifiedIndependenceTests.A_replay_of_evidence_stored_before_admission_was_recorded_reports_none_and_tags_none` | A replay never borrows the resubmitting call's admission, in its result or on its span |
 
 ## What this suite does not prove
 
@@ -217,7 +237,13 @@ only stored scalars (a dotted path reaching only the scalar it names, never a co
 value orders a guarded call, nested and borrowed included; which keys are harmless to show is the host's decision
 (the owner's, for a borrowed record, as well as the reader's).
 
-Nor does it prove that a run cited as confidence evidence was *exposed* to the record. The suite proves that a run,
-a round and an assessment cannot be invented — each must be one the library finalized, captured or minted — and that
-none can be moved to another scope or record or used twice; a caller able to choose among real runs in a scope can
-still cite one that never saw the lesson, once per run. That, and the trust-the-host opt-out, are KL-11.
+Nor does it prove that a run cited as confidence evidence *used* the record. The suite proves that a run, a round and
+an assessment cannot be invented — each must be one the library finalized, captured or minted — that none can be
+moved to another scope or record or used twice, and (story 7.3) that the run must be one the library recorded
+delivering the record into; a caller can still cite each run that was given the lesson, once per run, whatever the
+lesson did there. It does not prove the host's own statements: a host that calls `RecordExposure` itself, marks a
+hand-written record `Finalized`, or passes a dishonest `ClosedRound` to finalization is believed; so is an
+application role granted `AllowSealing`, which can replace a plaintext payload — exposures and origin included — while
+the grant stands. And the
+trust-the-host opt-out still trusts everything; the suite proves only that what it admits is labelled and can be left
+out of a read. Those residuals are KL-11.

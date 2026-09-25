@@ -26,7 +26,7 @@ preview.
 | # | Limit | Where the detail lives |
 | --- | --- | --- |
 | KL-2 | **Erasure cannot reach a copy of the derived search data, and without crypto-shredding it reaches only live rows.** With `ExperienceEncryption` configured (opt-in), erasing a record destroys its key, so its text is unreadable in every backup, replica, WAL segment and dead tuple — except its full-text vector (the task ID, summary and lesson as lexemes with positions) and its embedding with its content hash, which PostgreSQL has to read in the clear and which survive in every copy exactly as plaintext does. Never sealed, in either mode: IDs, scope, statuses, scores, timestamps and principal identities. Rows written before a deployment switched modes keep their plaintext copies (and append-only ledger rows stay plaintext until erased). In plaintext mode, still the default, every copy keeps everything and the dead tuple keeps the text until `VACUUM`. Exported telemetry, server logs and external artifacts are out of reach, and the property is only as good as a key store kept outside the database's backups | [Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy); [the honesty statement](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
-| KL-11 | **Verified independence proves a run is real, not that it saw the lesson; and the opt-out trusts the host outright.** By default a confidence submission's run must be finalized into a record in its scope or held by the capture service (never the record's own), a machine round must be the one finalization closed for that run, and a human assessment must present an unexpired, single-use HMAC token the library minted under the host's key. Nothing can check that a real run in the scope was *exposed* to the record, so a caller able to choose among real runs gets one key per real run rather than one per call; nor that the round a host closed at finalization, or a record it wrote by hand through `CreateAsync`, is honest. A host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` is back to trusting every `RunId`, `VerificationRoundId` and `AssessmentId` it passes, and one that lets agent output populate them hands the agent a fresh independence key per call. A direct caller of the aggregator still binds an evaluation to whatever run ID it names | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
+| KL-11 | **Verified independence proves a run was *given* the lesson, not that it used it; three host statements are still believed; and the opt-out's evidence is excluded only on read.** By default confidence evidence and attributed feedback must name a run the library knows in the record's scope (finalized there by the library, or held by the capture service), never the record's own, whose provenance shows the library delivered the record into it at or before the revision the evidence is computed against; a machine round must be the one finalization closed, and a human assessment must present a single-use HMAC token. What remains: (1) *delivered* is not *used*, so every run that was given a lesson is one key, whether or not the lesson mattered to it; (2) the library believes the host's own bookkeeping where it cannot see past it — a host that calls `IExperienceCaptureService.RecordExposure` for records it did not deliver, or writes a record through `CreateAsync` marked `ExperienceRecordOrigin.Finalized`, is believed (so is an application role while it holds `AllowSealing`, which can replace a plaintext payload), and the round finalization records is the `ClosedRound` the host passed it (evidence carries no run ID, so no check can tie a round, or a direct `VerificationAggregator.Aggregate` caller's run ID, to the run itself; a direct aggregator result counts only through finalization or such a marked record); (3) a host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` still has every `RunId`, `VerificationRoundId` and `AssessmentId` trusted, and one that lets agent output populate them hands the agent a fresh key per call — that evidence is now stored as `HostTrusted`, tagged in telemetry, and left out on request by `ReadConfidenceAsync`, but the stored score retrieval ranks on still counts it | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is revoked, superseded, erased or un-granted — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
 
 Resolved since `0.1.0-preview.2` (unreleased):
@@ -87,6 +87,24 @@ Resolved since `0.1.0-preview.2` (unreleased):
   three records gain a trailing optional parameter; and a store implementation must persist `ClosedRoundId` and
   spend `AssessmentId` once per record. `IndependenceVerification.TrustHostSuppliedIdentifiers` restores
   the previous behaviour for a host that cannot adopt the new flow. See
+  [Updating confidence from evidence](#updating-confidence-from-evidence).
+- KL-11 is **narrowed again, not closed**, by story 7.3 (exposure-bound evidence): the row above states what is left.
+  The MAF adapter's context provider now records, on the captured run, which records it injected into the invocation
+  and at which revision, as `Provenance.ExposedTo` (identifiers and revisions only); finalization copies that onto the run's record and marks
+  the record `ExperienceRecordOrigin.Finalized`. Confidence evidence and attributed feedback are then refused unless
+  the run was exposed to the record at or before the revision the evidence is computed against
+  (`IndependenceRefusal.NotExposed`), so a caller choosing among real runs gets one key per run that was given the
+  lesson rather than one per real run. A run known only through a record written by hand is refused
+  (`HostWrittenRun`). Every piece of evidence now records which mode admitted it (`ConfidenceUpdate.Admission`:
+  `Verified` or `HostTrusted`, migration `0018`), confidence spans carry it
+  (`agentexperience.confidence.admission`, and `agentexperience.independence.refusal` on a refusal), and
+  `ExperienceLifecycleService.ReadConfidenceAsync` reads a score without host-trusted evidence, or with only verified
+  evidence. **Breaking:** evidence about a run with no recorded exposure is refused by default — including every run
+  finalized before this version and every run captured without the adapter's context provider (call
+  `RecordExposure` from the code that delivers records, or opt out); records stored before this version read back as
+  `HostWritten` and vouch for no run; `StartRun` refuses a provenance that already carries exposures;
+  `IndependenceRefusal`, `ExperienceCaptureFailureStage` gain members; and `IExperienceCaptureService` gains
+  `RecordExposure` (with a default implementation that records nothing). See
   [Updating confidence from evidence](#updating-confidence-from-evidence).
 - KL-13 (the supported matrix stopping short of a newer MAF, `net8.0` and PostgreSQL 14) is resolved by story 7.2,
   with one boundary left on purpose. **MAF** is no longer pinned exactly: the adapter declares
@@ -331,6 +349,12 @@ contradicts the evaluation. That remains the host's statement (KL-11): finalizat
 and records the round it closed, which is what confidence evidence is later checked against, but a direct caller of
 `Aggregate` names its own run ID. A host that calls a reflector and then writes records without finalization is
 writing records itself, and nothing but its own call to `EnsureMatches` checks that path.
+
+Since story 7.3 that path no longer reaches confidence independence by default. Finalization marks the records it
+writes `ExperienceRecordOrigin.Finalized`; a record written any other way is `HostWritten` (the default), and a run
+known only through one is refused as `IndependenceRefusal.HostWrittenRun`. So a direct aggregator result stored by
+hand vouches for no run, round or exposure unless the host marks it `Finalized` itself — which is then the host's
+statement, and part of what KL-11 still says.
 
 ## Moving a record through its lifecycle
 
@@ -622,7 +646,22 @@ inputs cannot be invented, so before anything is computed or written the submiss
   record finalization derives for that run and scope, read through the ordinary scoped `GetAsync` — not through a
   grant, not a tombstone), or one the capture service wired into the lifecycle service holds there. Retrieval is
   exact-scope and a grant never confers writing, so no run in another scope could have been exposed to a record that
-  accepts evidence. It is never the record's own `SourceRunId` (`OwnRun`, refused in every mode).
+  accepts evidence. It is never the record's own `SourceRunId` (`OwnRun`, refused in every mode). A record under the
+  derived ID counts only if finalization wrote it (`ExperienceRecordOrigin.Finalized`); one written by hand through
+  `CreateAsync` vouches for nothing (`HostWrittenRun`, story 7.3).
+- **Exposure (story 7.3).** The run must have been *given* the record: its provenance
+  (`Provenance.ExposedTo`, on the finalized record or on the run the capture service holds) must name the record at a
+  revision at or before the one the evidence is computed against, or the submission is refused as `NotExposed`. The
+  MAF adapter records this for you — its context provider records, on the captured run, every record it injects, at
+  the revision it rendered — and finalization copies it onto the run's record. What a reused session's history
+  carries from an *earlier* run's turns is deliberately not credited to a later run: the session account lives in host
+  session storage, unauthenticated, so a later run in the same session is exposed only to what it is given itself. An exposure recorded at a *later* revision than the record's
+  current one cannot have happened, and is refused. A host that delivers records some other way calls
+  `IExperienceCaptureService.RecordExposure` from the code that delivers them. This is checked last, after the run,
+  round and token, and it applies to machine and human evidence alike, because every submission is a claim that
+  reusing the record helped or hurt the named run. The machine evidence that is about a record's *own* quality — its
+  source run's evaluation, which seeds its first supporting validation — is bound by finalization and never comes
+  through this path.
 - **`VerificationRoundId`** (machine) must be the round that run was finalized with: finalization stamps
   `ExperienceRecord.ClosedRoundId` from the evaluation it computed. A run only the capture service holds, or one
   finalized with no closed round, has no round to vouch for. So one run yields at most one machine key per record.
@@ -651,12 +690,15 @@ request has no field for it, because the number of distinct human reviewers is e
 Principals are compared ordinally, like every other identity here, and one with leading or trailing whitespace is
 refused rather than trimmed.
 
-**What verification does not prove — read this before relying on it.** It proves a run is *real and in scope*, not
-that it was *exposed* to the record: a caller able to choose among real runs in the scope can cite one that never saw
-the lesson, and gets one key per real run (not one per call). The round is the one the host closed at finalization,
-and a record written by hand through `CreateAsync` vouches for its own `SourceRunId` and `ClosedRoundId`. Real runs
-are easy to name: every record in the scope carries its `SourceRunId` and `ClosedRoundId`, a run's round vouches
-whatever its own verification concluded, and a run the capture service holds stays known while it is held. The token
+**What verification does not prove — read this before relying on it.** It proves a run is *real, in scope, and was
+given the record* — not that the record mattered to it: every run the library delivered a lesson into is one key,
+whatever the lesson did there. (Before story 7.3 it proved only that the run was real, so a caller choosing among real
+runs got one key per real run; now it gets one per run that was exposed.) Exposure is what the library recorded
+delivering, and the library believes a host that calls `RecordExposure` itself, or that writes a record through
+`CreateAsync` marked `ExperienceRecordOrigin.Finalized`: the store port cannot tell the library's writes from the
+host's. The round is the one the host closed at finalization. Real runs are easy to name: every record in the scope
+carries its `SourceRunId` and `ClosedRoundId`, a run's round vouches whatever its own verification concluded, and a
+run the capture service holds stays known while it is held. The token
 is only as secret as the key and as guarded as the code that can call the issuer, and single use is the store's
 guarantee (the PostgreSQL store makes it; an `IExperienceRecordStore` that ignores `ConfidenceUpdate.AssessmentId`
 does not). Verification runs before the store's replay check, so retry a lost acknowledgement within the token's
@@ -664,8 +706,29 @@ lifetime: after it, the retry is refused (`AssessmentTokenExpired`) although the
 run bookkeeping (the adapter's session state), never from agent output. **The opt-out**,
 `IndependenceVerification.TrustHostSuppliedIdentifiers`, is the previous behaviour for a host that cannot adopt this
 yet — one that captures and retrieves in different scopes, finalizes nothing, or must accept evidence about runs
-finalized before this version: every identifier is trusted as given (only the own-run rule stays), and a host that
-lets agent output populate them hands the agent a fresh key per call. That is KL-11.
+finalized before this version: every identifier is trusted as given (only the own-run rule stays, and no exposure is
+checked), and a host that lets agent output populate them hands the agent a fresh key per call. That is KL-11.
+
+**What the opt-out admitted is kept visible (story 7.3).** Every update Core submits carries
+`ConfidenceUpdate.Admission` — `Verified` when the checks above ran, `HostTrusted` when the host opted out — and the
+PostgreSQL store keeps it on the evidence ledger and on the counted event (`0018`), append-only like the rest of the
+row; evidence stored before that reads back with no admission. `confidence.apply` spans carry it as
+`agentexperience.confidence.admission`, and a refusal as `agentexperience.independence.refusal`, so an operator can
+see the opt-out in use without reading the ledger. To read a score without it:
+
+```csharp
+var read = await lifecycle.ReadConfidenceAsync(authorization, scope, experienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, ct);
+// read.Report.ReuseConfidence: the heuristic over the counters less the host-trusted evidence.
+// read.Report.HostTrusted / .Verified / .Unrecorded: what each admission counted. VerifiedOnly also drops Unrecorded
+// (no admission recorded: stored before 0018, or written by something other than Core) and, for a record written by
+// hand, the initial counters its writer chose (read.Report.Initial, read.Report.Origin).
+```
+
+It pages the record's history (a counted update is always an event), counts what each admission moved, and recomputes
+the score from the stored counters less the excluded ones; it writes nothing. The stored score — the one retrieval
+ranks on and injection shows — still counts everything; the exclusion is a read, not a rewrite. It is only as good as
+the store's history: an `IExperienceRecordStore` that does not persist `ConfidenceUpdate.Admission` reads everything
+back as unrecorded, which `ExcludeHostTrusted` keeps.
 
 | Submission | Outcome |
 | --- | --- |
@@ -677,6 +740,7 @@ lets agent output populate them hands the agent a fresh key per call. That is KL
 | Two submissions computed from one revision | Exactly one `Applied`; the other `StaleRevision` with the revision to retry against |
 | Against a `Candidate`, `Quarantined`, `Stale`, `Superseded`, or `Revoked` record | `Ineligible` — refused before anything is written |
 | An unknown or own run, a round finalization did not close, or a missing, invalid, expired, other-record or spent assessment token | `Unverified`, with `Refusal` naming which — nothing written (checked after `Ineligible`) |
+| A real run that was never given the record, or given it only at a later revision; or a run known only through a hand-written record | `Unverified`, `Refusal: NotExposed` or `HostWrittenRun` — nothing written, and a token it presented is not spent |
 
 **A record cannot be created claiming evidence it does not have.** `CreateAsync` refuses a record whose
 `ReuseConfidence` is not the one its own counters explain — creation is the single moment the two arrive
@@ -759,12 +823,18 @@ given. Evidence from another round is not evidence about this comparison, and is
 > Under the default verification (story 6.6), an attribution is accepted only when its `RunId` is a run the library
 > knows in the feedback's scope, a comparative result's round is the one that run was finalized with, and a human
 > assessment presents an assessment token the library minted — so an agent can no longer mint a run, a round or an
-> assessment, and a forged one is dropped with the exposure still recorded. What nothing can check is that a real
-> run was *exposed* to the records, or that a human made the assessment and meant it: the reviewer is your
+> assessment, and a forged one is dropped with the exposure still recorded. Since story 7.3 the run must also have
+> been *given* every attributed record — its provenance must show the library delivered the record into it (the MAF
+> context provider records this on the captured run) at or before the record's current revision — so an attribution
+> about a real run that never saw the lesson is dropped too. Note the difference: the submission's own
+> `ExposedExperienceIds` is still your statement, recorded as given; only an *attributed* record must appear in the
+> run's recorded exposure, because only an attribution produces a key. What nothing can check is that the lesson
+> mattered to the run, or that a human made the assessment and meant it: the reviewer is your
 > `AuthorizationContext.PrincipalId`, one reviewer's opinion about one run counts once, and the token proves your
 > review flow issued it — not what the person thought. The human shape is still the weakest boundary here. Take
 > `RunId` from your own run bookkeeping and keep the issuer in your review flow, never in code an agent drives. A
-> host that opted out (`TrustHostSuppliedIdentifiers`) is back to trusting all three identifiers as given.
+> host that opted out (`TrustHostSuppliedIdentifiers`) is back to trusting all three identifiers as given, and no
+> exposure is checked; what it admits is stored as `HostTrusted`.
 
 **A failed attribution costs the attribution, not the exposure.** An attribution that does not meet its evidence
 requirements — no `AssessmentId`, a missing, invalid, expired or non-covering assessment token, an unknown run, a
@@ -789,6 +859,7 @@ stays, and its own history carries the reason.
 | Attributed harm | Contradicting evidence per record; each `Contested`; all still present |
 | Attribution fails its evidence requirements | Exposure recorded, benefit `Unknown`, `Reason` says what was refused |
 | Attribution names a run the library does not know, a round its run was not finalized with, or presents a forged or expired assessment token | Same: exposure recorded, benefit `Unknown`, `Reason` names it |
+| Attribution names a real run that was never given an attributed record (no recorded exposure, or only at a later revision), or a run known only through a hand-written record | Same: exposure recorded, benefit `Unknown`, `Reason` names it — the whole attribution is dropped, including records the run was given |
 | A second submission presents an assessment token already spent on a record | That record `Refused`, not retryable — the token lands once per record |
 | Attribution names a record the run never saw, or a comparative result names another run | `Invalid` — nothing written |
 | Same feedback ID, identical content — in any record order | `AlreadyRecorded` — nothing written twice, nothing counted twice |
@@ -1123,6 +1194,17 @@ has lost its grant is named in a fixed withdrawal notice ahead of any new record
 the ID and nothing else, and record text cannot forge one. It is advisory: the earlier block stays in the history,
 and a model that read it cannot be made to forget it (KL-12). Use a fresh session per task where that matters, and
 set `SessionLimits = null` if your chat history drops injected blocks.
+
+**What the provider delivers is recorded on the captured run** (story 7.3). When the agent is also wrapped with
+`UseExperienceCapture`, the provider runs inside the captured invocation and records, on that run, each record it
+injects, at the revision it rendered: `Provenance.ExposedTo`, identifiers and revisions only. It records only on the
+run of the agent it was invoked for, so an uncaptured agent nested inside a captured one (an agent used as a tool)
+exposes nothing to the outer run. What an earlier turn gave a reused session is not credited to a later run: the
+session account is host storage and unauthenticated. Finalization copies it onto
+the run's record, and confidence evidence about reusing a record in that run is admitted only if the run was exposed
+to it (see [Updating confidence from evidence](#updating-confidence-from-evidence)). A failure to record it is reported
+through `OnCaptureFailure` at stage `RecordExposure` and never affects the injection; a provider used without capture
+records nothing.
 
 See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#injecting-historical-reference) for
 the payload shape, the options, and the failure behaviour.

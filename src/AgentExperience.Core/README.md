@@ -29,7 +29,7 @@ dimension and attribute is listed in the
 | `AssessmentTokenIssuer` | Mints the HMAC assessment tokens a human assessment must present to move a score (never registered in DI: whoever can call it can mint) |
 | `ExperienceIndexingService` | Embedding ingestion after the canonical commit; derived data never blocks canonical data |
 | `ExperienceRetrievalService` | Bounded, fail-closed text and hybrid retrieval with explainable ranking |
-| `ExperienceReuseFeedbackService` | Records what a run was exposed to, and only lets established evidence move a score |
+| `ExperienceReuseFeedbackService` | Records what a run was exposed to, and only lets established evidence move a score — for records the run was actually given |
 
 ## Wiring it
 
@@ -66,7 +66,8 @@ lifetime, the clock, and the opt-out (see KL-11 below).
 ## Known limits that live here
 
 The two that were Core's, KL-5 and KL-6, are resolved by story 5.5, with breaking changes. What KL-6's fix cannot
-check is stated at the end and belongs to KL-11 (host-supplied identifiers), which story 6.6 narrows to an opt-out.
+check is stated at the end and belongs to KL-11 (host-supplied identifiers), which story 6.6 narrows to an opt-out
+and story 7.3 narrows again, to what exposure cannot prove.
 
 - **KL-11, an independence key's inputs are verified (story 6.6).** `ExperienceLifecycleService.ApplyEvidenceAsync`,
   and so every attributed feedback submission, checks the identifiers before anything is computed or written, and
@@ -100,16 +101,44 @@ check is stated at the end and belongs to KL-11 (host-supplied identifiers), whi
   and spend `ConfidenceUpdate.AssessmentId` once per record — single use is the store's guarantee, which the
   PostgreSQL store makes and a store that ignores the field does not.
 
-  What remains, in the default mode: a run is proven *real and in scope*, not *exposed to the record*, so a caller
-  that can choose among real runs can cite one that never saw the lesson -- once per run per key, not once per call.
+  What remained after story 6.6, in the default mode: a run was proven *real and in scope*, not *exposed to the
+  record*, so a caller that can choose among real runs could cite one that never saw the lesson -- once per run per
+  key, not once per call. Story 7.3 (below) closes that part.
   Those runs are easy to find: every record in the scope names its `SourceRunId` and `ClosedRoundId`, a run counts
   whatever its own verification concluded (a failed or quarantined run's round vouches too), and a run the
   in-memory capture service holds stays known for as long as it is held. The round is the one the host closed at
-  finalization. A record written by hand through `CreateAsync` vouches for its own `SourceRunId` and
-  `ClosedRoundId`. Anyone with the key, or with code that calls the issuer, can mint. Verification runs before the
+  finalization. A record written by hand through `CreateAsync` vouched for its own `SourceRunId` and
+  `ClosedRoundId` (since 7.3, only if it is marked `Finalized`). Anyone with the key, or with code that calls the issuer, can mint. Verification runs before the
   store's replay check, so a lost-acknowledgement retry made after its token expired (or its key rotated, or its
   run stopped being known) is refused although the original landed, and a feedback retry then degrades and
   conflicts with its own stored row; retry within the token's lifetime.
+
+- **KL-11, evidence is bound to exposure (story 7.3).** After the checks above, the run must also have been *given*
+  the record: `ExperienceRun.Provenance.ExposedTo` (on the run's finalized record, or on the run the capture service
+  holds) must name it at a revision no later than the record's current one, or the submission is refused as
+  `NotExposed`. The same holds for machine and human evidence and for every attributed feedback record, because each
+  claims reusing the record helped or hurt that run; the machine evidence about a record's *own* quality is its source
+  run's evaluation, bound by finalization, and never passes through here. Exposure is recorded by
+  `IExperienceCaptureService.RecordExposure(runId, exposures)` — the MAF adapter's context provider calls it for what it
+  delivers — which keeps one entry per record at the earliest revision, is refused once the run is completed, and
+  stops at `RunExposure.MaxPerRun` (256). `StartRun` refuses a provenance that already carries exposures. Finalization
+  copies the provenance onto the record and sets `ExperienceRecord.Origin = Finalized`; a record under a run's
+  derived ID that a host wrote by hand is `HostWritten` (the default) and vouches for nothing (`HostWrittenRun`).
+  Every update Core submits carries `ConfidenceUpdate.Admission` (`Verified` or `HostTrusted`), `confidence.apply`
+  spans carry it, and `ExperienceLifecycleService.ReadConfidenceAsync(…, ConfidenceEvidenceFilter.ExcludeHostTrusted |
+  VerifiedOnly, …)` recomputes a score without the excluded evidence from the record's history.
+
+  **Breaking:** evidence about a run with no recorded exposure is refused by default — every run finalized before
+  this version, and every run captured without something calling `RecordExposure`; a record read back without an
+  origin is `HostWritten`; `IExperienceCaptureService` gains `RecordExposure` (a default interface method that
+  records nothing and returns `NotSupported`, so an existing implementation compiles but its runs are exposed to
+  nothing); `IndependenceRefusal` gains `NotExposed` and `HostWrittenRun`; and an `IExperienceRecordStore`
+  implementation must persist `Provenance.ExposedTo`, `ExperienceRecord.Origin` and `ConfidenceUpdate.Admission`.
+
+  What remains: delivered is not used — each run the library gave a lesson to is one key; a host that calls
+  `RecordExposure` for records it did not deliver, or marks a hand-written record `Finalized`, is believed; the round
+  is the `ClosedRound` the host passed to finalization; and the opt-out still trusts everything, excluded only when a
+  reader asks (the stored score retrieval ranks on still counts it).
 
 - **KL-5, evidence kind is default-deny.** `RequiredCheck(CheckId, ExpectedKind)` has no default for the kind. A
   check that accepts any kind says so with `RequiredCheck.AnyKind` (`"*"`); a null or blank kind is refused by

@@ -78,6 +78,38 @@ internal sealed class CaptureScope
     /// <summary>The run opened -- or continued -- for this invocation.</summary>
     internal Guid RunId { get; }
 
+    /// <summary>The agent this invocation's capture wraps: the inner agent the capture middleware delegates to.</summary>
+    internal AIAgent? Agent { get; private init; }
+
+    /// <summary>
+    /// Whether <paramref name="agent"/> -- the agent a context provider was invoked for -- is the agent this scope
+    /// captures, compared through the <see cref="ChatClientAgent"/> each resolves to, so a delegating wrapper and the
+    /// chat client agent it wraps are the same agent. A nested agent inherits this scope through the async flow but
+    /// is a different agent, and a <see langword="null"/> agent is never this one.
+    /// </summary>
+    internal bool Captures(AIAgent? agent)
+    {
+        if (agent is null || Agent is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(agent, Agent))
+        {
+            return true;
+        }
+
+        try
+        {
+            var captured = Agent.GetService<ChatClientAgent>();
+            return captured is not null && ReferenceEquals(captured, agent.GetService<ChatClientAgent>() ?? agent);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// When the run itself was opened. Equal to <see cref="StartedAt"/> for a run this invocation
     /// opened, and earlier than it for a run this invocation continued. The open-run duration bound
@@ -217,7 +249,7 @@ internal sealed class CaptureScope
         // A continued run's entry already carries its bound, and this leaves it as it is.
         registry.ArmAtOpen(claimed, runStartedAt);
 
-        var scope = new CaptureScope(service, options, registry, claimed, descriptor, runId, runStartedAt, startedAt, startTimestamp);
+        var scope = new CaptureScope(service, options, registry, claimed, descriptor, runId, runStartedAt, startedAt, startTimestamp) { Agent = agent };
 
         if (session is not null)
         {
@@ -739,6 +771,41 @@ internal sealed class CaptureScope
         catch (Exception ex)
         {
             ReportFailure(ExperienceCaptureFailureStage.ToolCall, $"Recording a tool call threw {ex.GetType().FullName}; the tool call is not recorded.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Records, on this invocation's run, that the context provider delivered <paramref name="exposures"/>
+    /// into it: identifiers and revisions only. Called by <c>ExperienceContextProvider</c> from inside the
+    /// invocation this scope captures. A refusal or a throw is reported once, at
+    /// <see cref="ExperienceCaptureFailureStage.RecordExposure"/>, and never reaches the invocation.
+    /// </summary>
+    /// <param name="exposures">The records delivered, each at the revision it was delivered at.</param>
+    internal void RecordExposures(IReadOnlyList<RunExposure> exposures)
+    {
+        if (exposures.Count == 0 || IsFinalized)
+        {
+            // A scope already finalizing has completed, or is completing, its run: its provenance is closed.
+            return;
+        }
+
+        try
+        {
+            var recorded = _service.RecordExposure(RunId, exposures);
+            if (recorded is null || recorded.Outcome is not (RecordExposureOutcome.Recorded or RecordExposureOutcome.DuplicateNoOp))
+            {
+                ReportFailure(
+                    ExperienceCaptureFailureStage.RecordExposure,
+                    $"RecordExposure returned {recorded?.Outcome.ToString() ?? "null"}; evidence about reusing the delivered records in this run will be refused as not exposed.",
+                    exception: null);
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(
+                ExperienceCaptureFailureStage.RecordExposure,
+                $"RecordExposure threw {ex.GetType().FullName}; evidence about reusing the delivered records in this run will be refused as not exposed.",
+                ex);
         }
     }
 

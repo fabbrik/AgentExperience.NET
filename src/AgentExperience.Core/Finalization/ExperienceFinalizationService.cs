@@ -558,6 +558,11 @@ public sealed class ExperienceFinalizationService
             // accepted only against this round.
             // An empty round ID names no round, so it vouches for none.
             ClosedRoundId = evaluation.Basis.ClosedRound is { RoundId: var round } && round != Guid.Empty ? round : null,
+
+            // The library derived this record from a run the capture service held, and the provenance above
+            // carries that run's exposures as the service recorded them. That is what confidence verification
+            // relies on; a record written any other way is HostWritten and vouches for no run.
+            Origin = ExperienceRecordOrigin.Finalized,
         };
 
         ExperienceRecordCreateResult created;

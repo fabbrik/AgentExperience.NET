@@ -436,14 +436,21 @@ public class VerifiedIndependenceTests
         // Run A produces the lesson; run B reuses it. Both are captured and finalized for real.
         var runA = world.StartCapturedRun(TestScope, complete: true);
         var finalizedA = await world.FinalizeAsync(runA, roundA);
-        var runB = world.StartCapturedRun(TestScope, complete: true);
+        Assert.Equal(FinalizationOutcome.Validated, finalizedA.Outcome);
+        var lesson = finalizedA.Record!.ExperienceId;
+
+        // Run B is given the lesson (as the context provider would record it), and finalization carries that
+        // exposure onto run B's record, marked as finalized.
+        var runB = world.StartCapturedRun(
+            TestScope, complete: true, exposures: [new RunExposure(lesson, world.Store.Find(lesson)!.Revision)]);
         var finalizedB = await world.FinalizeAsync(runB, roundB);
 
-        Assert.Equal(FinalizationOutcome.Validated, finalizedA.Outcome);
-        Assert.Equal(roundA, finalizedA.Record!.ClosedRoundId);
-        Assert.Equal(roundB, world.Store.Find(finalizedB.Record!.ExperienceId)!.ClosedRoundId);
-
-        var lesson = finalizedA.Record.ExperienceId;
+        Assert.Equal(roundA, finalizedA.Record.ClosedRoundId);
+        var storedB = world.Store.Find(finalizedB.Record!.ExperienceId)!;
+        Assert.Equal(roundB, storedB.ClosedRoundId);
+        Assert.Equal(ExperienceRecordOrigin.Finalized, storedB.Origin);
+        Assert.Contains(storedB.Provenance.ExposedTo, exposure => exposure.ExperienceId == lesson);
+        Assert.DoesNotContain(world.Store.Find(lesson)!.Provenance.ExposedTo, exposure => exposure.ExperienceId == lesson);
 
         // Machine: counted once for (run B, round B), recorded-not-counted for the same key again.
         var machine = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(runB, roundB, lesson), CancellationToken.None);
@@ -551,6 +558,7 @@ public class VerifiedIndependenceTests
         var world = new World();
         var second = Finalized(Guid.NewGuid(), TestScope, Guid.NewGuid());
         world.Store.Seed(second);
+        world.ExposeReuseRunTo(second);
         var partial = world.Issuer.Issue(Reviewer, TestScope, world.ReuseRun, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId]);
 
         var result = await world.Feedback.RecordAsync(
@@ -578,6 +586,7 @@ public class VerifiedIndependenceTests
         var world = new World();
         var second = Finalized(Guid.NewGuid(), TestScope, Guid.NewGuid()) with { Status = ExperienceStatus.Validated, SupportingValidations = 1, ReuseConfidence = 2d / 3d, Revision = 1 };
         world.Store.Seed(second);
+        world.ExposeReuseRunTo(second);
         var token = world.Issuer.Issue(
             Reviewer, TestScope, world.ReuseRun, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId, second.ExperienceId]);
         var assessment = new HumanReuseAssessment(
@@ -644,6 +653,373 @@ public class VerifiedIndependenceTests
 
         Assert.Equal(ReuseAttributionSource.ComparativeEvaluation, accepted.AttributionSource);
         Assert.True(Assert.Single(accepted.Exposures).Counted);
+    }
+
+    // ---- Exposure (story 7.3) ------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_real_run_that_was_never_exposed_to_the_record_is_refused_for_machine_and_human_evidence()
+    {
+        var world = new World();
+
+        // Run C is real, finalized here with a closed round -- and was never given the target lesson.
+        var unexposed = Guid.NewGuid();
+        var unexposedRound = Guid.NewGuid();
+        world.Store.Seed(Finalized(unexposed, TestScope, unexposedRound));
+
+        AssertRefused(
+            await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(unexposed, unexposedRound), CancellationToken.None),
+            IndependenceRefusal.NotExposed);
+
+        var token = world.Issuer.Issue(Reviewer, TestScope, unexposed, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId]);
+        AssertRefused(
+            await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Human(unexposed, token.Token), CancellationToken.None),
+            IndependenceRefusal.NotExposed);
+
+        // A captured run the capture service holds, exposed to another record only.
+        var held = world.StartCapturedRun(TestScope, exposeTarget: false, exposures: [new RunExposure(Guid.NewGuid(), 0)]);
+        var heldToken = world.Issuer.Issue(Reviewer, TestScope, held, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId]);
+        AssertRefused(
+            await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Human(held, heldToken.Token), CancellationToken.None),
+            IndependenceRefusal.NotExposed);
+
+        Assert.Empty(world.Store.Commits);
+        Assert.Equal(0, world.Store.EvidenceRows);
+
+        // The refused token was not spent: once that run is exposed it lands.
+        Assert.Equal(RecordExposureOutcome.Recorded, world.Capture.RecordExposure(held, [new RunExposure(world.Target.ExperienceId, world.Target.Revision)]).Outcome);
+        var landed = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Human(held, heldToken.Token), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, landed.Outcome);
+        Assert.True(landed.Counted);
+    }
+
+    [Fact]
+    public async Task An_exposed_run_is_admitted_once_per_independence_key_and_a_caller_choosing_among_runs_gets_one_key_per_exposed_run()
+    {
+        var world = new World();
+
+        // Five real runs in the scope; only run B (the world's reuse run) was given the lesson.
+        var others = Enumerable.Range(0, 5).Select(_ => (Run: Guid.NewGuid(), Round: Guid.NewGuid())).ToList();
+        foreach (var (run, round) in others)
+        {
+            world.Store.Seed(Finalized(run, TestScope, round));
+        }
+
+        var counted = 0;
+        foreach (var (run, round) in others.Append((world.ReuseRun, world.ReuseRound)))
+        {
+            var result = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(run, round), CancellationToken.None);
+            counted += result.Counted ? 1 : 0;
+        }
+
+        // And the exposed run a second time, under a fresh evidence ID: recorded, not counted.
+        var again = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+
+        Assert.Equal(1, counted);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, again.Outcome);
+        Assert.False(again.Counted);
+        Assert.Equal(ConfidenceEvidenceAdmission.Verified, again.Update!.Admission);
+        Assert.Equal(2, world.Store.Find(world.Target.ExperienceId)!.SupportingValidations);
+    }
+
+    [Fact]
+    public async Task Exposure_at_a_revision_after_the_one_the_evidence_is_computed_against_is_refused_and_an_earlier_one_admits()
+    {
+        var world = new World();
+
+        // A run whose exposure claims a revision five past the target's current one was given a version of the
+        // record that does not exist yet: refused, fail-closed.
+        var late = world.StartCapturedRun(TestScope, exposeTarget: false, exposures: [new RunExposure(world.Target.ExperienceId, world.Target.Revision + 5)]);
+        var lateToken = world.Issuer.Issue(Reviewer, TestScope, late, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId]);
+        var refused = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Human(late, lateToken.Token), CancellationToken.None);
+        AssertRefused(refused, IndependenceRefusal.NotExposed);
+        Assert.Contains("later", refused.Reason!, StringComparison.Ordinal);
+
+        // A run exposed at revision 0, before the current one, is still admitted after the record has moved on: the lesson is the
+        // same record, and a later revision of it is the same lesson.
+        var moved = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+        Assert.True(moved.Counted);
+        Assert.True(world.Store.Find(world.Target.ExperienceId)!.Revision > 0);
+
+        var early = world.StartCapturedRun(TestScope, exposeTarget: false, exposures: [new RunExposure(world.Target.ExperienceId, 0)]);
+        var earlyToken = world.Issuer.Issue(Reviewer, TestScope, early, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId]);
+        var admitted = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Human(early, earlyToken.Token), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, admitted.Outcome);
+        Assert.True(admitted.Counted);
+
+        // Once the record reaches the late run's claimed revision, the late exposure is no longer ahead of it.
+        world.Store.Seed(world.Store.Find(world.Target.ExperienceId)! with { Revision = world.Target.Revision + 5 });
+        var caughtUp = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Human(late, lateToken.Token), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, caughtUp.Outcome);
+    }
+
+    [Fact]
+    public async Task A_hand_written_record_under_a_runs_derived_id_vouches_for_nothing_until_marked_finalized()
+    {
+        var world = new World();
+
+        // Written through CreateAsync by a host, not by finalization: same derived ID, same round, even the
+        // exposure -- and the default origin, HostWritten.
+        var run = Guid.NewGuid();
+        var round = Guid.NewGuid();
+        var handWritten = Finalized(run, TestScope, round, new RunExposure(world.Target.ExperienceId, 0)) with { Origin = ExperienceRecordOrigin.HostWritten };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await world.Store.CreateAsync(Reviewer, handWritten, CancellationToken.None)).Outcome);
+
+        AssertRefused(
+            await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(run, round), CancellationToken.None),
+            IndependenceRefusal.HostWrittenRun);
+
+        var token = world.Issuer.Issue(Reviewer, TestScope, run, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId]);
+        var feedback = await world.Feedback.RecordAsync(
+            Reviewer,
+            Feedback(run, [world.Target.ExperienceId]) with { HumanAssessment = Assessment(token.AssessmentId, world.Target.ExperienceId, token.Token) },
+            CancellationToken.None);
+        Assert.Equal(ReuseAttributionSource.None, feedback.AttributionSource);
+        Assert.Contains("without finalization", feedback.Reason!, StringComparison.Ordinal);
+        Assert.Empty(world.Store.Commits);
+
+        // A record constructed with no origin at all is HostWritten: the default is the unverified one.
+        Assert.Equal(ExperienceRecordOrigin.HostWritten, (handWritten with { Origin = default }).Origin);
+
+        // The host that marks it finalized is making that statement itself -- and is then believed.
+        world.Store.Seed(handWritten with { Origin = ExperienceRecordOrigin.Finalized });
+        var believed = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(run, round), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, believed.Outcome);
+    }
+
+    [Fact]
+    public async Task Feedback_attributing_a_record_the_run_was_never_exposed_to_is_degraded_before_the_ledger()
+    {
+        var world = new World();
+        var second = Finalized(Guid.NewGuid(), TestScope, Guid.NewGuid()) with { Status = ExperienceStatus.Validated, SupportingValidations = 1, ReuseConfidence = 2d / 3d, Revision = 1 };
+        world.Store.Seed(second);
+
+        // Run B saw the target but not the second record.
+        var token = world.Issuer.Issue(
+            Reviewer, TestScope, world.ReuseRun, ConfidenceEvidenceKind.Supporting, [world.Target.ExperienceId, second.ExperienceId]);
+        var human = await world.Feedback.RecordAsync(
+            Reviewer,
+            Feedback(world.ReuseRun, [world.Target.ExperienceId, second.ExperienceId]) with
+            {
+                HumanAssessment = new HumanReuseAssessment(
+                    token.AssessmentId, ExperienceReuseBenefit.Improved, [world.Target.ExperienceId, second.ExperienceId], "helped", Now, AssessmentToken: token.Token),
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ReuseAttributionSource.None, human.AttributionSource);
+        Assert.Contains("exposed to", human.Reason!, StringComparison.Ordinal);
+
+        var comparative = await world.Feedback.RecordAsync(
+            Reviewer,
+            Feedback(world.ReuseRun, [second.ExperienceId]) with { ComparativeEvaluation = Comparative(world.ReuseRun, world.ReuseRound, second.ExperienceId) },
+            CancellationToken.None);
+
+        Assert.Equal(ReuseAttributionSource.None, comparative.AttributionSource);
+        Assert.Contains("exposed to", comparative.Reason!, StringComparison.Ordinal);
+        Assert.Empty(world.Store.Commits);
+    }
+
+    [Fact]
+    public async Task Opt_out_evidence_is_flagged_host_trusted_and_a_confidence_read_can_leave_it_out()
+    {
+        var world = new World();
+        var trusting = new ExperienceLifecycleService(
+            world.Store,
+            indexingService: null,
+            new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
+
+        // One verified machine key, and three host-trusted ones about runs nobody can vouch for.
+        var verified = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+        Assert.Equal(ConfidenceEvidenceAdmission.Verified, verified.Update!.Admission);
+        Assert.Equal(ConfidenceEvidenceAdmission.Verified, verified.Event!.Confidence!.Admission);
+
+        for (var i = 0; i < 3; i++)
+        {
+            var trusted = await trusting.ApplyEvidenceAsync(Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None);
+            Assert.True(trusted.Counted);
+            Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, trusted.Update!.Admission);
+        }
+
+        // And one contradiction the opt-out admitted, so both counters carry excludable evidence.
+        var contradicted = await trusting.ApplyEvidenceAsync(
+            Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()) with { Kind = ConfidenceEvidenceKind.Contradicting }, CancellationToken.None);
+        Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, contradicted.Update!.Admission);
+
+        var stored = world.Store.Find(world.Target.ExperienceId)!;
+        Assert.Equal(5, stored.SupportingValidations);
+        Assert.Equal(1, stored.Contradictions);
+
+        var all = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, all.Outcome);
+        Assert.Equal(stored.ReuseConfidence, all.Report!.ReuseConfidence);
+        Assert.Equal(new ConfidenceAdmissionCounts(1, 0), all.Report.Verified);
+        Assert.Equal(new ConfidenceAdmissionCounts(3, 1), all.Report.HostTrusted);
+        Assert.Equal(new ConfidenceAdmissionCounts(0, 0), all.Report.Unrecorded);
+
+        var excluded = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None);
+        Assert.Equal(2, excluded.Report!.SupportingValidations);
+        Assert.Equal(0, excluded.Report.Contradictions);
+        Assert.Equal(ReuseConfidenceHeuristic.Score(2, 0), excluded.Report.ReuseConfidence);
+        Assert.Equal(stored.ReuseConfidence, excluded.Report.StoredReuseConfidence);
+        Assert.Equal(stored.Revision, excluded.Report.Revision);
+
+        // Nothing moved: the read is a read.
+        Assert.Equal(stored, world.Store.Find(world.Target.ExperienceId));
+    }
+
+    [Fact]
+    public async Task Verified_only_also_leaves_out_evidence_stored_before_admission_was_recorded()
+    {
+        var world = new World();
+
+        // A counted update from before admission was recorded, as a store hands it back: no admission.
+        var legacy = await world.Store.CommitLifecycleEventAsync(
+            Reviewer,
+            TestScope,
+            new LifecycleEvent(
+                Guid.NewGuid(), world.Target.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, "legacy", "tests", Now, world.Target.Revision, null,
+                ReuseConfidenceHeuristic.Apply(world.Store.Find(world.Target.ExperienceId)!, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting,
+                    ConfidenceEvidenceSource.Machine, Guid.NewGuid(), Guid.NewGuid(), null, null)),
+            CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, legacy.Outcome);
+
+        var verified = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+        Assert.True(verified.Counted);
+
+        var keep = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None);
+        var strict = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.VerifiedOnly, CancellationToken.None);
+
+        Assert.Equal(new ConfidenceAdmissionCounts(1, 0), strict.Report!.Unrecorded);
+        Assert.Equal(3, keep.Report!.SupportingValidations);
+        Assert.Equal(2, strict.Report.SupportingValidations);
+        Assert.Equal(ReuseConfidenceHeuristic.Score(2, 0), strict.Report.ReuseConfidence);
+
+        // A record readable only through a grant has no history here to report.
+        world.Store.SharedByGrant.Add(world.Target.ExperienceId);
+        var shared = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.NotFound, shared.Outcome);
+        Assert.Null(shared.Report);
+
+        // A record its writer seeded by hand: its initial counters are its writer's statement, not verified evidence.
+        var seeded = Finalized(Guid.NewGuid(), TestScope, Guid.NewGuid()) with
+        {
+            Origin = ExperienceRecordOrigin.HostWritten,
+            Status = ExperienceStatus.Validated,
+            SupportingValidations = 500,
+            ReuseConfidence = ReuseConfidenceHeuristic.Score(500, 0),
+        };
+        world.Store.Seed(seeded);
+        var seededRead = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, seeded.ExperienceId, ConfidenceEvidenceFilter.VerifiedOnly, CancellationToken.None);
+        Assert.Equal(ExperienceRecordOrigin.HostWritten, seededRead.Report!.Origin);
+        Assert.Equal(new ConfidenceAdmissionCounts(500, 0), seededRead.Report.Initial);
+        Assert.Equal(0, seededRead.Report.SupportingValidations);
+        Assert.Equal(ReuseConfidenceHeuristic.Score(0, 0), seededRead.Report.ReuseConfidence);
+        Assert.Equal(500, (await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, seeded.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None)).Report!.SupportingValidations);
+
+        var invalid = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, Guid.Empty, (ConfidenceEvidenceFilter)9, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Invalid, invalid.Outcome);
+        Assert.Equal(2, invalid.Errors.Count);
+    }
+
+    [Fact]
+    public async Task A_replay_of_evidence_stored_before_admission_was_recorded_reports_none_and_tags_none()
+    {
+        using var probe = Diagnostics.TelemetryProbe.SpansOnly();
+        var world = new World();
+        var trusting = new ExperienceLifecycleService(
+            world.Store, indexingService: null, new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
+
+        // Stored as a store holding pre-0018 evidence would hand it back: no admission.
+        var request = world.Machine(Guid.NewGuid(), Guid.NewGuid());
+        var legacy = ReuseConfidenceHeuristic.Apply(
+            world.Store.Find(world.Target.ExperienceId)!, request.EvidenceId, request.Kind, request.Source, request.RunId, request.VerificationRoundId, null, null);
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await world.Store.CommitLifecycleEventAsync(
+            Reviewer,
+            TestScope,
+            new LifecycleEvent(Guid.NewGuid(), world.Target.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, "legacy", "tests", Now, world.Target.Revision, null, legacy),
+            CancellationToken.None)).Outcome);
+
+        // Resubmitted today, under the opt-out: the replay reports what was stored, and the span borrows nothing.
+        var replayed = await trusting.ApplyEvidenceAsync(Reviewer, request, CancellationToken.None);
+
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replayed.Outcome);
+        Assert.Null(replayed.Update!.Admission);
+        var span = Assert.Single(
+            probe.LibraryActivities,
+            activity => activity.GetTagItem("agentexperience.event_id") as string == request.EventId.ToString("D"));
+        Assert.Null(span.GetTagItem("agentexperience.confidence.admission"));
+    }
+
+    [Fact]
+    public void Provenance_compares_its_exposures_by_value_not_by_reference()
+    {
+        var id = Guid.NewGuid();
+        var written = new Provenance("tests", "1", Now, "c") { ExposedTo = [new RunExposure(id, 2)] };
+        var readBack = new Provenance("tests", "1", Now, "c") { ExposedTo = new List<RunExposure> { new(id, 2) } };
+
+        Assert.Equal(written, readBack);
+        Assert.Equal(written.GetHashCode(), readBack.GetHashCode());
+        Assert.NotEqual(written, readBack with { ExposedTo = [new RunExposure(id, 3)] });
+        Assert.NotEqual(written, readBack with { ExposedTo = [] });
+        Assert.NotEqual(written, readBack with { CorrelationId = "d" });
+    }
+
+    [Fact]
+    public void The_capture_service_keeps_the_earliest_revision_once_per_record_and_closes_exposure_with_the_run()
+    {
+        var world = new World();
+        var run = world.StartCapturedRun(TestScope, exposeTarget: false);
+        var a = new Guid("00000000-0000-0000-0000-00000000000a");
+        var b = new Guid("00000000-0000-0000-0000-00000000000b");
+
+        Assert.Equal(RecordExposureOutcome.Recorded, world.Capture.RecordExposure(run, [new RunExposure(b, 4), new RunExposure(a, 2)]).Outcome);
+        Assert.Equal(RecordExposureOutcome.DuplicateNoOp, world.Capture.RecordExposure(run, [new RunExposure(a, 3)]).Outcome);
+        Assert.Equal(RecordExposureOutcome.Recorded, world.Capture.RecordExposure(run, [new RunExposure(b, 1)]).Outcome);
+
+        Assert.True(world.Capture.TryGetRun(run, out var captured));
+        Assert.Equal([new RunExposure(a, 2), new RunExposure(b, 1)], captured.Provenance.ExposedTo);
+
+        // Invalid input throws; an unknown run is a typed outcome; so is capacity, all-or-nothing.
+        Assert.Throws<ArgumentException>(() => world.Capture.RecordExposure(run, [new RunExposure(Guid.Empty, 0)]));
+        Assert.Throws<ArgumentException>(() => world.Capture.RecordExposure(run, [new RunExposure(a, -1)]));
+        Assert.Throws<ArgumentNullException>(() => world.Capture.RecordExposure(run, null!));
+        Assert.Equal(RecordExposureOutcome.RunNotFound, world.Capture.RecordExposure(Guid.NewGuid(), [new RunExposure(a, 0)]).Outcome);
+
+        var tooMany = Enumerable.Range(0, RunExposure.MaxPerRun).Select(_ => new RunExposure(Guid.NewGuid(), 0)).ToArray();
+        Assert.Equal(RecordExposureOutcome.CapacityExceeded, world.Capture.RecordExposure(run, tooMany).Outcome);
+        Assert.True(world.Capture.TryGetRun(run, out captured));
+        Assert.Equal(2, captured.Provenance.ExposedTo.Count);
+
+        // A run starts exposed to nothing: a host cannot pre-seed exposure through StartRun -- not even by handing
+        // it an empty list it fills in afterwards.
+        var later = new List<RunExposure>();
+        var normalized = Guid.NewGuid();
+        Assert.Equal(StartRunOutcome.Started, world.Capture.StartRun(
+            normalized, "task-1", null, TestScope,
+            new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
+            new Provenance("tests", null, Now, null) { ExposedTo = later },
+            Now).Outcome);
+        later.Add(new RunExposure(a, 0));
+        Assert.True(world.Capture.TryGetRun(normalized, out var normalizedRun));
+        Assert.Empty(normalizedRun.Provenance.ExposedTo);
+
+        Assert.Throws<ArgumentException>(() => world.Capture.StartRun(
+            Guid.NewGuid(), "task-1", null, TestScope,
+            new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
+            new Provenance("tests", null, Now, null) { ExposedTo = [new RunExposure(a, 0)] },
+            Now));
+
+        // Completion closes it: finalization may already have copied the provenance.
+        var completed = world.StartCapturedRun(TestScope, complete: true, exposeTarget: false);
+        Assert.Equal(RecordExposureOutcome.Conflict, world.Capture.RecordExposure(completed, [new RunExposure(a, 0)]).Outcome);
+    }
+
+    [Fact]
+    public void A_capture_service_written_before_exposure_existed_records_none()
+    {
+        IExperienceCaptureService legacy = new LegacyCaptureService();
+
+        Assert.Equal(RecordExposureOutcome.NotSupported, legacy.RecordExposure(Guid.NewGuid(), [new RunExposure(Guid.NewGuid(), 0)]).Outcome);
     }
 
     // ---- The issuer and the options ------------------------------------------------------------------
@@ -747,6 +1123,7 @@ public class VerifiedIndependenceTests
         var run = Guid.NewGuid();
         Assert.Equal(StartRunOutcome.Started, capture.StartRun(
             run, "task-1", null, TestScope, new EnvironmentFingerprint("h", "r", "o", null, new Dictionary<string, string>()), new Provenance("t", null, Now, null), Now).Outcome);
+        Assert.Equal(RecordExposureOutcome.Recorded, capture.RecordExposure(run, [new RunExposure(target.ExperienceId, target.Revision)]).Outcome);
 
         var token = issuer.Issue(Reviewer, TestScope, run, ConfidenceEvidenceKind.Supporting, [target.ExperienceId]);
         var applied = await lifecycle.ApplyEvidenceAsync(
@@ -793,7 +1170,7 @@ public class VerifiedIndependenceTests
         ObservedAt: Now);
 
     /// <summary>A record as finalization would have left it for <paramref name="runId"/> in <paramref name="scope"/>.</summary>
-    private static ExperienceRecord Finalized(Guid runId, Scope scope, Guid? closedRound) => new(
+    private static ExperienceRecord Finalized(Guid runId, Scope scope, Guid? closedRound, params RunExposure[] exposedTo) => new(
         ExperienceId: ExperienceFinalizationService.ExperienceIdFor(runId, scope),
         SourceRunId: runId,
         Scope: scope,
@@ -804,7 +1181,7 @@ public class VerifiedIndependenceTests
         CompletionScore: 1,
         Reflection: null,
         Environment: new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
-        Provenance: new Provenance("tests", null, Now, null),
+        Provenance: new Provenance("tests", null, Now, null) { ExposedTo = exposedTo },
         Status: ExperienceStatus.Quarantined,
         ReuseConfidence: 0,
         SupportingValidations: 0,
@@ -814,6 +1191,7 @@ public class VerifiedIndependenceTests
         UpdatedAt: Now)
     {
         ClosedRoundId = closedRound,
+        Origin = ExperienceRecordOrigin.Finalized,
     };
 
     /// <summary>
@@ -837,7 +1215,7 @@ public class VerifiedIndependenceTests
                 ReuseConfidence = 2d / 3d,
                 SupportingValidations = 1,
             };
-            ReuseRecord = Finalized(ReuseRun, TestScope, ReuseRound);
+            ReuseRecord = Finalized(ReuseRun, TestScope, ReuseRound, new RunExposure(Target.ExperienceId, 0));
 
             if (seedTarget)
             {
@@ -866,7 +1244,20 @@ public class VerifiedIndependenceTests
 
         public Guid ReuseRound { get; } = Guid.NewGuid();
 
-        public ExperienceRecord ReuseRecord { get; }
+        public ExperienceRecord ReuseRecord { get; private set; }
+
+        /// <summary>Re-seeds run B's record as also having been exposed to <paramref name="others"/>, at revision 0.</summary>
+        public void ExposeReuseRunTo(params ExperienceRecord[] others)
+        {
+            ReuseRecord = ReuseRecord with
+            {
+                Provenance = ReuseRecord.Provenance with
+                {
+                    ExposedTo = [.. ReuseRecord.Provenance.ExposedTo, .. others.Select(other => new RunExposure(other.ExperienceId, 0))],
+                },
+            };
+            Store.Seed(ReuseRecord);
+        }
 
         public ApplyConfidenceEvidenceRequest Machine(Guid runId, Guid roundId, Guid? experienceId = null) => new(
             EventId: Guid.NewGuid(),
@@ -889,7 +1280,12 @@ public class VerifiedIndependenceTests
                 AssessmentToken = token,
             };
 
-        public Guid StartCapturedRun(Scope scope, bool complete = false)
+        /// <summary>
+        /// Starts a captured run and, unless <paramref name="exposeTarget"/> is <see langword="false"/>, records
+        /// that the library delivered the target lesson into it at its current revision -- what the MAF
+        /// adapter's context provider does when it injects it.
+        /// </summary>
+        public Guid StartCapturedRun(Scope scope, bool complete = false, bool exposeTarget = true, IReadOnlyList<RunExposure>? exposures = null)
         {
             var runId = Guid.NewGuid();
             Assert.Equal(StartRunOutcome.Started, Capture.StartRun(
@@ -900,6 +1296,18 @@ public class VerifiedIndependenceTests
                 new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
                 new Provenance("tests", null, Now, null),
                 Now).Outcome);
+
+            if (exposeTarget)
+            {
+                Assert.Equal(
+                    RecordExposureOutcome.Recorded,
+                    Capture.RecordExposure(runId, [new RunExposure(Target.ExperienceId, Target.Revision)]).Outcome);
+            }
+
+            if (exposures is { Count: > 0 })
+            {
+                Assert.Equal(RecordExposureOutcome.Recorded, Capture.RecordExposure(runId, exposures).Outcome);
+            }
 
             if (complete)
             {
@@ -925,6 +1333,25 @@ public class VerifiedIndependenceTests
                 CurrentArtifactRevision: "rev-1",
                 StorageDecision: StorageDecision.Permit,
                 FinalizedAt: Now.AddMinutes(2)));
+    }
+
+    /// <summary>A capture service that implements only the port as it stood before exposure existed.</summary>
+    private sealed class LegacyCaptureService : IExperienceCaptureService
+    {
+        public StartRunResult StartRun(Guid runId, string taskId, string? taskDescription, Scope scope, EnvironmentFingerprint environment, Provenance provenance, DateTimeOffset startedAt) =>
+            throw new NotSupportedException();
+
+        public Task<AppendAttemptResult> AppendAttemptAsync(Guid runId, AppendAttemptRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<CompleteRunResult> CompleteRunAsync(Guid runId, Guid completionEventId, RunExecutionStatus executionStatus, DateTimeOffset endedAt, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public bool TryGetRun(Guid runId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ExperienceRun? run)
+        {
+            run = null;
+            return false;
+        }
     }
 
     private sealed class MutableClock(DateTimeOffset now) : TimeProvider
@@ -1068,14 +1495,36 @@ public class VerifiedIndependenceTests
             };
             _evidence[update.EvidenceId] = (id, update, revision, lifecycleEvent.CurrentStatus);
             Commits.Add(lifecycleEvent);
+            _history.Add(new StoredLifecycleEvent(lifecycleEvent, Now, revision));
             return Done(new(ExperienceStoreOutcome.Committed, revision, null, [], update));
         }
 
         public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        /// <summary>The events that moved a record, each with the revision it produced, as a store's history holds them.</summary>
+        private readonly List<StoredLifecycleEvent> _history = [];
+
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken)
+        {
+            if (!_records.TryGetValue(query.ExperienceId, out var record) || record.Scope != query.Scope)
+            {
+                return Task.FromResult(new ExperienceRecordHistoryResult(ExperienceStoreOutcome.NotFound, 0, [], []));
+            }
+
+            // A page of two, so a history longer than that is walked through its cursor.
+            var events = _history
+                .Where(stored => stored.Event.ExperienceRecordId == query.ExperienceId && stored.AppliedRevision > (query.StartAfterRevision ?? -1))
+                .OrderBy(stored => stored.AppliedRevision)
+                .ToList();
+            var page = events.Take(2).ToList();
+            return Task.FromResult(new ExperienceRecordHistoryResult(
+                ExperienceStoreOutcome.Found,
+                record.Revision,
+                page,
+                [],
+                events.Count > page.Count ? page[^1].AppliedRevision : null));
+        }
 
         public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(
             AuthorizationContext authorization,

@@ -134,6 +134,7 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     private readonly List<ExperienceCandidate> _indexed = [];
     private readonly Dictionary<Guid, ExperienceRecord> _stored = [];
     private readonly HashSet<Guid> _events = [];
+    private readonly HashSet<(Guid, string)> _countedKeys = [];
     private readonly List<Guid> _reads = [];
     private readonly List<ExperienceReadOptions> _readOptions = [];
 
@@ -654,15 +655,27 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
                 return Task.FromResult(new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Committed, record.Revision, null, []));
             }
 
+            // Confidence evidence counts once per independence key, as the real store's partial unique index
+            // decides it; a taken key is recorded and moves nothing.
+            if (lifecycleEvent.Confidence is { } update
+                && !_countedKeys.Add((record.ExperienceId, AgentExperience.Core.Confidence.ReuseConfidenceHeuristic.IndependenceKeyFor(update).Value)))
+            {
+                return Task.FromResult(new ExperienceLifecycleCommitResult(
+                    ExperienceStoreOutcome.Committed, record.Revision, record.Status, [], update.AsRecordedOnly()));
+            }
+
             var applied = lifecycleEvent.ExpectedRevision + 1;
             _stored[record.ExperienceId] = record with
             {
                 Status = lifecycleEvent.CurrentStatus,
                 Revision = applied,
                 UpdatedAt = lifecycleEvent.OccurredAt,
+                ReuseConfidence = lifecycleEvent.Confidence?.NewReuseConfidence ?? record.ReuseConfidence,
+                SupportingValidations = lifecycleEvent.Confidence?.NewSupportingValidations ?? record.SupportingValidations,
+                Contradictions = lifecycleEvent.Confidence?.NewContradictions ?? record.Contradictions,
             };
 
-            return Task.FromResult(new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Committed, applied, null, []));
+            return Task.FromResult(new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Committed, applied, null, [], lifecycleEvent.Confidence));
         }
     }
 

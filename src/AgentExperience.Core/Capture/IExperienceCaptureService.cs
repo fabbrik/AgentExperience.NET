@@ -97,7 +97,7 @@ public interface IExperienceCaptureService
     /// <param name="taskDescription">Optional human-readable description of the task. Not sanitized by this service (Story 1.2 scopes sanitization to tool-call/attempt content only).</param>
     /// <param name="scope">The tenancy/ownership scope this run belongs to.</param>
     /// <param name="environment">The runtime environment this run executes in.</param>
-    /// <param name="provenance">Where this run's capture originates.</param>
+    /// <param name="provenance">Where this run's capture originates. Its <see cref="Provenance.ExposedTo"/> must be empty (an <see cref="ArgumentException"/> otherwise): exposure is recorded through <see cref="RecordExposure"/>, never claimed up front.</param>
     /// <param name="startedAt">When the run started.</param>
     StartRunResult StartRun(
         Guid runId,
@@ -158,4 +158,37 @@ public interface IExperienceCaptureService
 
     /// <summary>Reads back the current, in-memory snapshot of a run, if it exists.</summary>
     bool TryGetRun(Guid runId, [NotNullWhen(true)] out ExperienceRun? run);
+
+    /// <summary>
+    /// Records that stored records were delivered into a still-open run, in the run's
+    /// <see cref="Provenance.ExposedTo"/>: identifiers and revisions only, never content. Finalization copies
+    /// it onto the run's record, and confidence evidence about reusing a record in this run is admitted only
+    /// when the run was exposed to it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One entry per record: a record already held keeps the <em>earliest</em> revision it was delivered at,
+    /// and the list stays ordered by record ID. A call is all-or-nothing: past
+    /// <see cref="RunExposure.MaxPerRun"/> distinct records it records none of its exposures
+    /// (<see cref="RecordExposureOutcome.CapacityExceeded"/>), and after the run is completed it is refused
+    /// (<see cref="RecordExposureOutcome.Conflict"/>), because finalization may already have copied it.
+    /// </para>
+    /// <para>
+    /// <b>This is the library's statement that it delivered these records, so call it only from code that
+    /// did.</b> The MAF adapter's context provider calls it for what it injects. A host that calls it for
+    /// records it did not deliver is making its own statement, and a caller that lets agent output reach it
+    /// hands the agent the exposure it would need to name any run.
+    /// </para>
+    /// <para>
+    /// The default implementation records nothing and returns <see cref="RecordExposureOutcome.NotSupported"/>,
+    /// so an implementation written before exposure existed still compiles; its runs are exposed to nothing.
+    /// </para>
+    /// </remarks>
+    /// <param name="runId">The run the records were delivered into.</param>
+    /// <param name="exposures">The records, each at the revision it was delivered at. No empty record ID, no negative revision.</param>
+    /// <returns>What happened.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="exposures"/> or an element of it is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An exposure names <see cref="Guid.Empty"/> or a negative revision.</exception>
+    RecordExposureResult RecordExposure(Guid runId, IReadOnlyList<RunExposure> exposures) =>
+        new(RecordExposureOutcome.NotSupported, "This capture service does not record exposure.");
 }

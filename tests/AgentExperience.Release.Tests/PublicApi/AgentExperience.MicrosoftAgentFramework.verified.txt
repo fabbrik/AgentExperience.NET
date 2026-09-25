@@ -21,6 +21,7 @@
         Finalize = 2,
         ToolCall = 3,
         Finalization = 4,
+        RecordExposure = 5,
     }
     public sealed class ExperienceCaptureOptions
     {

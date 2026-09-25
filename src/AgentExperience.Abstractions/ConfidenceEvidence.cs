@@ -72,7 +72,9 @@ public enum ConfidenceEvidenceSource
 /// The run the reuse was observed in. Never <see cref="ExperienceRecord.SourceRunId"/>, which is the run
 /// the record came from. Core verifies it before a store sees it (unless the host opted out): it must be a
 /// run the library knows in the record's scope -- one finalized into a record there, or one the capture
-/// service holds -- so a caller that invents one is refused rather than handed a fresh independence key.
+/// service holds -- so a caller that invents one is refused rather than handed a fresh independence key. It must also
+/// have been exposed to the record: its provenance (<see cref="Provenance.ExposedTo"/>) must name the record at or
+/// before the revision the evidence is computed against.
 /// </param>
 /// <param name="VerificationRoundId">
 /// The verification round the observation came from. Required for
@@ -148,4 +150,38 @@ public sealed record ConfidenceUpdate(
     /// <see cref="AssessmentIdPath"/>.
     /// </remarks>
     public Guid? AssessmentId { get; init; }
+
+    /// <summary>
+    /// How this evidence was admitted: <see cref="ConfidenceEvidenceAdmission.Verified"/> when Core checked
+    /// its run, exposure, round or assessment against what the library knows, and
+    /// <see cref="ConfidenceEvidenceAdmission.HostTrusted"/> when the host had opted out of verification and
+    /// its identifiers were taken as given. <see langword="null"/> when no admission was recorded: evidence stored
+    /// before this existed, an update written to a store by something other than Core, or a store that does not
+    /// persist it.
+    /// </summary>
+    /// <remarks>
+    /// Core sets it on every update it submits, and a store persists it exactly as given and never derives
+    /// one. It is deliberately not part of a replay's content comparison: resubmitting an evidence ID
+    /// reports the admission the original was stored with. A confidence read can leave host-trusted
+    /// evidence out (<c>ExperienceLifecycleService.ReadConfidenceAsync</c>).
+    /// </remarks>
+    public ConfidenceEvidenceAdmission? Admission { get; init; }
+}
+
+/// <summary>
+/// Which verification mode admitted one piece of confidence evidence.
+/// </summary>
+public enum ConfidenceEvidenceAdmission
+{
+    /// <summary>
+    /// Core verified the evidence's independence key: a run known in the record's scope and exposed to the
+    /// record, the round finalization closed for it, or a library-minted assessment token.
+    /// </summary>
+    Verified,
+
+    /// <summary>
+    /// The host had opted out (<c>IndependenceVerification.TrustHostSuppliedIdentifiers</c>): only the
+    /// own-run rule was checked, and every other identifier was taken as given.
+    /// </summary>
+    HostTrusted,
 }

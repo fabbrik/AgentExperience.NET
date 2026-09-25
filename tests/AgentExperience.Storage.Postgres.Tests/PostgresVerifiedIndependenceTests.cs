@@ -79,7 +79,7 @@ public sealed class PostgresVerifiedIndependenceTests
         var (auth, scope) = (Authorize(tenant), Scope(tenant));
         var roundB = Guid.NewGuid();
         var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
-        var reuse = await FinalizeAsync(auth, scope, roundB);
+        var reuse = await FinalizeAsync(auth, scope, roundB, exposedTo: [lesson.ExperienceId]);
 
         var refusals = new (ApplyConfidenceEvidenceRequest Request, IndependenceRefusal Refusal)[]
         {
@@ -117,7 +117,7 @@ public sealed class PostgresVerifiedIndependenceTests
         var reviewer = auth with { PrincipalId = "reviewer-2" };
         var roundB = Guid.NewGuid();
         var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
-        var reuse = await FinalizeAsync(auth, scope, roundB);
+        var reuse = await FinalizeAsync(auth, scope, roundB, exposedTo: [lesson.ExperienceId]);
 
         var machine = await Apply(auth, Machine(scope, lesson.ExperienceId, reuse.RunId, roundB));
         var machineAgain = await Apply(auth, Machine(scope, lesson.ExperienceId, reuse.RunId, roundB));
@@ -149,7 +149,7 @@ public sealed class PostgresVerifiedIndependenceTests
         var tenant = NewTenant();
         var (auth, scope) = (Authorize(tenant), Scope(tenant));
         var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
-        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid(), exposedTo: [lesson.ExperienceId]);
 
         var token = _issuer.Issue(auth, scope, reuse.RunId, ConfidenceEvidenceKind.Supporting, [lesson.ExperienceId]);
         var request = Human(scope, lesson.ExperienceId, reuse.RunId, token.Token);
@@ -174,7 +174,7 @@ public sealed class PostgresVerifiedIndependenceTests
         var tenant = NewTenant();
         var (auth, scope) = (Authorize(tenant), Scope(tenant));
         var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
-        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid(), exposedTo: [lesson.ExperienceId]);
 
         var first = _issuer.Issue(auth, scope, reuse.RunId, ConfidenceEvidenceKind.Supporting, [lesson.ExperienceId]);
         var second = _issuer.Issue(auth, scope, reuse.RunId, ConfidenceEvidenceKind.Supporting, [lesson.ExperienceId]);
@@ -272,7 +272,7 @@ public sealed class PostgresVerifiedIndependenceTests
         var tenant = NewTenant();
         var (auth, scope) = (Authorize(tenant), Scope(tenant));
         var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
-        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid(), exposedTo: [lesson.ExperienceId]);
         var token = _issuer.Issue(auth, scope, reuse.RunId, ConfidenceEvidenceKind.Supporting, [lesson.ExperienceId]);
 
         var submission = new ExperienceReuseFeedback(
@@ -297,6 +297,177 @@ public sealed class PostgresVerifiedIndependenceTests
 
         Assert.Equal(1, await CountEvidenceAsync(lesson.ExperienceId));
         Assert.Equal(2, (await _store.GetAsync(auth, scope, lesson.ExperienceId, CancellationToken.None)).Record!.SupportingValidations);
+    }
+
+    // ---- Story 7.3: exposure-bound evidence, admission ------------------------------------------------
+
+    [Fact]
+    public async Task Exposure_and_origin_survive_finalization_and_the_store_and_an_unexposed_run_is_refused()
+    {
+        var tenant = NewTenant();
+        var (auth, scope) = (Authorize(tenant), Scope(tenant));
+        var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var exposed = await FinalizeAsync(auth, scope, Guid.NewGuid(), exposedTo: [lesson.ExperienceId]);
+        var unexposed = await FinalizeAsync(auth, scope, Guid.NewGuid());
+
+        var readExposed = (await _store.GetAsync(auth, scope, exposed.ExperienceId, CancellationToken.None)).Record!;
+        var readLesson = (await _store.GetAsync(auth, scope, lesson.ExperienceId, CancellationToken.None)).Record!;
+
+        Assert.Equal(ExperienceRecordOrigin.Finalized, readExposed.Origin);
+        Assert.Equal([new RunExposure(lesson.ExperienceId, 1)], readExposed.Provenance.ExposedTo);
+        Assert.Empty(readLesson.Provenance.ExposedTo);
+
+        // Identifiers only: in crypto-shredding mode they are inside the seal, never beside it.
+        Assert.Equal(!EncryptionMode.IsOn, await PayloadTextContainsAsync(exposed.ExperienceId, lesson.ExperienceId.ToString("D")));
+
+        var refused = await Apply(auth, Machine(scope, lesson.ExperienceId, unexposed.RunId, unexposed.RoundId!.Value));
+        Assert.Equal(ConfidenceUpdateOutcome.Unverified, refused.Outcome);
+        Assert.Equal(IndependenceRefusal.NotExposed, refused.Refusal);
+        Assert.Equal(0, await CountEvidenceAsync(lesson.ExperienceId));
+
+        var admitted = await Apply(auth, Machine(scope, lesson.ExperienceId, exposed.RunId, exposed.RoundId!.Value));
+        Assert.True(admitted.Counted);
+    }
+
+    [Fact]
+    public async Task A_record_written_by_hand_under_a_runs_derived_id_reads_back_host_written_and_vouches_for_nothing()
+    {
+        var tenant = NewTenant();
+        var (auth, scope) = (Authorize(tenant), Scope(tenant));
+        var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var run = Guid.NewGuid();
+        var round = Guid.NewGuid();
+
+        var handWritten = Minimal(scope, ExperienceFinalizationService.ExperienceIdFor(run, scope)) with
+        {
+            SourceRunId = run,
+            ClosedRoundId = round,
+            Provenance = new Provenance("host", null, PayloadTime, null) { ExposedTo = [new RunExposure(lesson.ExperienceId, 0)] },
+        };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, handWritten, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceRecordOrigin.HostWritten, (await _store.GetAsync(auth, scope, handWritten.ExperienceId, CancellationToken.None)).Record!.Origin);
+
+        var refused = await Apply(auth, Machine(scope, lesson.ExperienceId, run, round));
+        Assert.Equal(IndependenceRefusal.HostWrittenRun, refused.Refusal);
+
+        // The store refuses a malformed exposure list like any other malformed field.
+        var invalid = await _store.CreateAsync(
+            auth,
+            Minimal(scope) with { Provenance = new Provenance("host", null, PayloadTime, null) { ExposedTo = [new RunExposure(Guid.Empty, -1)] } },
+            CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Invalid, invalid.Outcome);
+        Assert.Contains(invalid.Errors, error => error.Path.StartsWith("Provenance.ExposedTo", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Admission_is_stored_on_the_ledger_and_the_event_and_a_confidence_read_can_leave_host_trusted_evidence_out()
+    {
+        var tenant = NewTenant();
+        var (auth, scope) = (Authorize(tenant), Scope(tenant));
+        var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid(), exposedTo: [lesson.ExperienceId]);
+
+        var verified = await Apply(auth, Machine(scope, lesson.ExperienceId, reuse.RunId, reuse.RoundId!.Value));
+        var trusted = await TrustingLifecycle(_store).ApplyEvidenceAsync(
+            auth, Machine(scope, lesson.ExperienceId, Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None);
+        Assert.True(verified.Counted);
+        Assert.True(trusted.Counted);
+        Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, trusted.Update!.Admission);
+
+        Assert.Equal("Verified", await ReadAdmissionAsync("confidence_evidence", "admission", "evidence_id", verified.Update!.EvidenceId));
+        Assert.Equal("HostTrusted", await ReadAdmissionAsync("confidence_evidence", "admission", "evidence_id", trusted.Update.EvidenceId));
+        Assert.Equal("HostTrusted", await ReadAdmissionAsync("lifecycle_events", "confidence_admission", "confidence_evidence_id", trusted.Update.EvidenceId));
+
+        // A replay reports the admission the original was stored with.
+        var replayed = await TrustingLifecycle(_store).ApplyEvidenceAsync(
+            auth, Machine(scope, lesson.ExperienceId, reuse.RunId, reuse.RoundId.Value) with { EventId = verified.Event!.EventId, EvidenceId = verified.Update.EvidenceId },
+            CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replayed.Outcome);
+        Assert.Equal(ConfidenceEvidenceAdmission.Verified, replayed.Update!.Admission);
+
+        var history = await _store.GetFirstHistoryPageAsync(auth, scope, lesson.ExperienceId, CancellationToken.None);
+        Assert.Contains(history.Events, stored => stored.Event.Confidence?.Admission == ConfidenceEvidenceAdmission.Verified);
+        Assert.Contains(history.Events, stored => stored.Event.Confidence?.Admission == ConfidenceEvidenceAdmission.HostTrusted);
+
+        var read = await _lifecycle.ReadConfidenceAsync(auth, scope, lesson.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
+        Assert.Equal(3, read.Report!.StoredSupportingValidations);
+        Assert.Equal(2, read.Report.SupportingValidations);
+        Assert.Equal(new ConfidenceAdmissionCounts(1, 0), read.Report.HostTrusted);
+        Assert.Equal(ReuseConfidenceHeuristic.Score(2, 0), read.Report.ReuseConfidence);
+    }
+
+    [Fact]
+    public async Task The_database_refuses_an_unknown_admission_and_the_application_role_cannot_relabel_one()
+    {
+        var tenant = NewTenant();
+        var (auth, scope) = (Authorize(tenant), Scope(tenant));
+        var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var trusted = await TrustingLifecycle(_store).ApplyEvidenceAsync(
+            auth, Machine(scope, lesson.ExperienceId, Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None);
+
+        await using (var insert = _fixture.DataSource.CreateCommand(
+            "INSERT INTO agent_experience.confidence_evidence (evidence_id, experience_id, event_id, kind, source, " +
+            "run_id, verification_round_id, reviewer_identity, counted, rule_version, recorded_at, applied_revision, " +
+            "applied_status, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
+            "new_supporting_validations, prior_contradictions, new_contradictions, admission) " +
+            "VALUES (gen_random_uuid(), @experience_id, NULL, 'Supporting', 'Machine', gen_random_uuid(), " +
+            "gen_random_uuid(), NULL, false, '1.0.0', now(), 1, 'Validated', 2.0/3.0, 2.0/3.0, 1, 1, 0, 0, 'Trusted')"))
+        {
+            insert.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", lesson.ExperienceId));
+            var ex = await Assert.ThrowsAsync<PostgresException>(() => insert.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
+            Assert.Equal("confidence_evidence_admission_known", ex.ConstraintName);
+        }
+
+        // Host-trusted evidence cannot be relabelled as verified after the fact, on either ledger.
+        foreach (var (table, column, key) in new[] { ("confidence_evidence", "admission", "evidence_id"), ("lifecycle_events", "confidence_admission", "confidence_evidence_id") })
+        {
+            await using var relabel = _fixture.DataSource.CreateCommand(
+                $"UPDATE agent_experience.{table} SET {column} = 'Verified' WHERE {key} = @id");
+            relabel.Parameters.Add(new NpgsqlParameter<Guid>("id", trusted.Update!.EvidenceId));
+            var refused = await Assert.ThrowsAsync<PostgresException>(() => relabel.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, refused.SqlState);
+        }
+
+        // The event ledger's own CHECK, proven as the owner (so no privilege is what refuses it): an unknown
+        // admission, and an admission on an event that carries no confidence update, are both refused.
+        foreach (var (admission, keepEvidence) in new[] { ("Trusted", true), ("Verified", false) })
+        {
+            await using var copy = _fixture.OwnerDataSource.CreateCommand(
+                "INSERT INTO agent_experience.lifecycle_events SELECT (jsonb_populate_record(e, jsonb_build_object(" +
+                "'event_id', gen_random_uuid(), 'expected_revision', e.expected_revision + 1000, 'applied_revision', e.applied_revision + 1000, 'confidence_admission', @admission" +
+                "))).* FROM agent_experience.lifecycle_events e WHERE e.confidence_evidence_id = @id");
+            copy.Parameters.Add(new NpgsqlParameter<string>("admission", admission));
+            copy.Parameters.Add(new NpgsqlParameter<Guid>("id", trusted.Update!.EvidenceId));
+            if (!keepEvidence)
+            {
+                copy.CommandText = copy.CommandText.Replace("'confidence_admission', @admission", "'confidence_admission', @admission, 'confidence_evidence_id', NULL", StringComparison.Ordinal);
+            }
+
+            var ex = await Assert.ThrowsAsync<PostgresException>(() => copy.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
+            Assert.Equal("lifecycle_events_confidence_admission_known", ex.ConstraintName);
+        }
+
+        Assert.Equal("HostTrusted", await ReadAdmissionAsync("confidence_evidence", "admission", "evidence_id", trusted.Update!.EvidenceId));
+    }
+
+    private async Task<string?> ReadAdmissionAsync(string table, string column, string key, Guid evidenceId)
+    {
+        await using var command = _fixture.DataSource.CreateCommand(
+            $"SELECT {column} FROM agent_experience.{table} WHERE {key} = @id");
+        command.Parameters.Add(new NpgsqlParameter<Guid>("id", evidenceId));
+        return await command.ExecuteScalarAsync() as string;
+    }
+
+    private async Task<bool> PayloadTextContainsAsync(Guid experienceId, string text)
+    {
+        await using var command = _fixture.DataSource.CreateCommand(
+            "SELECT strpos(payload::text, @text) > 0 FROM agent_experience.experience_records WHERE experience_id = @id");
+        command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+        command.Parameters.Add(new NpgsqlParameter<string>("text", text));
+        return (bool)(await command.ExecuteScalarAsync())!;
     }
 
     private Task<ApplyConfidenceEvidenceResult> Apply(AuthorizationContext auth, ApplyConfidenceEvidenceRequest request) =>
@@ -369,7 +540,11 @@ public sealed class PostgresVerifiedIndependenceTests
         };
 
     /// <summary>Captures a run in <paramref name="scope"/> and finalizes it for real, with or without a closed round.</summary>
-    private async Task<(Guid RunId, Guid ExperienceId, Guid? RoundId)> FinalizeAsync(AuthorizationContext auth, Scope scope, Guid? closedRound)
+    private async Task<(Guid RunId, Guid ExperienceId, Guid? RoundId)> FinalizeAsync(
+        AuthorizationContext auth,
+        Scope scope,
+        Guid? closedRound,
+        IReadOnlyList<Guid>? exposedTo = null)
     {
         var runId = Guid.NewGuid();
         Assert.Equal(StartRunOutcome.Started, _capture.StartRun(
@@ -380,6 +555,20 @@ public sealed class PostgresVerifiedIndependenceTests
             new EnvironmentFingerprint("worker-01", "net10.0", "linux-x64", null, new Dictionary<string, string>()),
             new Provenance("integration-tests", null, PayloadTime, null),
             PayloadTime).Outcome);
+
+        // The records this run was given, at the revision each stands at now -- what the MAF adapter's context
+        // provider records when it injects them.
+        if (exposedTo is { Count: > 0 })
+        {
+            var exposures = new List<RunExposure>();
+            foreach (var experienceId in exposedTo)
+            {
+                var read = await _store.GetAsync(auth, scope, experienceId, CancellationToken.None);
+                exposures.Add(new RunExposure(experienceId, read.Record!.Revision));
+            }
+
+            Assert.Equal(RecordExposureOutcome.Recorded, _capture.RecordExposure(runId, exposures).Outcome);
+        }
         Assert.Equal(AppendAttemptOutcome.Recorded, (await _capture.AppendAttemptAsync(
             runId, new AppendAttemptRequest(Guid.NewGuid(), PayloadTime, TimeSpan.FromSeconds(1), [], "done", null))).Outcome);
         Assert.Equal(CompleteRunOutcome.Recorded, (await _capture.CompleteRunAsync(

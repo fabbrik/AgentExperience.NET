@@ -202,6 +202,28 @@ internal sealed class RecordingCaptureService(IExperienceCaptureService inner) :
 
     public int CompleteCalls => _completeCalls;
 
+    /// <summary>When set, <see cref="RecordExposure"/> throws, as a failing capture store would.</summary>
+    public bool ThrowOnRecordExposure { get; set; }
+
+    /// <summary>When set, <see cref="RecordExposure"/> returns this outcome and records nothing, as a service that does not record exposure would.</summary>
+    public RecordExposureOutcome? ForcedExposureOutcome { get; set; }
+
+    /// <summary>Every exposure list the adapter recorded, in order.</summary>
+    public ConcurrentQueue<(Guid RunId, IReadOnlyList<RunExposure> Exposures)> RecordedExposures { get; } = new();
+
+    public RecordExposureResult RecordExposure(Guid runId, IReadOnlyList<RunExposure> exposures)
+    {
+        if (ThrowOnRecordExposure)
+        {
+            throw new InvalidOperationException("capture store unavailable while recording exposure");
+        }
+
+        RecordedExposures.Enqueue((runId, exposures));
+        return ForcedExposureOutcome is { } forced
+            ? new RecordExposureResult(forced, "forced by the test")
+            : inner.RecordExposure(runId, exposures);
+    }
+
     public StartRunResult StartRun(Guid runId, string taskId, string? taskDescription, Scope scope, EnvironmentFingerprint environment, Provenance provenance, DateTimeOffset startedAt)
     {
         if (Interlocked.Decrement(ref _nullStartRuns) >= 0)

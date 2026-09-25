@@ -200,7 +200,7 @@ public class ComparativeEvaluationTests
         CompletionScore: 0,
         Reflection: null,
         Environment: new EnvironmentFingerprint("synthetic", "net10.0", "linux", null, new Dictionary<string, string>()),
-        Provenance: new Provenance("synthetic", null, At, null),
+        Provenance: new Provenance("synthetic", null, At, null) { ExposedTo = [new RunExposure(ExposedId, 0)] },
         Status: ExperienceStatus.Candidate,
         ReuseConfidence: 0,
         SupportingValidations: 0,
@@ -210,6 +210,7 @@ public class ComparativeEvaluationTests
         UpdatedAt: At)
     {
         ClosedRoundId = RoundId,
+        Origin = ExperienceRecordOrigin.Finalized,
     };
 
     private static Evidence Evidence(Guid roundId) => new(

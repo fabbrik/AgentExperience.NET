@@ -51,6 +51,7 @@
     {
         System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default);
+        AgentExperience.Core.Capture.RecordExposureResult RecordExposure(System.Guid runId, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.RunExposure> exposures);
         AgentExperience.Core.Capture.StartRunResult StartRun(System.Guid runId, string taskId, string? taskDescription, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.EnvironmentFingerprint environment, AgentExperience.Abstractions.Provenance provenance, System.DateTimeOffset startedAt);
         bool TryGetRun(System.Guid runId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out AgentExperience.Abstractions.ExperienceRun? run);
     }
@@ -59,6 +60,7 @@
         public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default) { }
+        public AgentExperience.Core.Capture.RecordExposureResult RecordExposure(System.Guid runId, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.RunExposure> exposures) { }
         public AgentExperience.Core.Capture.StartRunResult StartRun(System.Guid runId, string taskId, string? taskDescription, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.EnvironmentFingerprint environment, AgentExperience.Abstractions.Provenance provenance, System.DateTimeOffset startedAt) { }
         public bool TryGetRun(System.Guid runId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out AgentExperience.Abstractions.ExperienceRun? run) { }
     }
@@ -72,6 +74,21 @@
         public System.DateTimeOffset StartedAt { get; init; }
         public System.Guid ToolCallId { get; init; }
         public string ToolName { get; init; }
+    }
+    public enum RecordExposureOutcome
+    {
+        Recorded = 0,
+        DuplicateNoOp = 1,
+        Conflict = 2,
+        RunNotFound = 3,
+        CapacityExceeded = 4,
+        NotSupported = 5,
+    }
+    public sealed class RecordExposureResult : System.IEquatable<AgentExperience.Core.Capture.RecordExposureResult>
+    {
+        public RecordExposureResult(AgentExperience.Core.Capture.RecordExposureOutcome Outcome, string? Reason) { }
+        public AgentExperience.Core.Capture.RecordExposureOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
     }
     public enum StartRunOutcome
     {
@@ -130,6 +147,8 @@ namespace AgentExperience.Core.Confidence
         AssessmentTokenNotForRecord = 6,
         AssessmentTokenReplayed = 7,
         AssessmentKeyNotConfigured = 8,
+        NotExposed = 9,
+        HostWrittenRun = 10,
     }
     public enum IndependenceVerification
     {
@@ -458,6 +477,44 @@ namespace AgentExperience.Core.Lifecycle
         public string? Reason { get; init; }
         public long Revision { get; init; }
     }
+    public sealed class ConfidenceAdmissionCounts : System.IEquatable<AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts>
+    {
+        public ConfidenceAdmissionCounts(int Supporting, int Contradicting) { }
+        public int Contradicting { get; init; }
+        public int Supporting { get; init; }
+    }
+    public enum ConfidenceEvidenceFilter
+    {
+        All = 0,
+        ExcludeHostTrusted = 1,
+        VerifiedOnly = 2,
+    }
+    public sealed class ConfidenceReadResult : System.IEquatable<AgentExperience.Core.Lifecycle.ConfidenceReadResult>
+    {
+        public ConfidenceReadResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, AgentExperience.Core.Lifecycle.ConfidenceReport? Report, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceReport? Report { get; init; }
+    }
+    public sealed class ConfidenceReport : System.IEquatable<AgentExperience.Core.Lifecycle.ConfidenceReport>
+    {
+        public ConfidenceReport(System.Guid ExperienceId, long Revision, AgentExperience.Abstractions.ExperienceStatus Status, AgentExperience.Core.Lifecycle.ConfidenceEvidenceFilter Filter, double ReuseConfidence, int SupportingValidations, int Contradictions, double StoredReuseConfidence, int StoredSupportingValidations, int StoredContradictions, AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts Verified, AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts HostTrusted, AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts Unrecorded) { }
+        public int Contradictions { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceEvidenceFilter Filter { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts HostTrusted { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts Initial { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecordOrigin Origin { get; init; }
+        public double ReuseConfidence { get; init; }
+        public long Revision { get; init; }
+        public AgentExperience.Abstractions.ExperienceStatus Status { get; init; }
+        public int StoredContradictions { get; init; }
+        public double StoredReuseConfidence { get; init; }
+        public int StoredSupportingValidations { get; init; }
+        public int SupportingValidations { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts Unrecorded { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts Verified { get; init; }
+    }
     public enum ConfidenceUpdateOutcome
     {
         Applied = 0,
@@ -482,6 +539,7 @@ namespace AgentExperience.Core.Lifecycle
         public AgentExperience.Core.Confidence.IndependenceVerification IndependenceVerification { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest request, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.CommitLifecycleTransitionResult> CommitAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.CommitLifecycleTransitionRequest request, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ConfidenceReadResult> ReadConfidenceAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, AgentExperience.Core.Lifecycle.ConfidenceEvidenceFilter filter, System.Threading.CancellationToken cancellationToken) { }
         public static bool IsEligible(AgentExperience.Abstractions.ExperienceStatus status) { }
         public static bool IsTransitionAllowed(AgentExperience.Abstractions.ExperienceStatus priorStatus, AgentExperience.Abstractions.ExperienceStatus currentStatus) { }
     }

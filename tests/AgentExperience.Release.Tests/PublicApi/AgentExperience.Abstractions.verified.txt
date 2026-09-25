@@ -43,6 +43,11 @@
         public string Summary { get; init; }
         public System.Guid VerificationRoundId { get; init; }
     }
+    public enum ConfidenceEvidenceAdmission
+    {
+        Verified = 0,
+        HostTrusted = 1,
+    }
     public enum ConfidenceEvidenceKind
     {
         Supporting = 0,
@@ -57,6 +62,7 @@
     {
         public const string AssessmentIdPath = "Confidence.AssessmentId";
         public ConfidenceUpdate(System.Guid EvidenceId, AgentExperience.Abstractions.ConfidenceEvidenceKind Kind, AgentExperience.Abstractions.ConfidenceEvidenceSource Source, System.Guid RunId, System.Guid? VerificationRoundId, string? ReviewerIdentity, string RuleVersion, double PriorReuseConfidence, double NewReuseConfidence, int PriorSupportingValidations, int NewSupportingValidations, int PriorContradictions, int NewContradictions, string? Detail = null) { }
+        public AgentExperience.Abstractions.ConfidenceEvidenceAdmission? Admission { get; init; }
         public System.Guid? AssessmentId { get; init; }
         public bool Counted { get; }
         public string? Detail { get; init; }
@@ -461,6 +467,7 @@
         public System.DateTimeOffset CreatedAt { get; init; }
         public AgentExperience.Abstractions.EnvironmentFingerprint Environment { get; init; }
         public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecordOrigin Origin { get; init; }
         public AgentExperience.Abstractions.Outcome Outcome { get; init; }
         public AgentExperience.Abstractions.Provenance Provenance { get; init; }
         public AgentExperience.Abstractions.Reflection? Reflection { get; init; }
@@ -518,6 +525,11 @@
         public long? NextStartAfterRevision { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
         public long Revision { get; init; }
+    }
+    public enum ExperienceRecordOrigin
+    {
+        HostWritten = 0,
+        Finalized = 1,
     }
     public sealed class ExperienceRecordQuery : System.IEquatable<AgentExperience.Abstractions.ExperienceRecordQuery>
     {
@@ -828,9 +840,12 @@
     {
         public Provenance(string Source, string? SourceVersion, System.DateTimeOffset RecordedAt, string? CorrelationId) { }
         public string? CorrelationId { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.RunExposure> ExposedTo { get; init; }
         public System.DateTimeOffset RecordedAt { get; init; }
         public string Source { get; init; }
         public string? SourceVersion { get; init; }
+        public bool Equals(AgentExperience.Abstractions.Provenance? other) { }
+        public override int GetHashCode() { }
     }
     public sealed class RawPayload : System.IEquatable<AgentExperience.Abstractions.RawPayload>
     {
@@ -913,6 +928,13 @@
         Completed = 0,
         Failed = 1,
         Cancelled = 2,
+    }
+    public sealed class RunExposure : System.IEquatable<AgentExperience.Abstractions.RunExposure>
+    {
+        public const int MaxPerRun = 256;
+        public RunExposure(System.Guid ExperienceId, long Revision) { }
+        public System.Guid ExperienceId { get; init; }
+        public long Revision { get; init; }
     }
     public enum SanitizationDecision
     {

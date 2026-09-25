@@ -482,6 +482,23 @@ Two rules are the adapter's, because only the transaction that writes the counte
   [main README](../../README.md#updating-confidence-from-evidence). A writer that bypasses Core is still unchecked
   here, exactly as it always was. Core computes the same string in `ConfidenceIndependenceKey`, and an integration
   test pins the two against each other.
+- **Exposure and origin travel in the payload (story 7.3).** Core also requires the run to have been *exposed* to the
+  record: the run's record must carry the record in its provenance's `exposedTo` (record IDs and revisions only,
+  written by finalization from what the capture service recorded) at a revision no later than the record's current
+  one, and it must carry `"origin": "Finalized"`. A record written without finalization reads back as
+  `ExperienceRecordOrigin.HostWritten` and vouches for no run. Like `closedRoundId`, both are optional version-1
+  payload fields, written only when set, needing no column; in crypto-shredding mode they are sealed with the rest of
+  the payload, and the application role cannot rewrite them either way, because it has no `UPDATE` on `payload` —
+  except through `0016`'s sealing function while `AllowSealing` is granted, which replaces a plaintext payload with
+  whatever sealed envelope the application produces (take `AllowSealing` away once the upgrade is done). The
+  store refuses a record whose `Provenance.ExposedTo` names an empty ID, a negative revision, a record twice, or more
+  than `RunExposure.MaxPerRun` records.
+- **The admission is recorded, append-only.** `confidence_evidence.admission` and
+  `lifecycle_events.confidence_admission` (from `0018`) keep `ConfidenceUpdate.Admission` — `Verified` or
+  `HostTrusted`, `NULL` on rows written before `0018` — exactly as Core gave it, and read it back on a replay and in
+  history (`ConfidenceUpdate.Admission`). It is not part of a replay's content comparison: resubmitting evidence
+  reports the admission the original was stored with. Neither ledger grants `UPDATE`, and `0007`'s triggers refuse
+  one, so host-trusted evidence cannot be relabelled after the fact.
 - **An assessment is spent once per record.** `confidence_evidence.assessment_id` (from `0015`) records the
   assessment token a human submission presented, and a unique index on `(experience_id, assessment_id) WHERE
   assessment_id IS NOT NULL` — not partial on `counted` — lets one assessment land one piece of evidence per record.
@@ -1758,6 +1775,20 @@ its triggers as to `0006`'s: read them above before relying on them.
   written only when finalization closed a round (a payload with none is byte for byte what it was), and read back as
   `ExperienceRecord.ClosedRoundId`. The payload version stays `1`; an older reader ignores the field. A record
   written before this version has none, so machine evidence about its run is refused unless the host opts out.
+
+`0018_evidence_admission.sql` records which verification mode admitted each piece of confidence evidence (story 7.3,
+KL-11; see [Confidence evidence](#confidence-evidence)). It follows `0017_grant_argument_disclosure` (story 7.1),
+which touches neither evidence ledger:
+
+- `confidence_evidence.admission text NULL` and `lifecycle_events.confidence_admission text NULL`, each with a
+  `CHECK` admitting `NULL`, `'Verified'` or `'HostTrusted'` only (the event's only on a confidence event), added
+  `NOT VALID` so neither ledger is scanned; the header has the `VALIDATE` statements.
+- No table, index, function, trigger or grant, so the application role's manifest is unchanged: its table-level
+  `INSERT` and `SELECT` on both ledgers cover the new columns, and it has no `UPDATE` on either.
+- Exposure-bound evidence itself needs no schema: a run's exposures and a record's origin travel in the payload as
+  `provenance.exposedTo` and `origin`, written only when set. The payload version stays `1`; an older reader ignores
+  both. A record written before this version has neither, so it reads back `HostWritten` and exposed to nothing, and
+  evidence about its run is refused unless the host opts out.
 
 `0016_crypto_shredding.sql` gives [crypto-shredding](#crypto-shredding-erasure-that-reaches-every-copy) its database
 side, and changes nothing for a deployment that stays in plaintext mode:

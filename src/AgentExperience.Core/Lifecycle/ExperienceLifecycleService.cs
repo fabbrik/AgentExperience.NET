@@ -419,10 +419,12 @@ public sealed class ExperienceLifecycleService
     /// <see cref="ApplyConfidenceEvidenceRequest.AssessmentToken"/> minted by
     /// <see cref="AssessmentTokenIssuer"/> for this scope, run, reviewer, kind and record, which has not
     /// expired. The store spends the token's assessment once per record, atomically with the evidence.
+    /// Last, the run must have been exposed to the record (story 7.3): its provenance, on its finalized record or
+    /// on the run the capture service holds, must name the record at or before the revision this call read.
     /// Any failure is <see cref="ConfidenceUpdateOutcome.Unverified"/> with
     /// <see cref="ApplyConfidenceEvidenceResult.Refusal"/> naming it, and nothing written. What this cannot
-    /// prove is that a real run was exposed to the record: a caller able to choose among real runs gets one
-    /// key per run, not one per call.
+    /// prove is that the record mattered to the run: each run that was given the lesson is one key. The update
+    /// carries <see cref="ConfidenceUpdate.Admission"/>, which mode admitted it.
     /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do. Also the source of the reviewer identity for human evidence.</param>
@@ -457,7 +459,13 @@ public sealed class ExperienceLifecycleService
 
         // The evidence's own Detail is not written here: it is content-free by contract, but it is
         // also of no use to an operator, and the fewer free-form values a span carries the less
-        // there is for a future change to get wrong.
+        // there is for a future change to get wrong. The admission and the refusal are closed sets, and
+        // they are what makes the verification opt-out visible without reading the ledger.
+        // Only for evidence that is in the ledger, and only the admission the store reported it stored with: a
+        // replay of evidence stored before admission was recorded carries none, and must not borrow this call's.
+        var admission = result.Outcome == ConfidenceUpdateOutcome.Applied ? result.Update?.Admission : null;
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.AdmissionAttribute, admission?.ToString());
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RefusalAttribute, result.Refusal?.ToString());
         ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.ConfidenceApply, result.Outcome.ToString());
         return result;
     }
@@ -603,6 +611,10 @@ public sealed class ExperienceLifecycleService
             // Carried to the store, which spends it: one assessment lands at most one piece of evidence
             // per record, atomically with the evidence itself.
             AssessmentId = independence.AssessmentId,
+
+            // Which mode admitted it, persisted with it: evidence the opt-out admitted stays findable, and a
+            // confidence read can leave it out.
+            Admission = independence.Admission,
         };
 
         var currentStatus = ReuseConfidenceHeuristic.StatusAfter(record.Status, request.Kind);
@@ -967,6 +979,174 @@ public sealed class ExperienceLifecycleService
         _ => throw new ExperienceStoreException(
             $"The Experience Record store returned '{outcome}', which is not a lifecycle commit outcome."),
     };
+
+    /// <summary>
+    /// Reads a record's reuse confidence, optionally leaving out evidence the verification opt-out admitted,
+    /// or everything not known to have been verified.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A record's counters are moved only by counted confidence updates, and every counted update is on a
+    /// lifecycle event in the record's history, carrying the <see cref="ConfidenceUpdate.Admission"/> it was
+    /// stored with. This read pages that history up to the record's revision as it read it, counts counted
+    /// updates by admission, and recomputes the score with <see cref="ReuseConfidenceHeuristic.Score"/> from
+    /// the stored counters less the ones <paramref name="filter"/> excludes. With
+    /// <see cref="ConfidenceEvidenceFilter.All"/>, or when nothing is excluded, it reports the stored score
+    /// unchanged.
+    /// </para>
+    /// <para>
+    /// It writes nothing, and it reads like the confidence path does: a scope check, never a delivery, and a
+    /// record readable only through a sharing grant is <see cref="ExperienceStoreOutcome.NotFound"/>, because its
+    /// evidence history belongs to its owner's scope.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the record lies in. Never treated as authority.</param>
+    /// <param name="experienceId">The record whose confidence to read.</param>
+    /// <param name="filter">Which evidence to count.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The store's outcome for the read, and the report on <see cref="ExperienceStoreOutcome.Found"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ExperienceStoreException">Storage infrastructure failed, or the store's history does not page forward.</exception>
+    public async Task<ConfidenceReadResult> ReadConfidenceAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid experienceId,
+        ConfidenceEvidenceFilter filter,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        if (experienceId == Guid.Empty || !Enum.IsDefined(filter))
+        {
+            return new(
+                ExperienceStoreOutcome.Invalid,
+                null,
+                [
+                    .. experienceId == Guid.Empty ? [new StoreValidationError(nameof(experienceId), "must not be an empty GUID.")] : Array.Empty<StoreValidationError>(),
+                    .. Enum.IsDefined(filter) ? Array.Empty<StoreValidationError>() : [new StoreValidationError(nameof(filter), "must be a defined ConfidenceEvidenceFilter member.")],
+                ]);
+        }
+
+        var read = await _store
+            .GetAsync(authorization, scope, experienceId, ScopeCheckRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (read.Outcome != ExperienceStoreOutcome.Found || read.Record is not { } record || read.SharedByGrant)
+        {
+            var outcome = read.Outcome == ExperienceStoreOutcome.Found ? ExperienceStoreOutcome.NotFound : read.Outcome;
+            return new(outcome, null, read.Errors);
+        }
+
+        int verifiedSupporting = 0, verifiedContradicting = 0;
+        int trustedSupporting = 0, trustedContradicting = 0;
+        int unrecordedSupporting = 0, unrecordedContradicting = 0;
+
+        long? after = null;
+        while (true)
+        {
+            var page = await _store
+                .GetHistoryAsync(
+                    authorization,
+                    new ExperienceRecordHistoryQuery(scope, experienceId, ExperienceRecordHistoryQuery.MaxLimit, after),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (page.Outcome != ExperienceStoreOutcome.Found)
+            {
+                // The record went between the two reads (erased, or its scope's authority withdrawn).
+                return new(page.Outcome, null, page.Errors);
+            }
+
+            foreach (var stored in page.Events)
+            {
+                // Only what the record read reflects: an update committed after it would move counters
+                // this report did not read.
+                if (stored.AppliedRevision > record.Revision || stored.Event.Confidence is not { Counted: true } update)
+                {
+                    continue;
+                }
+
+                var supporting = update.NewSupportingValidations - update.PriorSupportingValidations;
+                var contradicting = update.NewContradictions - update.PriorContradictions;
+                switch (update.Admission)
+                {
+                    case ConfidenceEvidenceAdmission.Verified:
+                        verifiedSupporting += supporting;
+                        verifiedContradicting += contradicting;
+                        break;
+                    case ConfidenceEvidenceAdmission.HostTrusted:
+                        trustedSupporting += supporting;
+                        trustedContradicting += contradicting;
+                        break;
+                    default:
+                        unrecordedSupporting += supporting;
+                        unrecordedContradicting += contradicting;
+                        break;
+                }
+            }
+
+            if (page.NextStartAfterRevision is not { } next)
+            {
+                break;
+            }
+
+            if (after is { } previous && next <= previous)
+            {
+                throw new ExperienceStoreException("The store's history cursor did not move forward, so the history cannot be read to its end.");
+            }
+
+            after = next;
+        }
+
+        // The counters the record started with, which no history event explains: finalization's own validation
+        // for a finalized record, whatever its writer chose for a hand-written one.
+        var initialSupporting = Math.Max(0, record.SupportingValidations - verifiedSupporting - trustedSupporting - unrecordedSupporting);
+        var initialContradicting = Math.Max(0, record.Contradictions - verifiedContradicting - trustedContradicting - unrecordedContradicting);
+        var initialUnverified = record.Origin != ExperienceRecordOrigin.Finalized;
+
+        var excludedSupporting = filter switch
+        {
+            ConfidenceEvidenceFilter.ExcludeHostTrusted => trustedSupporting,
+            ConfidenceEvidenceFilter.VerifiedOnly => trustedSupporting + unrecordedSupporting + (initialUnverified ? initialSupporting : 0),
+            _ => 0,
+        };
+        var excludedContradicting = filter switch
+        {
+            ConfidenceEvidenceFilter.ExcludeHostTrusted => trustedContradicting,
+            ConfidenceEvidenceFilter.VerifiedOnly => trustedContradicting + unrecordedContradicting + (initialUnverified ? initialContradicting : 0),
+            _ => 0,
+        };
+
+        // Clamped rather than trusted: a store whose history and counters disagree must not produce a
+        // negative count, and the report says what it excluded either way.
+        var supportingCounted = Math.Max(0, record.SupportingValidations - excludedSupporting);
+        var contradictionsCounted = Math.Max(0, record.Contradictions - excludedContradicting);
+        var excludedAny = excludedSupporting != 0 || excludedContradicting != 0;
+
+        return new(
+            ExperienceStoreOutcome.Found,
+            new ConfidenceReport(
+                record.ExperienceId,
+                record.Revision,
+                record.Status,
+                filter,
+                ReuseConfidence: excludedAny ? ReuseConfidenceHeuristic.Score(supportingCounted, contradictionsCounted) : record.ReuseConfidence,
+                SupportingValidations: supportingCounted,
+                Contradictions: contradictionsCounted,
+                StoredReuseConfidence: record.ReuseConfidence,
+                StoredSupportingValidations: record.SupportingValidations,
+                StoredContradictions: record.Contradictions,
+                Verified: new(verifiedSupporting, verifiedContradicting),
+                HostTrusted: new(trustedSupporting, trustedContradicting),
+                Unrecorded: new(unrecordedSupporting, unrecordedContradicting))
+            {
+                Origin = record.Origin,
+                Initial = new(initialSupporting, initialContradicting),
+            },
+            NoErrors);
+    }
 
     /// <summary>
     /// Maps a store outcome to its confidence-update counterpart one-to-one. It covers both port calls

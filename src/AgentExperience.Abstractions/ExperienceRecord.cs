@@ -54,7 +54,46 @@ public sealed record ExperienceRecord(
     /// machine evidence observed in a run counts only against the round that run was finalized with, so a
     /// round invented by the caller is refused rather than becoming a fresh independence key. A record
     /// written by hand through <see cref="IExperienceRecordStore.CreateAsync"/> carries whatever its
-    /// writer set, which is that writer's statement. Must not be <see cref="Guid.Empty"/> when set.
+    /// writer set, which is that writer's statement -- and, unless it is marked
+    /// <see cref="ExperienceRecordOrigin.Finalized"/>, one that confidence verification does not rely on.
+    /// Must not be <see cref="Guid.Empty"/> when set.
     /// </remarks>
     public Guid? ClosedRoundId { get; init; }
+
+    /// <summary>
+    /// Who wrote this record: <see cref="ExperienceRecordOrigin.Finalized"/> when finalization derived it
+    /// from a captured run, and <see cref="ExperienceRecordOrigin.HostWritten"/> (the default) otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Confidence verification treats only a finalized record as the library's own knowledge of its source
+    /// run: its <see cref="SourceRunId"/>, <see cref="ClosedRoundId"/> and the exposures in its
+    /// <see cref="ExperienceRecord.Provenance"/>. A run known only through a hand-written record is refused
+    /// (<c>IndependenceRefusal.HostWrittenRun</c>), so a record written through
+    /// <see cref="IExperienceRecordStore.CreateAsync"/> without finalization -- a direct aggregator result
+    /// included -- vouches for no run, round or exposure by default. It is a marker, not a signature: a host
+    /// writing through the store port can set <see cref="ExperienceRecordOrigin.Finalized"/> itself, and is
+    /// then making that statement. Records stored before this was recorded read back as
+    /// <see cref="ExperienceRecordOrigin.HostWritten"/>.
+    /// </remarks>
+    public ExperienceRecordOrigin Origin { get; init; } = ExperienceRecordOrigin.HostWritten;
+}
+
+/// <summary>
+/// Who wrote an <see cref="ExperienceRecord"/>, which decides whether confidence verification relies on what
+/// it says about its source run.
+/// </summary>
+public enum ExperienceRecordOrigin
+{
+    /// <summary>
+    /// Written by a host through <see cref="IExperienceRecordStore.CreateAsync"/> without finalization, or
+    /// stored before the origin was recorded. Unverified: its source run, round and exposures are its
+    /// writer's statement, and vouch for no run in confidence verification. The default.
+    /// </summary>
+    HostWritten = 0,
+
+    /// <summary>
+    /// Derived by <c>ExperienceFinalizationService</c> from a run the capture service held, with the round
+    /// finalization closed and the exposures the run recorded.
+    /// </summary>
+    Finalized = 1,
 }

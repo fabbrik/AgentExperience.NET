@@ -1029,14 +1029,18 @@ public sealed class ExperienceReuseFeedbackService
         {
             errors.Add(new(
                 nameof(feedback.RunId),
-                "must be a run the library knows in the feedback's scope (finalized there, or held by the capture service) for an attribution to count."));
+                run.HostWrittenOnly
+                    ? "must be a run the library knows in the feedback's scope for an attribution to count; it is known only through a record written without finalization, which vouches for nothing."
+                    : "must be a run the library knows in the feedback's scope (finalized there, or held by the capture service) for an attribution to count."));
             return errors;
         }
 
         var attributed = feedback.HumanAssessment?.AttributedExperienceIds ?? feedback.ComparativeEvaluation!.AttributedExperienceIds;
-        if (await verifier
-            .IsSourceRunOfAnyAsync(authorization, feedback.Scope, feedback.RunId, attributed, cancellationToken)
-            .ConfigureAwait(false))
+        var attributedRecords = await verifier
+            .ReadInScopeAsync(authorization, feedback.Scope, attributed, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (IndependenceVerifier.IsSourceRunOfAny(feedback.RunId, attributedRecords))
         {
             errors.Add(new(
                 nameof(feedback.RunId),
@@ -1051,8 +1055,10 @@ public sealed class ExperienceReuseFeedbackService
                 errors.Add(new(
                     $"{nameof(feedback.ComparativeEvaluation)}.{nameof(comparative.VerificationRoundId)}",
                     "must be the verification round finalization closed for the run."));
+                return errors;
             }
 
+            AddNotExposed(errors, run, attributedRecords, $"{nameof(feedback.ComparativeEvaluation)}.{nameof(comparative.AttributedExperienceIds)}");
             return errors;
         }
 
@@ -1082,7 +1088,34 @@ public sealed class ExperienceReuseFeedbackService
             errors.Add(new(TokenPath, IndependenceVerifier.Describe(IndependenceRefusal.AssessmentTokenNotForRecord)));
         }
 
+        if (errors.Count == 0)
+        {
+            AddNotExposed(errors, run, attributedRecords, $"{nameof(feedback.HumanAssessment)}.{nameof(assessment.AttributedExperienceIds)}");
+        }
+
         return errors;
+    }
+
+    /// <summary>
+    /// Refuses an attribution naming a record the run was never exposed to, or was exposed to only at a
+    /// revision later than the record's current one. Checked last, as on the confidence path, and against the
+    /// records as just read; a record that was not found here is left to the per-record path, which reports it
+    /// as unresolved and never submits evidence for it.
+    /// </summary>
+    private static void AddNotExposed(
+        List<StoreValidationError> errors,
+        RunKnowledge run,
+        IEnumerable<ExperienceRecord> attributedRecords,
+        string path)
+    {
+        foreach (var record in attributedRecords)
+        {
+            if (IndependenceVerifier.ExposureRefusal(run.Exposures, record) is { } refusal)
+            {
+                errors.Add(new(path, $"must name only records the run was exposed to. {refusal}"));
+                return;
+            }
+        }
     }
 
     /// <summary>What validation found, split by whether losing the whole submission is the right price.</summary>

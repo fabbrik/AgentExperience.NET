@@ -121,6 +121,16 @@ internal static class ExperienceDiagnostics
     /// <summary>The <c>FinalizationStage</c> a finalization ended at. Documented content-free at its declaration site.</summary>
     internal const string StageAttribute = "agentexperience.stage";
 
+    /// <summary>
+    /// How confidence evidence that reached the store was admitted: a <c>ConfidenceEvidenceAdmission</c>
+    /// member name (<c>Verified</c> or <c>HostTrusted</c>). A closed set, so an operator can find evidence the
+    /// verification opt-out admitted without reading the ledger.
+    /// </summary>
+    internal const string AdmissionAttribute = "agentexperience.confidence.admission";
+
+    /// <summary>Which independence check refused confidence evidence: an <c>IndependenceRefusal</c> member name. A closed set.</summary>
+    internal const string RefusalAttribute = "agentexperience.independence.refusal";
+
     /// <summary>The <c>outcome</c> value every faulted path reports, so a thrown operation is still counted and timed alongside the ones that returned.</summary>
     internal const string FaultedOutcome = "Faulted";
 

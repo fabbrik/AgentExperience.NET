@@ -133,6 +133,19 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentNullException.ThrowIfNull(provenance);
 
+        // Exposure is recorded only through RecordExposure, as the library delivers records into the run; a
+        // provenance that arrives already claiming exposures would be the caller's statement in the one
+        // field confidence verification relies on to be the library's.
+        if (provenance.ExposedTo is not { Count: 0 })
+        {
+            throw new ArgumentException(
+                "A run starts exposed to nothing: Provenance.ExposedTo must be empty, and exposures are recorded through RecordExposure.",
+                nameof(provenance));
+        }
+
+        // Normalized rather than kept: the caller's list object, empty now, could be filled afterwards.
+        provenance = provenance with { ExposedTo = [] };
+
         var run = new ExperienceRun(
             RunId: runId,
             TaskId: taskId,
@@ -206,6 +219,82 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
 
         run = null;
         return false;
+    }
+
+    /// <inheritdoc />
+    public RecordExposureResult RecordExposure(Guid runId, IReadOnlyList<RunExposure> exposures)
+    {
+        ArgumentNullException.ThrowIfNull(exposures);
+
+        // One snapshot, validated before anything is looked at, so a list that changes under us cannot put
+        // an unchecked exposure on the run.
+        var submitted = exposures.ToArray();
+        foreach (var exposure in submitted)
+        {
+            ArgumentNullException.ThrowIfNull(exposure, nameof(exposures));
+            if (exposure.ExperienceId == Guid.Empty)
+            {
+                throw new ArgumentException("An exposure must name a record, never an empty GUID.", nameof(exposures));
+            }
+
+            if (exposure.Revision < 0)
+            {
+                throw new ArgumentException("An exposure's revision must not be negative.", nameof(exposures));
+            }
+        }
+
+        if (!_runs.TryGetValue(runId, out var state))
+        {
+            return new RecordExposureResult(RecordExposureOutcome.RunNotFound, $"No run with RunId '{runId}' exists.");
+        }
+
+        lock (state.Gate)
+        {
+            if (state.Completion is not null)
+            {
+                return new RecordExposureResult(
+                    RecordExposureOutcome.Conflict,
+                    "The run is already completed; its provenance is closed and no further exposure can be recorded.");
+            }
+
+            var merged = new SortedDictionary<Guid, long>();
+            foreach (var held in state.Run.Provenance.ExposedTo)
+            {
+                merged[held.ExperienceId] = held.Revision;
+            }
+
+            var changed = false;
+            foreach (var exposure in submitted)
+            {
+                if (!merged.TryGetValue(exposure.ExperienceId, out var revision) || exposure.Revision < revision)
+                {
+                    merged[exposure.ExperienceId] = exposure.Revision;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+            {
+                return new RecordExposureResult(RecordExposureOutcome.DuplicateNoOp, Reason: null);
+            }
+
+            if (merged.Count > RunExposure.MaxPerRun)
+            {
+                return new RecordExposureResult(
+                    RecordExposureOutcome.CapacityExceeded,
+                    $"The run would be exposed to more than {RunExposure.MaxPerRun} records; nothing from this call was recorded.");
+            }
+
+            state.Run = state.Run with
+            {
+                Provenance = state.Run.Provenance with
+                {
+                    ExposedTo = [.. merged.Select(entry => new RunExposure(entry.Key, entry.Value))],
+                },
+            };
+
+            return new RecordExposureResult(RecordExposureOutcome.Recorded, Reason: null);
+        }
     }
 
     /// <inheritdoc />

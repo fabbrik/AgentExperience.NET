@@ -54,6 +54,22 @@ public enum IndependenceRefusal
 
     /// <summary>Human evidence was submitted under verification, and no assessment token key is configured to check it with.</summary>
     AssessmentKeyNotConfigured,
+
+    /// <summary>
+    /// The run is real and in scope, but it was not exposed to this record: its provenance does not name the
+    /// record, or names it only at a revision later than the one the evidence is computed against. A lesson
+    /// cannot have helped or hurt a run that was never given it, so a caller able to name real runs gets one
+    /// key per run that saw the lesson rather than one per real run.
+    /// </summary>
+    NotExposed,
+
+    /// <summary>
+    /// The run is known only through a record written by hand (<c>ExperienceRecordOrigin.HostWritten</c>)
+    /// rather than by finalization, and the capture service does not hold it. What such a record says about
+    /// its source run -- the run, the round, the exposures -- is its writer's statement, so it vouches for
+    /// nothing.
+    /// </summary>
+    HostWrittenRun,
 }
 
 /// <summary>

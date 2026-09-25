@@ -478,6 +478,94 @@ grant (see
   schema checks, the access row at the new level, and the `0017` upgrade, on each supported PostgreSQL major, and runs
   in encrypted mode too (the upgrade test itself writes plaintext rows, since a pre-`0016` schema can hold only those).
 
+**Story 7.3** binds confidence evidence to exposure the library recorded, makes the verification opt-out visible,
+and narrows KL-11 to what remains (see
+[Updating confidence from evidence](README.md#updating-confidence-from-evidence)).
+
+### Upgrade for exposure-bound evidence
+
+1. **Run the schema migrator as the owner.** It applies `0018_evidence_admission`: two nullable columns on the two
+   evidence ledgers and two `NOT VALID` checks. No table, index or grant, so the application role's manifest is
+   unchanged; re-applying it is harmless. No journaled script is edited.
+2. **Deliver records through the MAF adapter, or record what you deliver.** An agent built with both
+   `ExperienceContextProvider` and `UseExperienceCapture` records exposure with no change. A host that injects
+   records some other way calls `IExperienceCaptureService.RecordExposure(runId, exposures)` from the code that
+   delivers them, before the run completes. Without either, evidence about reuse in that run is refused.
+3. **Or opt out** with `IndependenceVerification.TrustHostSuppliedIdentifiers`, as before, if you must keep accepting
+   evidence about runs finalized before this version. Its evidence is now labelled `HostTrusted`.
+
+### Added
+
+- **Exposure is recorded on the captured run** (story 7.3, KL-11). `Provenance.ExposedTo`, a list of `RunExposure`
+  (record ID and revision, never content), one entry per record at the earliest revision it was delivered at, at most
+  `RunExposure.MaxPerRun` (256). `IExperienceCaptureService.RecordExposure` adds to it on a still-open run
+  (`RecordExposureOutcome`: `Recorded`, `DuplicateNoOp`, `Conflict` once the run is completed, `RunNotFound`,
+  `CapacityExceeded`, `NotSupported`). The MAF context provider records every record it injects, at the revision it
+  rendered, on the run `UseExperienceCapture` captures the invocation as — only when that run is its own agent's, so
+  an uncaptured agent nested inside a captured one exposes nothing to the outer run; a failure, including a capture
+  service that returns `NotSupported`, is reported through `OnCaptureFailure` at the new stage `RecordExposure`. What
+  a reused session's history carries from an earlier run is not credited to a later run: the session account is host
+  storage, unauthenticated.
+- **Finalization carries it onto the record** and marks the record `ExperienceRecord.Origin = Finalized`
+  (`ExperienceRecordOrigin`: `HostWritten`, the default, and `Finalized`). The PostgreSQL store keeps both in the
+  payload as optional version-1 fields (`provenance.exposedTo`, `origin`), sealed in crypto-shredding mode.
+- **Evidence must name a run exposed to the record.** `ApplyEvidenceAsync`, and every attributed feedback record,
+  refuse a run whose recorded exposure does not include the record at or before its current revision
+  (`IndependenceRefusal.NotExposed`), and a run known only through a hand-written record (`HostWrittenRun`). Checked
+  last, after the run, round and token, for machine and human evidence alike.
+- **Which mode admitted each piece of evidence is recorded.** `ConfidenceUpdate.Admission`
+  (`ConfidenceEvidenceAdmission`: `Verified`, `HostTrusted`; `null` when none was recorded — evidence stored before
+  this version, or an update written by something other than Core), stored
+  in `confidence_evidence.admission` and `lifecycle_events.confidence_admission` (`0018`), read back on replay and in
+  history, and never part of a replay's content comparison.
+- **Telemetry:** `confidence.apply` spans carry `agentexperience.confidence.admission` on `Applied` (the admission
+  the stored evidence carries), and `agentexperience.independence.refusal` on `Unverified`. Both are span attributes only; the metric
+  dimensions are unchanged.
+- **`ExperienceLifecycleService.ReadConfidenceAsync(authorization, scope, experienceId, filter, ct)`**, with
+  `ConfidenceEvidenceFilter` (`All`, `ExcludeHostTrusted`, `VerifiedOnly`), `ConfidenceReadResult`, `ConfidenceReport`
+  and `ConfidenceAdmissionCounts`: a score recomputed from the stored counters less the excluded evidence, read from
+  the record's history. `VerifiedOnly` also leaves out a hand-written record's initial counters (the report carries
+  `Origin` and `Initial`). It writes nothing.
+
+### Breaking
+
+- **Evidence about a run with no recorded exposure is refused by default** (`NotExposed`). That includes every run
+  finalized before this version (no record carries exposures yet) and every run captured without something calling
+  `RecordExposure`. Feedback naming such a run records the exposure with benefit `Unknown`.
+- **A record read back without an origin is `HostWritten`,** so a record stored before this version, or written by
+  hand through `CreateAsync`, vouches for no run (`HostWrittenRun`). A host that writes records itself and wants them
+  to count sets `Origin = ExperienceRecordOrigin.Finalized` — and is then making that statement.
+- **`StartRun` throws `ArgumentException`** for a provenance whose `ExposedTo` is not empty: exposure is recorded, not
+  claimed up front.
+- **`IExperienceCaptureService` gains `RecordExposure`,** with a default interface implementation that records nothing
+  and returns `NotSupported`: an existing implementation compiles, and its runs are exposed to nothing.
+- `IndependenceRefusal` gains `NotExposed` (9) and `HostWrittenRun` (10); `ExperienceCaptureFailureStage` gains
+  `RecordExposure` (5). An exhaustive `switch` needs the arms.
+- `Provenance` gains the init property `ExposedTo` and value equality that compares it element by element;
+  `ExperienceRecord` gains `Origin`; `ConfidenceUpdate` gains `Admission`.
+- **For `IExperienceRecordStore` implementers:** persist `Provenance.ExposedTo`, `ExperienceRecord.Origin` (a store
+  that drops it makes every run `HostWrittenRun`) and `ConfidenceUpdate.Admission`. The PostgreSQL store refuses an
+  `ExposedTo` with an empty ID, a negative revision, a duplicate record or more than 256 entries (`Invalid`).
+
+### Known limits
+
+- **KL-11 is narrowed again, not closed.** What remains: exposure means the library *delivered* a record into a run,
+  not that the run used it, so each run given a lesson is one key; a host that calls `RecordExposure` for records it
+  did not deliver, or marks a hand-written record `Finalized`, is believed; the round is the `ClosedRound` the host
+  passed to finalization, and a direct aggregator caller's run ID is still its own statement (its result counts only
+  through finalization or such a marked record); and the opt-out still trusts everything — its evidence is labelled
+  and excludable on read, but the stored score retrieval ranks on still counts it.
+
+### Tests
+
+- The sample's golden transcript and 4.4's three golden reports are unchanged, byte for byte: the sample submits
+  unattributed feedback, which checks no exposure, and the reuse baseline drives capture directly without the
+  adapter's capture wrapper, so it records no exposure and submits no attribution. The synthetic comparative-evaluation
+  tests now seed their run's record as finalized and exposed; the Core telemetry loop seeds its reuse run as exposed
+  to the lesson, and its span-attribute set gains the two new attributes.
+- The script-order tests in `OfflineStoreTests` now pin each script's absolute position, so appending a script no
+  longer shifts every earlier assertion.
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

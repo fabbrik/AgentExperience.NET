@@ -45,6 +45,7 @@ internal static class ExperienceRecordValidator
 
         ValidateEnvironment(record.Environment, errors);
         ValidateProvenance(record.Provenance, errors);
+        RequireDefined(record.Origin, "Origin", errors);
         RequireDefined(record.Status, "Status", errors);
         RequireUnitInterval(record.ReuseConfidence, "ReuseConfidence", errors);
 
@@ -437,6 +438,11 @@ internal static class ExperienceRecordValidator
         }
 
         RequireDefined(update.Kind, $"{Path}.Kind", errors);
+        if (update.Admission is { } admission)
+        {
+            RequireDefined(admission, $"{Path}.Admission", errors);
+        }
+
         RequireNotBlank(update.RuleVersion, $"{Path}.RuleVersion", errors);
         RequireUnitInterval(update.PriorReuseConfidence, $"{Path}.PriorReuseConfidence", errors);
         RequireUnitInterval(update.NewReuseConfidence, $"{Path}.NewReuseConfidence", errors);
@@ -1449,6 +1455,39 @@ internal static class ExperienceRecordValidator
         }
 
         RequireNotNull(provenance.Source, "Provenance.Source", errors);
+
+        if (provenance.ExposedTo is not { } exposedTo)
+        {
+            errors.Add(new("Provenance.ExposedTo", Required));
+            return;
+        }
+
+        if (exposedTo.Count > RunExposure.MaxPerRun)
+        {
+            errors.Add(new("Provenance.ExposedTo", $"must name at most {RunExposure.MaxPerRun} records."));
+            return;
+        }
+
+        var seen = new HashSet<Guid>();
+        for (var i = 0; i < exposedTo.Count; i++)
+        {
+            if (exposedTo[i] is not { } exposure)
+            {
+                errors.Add(new($"Provenance.ExposedTo[{i}]", Required));
+            }
+            else if (exposure.ExperienceId == Guid.Empty)
+            {
+                errors.Add(new($"Provenance.ExposedTo[{i}].ExperienceId", "must not be an empty GUID."));
+            }
+            else if (exposure.Revision < 0)
+            {
+                errors.Add(new($"Provenance.ExposedTo[{i}].Revision", "must not be negative."));
+            }
+            else if (!seen.Add(exposure.ExperienceId))
+            {
+                errors.Add(new($"Provenance.ExposedTo[{i}].ExperienceId", "must not name the same record twice; a run keeps one exposure per record."));
+            }
+        }
     }
 
     private static void RequireStringList(IReadOnlyList<string>? values, string path, List<StoreValidationError> errors)

@@ -36,7 +36,9 @@ namespace AgentExperience.Core.Lifecycle;
 /// half of every independence key, so under <see cref="IndependenceVerification.Verified"/> it must be a
 /// run the library knows in <paramref name="Scope"/>: one finalized into a record there, or one the
 /// capture service wired into the lifecycle service holds there. An invented run is refused
-/// (<see cref="IndependenceRefusal.UnknownRun"/>) rather than becoming a fresh key.
+/// (<see cref="IndependenceRefusal.UnknownRun"/>) rather than becoming a fresh key, and a real run that was never
+/// exposed to the record -- whose provenance does not name it at or before its current revision -- is refused
+/// too (<see cref="IndependenceRefusal.NotExposed"/>).
 /// </param>
 /// <param name="VerificationRoundId">
 /// The verification round the observation came from. Required for
@@ -169,8 +171,10 @@ public enum ConfidenceUpdateOutcome
 
     /// <summary>
     /// The submission's independence key could not be verified: its run is the record's own, or not one
-    /// the library knows in the record's scope, its round is not the one finalization closed for that
-    /// run, or its assessment token is missing, invalid, expired, for another record, or already spent.
+    /// the library knows in the record's scope (or known only through a hand-written record), its round is
+    /// not the one finalization closed for that run, its assessment token is missing, invalid, expired, for
+    /// another record, or already spent, or the run was never exposed to the record at or before its current
+    /// revision.
     /// <see cref="ApplyConfidenceEvidenceResult.Refusal"/> says which. This call wrote nothing and moved no
     /// counter. It is not proof that the evidence was never written: verification runs before the store's
     /// replay check, so a retry of evidence that did land, made after its token expired, its key rotated, or
@@ -179,6 +183,90 @@ public enum ConfidenceUpdateOutcome
     /// </summary>
     Unverified,
 }
+
+/// <summary>
+/// Which confidence evidence <see cref="ExperienceLifecycleService.ReadConfidenceAsync"/> counts.
+/// </summary>
+public enum ConfidenceEvidenceFilter
+{
+    /// <summary>Everything the record's counters hold: the stored score, unchanged.</summary>
+    All,
+
+    /// <summary>
+    /// Leaves out evidence the verification opt-out admitted
+    /// (<see cref="ConfidenceEvidenceAdmission.HostTrusted"/>). Evidence stored before admission was recorded
+    /// is kept.
+    /// </summary>
+    ExcludeHostTrusted,
+
+    /// <summary>
+    /// Counts only evidence recorded as <see cref="ConfidenceEvidenceAdmission.Verified"/>, plus the initial
+    /// counters of a record finalization wrote: host-trusted evidence, evidence with no recorded admission (stored
+    /// before admission was recorded, or written by something other than Core), and the initial counters of a
+    /// record written by hand (<see cref="ExperienceRecordOrigin.HostWritten"/>, whose writer chose them) are all
+    /// left out.
+    /// </summary>
+    VerifiedOnly,
+}
+
+/// <summary>How many counted updates of one admission moved each counter.</summary>
+/// <param name="Supporting">Supporting validations those updates counted.</param>
+/// <param name="Contradicting">Contradictions those updates counted.</param>
+public sealed record ConfidenceAdmissionCounts(int Supporting, int Contradicting);
+
+/// <summary>
+/// A record's reuse confidence as <see cref="ExperienceLifecycleService.ReadConfidenceAsync"/> computed it.
+/// </summary>
+/// <param name="ExperienceId">The record.</param>
+/// <param name="Revision">The revision the report reflects.</param>
+/// <param name="Status">The record's status at that revision.</param>
+/// <param name="Filter">Which evidence was counted.</param>
+/// <param name="ReuseConfidence">The score over the counted evidence: the stored score when nothing was excluded, otherwise <see cref="ReuseConfidenceHeuristic.Score"/> over <paramref name="SupportingValidations"/> and <paramref name="Contradictions"/>.</param>
+/// <param name="SupportingValidations">The supporting count with the excluded evidence taken out.</param>
+/// <param name="Contradictions">The contradiction count with the excluded evidence taken out.</param>
+/// <param name="StoredReuseConfidence">The record's stored score.</param>
+/// <param name="StoredSupportingValidations">The record's stored supporting count, which includes its initial validation.</param>
+/// <param name="StoredContradictions">The record's stored contradiction count.</param>
+/// <param name="Verified">What verified evidence counted.</param>
+/// <param name="HostTrusted">What evidence the verification opt-out admitted counted.</param>
+/// <param name="Unrecorded">What evidence with no recorded admission counted: stored before admission was recorded, or written by something other than Core.</param>
+public sealed record ConfidenceReport(
+    Guid ExperienceId,
+    long Revision,
+    ExperienceStatus Status,
+    ConfidenceEvidenceFilter Filter,
+    double ReuseConfidence,
+    int SupportingValidations,
+    int Contradictions,
+    double StoredReuseConfidence,
+    int StoredSupportingValidations,
+    int StoredContradictions,
+    ConfidenceAdmissionCounts Verified,
+    ConfidenceAdmissionCounts HostTrusted,
+    ConfidenceAdmissionCounts Unrecorded)
+{
+    /// <summary>Who wrote the record, which decides whether <see cref="ConfidenceEvidenceFilter.VerifiedOnly"/> keeps its initial counters.</summary>
+    public ExperienceRecordOrigin Origin { get; init; }
+
+    /// <summary>The counters the record started with, which no history event explains.</summary>
+    public ConfidenceAdmissionCounts Initial { get; init; } = new(0, 0);
+}
+
+/// <summary>
+/// The result of one <see cref="ExperienceLifecycleService.ReadConfidenceAsync"/> call.
+/// </summary>
+/// <param name="Outcome">
+/// <see cref="ExperienceStoreOutcome.Found"/> with a report; otherwise the store's refusal --
+/// <see cref="ExperienceStoreOutcome.NotFound"/> (including a record readable only through a grant),
+/// <see cref="ExperienceStoreOutcome.Deleted"/>, <see cref="ExperienceStoreOutcome.Denied"/> or
+/// <see cref="ExperienceStoreOutcome.Invalid"/>.
+/// </param>
+/// <param name="Report">The report, on <see cref="ExperienceStoreOutcome.Found"/>; otherwise <see langword="null"/>.</param>
+/// <param name="Errors">Every validation error on <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ConfidenceReadResult(
+    ExperienceStoreOutcome Outcome,
+    ConfidenceReport? Report,
+    IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>
 /// The result of one <see cref="ExperienceLifecycleService.ApplyEvidenceAsync"/> call.
