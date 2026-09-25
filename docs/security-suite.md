@@ -147,6 +147,24 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Core.Tests | `VerificationAggregatorTests.A_required_check_naming_an_ExpectedKind_ignores_evidence_of_any_other_kind` | A mismatched evaluator leaves the check `Unknown`, never `Pass` |
 | Core.Tests | `DefaultExperienceReflectorTests.KL6_a_request_pairing_a_run_with_another_runs_evaluation_cannot_be_constructed` | An evaluation made under one run ID cannot be paired with another run: no reflector, default or host, receives the pair |
 | Core.Tests | `ExperienceFinalizationServiceTests.KL6_a_host_reflection_that_does_not_match_its_request_quarantines_the_record_without_a_lesson` | A host reflector that re-judges the verdict, swaps the run, or adds evidence gets no validated lesson stored |
+| Core.Tests | `VerifiedIndependenceTests.A_forged_run_is_refused_as_unknown_and_nothing_is_written` | KL-11: a `RunId` agent output invented is not a fresh independence key — not even behind a genuine token minted for it |
+| Core.Tests | `VerifiedIndependenceTests.Evidence_naming_the_records_own_source_run_is_refused_in_both_modes` | A run cannot confirm the lesson it produced, even under the trust-the-host opt-out |
+| Core.Tests | `VerifiedIndependenceTests.A_run_finalized_only_in_another_scope_or_readable_only_through_a_grant_is_unknown` | A run is known only in the evidence's own scope: not through another scope's record, a grant, or a tombstone |
+| Core.Tests | `VerifiedIndependenceTests.A_forged_round_is_refused_for_a_real_run_and_so_is_every_round_of_a_run_that_closed_none` | A machine round must be the one finalization closed for that run; another run's genuine round is refused too |
+| Core.Tests | `VerifiedIndependenceTests.A_random_GUID_a_malformed_string_or_a_tampered_token_is_refused_as_invalid` | An assessment cannot be forged: a random GUID, any single-character tamper, an over-long string or another key's token fails the HMAC, and is a refusal, never an exception |
+| Core.Tests | `VerifiedIndependenceTests.A_token_for_another_scope_run_reviewer_or_direction_is_refused_and_one_for_another_record_is_not_for_this_one` | A genuine token cannot be moved to another scope, run, reviewer, direction or record |
+| Core.Tests | `VerifiedIndependenceTests.An_expired_token_is_refused_and_one_issued_in_the_future_is_invalid` | A token expires, and one stamped ahead of the verifier's clock is refused |
+| Core.Tests | `VerifiedIndependenceTests.A_replayed_token_is_refused_while_an_identical_retry_of_the_same_evidence_still_replays` | A token is spent once per record; a lost acknowledgement's retry still converges |
+| Core.Tests | `VerifiedIndependenceTests.Feedback_with_a_forged_or_mismatched_assessment_records_the_exposure_and_moves_nothing` | Reuse feedback drops a forged, mismatched or unknown-run attribution before its ledger records a benefit, and never echoes the token |
+| Core.Tests | `VerifiedIndependenceTests.The_token_binds_every_field_of_a_scope` | A token minted for a narrower or wider scope fails, and a field added to `Scope` fails this test until the MAC binds it |
+| Core.Tests | `VerifiedIndependenceTests.A_tokens_expiry_is_the_one_it_was_minted_with_whatever_the_verifier_is_configured_with` | Expiry is signed into the token, so reconfiguring a verifier cannot resurrect or extend one |
+| Core.Tests | `VerifiedIndependenceTests.Feedback_attributing_a_record_to_its_own_source_run_is_degraded_before_the_ledger` | Feedback cannot record an attributed benefit for a lesson "reused" in the run it came from |
+| Core.Tests | `VerifiedIndependenceTests.The_issuer_refuses_what_it_should_never_sign_and_never_prints_a_token` | The issuer never signs for a scope outside the reviewer's authorization, and no `ToString()` prints a token |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.Forged_runs_rounds_and_assessment_tokens_are_refused_and_nothing_reaches_the_ledger` | The same refusals end to end over real finalization: nothing reaches `confidence_evidence` **(DB)** |
+| Core.Tests | `VerifiedIndependenceTests.Core_registration_verifies_by_default_wires_the_capture_service_and_never_registers_an_issuer` | Verification is the default through DI, and no container offers an issuer an agent-driven component could resolve |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.A_replayed_token_is_refused_by_the_database_and_an_identical_retry_still_replays` | Single use is the database's unique index, atomic with the evidence; a replay writes not even an uncounted row **(DB)** |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.The_assessment_index_refuses_a_second_use_even_where_the_independence_key_is_free` | A writer that bypasses Core's token check still cannot spend one assessment twice on a record **(DB)** |
+| Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.A_second_feedback_presenting_a_spent_token_lands_nothing_while_retrying_the_first_converges` | A token cannot be reused through a second feedback submission **(DB)** |
 
 ## What this suite does not prove
 
@@ -162,3 +180,8 @@ safe to show. Such a value was chosen by the captured run's model and is only as
 which classifies by field name, not content, left it. The suite proves the structural bounds — only allowlisted keys,
 only stored scalars, quoted with no double quote or step separator inside, clamped and capped, never for a borrowed record — and that the approval boundary
 still holds when a shown value orders a guarded call; which keys are harmless to show is the host's decision.
+
+Nor does it prove that a run cited as confidence evidence was *exposed* to the record. The suite proves that a run,
+a round and an assessment cannot be invented — each must be one the library finalized, captured or minted — and that
+none can be moved to another scope or record or used twice; a caller able to choose among real runs in a scope can
+still cite one that never saw the lesson, once per run. That, and the trust-the-host opt-out, are KL-11.

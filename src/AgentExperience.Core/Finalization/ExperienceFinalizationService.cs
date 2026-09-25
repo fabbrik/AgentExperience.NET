@@ -551,7 +551,14 @@ public sealed class ExperienceFinalizationService
             Contradictions: 0,
             Revision: 0,
             CreatedAt: finalizedAt,
-            UpdatedAt: finalizedAt);
+            UpdatedAt: finalizedAt)
+        {
+            // Read off the evaluation's basis rather than the request, so the round recorded is exactly
+            // the one aggregation was bound to. Confidence evidence about reuse in this run is later
+            // accepted only against this round.
+            // An empty round ID names no round, so it vouches for none.
+            ClosedRoundId = evaluation.Basis.ClosedRound is { RoundId: var round } && round != Guid.Empty ? round : null,
+        };
 
         ExperienceRecordCreateResult created;
         try

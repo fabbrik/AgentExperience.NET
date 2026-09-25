@@ -87,15 +87,17 @@ public sealed record ReuseMeasure(string Kind, double Value);
 /// <para>
 /// <b>READ THIS BEFORE WIRING IT UP: a human assessment is a HOST TRUST BOUNDARY, and it is the weakest
 /// one in this library.</b> Nothing here can check that a human made this judgement, or that the human
-/// saw the run. What the library enforces is narrow and worth stating exactly: the reviewer is the
-/// host's <see cref="AuthorizationContext.PrincipalId"/>, the run and the assessment are named by
-/// identifiers the host established, and one reviewer's opinion about one run counts once. Everything
-/// outside that -- that a person exists, that they read the transcript, that they meant it -- is the
-/// host's to establish. A host that lets agent output populate
-/// <see cref="ExperienceReuseFeedback.RunId"/> or <paramref name="AssessmentId"/> has handed the agent
-/// the ability to contest its own stored lessons repeatedly, because a fresh run ID is a fresh
-/// independence key. Establish both from your own review bookkeeping, exactly as you establish
-/// <see cref="AuthorizationContext"/>, and never from anything an agent produced.
+/// saw the run. What the library enforces is worth stating exactly: the reviewer is the host's
+/// <see cref="AuthorizationContext.PrincipalId"/>; the run must be one the library knows in the
+/// feedback's scope; the assessment must present an <paramref name="AssessmentToken"/> the library
+/// minted under the host's secret for exactly this scope, run, reviewer, direction and records, which
+/// has not expired and lands at most once per record; and one reviewer's opinion about one run counts
+/// once. An agent can therefore not mint an assessment, or a fresh independence key, from its own
+/// output. Everything outside that -- that a person exists, that they read the transcript, that they
+/// meant it -- is the host's to establish, and so is keeping the token issuer away from agent-driven
+/// code. A host that opted out of verification
+/// (<c>IndependenceVerification.TrustHostSuppliedIdentifiers</c>) is back to trusting the identifiers it
+/// passes, and must establish them from its own bookkeeping, never from anything an agent produced.
 /// </para>
 /// <para>
 /// <b>There is no reviewer field, on purpose.</b> The reviewer is the host's
@@ -105,10 +107,11 @@ public sealed record ReuseMeasure(string Kind, double Value);
 /// </para>
 /// </remarks>
 /// <param name="AssessmentId">
-/// The host-established identity of the review this judgement came out of -- a row in the host's own
-/// review record, not a value minted at the call site. Must not be <see cref="Guid.Empty"/>. It is
-/// stored on the feedback ledger so an auditor can go from a moved score back to the review that moved
-/// it; requiring it is what keeps a human attribution from being a bare claim with a timestamp on it.
+/// The identity of the review this judgement came out of. Must not be <see cref="Guid.Empty"/>. Under
+/// verification it must be the ID of <paramref name="AssessmentToken"/> (the
+/// <c>IssuedAssessmentToken.AssessmentId</c> the issuer returned with it). It is stored on the feedback
+/// ledger so an auditor can go from a moved score back to the review that moved it; requiring it is what
+/// keeps a human attribution from being a bare claim with a timestamp on it.
 /// </param>
 /// <param name="Benefit">Whether reuse helped or hurt. Must be <see cref="ExperienceReuseBenefit.Improved"/> or <see cref="ExperienceReuseBenefit.Harmed"/>: an assessment of <see cref="ExperienceReuseBenefit.Unknown"/> is not an assessment.</param>
 /// <param name="AttributedExperienceIds">The exposed records this judgement is about. Must be non-empty, free of duplicates, and a subset of <see cref="ExperienceReuseFeedback.ExposedExperienceIds"/>.</param>
@@ -120,13 +123,39 @@ public sealed record ReuseMeasure(string Kind, double Value);
 /// independence key: human evidence counts once per reviewer and run, so keying on a round the reviewer
 /// chose would let one reviewer's opinion about one run count as many times as rounds were closed.
 /// </param>
+/// <param name="AssessmentToken">
+/// The assessment token <c>AssessmentTokenIssuer.Issue</c> minted for this review: for the feedback's
+/// scope and run, the reviewing principal, the direction (<see cref="ExperienceReuseBenefit.Improved"/>
+/// supports, <see cref="ExperienceReuseBenefit.Harmed"/> contradicts) and at least every attributed
+/// record. Required unless the host opted out of verification; without a valid one the attribution is
+/// dropped and the exposure is recorded with benefit <see cref="ExperienceReuseBenefit.Unknown"/>. It is
+/// a bearer credential for one review: pass it from your review bookkeeping, never through anything an
+/// agent can read or write.
+/// </param>
 public sealed record HumanReuseAssessment(
     Guid AssessmentId,
     ExperienceReuseBenefit Benefit,
     IReadOnlyList<Guid> AttributedExperienceIds,
     string Rationale,
     DateTimeOffset AssessedAt,
-    Guid? VerificationRoundId = null);
+    Guid? VerificationRoundId = null,
+    string? AssessmentToken = null)
+{
+    /// <summary>Prints the assessment without its token, which is a bearer credential for one review.</summary>
+    /// <param name="builder">The builder the members are printed into.</param>
+    /// <returns>Always <see langword="true"/>.</returns>
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("AssessmentId = ").Append(AssessmentId)
+            .Append(", Benefit = ").Append(Benefit)
+            .Append(", AttributedExperienceIds = ").Append(AttributedExperienceIds)
+            .Append(", Rationale = ").Append(Rationale)
+            .Append(", AssessedAt = ").Append(AssessedAt)
+            .Append(", VerificationRoundId = ").Append(VerificationRoundId)
+            .Append(", AssessmentToken = ").Append(AssessmentToken is null ? "null" : "<redacted>");
+        return true;
+    }
+}
 
 /// <summary>
 /// The result a comparative evaluator reached about one run: the second shape that can move
@@ -140,11 +169,11 @@ public sealed record HumanReuseAssessment(
 /// its conclusion from. A result that does not is refused rather than downgraded silently.
 /// </para>
 /// <para>
-/// <b><see cref="RunId"/> and <see cref="VerificationRoundId"/> are a host trust boundary</b>, exactly
-/// as they are on <see cref="ConfidenceUpdate"/>: together they form the
-/// machine independence key <c>machine:{run}:{round}</c>, nothing in this library can check that a run
-/// happened or that a round was closed, and a caller inventing a fresh pair each time gets a fresh key
-/// each time. Establish both from your own bookkeeping, never from anything an agent produced.
+/// <b><see cref="RunId"/> and <see cref="VerificationRoundId"/> are verified</b>, exactly as they are on
+/// the confidence path: together they form the machine independence key <c>machine:{run}:{round}</c>, so
+/// the run must be one finalized into a record in the feedback's scope and the round must be the one that
+/// finalization closed (<see cref="ExperienceRecord.ClosedRoundId"/>). A result naming an invented run or
+/// round has its attribution dropped. A host that opted out of verification is back to trusting both.
 /// </para>
 /// </remarks>
 /// <param name="EvaluatorId">Identity of the evaluator that produced this result, recorded as the evidence's producer. Must be non-blank.</param>
@@ -178,10 +207,11 @@ public sealed record ComparativeEvaluationResult(
 /// ID and the record's ID, so a retry after a partial failure converges rather than double-counting.
 /// </para>
 /// <para>
-/// <b><see cref="RunId"/> is a host trust boundary.</b> It is half of every independence key the
-/// confidence path deduplicates on, and nothing here can check that the run happened. Establish it from
-/// your own run bookkeeping, exactly as you establish <see cref="AuthorizationContext"/>, and never pass
-/// through an identifier an agent produced.
+/// <b><see cref="RunId"/> is half of every independence key</b> the confidence path deduplicates on, so an
+/// attribution is accepted only for a run the library knows in <see cref="Scope"/> (finalized there, or
+/// held by the capture service), and never for an attributed record's own source run. Exposure without
+/// attribution keys nothing and is recorded against the run as given. Take it from your own run
+/// bookkeeping (the adapter's session state), never from an identifier an agent produced.
 /// </para>
 /// <para>
 /// <b>Exposure is not attribution.</b> A submission with no <see cref="HumanAssessment"/> and no

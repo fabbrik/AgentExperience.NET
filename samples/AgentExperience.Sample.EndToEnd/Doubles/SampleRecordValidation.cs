@@ -38,6 +38,11 @@ internal static class SampleRecordValidation
             errors.Add(new("SourceRunId", "must not be an empty GUID."));
         }
 
+        if (record.ClosedRoundId == Guid.Empty)
+        {
+            errors.Add(new("ClosedRoundId", "must be null or name a verification round, never an empty GUID."));
+        }
+
         ValidateScope(record.Scope, "Scope", errors);
         RequireNotBlank(record.TaskId, "TaskId", errors);
         RequireUnitInterval(record.CompletionScore, "CompletionScore", errors);

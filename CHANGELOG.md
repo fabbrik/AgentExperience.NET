@@ -187,6 +187,85 @@ A host that skips all of this keeps working exactly as before, as a single-role 
   earlier blocks, and the tracking is only as trustworthy as the host's session storage (removing the key resets it;
   concurrent invocations on one session race on it).
 
+**Story 6.6** verifies confidence independence by default, and narrows KL-11 to what verification cannot establish
+(see [Updating confidence from evidence](README.md#updating-confidence-from-evidence)).
+
+### Upgrade for verified independence
+
+1. **Run the schema migrator** (as the owner role). It applies `0015_verified_independence`: two nullable columns
+   and one unique index, and no table, so the application role's manifest is unchanged. Its header describes
+   building the index out of band first, for a large evidence ledger. No journaled script is edited.
+2. **Give the lifecycle service an assessment token key** if the host records human assessments:
+   `services.AddSingleton(new ExperienceIndependenceOptions { AssessmentTokenKey = ... })`, at least 32 random bytes
+   from your secret store, and call `AssessmentTokenIssuer.Issue` from your review flow.
+3. **Or opt out** with `IndependenceVerification.TrustHostSuppliedIdentifiers` if you capture and retrieve in
+   different scopes, finalize nothing, or must keep accepting evidence about runs finalized before this version.
+
+### Added
+
+- **Verified independence keys** (story 6.6, KL-11). `ExperienceLifecycleService.ApplyEvidenceAsync`, and so every
+  attributed feedback submission, now refuses with `ConfidenceUpdateOutcome.Unverified` and an `IndependenceRefusal`
+  an independence key it cannot vouch for:
+  - a `RunId` that is not finalized into a record in the evidence's scope nor held by the capture service
+    (`UnknownRun`), or is the record's own source run (`OwnRun`);
+  - a machine `VerificationRoundId` other than the round finalization closed for that run (`UnknownRound`);
+  - human evidence without a valid assessment token: missing, forged, for another scope, run, reviewer, direction or
+    record, expired, or already spent on this record (`AssessmentToken*`), or with no key configured.
+- `ExperienceIndependenceOptions` (mode, key, token lifetime, clock), `IndependenceVerification`,
+  `IndependenceRefusal`, `AssessmentTokenIssuer` and `IssuedAssessmentToken`. `AddAgentExperienceCore` wires the
+  registered capture service and options into the lifecycle service. It deliberately does not register the issuer:
+  anything that can resolve it can mint, so the review flow constructs it.
+- An assessment token is HMAC-SHA256 under the host's key, over its ID, issue time, direction and records and over
+  the scope, run and reviewer. It is compared in constant time, carries its signed expiry (a day by default, at most
+  30), and is spent once per record in the same transaction as the evidence it lands. It never appears in
+  `ToString()`.
+- `ExperienceRecord.ClosedRoundId`, stamped by finalization from the evaluation's `VerificationBasis.ClosedRound` and
+  stored in the payload (`closedRoundId`, omitted when null). `ConfidenceUpdate.AssessmentId`, stored in
+  `confidence_evidence.assessment_id` and `lifecycle_events.confidence_assessment_id` and read back with history.
+- `0015_verified_independence`: those two columns, human-only `CHECK`s (`NOT VALID`), and the unique index
+  `ux_confidence_evidence_assessment` on `(experience_id, assessment_id)`.
+- `ExperienceReuseFeedbackService` checks an attribution's run (known, and not an attributed record's own), round and
+  token before writing its ledger, and records a failing one with benefit `Unknown` and the reason, as it does every
+  other attribution failure.
+
+### Breaking
+
+- **Evidence the library cannot verify is refused by default.** Machine evidence about a run finalized before this
+  version is refused (`UnknownRound`): its record carries no closed round. Evidence about a run that was captured
+  and retrieved in different scopes is refused (`UnknownRun`). Use the opt-out for either.
+- **Evidence naming the record's own source run is refused in every mode** (`OwnRun`). It was a documented rule
+  that nothing enforced.
+- **A human assessment needs an assessment token.** Without one (or with an invalid one, or an `AssessmentId` that
+  is not the token's) the feedback is recorded with benefit `Unknown`; a direct `Human` submission is `Unverified`.
+  A token spent on a record is refused for any other evidence ID, including a second feedback submission.
+- `ConfidenceUpdateOutcome` gains `Unverified` (value 9); an exhaustive `switch` needs the arm. `Machine` evidence
+  carrying an `AssessmentToken` is `Invalid`.
+- `ApplyConfidenceEvidenceRequest` (`AssessmentToken`), `ApplyConfidenceEvidenceResult` (`Refusal`) and
+  `HumanReuseAssessment` (`AssessmentToken`) each gain a trailing optional parameter: a binary break, and a source
+  break for positional deconstruction. `ExperienceLifecycleService` gains a constructor taking `ExperienceIndependenceOptions` and an optional
+  `IExperienceCaptureService`; the existing constructors verify, with no key and no capture service.
+- The store refuses `ExperienceRecord.ClosedRoundId == Guid.Empty` and an `AssessmentId` on machine evidence
+  (`Invalid`).
+- **For `IExperienceRecordStore` implementers:** persist `ExperienceRecord.ClosedRoundId` (a store that drops it makes
+  every machine submission `UnknownRound`), and refuse a second piece of evidence presenting the same
+  `ConfidenceUpdate.AssessmentId` for a record with `Conflict` and an error on `ConfidenceUpdate.AssessmentIdPath`
+  (a store that ignores it leaves tokens replayable, though each replay still meets the independence key).
+
+### Known limits
+
+- **KL-11 is narrowed, not closed.** What remains by default: a run is proven real and in scope, not exposed to the
+  record, so a caller that can choose among real runs gets one key per real run rather than one per call; the round
+  is the one the host closed at finalization, whatever that run's own verdict; a record written by hand through
+  `CreateAsync` vouches for itself; whoever holds the key, or can call the issuer, can mint; and a retry made after
+  its token expired is refused although the original landed. The opt-out is the old trust boundary.
+
+### Tests
+
+- The sample's golden transcript and 4.4's three golden reports are unchanged, byte for byte: neither submits
+  attributed feedback. The Core telemetry loop now reuses its lesson in a second run, seeded into its store double as
+  finalized, with a token, rather than citing the record's own run, which the own-run rule refuses; its call table
+  is unchanged.
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

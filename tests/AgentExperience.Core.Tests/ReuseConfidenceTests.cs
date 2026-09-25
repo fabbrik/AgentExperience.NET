@@ -140,7 +140,7 @@ public class ReuseConfidenceTests
     {
         var experienceId = Guid.NewGuid();
         var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1));
-        var service = new ExperienceLifecycleService(store);
+        var service = Trusting(store);
 
         var confirmation = await service.ApplyEvidenceAsync(Authorization, Machine(experienceId), CancellationToken.None);
 
@@ -186,7 +186,7 @@ public class ReuseConfidenceTests
         var experienceId = Guid.NewGuid();
         var store = new EvidenceStore(Record(ExperienceStatus.Contested, 3d / 5d, 2, 1, experienceId, revision: 3));
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization,
             Machine(experienceId) with { Kind = ConfidenceEvidenceKind.Contradicting },
             CancellationToken.None);
@@ -212,7 +212,7 @@ public class ReuseConfidenceTests
         var experienceId = Guid.NewGuid();
         var store = new EvidenceStore(Record(ExperienceStatus.Reinforced, 3d / 4d, 2, 0, experienceId, revision: 2));
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(experienceId), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.Applied, result.Outcome);
@@ -234,7 +234,7 @@ public class ReuseConfidenceTests
 
         foreach (var kind in Enum.GetValues<ConfidenceEvidenceKind>())
         {
-            var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+            var result = await Trusting(store).ApplyEvidenceAsync(
                 Authorization, Machine(experienceId) with { Kind = kind }, CancellationToken.None);
 
             Assert.Equal(ConfidenceUpdateOutcome.Ineligible, result.Outcome);
@@ -272,7 +272,7 @@ public class ReuseConfidenceTests
         var experienceId = Guid.NewGuid();
         var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1));
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization,
             Human(experienceId),
             CancellationToken.None);
@@ -284,7 +284,7 @@ public class ReuseConfidenceTests
             ReuseConfidenceHeuristic.IndependenceKeyFor(result.Update));
 
         // Machine evidence never carries one, so the human key can never be forged through it.
-        var machine = await new ExperienceLifecycleService(
+        var machine = await Trusting(
             new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1)))
             .ApplyEvidenceAsync(Authorization, Machine(experienceId), CancellationToken.None);
 
@@ -300,7 +300,7 @@ public class ReuseConfidenceTests
             CountEvidence = false,
         };
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(experienceId), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.Applied, result.Outcome);
@@ -320,7 +320,7 @@ public class ReuseConfidenceTests
         var index = new FakeEmbeddingIndex();
         var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1));
 
-        var contested = await new ExperienceLifecycleService(store, Indexing(index)).ApplyEvidenceAsync(
+        var contested = await Trusting(store, Indexing(index)).ApplyEvidenceAsync(
             Authorization,
             Machine(experienceId) with { Kind = ConfidenceEvidenceKind.Contradicting },
             CancellationToken.None);
@@ -340,7 +340,7 @@ public class ReuseConfidenceTests
         var index = new FakeEmbeddingIndex();
 
         // Supporting evidence leaves the record eligible, so there is nothing to clean up.
-        var supporting = await new ExperienceLifecycleService(
+        var supporting = await Trusting(
                 new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1)),
                 Indexing(index))
             .ApplyEvidenceAsync(Authorization, Machine(experienceId), CancellationToken.None);
@@ -348,7 +348,7 @@ public class ReuseConfidenceTests
         // A duplicate contradiction moved nothing: the store reports the status it left the record in,
         // and that is what the hook is asked about -- not the status an uncounted submission would have
         // produced had it counted.
-        var duplicate = await new ExperienceLifecycleService(
+        var duplicate = await Trusting(
                 new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1))
                 {
                     CountEvidence = false,
@@ -377,7 +377,7 @@ public class ReuseConfidenceTests
             CommitResult = new ExperienceLifecycleCommitResult(ExperienceStoreOutcome.Committed, 2, null, []),
         };
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(experienceId), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.Applied, result.Outcome);
@@ -396,7 +396,7 @@ public class ReuseConfidenceTests
         // reports Ineligible rather than replaying Applied.
         var experienceId = Guid.NewGuid();
         var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1));
-        var service = new ExperienceLifecycleService(store);
+        var service = Trusting(store);
         var request = Machine(experienceId);
 
         Assert.Equal(ConfidenceUpdateOutcome.Applied, (await service.ApplyEvidenceAsync(Authorization, request, CancellationToken.None)).Outcome);
@@ -418,7 +418,7 @@ public class ReuseConfidenceTests
         {
             var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1));
 
-            var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+            var result = await Trusting(store).ApplyEvidenceAsync(
                 Authorization with { PrincipalId = principal },
                 Human(experienceId),
                 CancellationToken.None);
@@ -429,7 +429,7 @@ public class ReuseConfidenceTests
         }
 
         // Machine evidence does not rest on the principal, so it is unaffected.
-        var machine = await new ExperienceLifecycleService(
+        var machine = await Trusting(
                 new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 1)))
             .ApplyEvidenceAsync(Authorization with { PrincipalId = " " }, Machine(experienceId), CancellationToken.None);
 
@@ -450,7 +450,7 @@ public class ReuseConfidenceTests
         {
             var store = new EvidenceStore(record);
 
-            var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+            var result = await Trusting(store).ApplyEvidenceAsync(
                 Authorization, Machine(experienceId), CancellationToken.None);
 
             Assert.Equal(ConfidenceUpdateOutcome.Invalid, result.Outcome);
@@ -464,7 +464,7 @@ public class ReuseConfidenceTests
     {
         var store = new EvidenceStore(record: null) { FoundWithNoRecord = true };
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(Guid.NewGuid()), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.NotFound, result.Outcome);
@@ -478,7 +478,7 @@ public class ReuseConfidenceTests
         var experienceId = Guid.NewGuid();
         var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, experienceId, revision: 12));
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(experienceId), CancellationToken.None);
 
         var stamped = Assert.Single(store.Commits).Event;
@@ -509,7 +509,7 @@ public class ReuseConfidenceTests
             CommitResult = new ExperienceLifecycleCommitResult(stored, 9, ExperienceStatus.Reinforced, []),
         };
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(experienceId), CancellationToken.None);
 
         Assert.Equal(expected, result.Outcome);
@@ -528,7 +528,7 @@ public class ReuseConfidenceTests
             SharedByGrant = true,
         };
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(experienceId), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.NotFound, result.Outcome);
@@ -543,7 +543,7 @@ public class ReuseConfidenceTests
         // tombstone. That is a typed refusal, not a store failure, and nothing reaches the commit.
         var store = new EvidenceStore(record: null) { ReadOutcome = ExperienceStoreOutcome.Deleted };
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(Guid.NewGuid()), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.Deleted, result.Outcome);
@@ -559,7 +559,7 @@ public class ReuseConfidenceTests
     {
         var store = new EvidenceStore(record: null);
 
-        var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+        var result = await Trusting(store).ApplyEvidenceAsync(
             Authorization, Machine(Guid.NewGuid()), CancellationToken.None);
 
         Assert.Equal(ConfidenceUpdateOutcome.NotFound, result.Outcome);
@@ -589,7 +589,7 @@ public class ReuseConfidenceTests
         {
             var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, request.ExperienceId, revision: 1));
 
-            var result = await new ExperienceLifecycleService(store).ApplyEvidenceAsync(
+            var result = await Trusting(store).ApplyEvidenceAsync(
                 Authorization, request, CancellationToken.None);
 
             Assert.Equal(ConfidenceUpdateOutcome.Invalid, result.Outcome);
@@ -606,7 +606,7 @@ public class ReuseConfidenceTests
         // confidence, so no counter can move through it.
         var store = new EvidenceStore(Record(ExperienceStatus.Validated, 2d / 3d, 1, 0, Guid.NewGuid(), revision: 1));
 
-        var result = await new ExperienceLifecycleService(store).CommitAsync(
+        var result = await Trusting(store).CommitAsync(
             Authorization,
             new CommitLifecycleTransitionRequest(
                 Guid.NewGuid(),
@@ -623,6 +623,15 @@ public class ReuseConfidenceTests
         Assert.Equal(LifecycleTransitionOutcome.Committed, result.Outcome);
         Assert.Null(Assert.Single(store.Commits).Event.Confidence);
     }
+
+    /// <summary>
+    /// These tests are about the arithmetic, the store contract and the reviewer rule, not about verifying
+    /// an independence key's inputs (<c>VerifiedIndependenceTests</c> covers that against a store that
+    /// knows runs), so they run with the host's identifiers trusted: the opt-out, which keeps only the
+    /// own-run rule.
+    /// </summary>
+    private static ExperienceLifecycleService Trusting(IExperienceRecordStore store, ExperienceIndexingService? indexing = null) =>
+        new(store, indexing, new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
 
     private static ApplyConfidenceEvidenceRequest Machine(Guid experienceId) => new(
         EventId: Guid.NewGuid(),

@@ -382,6 +382,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.GrantDisclosureScriptName,
                 PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
                 PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
+                PostgresExperienceRecordSchema.VerifiedIndependenceScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -601,7 +602,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^8]);
+            PostgresExperienceRecordSchema.ScriptNames[^9]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -663,7 +664,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^7]);
+            PostgresExperienceRecordSchema.ScriptNames[^8]);
     }
 
     [Fact]
@@ -741,7 +742,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^6]);
+            PostgresExperienceRecordSchema.ScriptNames[^7]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -963,10 +964,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
         Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
 
-        // 0010 is applied immediately before 0011, 0012 and 0013, which the migrator relies on for ordinal name ordering.
+        // 0010 is applied immediately before 0011, 0012, 0013 and 0015, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^4]);
+            PostgresExperienceRecordSchema.ScriptNames[^5]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1004,7 +1005,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantDisclosureScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     [Fact]
@@ -1062,14 +1063,14 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
     }
 
     [Fact]
-    public void Role_separation_script_is_applied_last_pins_every_guard_and_purge_search_path_and_grants_nothing_to_a_named_role()
+    public void Role_separation_script_follows_0012_pins_every_guard_and_purge_search_path_and_grants_nothing_to_a_named_role()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -1107,6 +1108,41 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Verified_independence_script_is_applied_last_spends_an_assessment_once_per_record_and_adds_no_table()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.VerifiedIndependenceScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Single use, on every row whatever it counted: the index is partial on the assessment only.
+        Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_confidence_evidence_assessment", statements, StringComparison.Ordinal);
+        Assert.Contains("ON agent_experience.confidence_evidence (experience_id, assessment_id)\n    WHERE assessment_id IS NOT NULL;", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("WHERE counted", statements, StringComparison.Ordinal);
+
+        // Nullable columns on both ledgers, human-only and never the empty UUID, checked without a scan.
+        Assert.Contains("ADD COLUMN IF NOT EXISTS assessment_id uuid NULL;", statements, StringComparison.Ordinal);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS confidence_assessment_id uuid NULL;", statements, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(statements, "NOT VALID;"));
+        Assert.Contains("source = 'Human'", statements, StringComparison.Ordinal);
+        Assert.Contains("confidence_source = 'Human'", statements, StringComparison.Ordinal);
+
+        // No table, function, trigger or grant: the application role's manifest needs nothing new.
+        Assert.DoesNotContain("CREATE TABLE", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("FUNCTION", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("TRIGGER", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+
+        // The out-of-band index runbook is in the header.
+        Assert.Contains("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_confidence_evidence_assessment", script, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.VerifiedIndependenceScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),

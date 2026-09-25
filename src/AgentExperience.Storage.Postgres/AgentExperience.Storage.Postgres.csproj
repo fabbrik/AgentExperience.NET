@@ -41,6 +41,7 @@
     <EmbeddedResource Include="Migrations\0011_grant_disclosure.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0011_grant_disclosure.sql" />
     <EmbeddedResource Include="Migrations\0012_grant_access_retention.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0012_grant_access_retention.sql" />
     <EmbeddedResource Include="Migrations\0013_role_separation_hardening.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0013_role_separation_hardening.sql" />
+    <EmbeddedResource Include="Migrations\0015_verified_independence.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0015_verified_independence.sql" />
   </ItemGroup>
 
   <ItemGroup>

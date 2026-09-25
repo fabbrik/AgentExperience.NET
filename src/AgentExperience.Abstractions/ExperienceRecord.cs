@@ -42,4 +42,19 @@ public sealed record ExperienceRecord(
     int Contradictions,
     long Revision,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>
+    /// The verification round finalization closed for <see cref="SourceRunId"/> -- the
+    /// <c>ClosedRound</c> of the evaluation this record was finalized against -- or <see langword="null"/>
+    /// when no round was closed, or when the record was written before this was recorded.
+    /// </summary>
+    /// <remarks>
+    /// It is what lets confidence evidence name a verification round the library itself saw closed:
+    /// machine evidence observed in a run counts only against the round that run was finalized with, so a
+    /// round invented by the caller is refused rather than becoming a fresh independence key. A record
+    /// written by hand through <see cref="IExperienceRecordStore.CreateAsync"/> carries whatever its
+    /// writer set, which is that writer's statement. Must not be <see cref="Guid.Empty"/> when set.
+    /// </remarks>
+    public Guid? ClosedRoundId { get; init; }
+}

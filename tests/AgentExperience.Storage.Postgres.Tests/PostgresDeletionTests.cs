@@ -53,7 +53,7 @@ public sealed class PostgresDeletionTests
             auditing: new ExperienceGrantAuditing(_access, _ => { }));
         _grants = new PostgresExperienceGrantStore(fixture.DataSource);
         _ledger = new PostgresExperienceReuseFeedbackStore(fixture.DataSource);
-        _lifecycle = new ExperienceLifecycleService(_store);
+        _lifecycle = TestRecords.TrustingLifecycle(_store);
         _feedback = new ExperienceReuseFeedbackService(_ledger, _lifecycle);
     }
 

@@ -205,13 +205,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "replacement_experience_id, actor, confidence_evidence_id, confidence_kind, confidence_source, " +
         "confidence_run_id, confidence_verification_round_id, confidence_reviewer_identity, confidence_rule_version, " +
         "confidence_detail, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
-        "new_supporting_validations, prior_contradictions, new_contradictions";
+        "new_supporting_validations, prior_contradictions, new_contradictions, confidence_assessment_id";
+
+    /// <summary>The ordinal <c>confidence_assessment_id</c> sits at, the last of <see cref="EventColumns"/> (added by <c>0015</c>).</summary>
+    private const int EventAssessmentIdOrdinal = 32;
 
     /// <summary>The ordinal <c>r.revision</c> sits at in <see cref="HistorySql"/>, straight after <see cref="EventColumns"/>.</summary>
-    private const int HistoryRevisionOrdinal = 32;
+    private const int HistoryRevisionOrdinal = 33;
 
     /// <summary>The ordinal <c>r.deleted_at</c> sits at in <see cref="HistorySql"/>, straight after the revision.</summary>
-    private const int HistoryDeletedAtOrdinal = 33;
+    private const int HistoryDeletedAtOrdinal = 34;
 
     private const string InsertEventSql =
         $"INSERT INTO {EventsTable} ({EventColumns}) VALUES (@event_id, @experience_id, @tenant_id, @application_id, " +
@@ -220,7 +223,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "@confidence_evidence_id, @confidence_kind, @confidence_source, @confidence_run_id, " +
         "@confidence_verification_round_id, @confidence_reviewer_identity, @confidence_rule_version, " +
         "@confidence_detail, @prior_reuse_confidence, @new_reuse_confidence, @prior_supporting_validations, " +
-        "@new_supporting_validations, @prior_contradictions, @new_contradictions)";
+        "@new_supporting_validations, @prior_contradictions, @new_contradictions, @confidence_assessment_id)";
 
     /// <summary>The primary key a resubmitted <see cref="LifecycleEvent.EventId"/> violates.</summary>
     private const string EventPrimaryKey = "lifecycle_events_pkey";
@@ -240,17 +243,34 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "evidence_id, experience_id, event_id, kind, source, run_id, verification_round_id, " +
         "reviewer_identity, counted, actor, rule_version, detail, recorded_at, applied_revision, applied_status, " +
         "prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, new_supporting_validations, " +
-        "prior_contradictions, new_contradictions";
+        "prior_contradictions, new_contradictions, assessment_id";
 
     private const string InsertEvidenceSql =
         $"INSERT INTO {EvidenceTable} ({EvidenceColumns}) VALUES (@evidence_id, @experience_id, @event_id, " +
         "@confidence_kind, @confidence_source, @confidence_run_id, @confidence_verification_round_id, " +
         "@confidence_reviewer_identity, @counted, @actor, @confidence_rule_version, @confidence_detail, " +
         "@recorded_at, @applied_revision, @applied_status, @prior_reuse_confidence, @new_reuse_confidence, " +
-        "@prior_supporting_validations, @new_supporting_validations, @prior_contradictions, @new_contradictions)";
+        "@prior_supporting_validations, @new_supporting_validations, @prior_contradictions, @new_contradictions, " +
+        "@confidence_assessment_id)";
 
     /// <summary>The primary key a resubmitted <see cref="ConfidenceUpdate.EvidenceId"/> violates.</summary>
     private const string EvidencePrimaryKey = "confidence_evidence_pkey";
+
+    /// <summary>
+    /// The unique index that spends an assessment: one piece of evidence per record per
+    /// <see cref="ConfidenceUpdate.AssessmentId"/>. Created by <c>0015</c>. Violating it with a new evidence
+    /// ID means the assessment token was replayed.
+    /// </summary>
+    private const string EvidenceAssessmentIndex = "ux_confidence_evidence_assessment";
+
+    /// <summary>
+    /// Whether an evidence ID is already in the ledger for a live record in this exact scope. Scoped like
+    /// <see cref="SelectEvidenceSql"/>, so another scope's evidence reads as "not taken" and the answer
+    /// reveals nothing about it.
+    /// </summary>
+    private const string EvidenceIdTakenSql =
+        $"SELECT EXISTS (SELECT 1 FROM {EvidenceTable} ev JOIN {Table} r ON r.experience_id = ev.experience_id " +
+        $"WHERE ev.evidence_id = @evidence_id AND {RecordScopePredicate} AND {RecordLivePredicate})";
 
     /// <summary>
     /// The partial unique index that decides independence. Violating it means this observation has
@@ -281,7 +301,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "SELECT ev.experience_id, ev.event_id, ev.kind, ev.source, ev.run_id, ev.verification_round_id, " +
         "ev.reviewer_identity, ev.counted, ev.applied_revision, ev.applied_status, ev.rule_version, ev.detail, " +
         "ev.prior_reuse_confidence, ev.new_reuse_confidence, ev.prior_supporting_validations, " +
-        "ev.new_supporting_validations, ev.prior_contradictions, ev.new_contradictions " +
+        "ev.new_supporting_validations, ev.prior_contradictions, ev.new_contradictions, ev.assessment_id " +
         $"FROM {EvidenceTable} ev JOIN {Table} r ON r.experience_id = ev.experience_id " +
         $"WHERE ev.evidence_id = @evidence_id AND {RecordScopePredicate} AND {RecordLivePredicate}";
 
@@ -358,7 +378,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "e.applied_revision, e.replacement_experience_id, e.actor, e.confidence_evidence_id, e.confidence_kind, " +
         "e.confidence_source, e.confidence_run_id, e.confidence_verification_round_id, e.confidence_reviewer_identity, " +
         "e.confidence_rule_version, e.confidence_detail, e.prior_reuse_confidence, e.new_reuse_confidence, " +
-        "e.prior_supporting_validations, e.new_supporting_validations, e.prior_contradictions, e.new_contradictions";
+        "e.prior_supporting_validations, e.new_supporting_validations, e.prior_contradictions, e.new_contradictions, " +
+        "e.confidence_assessment_id";
 
     /// <summary>
     /// The same exact-scope predicate as <see cref="ScopePredicate"/>, qualified with the <c>r</c>
@@ -2114,6 +2135,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             return (null, (await ReplayEvidenceAsync().ConfigureAwait(false), Commit: false));
         }
+        catch (PostgresException ex) when (IsViolationOf(ex, EvidenceAssessmentIndex, cancellationToken))
+        {
+            return (null, (await ReplayOrSpentAsync().ConfigureAwait(false), Commit: false));
+        }
 
         await ExecuteAsync($"RELEASE SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);
         return (submitted, null);
@@ -2149,6 +2174,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             parameters.Add(new NpgsqlParameter<int>("new_supporting_validations", update.NewSupportingValidations));
             parameters.Add(new NpgsqlParameter<int>("prior_contradictions", update.PriorContradictions));
             parameters.Add(new NpgsqlParameter<int>("new_contradictions", update.NewContradictions));
+            parameters.Add(NullableUuid("confidence_assessment_id", update.AssessmentId));
             await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -2191,6 +2217,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             {
                 return (await ReplayEvidenceAsync().ConfigureAwait(false), Commit: false);
             }
+            catch (PostgresException spent) when (IsViolationOf(spent, EvidenceAssessmentIndex, cancellationToken))
+            {
+                return (await ReplayOrSpentAsync().ConfigureAwait(false), Commit: false);
+            }
 
             await ExecuteAsync($"RELEASE SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);
 
@@ -2198,6 +2228,39 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return (
                 new(ExperienceStoreOutcome.Committed, record.Revision, record.Status, NoErrors, recordedOnly),
                 Commit: true);
+        }
+
+        async Task<ExperienceLifecycleCommitResult> ReplayOrSpentAsync()
+        {
+            // Which unique index PostgreSQL reports first when a statement violates several is not a
+            // promise, so an identical retry -- which also re-presents its own, already stored assessment
+            // -- can surface here rather than on the primary key. It is still a replay: the stored row
+            // under this evidence ID decides it exactly as the primary-key path would. Only when no row
+            // holds this evidence ID was the assessment spent by *other* evidence, which is a replayed
+            // token: refused, and nothing written.
+            await ExecuteAsync($"ROLLBACK TO SAVEPOINT {EvidenceSavepoint}", CancellationToken.None).ConfigureAwait(false);
+
+            bool taken;
+            await using (var probe = new NpgsqlCommand(EvidenceIdTakenSql, connection, transaction))
+            {
+                probe.Parameters.Add(new NpgsqlParameter<Guid>("evidence_id", submitted.EvidenceId));
+                AddScopeParameters(probe.Parameters, scope);
+                taken = await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+            }
+
+            if (taken)
+            {
+                return await CompareStoredEvidenceAsync(connection, transaction, scope, lifecycleEvent, submitted, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            return new(
+                ExperienceStoreOutcome.Conflict,
+                0,
+                null,
+                [new StoreValidationError(
+                    ConfidenceUpdate.AssessmentIdPath,
+                    "this assessment has already landed evidence for this record under another evidence ID.")]);
         }
 
         async Task<ExperienceLifecycleCommitResult> ReplayEvidenceAsync()
@@ -2270,7 +2333,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 && (reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5)) == submitted.VerificationRoundId
                 && string.Equals(reader.IsDBNull(6) ? null : reader.GetString(6), submitted.ReviewerIdentity, StringComparison.Ordinal)
                 && string.Equals(reader.GetString(10), submitted.RuleVersion, StringComparison.Ordinal)
-                && string.Equals(reader.IsDBNull(11) ? null : reader.GetString(11), submitted.Detail, StringComparison.Ordinal);
+                && string.Equals(reader.IsDBNull(11) ? null : reader.GetString(11), submitted.Detail, StringComparison.Ordinal)
+                && (reader.IsDBNull(18) ? (Guid?)null : reader.GetGuid(18)) == submitted.AssessmentId;
 
             if (!sameContent)
             {
@@ -2419,6 +2483,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(NullableInt("new_supporting_validations", confidence?.NewSupportingValidations));
         parameters.Add(NullableInt("prior_contradictions", confidence?.PriorContradictions));
         parameters.Add(NullableInt("new_contradictions", confidence?.NewContradictions));
+        parameters.Add(NullableUuid("confidence_assessment_id", confidence?.AssessmentId));
     }
 
     internal static void AddScopeParameters(NpgsqlParameterCollection parameters, Scope scope)
@@ -2631,7 +2696,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             NewSupportingValidations: reader.GetInt32(29),
             PriorContradictions: reader.GetInt32(30),
             NewContradictions: reader.GetInt32(31),
-            Detail: reader.IsDBNull(25) ? null : reader.GetString(25));
+            Detail: reader.IsDBNull(25) ? null : reader.GetString(25))
+        {
+            AssessmentId = reader.IsDBNull(EventAssessmentIdOrdinal) ? null : reader.GetGuid(EventAssessmentIdOrdinal),
+        };
 
     /// <summary>Reads a <c>bigint</c> revision, reporting schema drift the way the row decoders do.</summary>
     private static long ReadRevision(DbDataReader reader, int ordinal)

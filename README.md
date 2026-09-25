@@ -27,7 +27,7 @@ preview.
 | --- | --- | --- |
 | KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
 | KL-8 | **An approach shows argument values only for scalars the host allowlisted, and never for a borrowed record.** An object- or array-valued argument renders as a marker, and a record read through a sharing grant shows none — its approach is tool names only under `LessonAndApproach` and withheld under `LessonOnly`; a host whose lessons turn on either needs its own reflector to say so in the lesson | [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values) |
-| KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call. The same trust binds an evaluation to its run: the aggregator records the run ID it is given, and evidence carries none | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
+| KL-11 | **Verified independence proves a run is real, not that it saw the lesson; and the opt-out trusts the host outright.** By default a confidence submission's run must be finalized into a record in its scope or held by the capture service (never the record's own), a machine round must be the one finalization closed for that run, and a human assessment must present an unexpired, single-use HMAC token the library minted under the host's key. Nothing can check that a real run in the scope was *exposed* to the record, so a caller able to choose among real runs gets one key per real run rather than one per call; nor that the round a host closed at finalization, or a record it wrote by hand through `CreateAsync`, is honest. A host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` is back to trusting every `RunId`, `VerificationRoundId` and `AssessmentId` it passes, and one that lets agent output populate them hands the agent a fresh independence key per call. A direct caller of the aggregator still binds an evaluation to whatever run ID it names | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is revoked, superseded, erased or un-granted — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
 | KL-13 | **The supported matrix stops short of three things.** `Microsoft.Agents.AI` is still pinned exactly, at 1.22.0, so a host whose graph needs a newer MAF gets NuGet's NU1608 warning about the adapter (an error under warnings-as-errors), or NU1107 if the newer MAF arrives through another package; CI's MAF probe reports when the newest MAF stops passing. `net8.0` is not targeted, because its `System.Text.Json` lacks APIs Core and the store compile against. PostgreSQL 14 is not supported, because migration `0005` needs 15. Everything else is covered: `net9.0` and `net10.0`, PostgreSQL 15 to 18, and every other dependency a floor that CI tests at the floor and at the newest release in its major (the same minor for `Pgvector`), so a newer `Microsoft.Extensions.*`, `Npgsql`, DbUp or `Pgvector` no longer conflicts | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 
@@ -48,6 +48,24 @@ Resolved since `0.1.0-preview.2` (unreleased):
   local development) gets none of this. `0013` also pins `search_path` with `pg_temp` last on every purge and guard
   function. See
   [Store: deploying with two roles](src/AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles).
+- KL-11 (confidence independence trusting host-supplied identifiers) is **narrowed, not closed**, by story 6.6: the
+  row above now states only what remains. By default `ApplyEvidenceAsync`, and every attributed feedback submission,
+  refuses an independence key whose inputs the library cannot vouch for, with `ConfidenceUpdateOutcome.Unverified`
+  and an `IndependenceRefusal`: a run that is not finalized into a record in the evidence's scope nor held by the
+  capture service (`UnknownRun`), the record's own run (`OwnRun`, in every mode), a machine round other than the one
+  finalization closed for that run (`UnknownRound`; finalization now stamps `ExperienceRecord.ClosedRoundId`), and a
+  human assessment without a valid assessment token. `AssessmentTokenIssuer` mints the token under a host-held key
+  (`ExperienceIndependenceOptions.AssessmentTokenKey`); it is HMAC-SHA256, bound to the scope, run, reviewer,
+  direction and records, compared in constant time, expires (a day by default), and is spent once per record by
+  `0015`'s unique index, atomically with the evidence. A forged run, round or token, an expired or replayed token,
+  and a token for another scope or record are all refused with nothing written. **Breaking:** evidence the library
+  cannot verify is refused by default, including machine evidence about runs finalized before this version (their
+  records carry no closed round); evidence naming the record's own run is refused in every mode; a human
+  assessment without a token is recorded with benefit `Unknown`; `ConfidenceUpdateOutcome` gains `Unverified`;
+  three records gain a trailing optional parameter; and a store implementation must persist `ClosedRoundId` and
+  spend `AssessmentId` once per record. `IndependenceVerification.TrustHostSuppliedIdentifiers` restores
+  the previous behaviour for a host that cannot adopt the new flow. See
+  [Updating confidence from evidence](#updating-confidence-from-evidence).
 
 Resolved in `0.1.0-preview.2`:
 
@@ -269,7 +287,9 @@ and evidence IDs; finalization applies it to every reflection, and a host that c
 What the binding cannot do: it is exactly as strong as the run ID. Evidence carries no run ID, so the library cannot
 tell whether the round and evidence a host aggregated under a run ID really belong to that run, and a host that
 re-stamps another run with `run with { RunId = ... }` is refused only when that run's own recorded outcome
-contradicts the evaluation. That remains the host's statement, like every other host-supplied identifier (KL-11). A host that calls a reflector and then writes records without finalization is
+contradicts the evaluation. That remains the host's statement (KL-11): finalization binds the capture service's own run
+and records the round it closed, which is what confidence evidence is later checked against, but a direct caller of
+`Aggregate` names its own run ID. A host that calls a reflector and then writes records without finalization is
 writing records itself, and nothing but its own call to `EnsureMatches` checks that path.
 
 ## Moving a record through its lifecycle
@@ -510,8 +530,8 @@ var result = await lifecycle.ApplyEvidenceAsync(
         EvidenceId: Guid.NewGuid(),           // the evidence's own; reuse it verbatim on a retry
         Kind: ConfidenceEvidenceKind.Supporting,      // or Contradicting
         Source: ConfidenceEvidenceSource.Machine,     // or Human
-        RunId: runId,                         // the run the *reuse* happened in, not the record's source run
-        VerificationRoundId: roundId,         // machine evidence only
+        RunId: runId,                         // the run the *reuse* happened in -- finalized, or captured, here
+        VerificationRoundId: roundId,         // machine only: the round that run was finalized with
         Reason: "the retry-after-lock lesson was applied and the checks passed",
         Producer: "verification-aggregator/1.0.0",
         OccurredAt: DateTimeOffset.UtcNow),
@@ -547,17 +567,58 @@ verification round)`; human evidence once per `(record, reviewer, run)`. The key
 `confidence_evidence` with a partial unique index over it, so no caller picks the key **string**: two submissions
 describing the same observation collide however they are phrased.
 
-**The key's inputs are a host trust boundary — read this before wiring it up.** Nothing stops a caller that invents
-the key's *inputs*. There is no foreign key behind `RunId` or `VerificationRoundId` and nothing in the schema can
-check that a run happened or that a round was closed, so a caller passing a fresh `Guid` for both on every
-submission gets a fresh key every time and can drive the score as high as it likes. Establish them the way you
-establish `AuthorizationContext`: from your own run bookkeeping and your own closed verification rounds, never
-passed through from something an agent produced. `ReviewerIdentity` is the same boundary, and is the one the library
-can enforce for you — it is taken from `AuthorizationContext.PrincipalId` and the request has no field for it,
-because the number of distinct human reviewers is exactly what this rule protects. Principals are compared
-ordinally, like every other identity here, and one with leading or trailing whitespace is refused rather than
-trimmed. What the rule guarantees, stated exactly: a host that establishes these honestly cannot have its own
-observations counted twice.
+**The key's inputs are verified against what the library knows (story 6.6).** A key is only worth anything if its
+inputs cannot be invented, so before anything is computed or written the submission is checked, and refused with
+`ConfidenceUpdateOutcome.Unverified` and an `IndependenceRefusal` if it fails:
+
+- **`RunId`** must be a run the library knows **in the evidence's scope**: one finalized into a record there (the
+  record finalization derives for that run and scope, read through the ordinary scoped `GetAsync` — not through a
+  grant, not a tombstone), or one the capture service wired into the lifecycle service holds there. Retrieval is
+  exact-scope and a grant never confers writing, so no run in another scope could have been exposed to a record that
+  accepts evidence. It is never the record's own `SourceRunId` (`OwnRun`, refused in every mode).
+- **`VerificationRoundId`** (machine) must be the round that run was finalized with: finalization stamps
+  `ExperienceRecord.ClosedRoundId` from the evaluation it computed. A run only the capture service holds, or one
+  finalized with no closed round, has no round to vouch for. So one run yields at most one machine key per record.
+- **Human evidence** must carry an `AssessmentToken` from `AssessmentTokenIssuer.Issue(reviewer, scope, runId, kind,
+  experienceIds)`, which your review flow calls when a person records a decision. It is an HMAC-SHA256 over the
+  assessment's ID, issue time, direction and records and over the scope, run and reviewer, under
+  `ExperienceIndependenceOptions.AssessmentTokenKey` (at least 32 bytes from your secret store). It is compared in
+  constant time before anything it claims is read, expires after `AssessmentTokenLifetime` (a day by default), must
+  cover the record, and is spent once per record by the store, in the same transaction as the evidence: another
+  evidence ID presenting it is refused (`AssessmentTokenReplayed`), while resubmitting the same evidence still
+  replays. A random GUID, a tampered token, or one minted for another scope, run, reviewer, direction or record is
+  `AssessmentTokenInvalid` or `AssessmentTokenNotForRecord`; with no key configured, human evidence is refused.
+
+```csharp
+services.AddSingleton(new ExperienceIndependenceOptions { AssessmentTokenKey = secrets.AssessmentTokenKey });
+
+// In your review flow, where a person decided -- never in code an agent drives. The issuer is deliberately not
+// registered in DI: anything that can resolve it can mint.
+var issuer = new AssessmentTokenIssuer(independenceOptions);
+var assessment = issuer.Issue(reviewerAuthorization, recordScope, runId, ConfidenceEvidenceKind.Supporting, [experienceId]);
+// ...then submit Human evidence with AssessmentToken: assessment.Token, under the same reviewer's authorization.
+```
+
+`ReviewerIdentity` is enforced for you as before — it is taken from `AuthorizationContext.PrincipalId` and the
+request has no field for it, because the number of distinct human reviewers is exactly what this rule protects.
+Principals are compared ordinally, like every other identity here, and one with leading or trailing whitespace is
+refused rather than trimmed.
+
+**What verification does not prove — read this before relying on it.** It proves a run is *real and in scope*, not
+that it was *exposed* to the record: a caller able to choose among real runs in the scope can cite one that never saw
+the lesson, and gets one key per real run (not one per call). The round is the one the host closed at finalization,
+and a record written by hand through `CreateAsync` vouches for its own `SourceRunId` and `ClosedRoundId`. Real runs
+are easy to name: every record in the scope carries its `SourceRunId` and `ClosedRoundId`, a run's round vouches
+whatever its own verification concluded, and a run the capture service holds stays known while it is held. The token
+is only as secret as the key and as guarded as the code that can call the issuer, and single use is the store's
+guarantee (the PostgreSQL store makes it; an `IExperienceRecordStore` that ignores `ConfidenceUpdate.AssessmentId`
+does not). Verification runs before the store's replay check, so retry a lost acknowledgement within the token's
+lifetime: after it, the retry is refused (`AssessmentTokenExpired`) although the original is durable. Keep taking `RunId` from your own
+run bookkeeping (the adapter's session state), never from agent output. **The opt-out**,
+`IndependenceVerification.TrustHostSuppliedIdentifiers`, is the previous behaviour for a host that cannot adopt this
+yet — one that captures and retrieves in different scopes, finalizes nothing, or must accept evidence about runs
+finalized before this version: every identifier is trusted as given (only the own-run rule stays), and a host that
+lets agent output populate them hands the agent a fresh key per call. That is KL-11.
 
 | Submission | Outcome |
 | --- | --- |
@@ -568,6 +629,7 @@ observations counted twice.
 | Same evidence ID, different content | `Conflict` — nothing written |
 | Two submissions computed from one revision | Exactly one `Applied`; the other `StaleRevision` with the revision to retry against |
 | Against a `Candidate`, `Quarantined`, `Stale`, `Superseded`, or `Revoked` record | `Ineligible` — refused before anything is written |
+| An unknown or own run, a round finalization did not close, or a missing, invalid, expired, other-record or spent assessment token | `Unverified`, with `Refusal` naming which — nothing written (checked after `Ineligible`) |
 
 **A record cannot be created claiming evidence it does not have.** `CreateAsync` refuses a record whose
 `ReuseConfidence` is not the one its own counters explain — creation is the single moment the two arrive
@@ -640,25 +702,26 @@ believed against what evidence established, and it is never acted on. Exactly tw
 
 | Attribution | What it must carry | What it produces |
 | --- | --- | --- |
-| `HumanReuseAssessment` | improvement or harm, the exposed records it is about, an auditable rationale, an `AssessmentId` naming the **host-established review** it came out of, optionally the verification round it was made against — and **no reviewer field**, because the reviewer is your `AuthorizationContext.PrincipalId` | `Human` evidence, keyed `human:{principal}:{run}` |
-| `ComparativeEvaluationResult` | the same records and rationale, plus the run it evaluated (which must be *this* run), its verification round, and the evidence it reached its conclusion from — each piece of which must name that same round | `Machine` evidence, keyed `machine:{run}:{round}` |
+| `HumanReuseAssessment` | improvement or harm, the exposed records it is about, an auditable rationale, the `AssessmentId` and `AssessmentToken` of a **library-minted assessment token** for this scope, run, reviewer, direction and (at least) these records, optionally the verification round it was made against — and **no reviewer field**, because the reviewer is your `AuthorizationContext.PrincipalId` | `Human` evidence, keyed `human:{principal}:{run}` |
+| `ComparativeEvaluationResult` | the same records and rationale, plus the run it evaluated (which must be *this* run, finalized in this scope), the verification round that run was finalized with, and the evidence it reached its conclusion from — each piece of which must name that same round | `Machine` evidence, keyed `machine:{run}:{round}` |
 
 **This library does not implement a comparative evaluator**; it defines the contract and verifies the result it is
 given. Evidence from another round is not evidence about this comparison, and is refused.
 
-> **Read this before you wire either one up — the library cannot check that any of it is true.**
-> `RunId`, `AssessmentId`, and `VerificationRoundId` are all host-established identifiers. Nothing here can verify
-> that a run happened, that a round was closed, or that a human made an assessment and meant it. What the library
-> actually guarantees is narrow: the reviewer is your `AuthorizationContext.PrincipalId` rather than anything on the
-> submission, and one reviewer's opinion about one run counts once. Because the *caller* supplies `RunId`, a host
-> that lets agent output populate it hands the agent a fresh independence key on every call — and with it the
-> ability to contest its own stored lessons over and over. The human shape is the weakest boundary in this library;
-> requiring an `AssessmentId` makes a moved score traceable back to a review that exists, and that is all it does.
-> Establish these from your own run and review bookkeeping, exactly as you establish `AuthorizationContext`, and
-> never from anything an agent produced.
+> **Read this before you wire either one up — what the library can and cannot check.**
+> Under the default verification (story 6.6), an attribution is accepted only when its `RunId` is a run the library
+> knows in the feedback's scope, a comparative result's round is the one that run was finalized with, and a human
+> assessment presents an assessment token the library minted — so an agent can no longer mint a run, a round or an
+> assessment, and a forged one is dropped with the exposure still recorded. What nothing can check is that a real
+> run was *exposed* to the records, or that a human made the assessment and meant it: the reviewer is your
+> `AuthorizationContext.PrincipalId`, one reviewer's opinion about one run counts once, and the token proves your
+> review flow issued it — not what the person thought. The human shape is still the weakest boundary here. Take
+> `RunId` from your own run bookkeeping and keep the issuer in your review flow, never in code an agent drives. A
+> host that opted out (`TrustHostSuppliedIdentifiers`) is back to trusting all three identifiers as given.
 
 **A failed attribution costs the attribution, not the exposure.** An attribution that does not meet its evidence
-requirements — no `AssessmentId`, no evidence behind a comparison, a blank rationale, a benefit of `Unknown` — is
+requirements — no `AssessmentId`, a missing, invalid, expired or non-covering assessment token, an unknown run, a
+round its run was not finalized with, no evidence behind a comparison, a blank rationale, a benefit of `Unknown` — is
 dropped: the submission is still recorded, with benefit `Unknown`, no confidence submission, and a `Reason` naming
 what was refused. Only a structurally incoherent submission is `Invalid` with nothing written: no feedback ID, no
 records, an attribution naming a record the run never saw, or a comparative result about a *different* run. Losing
@@ -678,6 +741,8 @@ stays, and its own history carries the reason.
 | Comparative evaluator result | Supporting evidence per attributed record, as machine evidence |
 | Attributed harm | Contradicting evidence per record; each `Contested`; all still present |
 | Attribution fails its evidence requirements | Exposure recorded, benefit `Unknown`, `Reason` says what was refused |
+| Attribution names a run the library does not know, a round its run was not finalized with, or presents a forged or expired assessment token | Same: exposure recorded, benefit `Unknown`, `Reason` names it |
+| A second submission presents an assessment token already spent on a record | That record `Refused`, not retryable — the token lands once per record |
 | Attribution names a record the run never saw, or a comparative result names another run | `Invalid` — nothing written |
 | Same feedback ID, identical content — in any record order | `AlreadyRecorded` — nothing written twice, nothing counted twice |
 | Same feedback ID, different content | `Conflict` — nothing written; the stored submission's records are reported back when you are authorized for its scope |
@@ -1238,7 +1303,11 @@ services.AddAgentExperienceEmbeddingGenerator();                // IExperienceEm
                                                                 //    IEmbeddingGenerator<string, Embedding<float>>
 services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
 // -> ISanitizer, IExperienceCaptureService, IExperienceReflector,
-//    ExperienceLifecycleService, ExperienceFinalizationService
+//    ExperienceLifecycleService (verifying independence), ExperienceFinalizationService
+services.AddSingleton(new ExperienceIndependenceOptions         // optional: the assessment token key, without
+{                                                               //    which human evidence is refused; or the
+    AssessmentTokenKey = secrets.AssessmentTokenKey,            //    TrustHostSuppliedIdentifiers opt-out
+});
 services.AddAgentExperienceIndexing();                          // ExperienceIndexingService, and finalization's
                                                                 //    post-commit hook, in either registration order
 services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService
@@ -1256,7 +1325,7 @@ Schema comes in two calls, matching that split:
 
 ```csharp
 // As the owner role, on every deploy. The stores themselves connect as the application role.
-await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0013, always
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003, 0005-0013 and 0015, always
 await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004, only with the vector channel
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(                     // last, so it covers both
     ownerDataSource,

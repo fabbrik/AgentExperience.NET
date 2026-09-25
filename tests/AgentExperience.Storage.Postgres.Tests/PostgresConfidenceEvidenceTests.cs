@@ -23,7 +23,7 @@ public sealed class PostgresConfidenceEvidenceTests
     {
         _fixture = fixture;
         _store = new PostgresExperienceRecordStore(fixture.DataSource);
-        _lifecycle = new ExperienceLifecycleService(_store);
+        _lifecycle = TestRecords.TrustingLifecycle(_store);
     }
 
     [Fact]
@@ -349,7 +349,7 @@ public sealed class PostgresConfidenceEvidenceTests
         // The barrier makes "both read before either commits" a fact rather than a timing hope: without
         // it, a loaded runner can finish the first submission before the second reads, and the second then
         // legitimately applies at revision 2 (story 6.3 CI, with two framework test hosts in parallel).
-        var racing = new ExperienceLifecycleService(new ReadBarrierStore(_store, parties: 2));
+        var racing = TestRecords.TrustingLifecycle(new ReadBarrierStore(_store, parties: 2));
         var results = await Task.WhenAll(
             racing.ApplyEvidenceAsync(auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting), CancellationToken.None),
             racing.ApplyEvidenceAsync(auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting), CancellationToken.None));

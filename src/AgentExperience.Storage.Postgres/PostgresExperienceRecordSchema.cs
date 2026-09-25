@@ -199,6 +199,19 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string RoleSeparationHardeningScriptName = "0013_role_separation_hardening.sql";
 
+    /// <summary>
+    /// The script that makes an assessment single-use: <c>confidence_evidence.assessment_id</c> with a
+    /// unique index on <c>(experience_id, assessment_id)</c>, and <c>lifecycle_events.confidence_assessment_id</c>
+    /// so the audit trail names the assessment behind a counted human update.
+    /// </summary>
+    /// <remarks>
+    /// The rest of verified independence (story 6.6) needs no schema: the run and the round are checked by
+    /// Core against finalized records, whose closed round travels in the payload. It adds no table, so the
+    /// application role's manifest is unchanged. See the script's header for the <c>CONCURRENTLY</c>
+    /// runbook for its one index.
+    /// </remarks>
+    public const string VerifiedIndependenceScriptName = "0015_verified_independence.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -222,6 +235,7 @@ public static class PostgresExperienceRecordSchema
         GrantDisclosureScriptName,
         GrantAccessRetentionScriptName,
         RoleSeparationHardeningScriptName,
+        VerifiedIndependenceScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

@@ -55,7 +55,7 @@ Apply the schema on every deploy, as the owner role of the base package's
 application role its privileges last, so the embedding table is covered:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0013, base schema
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003, 0005-0013 and 0015, base schema
 await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004, this package's schema
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
     ownerDataSource, new ExperienceApplicationRoleOptions("agent_experience_app"), cancellationToken);

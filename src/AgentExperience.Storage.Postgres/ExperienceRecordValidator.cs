@@ -26,6 +26,12 @@ internal static class ExperienceRecordValidator
             errors.Add(new("SourceRunId", "must not be an empty GUID."));
         }
 
+        if (record.ClosedRoundId == Guid.Empty)
+        {
+            // An empty round names no round; a record that closed none says so with null.
+            errors.Add(new("ClosedRoundId", "must be null or name a verification round, never an empty GUID."));
+        }
+
         ValidateScope(record.Scope, "Scope", errors);
         RequireNotBlank(record.TaskId, "TaskId", errors);
         ValidateAttempts(record.Attempts, errors);
@@ -448,6 +454,11 @@ internal static class ExperienceRecordValidator
             {
                 errors.Add(new($"{Path}.ReviewerIdentity", $"must be null for {ConfidenceEvidenceSource.Machine} evidence."));
             }
+
+            if (update.AssessmentId is not null)
+            {
+                errors.Add(new(ConfidenceUpdate.AssessmentIdPath, $"must be null for {ConfidenceEvidenceSource.Machine} evidence."));
+            }
         }
         else
         {
@@ -461,6 +472,11 @@ internal static class ExperienceRecordValidator
             if (update.VerificationRoundId is not null)
             {
                 errors.Add(new($"{Path}.VerificationRoundId", $"must be null for {ConfidenceEvidenceSource.Human} evidence."));
+            }
+
+            if (update.AssessmentId == Guid.Empty)
+            {
+                errors.Add(new(ConfidenceUpdate.AssessmentIdPath, "must be null or name an assessment, never an empty GUID."));
             }
         }
     }

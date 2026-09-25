@@ -129,6 +129,7 @@ namespace AgentExperience.Storage.Postgres
         public const string SchemaName = "agent_experience";
         public const string SearchScriptName = "0003_add_experience_search.sql";
         public const string SupersessionAndAppendOnlyScriptName = "0006_lifecycle_supersession_and_append_only.sql";
+        public const string VerifiedIndependenceScriptName = "0015_verified_independence.sql";
         public static System.Collections.Generic.IReadOnlyList<string> ScriptNames { get; }
         public static string GetScript(string scriptName) { }
     }
