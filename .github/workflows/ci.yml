@@ -4,7 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
-  # Weekly, so the MAF compatibility probe notices a new Microsoft.Agents.AI release even in a quiet week.
+  # Weekly, so the MAF compatibility probe notices a new Microsoft.Agents.AI release, and the floating-dependency
+  # leg a new release of any floored package, even in a quiet week.
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
@@ -30,10 +31,13 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
+      # The pinned SDK builds every target framework; the 9.0 SDK is installed beside it, for its runtime, so the net9.0
+      # test runs have a runtime to run on. The SDK in use is still exactly global.json's (asserted below).
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          dotnet-version: 9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -51,6 +55,9 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      # Every test project runs once per target framework it builds (net9.0 and net10.0; the sample, its
+      # tests and the reuse baseline are net10.0 only), against the default PostgreSQL major. The postgres
+      # job below repeats the storage suites on every supported major.
       - name: Test
         run: dotnet test --no-build --configuration Release
 
@@ -103,10 +110,13 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
+      # The pinned SDK builds every target framework; the 9.0 SDK is installed beside it, for its runtime, so the net9.0
+      # test runs have a runtime to run on. The SDK in use is still exactly global.json's (asserted below).
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          dotnet-version: 9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -137,6 +147,111 @@ jobs:
           path: artifacts/packages/
           retention-days: 14
 
+  # The PostgreSQL matrix (story 6.3, KL-13): the storage suites, the pgvector proof and the sample's PostgreSQL
+  # mode, on every supported major (both target frameworks; the sample tests are net10.0 only). One variable picks both the pgvector image and
+  # the stock one, and each suite asserts the server it reached reports that major, so a leg cannot quietly
+  # run the default. The list must equal PostgresTestImage.SupportedMajors; a release test checks it.
+  postgres:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 16, 17, 18]
+    name: postgres (${{ matrix.postgres }})
+    env:
+      AGENTEXPERIENCE_POSTGRES_MAJOR: ${{ matrix.postgres }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
+      # The pinned SDK builds every target framework; the 9.0 SDK is installed beside it, for its runtime, so the net9.0
+      # test runs have a runtime to run on. The SDK in use is still exactly global.json's (asserted below).
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          dotnet-version: 9.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Restore
+        run: dotnet restore --locked-mode
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test the storage suites on PostgreSQL ${{ matrix.postgres }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for project in \
+            tests/AgentExperience.Storage.Postgres.Tests \
+            tests/AgentExperience.Storage.Postgres.Vectors.Tests \
+            tests/AgentExperience.CompatibilityProof \
+            tests/AgentExperience.Sample.EndToEnd.Tests; do
+            dotnet test "$project" --no-build --configuration Release || failed=1
+          done
+          exit "$failed"
+
+  # The floating-dependency leg (story 6.3, KL-13). Every shipping reference except Microsoft.Agents.AI is a
+  # floor, which admits every later release in its major. The build-and-test job proves the floors themselves;
+  # this proves the newest release in each major, with the whole suite. It GATES on push and on the weekly
+  # schedule: a floor makes a support claim for those versions, so a release that breaks the library breaks
+  # hosts, and main must go red. On a pull request it runs and reports in the job summary but does not
+  # block, so an unrelated PR is not held hostage to a release that shipped that morning (the AD-F reasoning
+  # behind the MAF probe). Triage for a red run: raise the floor past the broken release, or fix the library.
+  floating-dependencies:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
+      # The pinned SDK builds every target framework; the 9.0 SDK is installed beside it, for its runtime, so the net9.0
+      # test runs have a runtime to run on. The SDK in use is still exactly global.json's (asserted below).
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          dotnet-version: 9.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Float every floor to the newest release in its major, and test
+        run: eng/probe-floating-dependencies.sh
+
   # The MAF compatibility matrix (story 4.3, AD-F). The pinned leg is the supported version and gates the
   # build. The latest leg probes the newest stable Microsoft.Agents.AI on nuget.org and reports PASSED or
   # FAILED in the job summary, but never fails the workflow: a gate that went red whenever Microsoft shipped
@@ -161,10 +276,13 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
+      # The pinned SDK builds every target framework; the 9.0 SDK is installed beside it, for its runtime, so the net9.0
+      # test runs have a runtime to run on. The SDK in use is still exactly global.json's (asserted below).
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          dotnet-version: 9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 

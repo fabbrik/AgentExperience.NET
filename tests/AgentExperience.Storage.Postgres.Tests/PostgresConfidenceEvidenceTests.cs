@@ -6,7 +6,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 3.4 against a real PostgreSQL 16 container: the evidence ledger, its unique independence index,
+/// Story 3.4 against a real PostgreSQL container: the evidence ledger, its unique independence index,
 /// the counters and score moving in the same transaction as the evidence row and the lifecycle event, the
 /// duplicate that is recorded and counted zero times, the concurrent submission that loses on revision,
 /// and the database refusing a direct rewrite of the confidence columns. Each test uses its own random
@@ -346,9 +346,13 @@ public sealed class PostgresConfidenceEvidenceTests
 
         // Both read the record at revision 1 and both compute against it. Only the revision guard, inside
         // the commit, can stop them both applying -- and the loser must be told, not silently dropped.
+        // The barrier makes "both read before either commits" a fact rather than a timing hope: without
+        // it, a loaded runner can finish the first submission before the second reads, and the second then
+        // legitimately applies at revision 2 (story 6.3 CI, with two framework test hosts in parallel).
+        var racing = new ExperienceLifecycleService(new ReadBarrierStore(_store, parties: 2));
         var results = await Task.WhenAll(
-            ApplyAsync(auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting)),
-            ApplyAsync(auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting)));
+            racing.ApplyEvidenceAsync(auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting), CancellationToken.None),
+            racing.ApplyEvidenceAsync(auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting), CancellationToken.None));
 
         Assert.Equal(1, results.Count(r => r.Outcome == ConfidenceUpdateOutcome.Applied));
         Assert.Equal(1, results.Count(r => r.Outcome == ConfidenceUpdateOutcome.StaleRevision));
@@ -708,5 +712,52 @@ public sealed class PostgresConfidenceEvidenceTests
         }
 
         return await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// Forwards everything to the real store, but holds each single-record read until
+    /// <paramref name="parties"/> reads have completed, so concurrent callers all see the same revision
+    /// before any of them can commit.
+    /// </summary>
+    private sealed class ReadBarrierStore(IExperienceRecordStore inner, int parties) : IExperienceRecordStore
+    {
+        private readonly TaskCompletionSource _allRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _reads;
+
+        public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken) =>
+            inner.CreateAsync(authorization, record, cancellationToken);
+
+        public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+            HoldAsync(inner.GetAsync(authorization, scope, experienceId, cancellationToken));
+
+        public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, ExperienceReadOptions options, CancellationToken cancellationToken) =>
+            HoldAsync(inner.GetAsync(authorization, scope, experienceId, options, cancellationToken));
+
+        public Task<ExperienceRecordGetManyResult> GetManyAsync(AuthorizationContext authorization, Scope scope, IReadOnlyList<Guid> experienceIds, ExperienceReadOptions options, CancellationToken cancellationToken) =>
+            inner.GetManyAsync(authorization, scope, experienceIds, options, cancellationToken);
+
+        public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+            inner.QueryAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AuthorizationContext authorization, Scope scope, LifecycleEvent lifecycleEvent, CancellationToken cancellationToken) =>
+            inner.CommitLifecycleEventAsync(authorization, scope, lifecycleEvent, cancellationToken);
+
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
+            inner.GetHistoryAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
+            inner.CheckSupersessionAsync(authorization, scope, experienceId, replacementExperienceId, cancellationToken);
+
+        private async Task<ExperienceRecordGetResult> HoldAsync(Task<ExperienceRecordGetResult> read)
+        {
+            var result = await read;
+            if (Interlocked.Increment(ref _reads) >= parties)
+            {
+                _allRead.TrySetResult();
+            }
+
+            await _allRead.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            return result;
+        }
     }
 }

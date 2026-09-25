@@ -29,7 +29,7 @@ preview.
 | KL-8 | **An approach shows argument values only for scalars the host allowlisted, and never for a borrowed record.** An object- or array-valued argument renders as a marker, and a record read through a sharing grant shows none — its approach is tool names only under `LessonAndApproach` and withheld under `LessonOnly`; a host whose lessons turn on either needs its own reflector to say so in the lesson | [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call. The same trust binds an evaluation to its run: the aggregator records the run ID it is given, and evidence carries none | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
-| KL-13 | **The supported matrix is narrow.** `net10.0` only, PostgreSQL 16 only, `Microsoft.Agents.AI` 1.22.0 only. Every shipping pin is exact, including the shared `Microsoft.Extensions.*` ones (DI abstractions, redaction, AI abstractions), so a host whose graph needs a newer version of any of them, or a MAF that does, gets a restore conflict until a new preview moves the pins. CI's MAF probe reports on every run when the newest MAF stops resolving | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
+| KL-13 | **The supported matrix stops short of three things.** `Microsoft.Agents.AI` is still pinned exactly, at 1.22.0, so a host whose graph needs a newer MAF gets NuGet's NU1608 warning about the adapter (an error under warnings-as-errors), or NU1107 if the newer MAF arrives through another package; CI's MAF probe reports when the newest MAF stops passing. `net8.0` is not targeted, because its `System.Text.Json` lacks APIs Core and the store compile against. PostgreSQL 14 is not supported, because migration `0005` needs 15. Everything else is covered: `net9.0` and `net10.0`, PostgreSQL 15 to 18, and every other dependency a floor that CI tests at the floor and at the newest release in its major (the same minor for `Pgvector`), so a newer `Microsoft.Extensions.*`, `Npgsql`, DbUp or `Pgvector` no longer conflicts | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 
 Resolved since `0.1.0-preview.2` (unreleased):
 
@@ -78,6 +78,8 @@ Resolved in `0.1.0-preview.2`:
 - KL-15 (Core's redaction dependency a floor) is resolved by exact-pinning `Microsoft.Extensions.Compliance.Redaction`
   at `[10.10.0]` (story 5.1). Every `PackageReference` a shipping project declares is now exact, and a release test
   fails on a new floor; the dependencies those packages declare in turn are still whatever NuGet floors they carry.
+  (Story 6.3, after this preview, replaced that policy: every reference but MAF is now a floor CI tests at both ends
+  of its major. See KL-13.)
 - KL-16 (erasure emitting no library telemetry) is resolved by story 5.2. Deletion, the retention sweep and the grant
   purge are now the `delete`, `retention.sweep` and `grant.purge` operations on the `AgentExperience.Storage.Postgres`
   source and meter, and they carry nothing that was erased; see [`docs/telemetry.md`](docs/telemetry.md#operations).
@@ -1303,9 +1305,9 @@ operation emits: [`docs/telemetry.md`](docs/telemetry.md). Erasure is instrument
 src/
   AgentExperience.Abstractions/             domain contracts and ports (BCL only)
   AgentExperience.Core/                     sanitization, capture, verification, reflection, lifecycle transitions, finalization, indexing, retrieval, reuse feedback
-  AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned Microsoft.Agents.AI 1.22.0)
-  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, sharing grants, reuse feedback ledger, and schema migrator (pinned Npgsql 10.0.3, dbup-postgresql 7.0.1, dbup-core 6.1.1)
-  AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (pinned Npgsql 10.0.3, Pgvector 0.3.2, Microsoft.Extensions.AI.Abstractions 10.10.0)
+  AgentExperience.MicrosoftAgentFramework/  MAF adapter: run/tool capture and Historical Reference injection (pinned exactly to Microsoft.Agents.AI 1.22.0)
+  AgentExperience.Storage.Postgres/         PostgreSQL Experience Record store, text search, sharing grants, reuse feedback ledger, and schema migrator (Npgsql 10.0.3+, dbup-postgresql 7.0.1+, dbup-core 6.1.1+)
+  AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, and vector search (Npgsql 10.0.3+, Pgvector 0.3.2+, Microsoft.Extensions.AI.Abstractions 10.10.0+)
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
   AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle, indexing, retrieval tests
@@ -1325,7 +1327,9 @@ _sdlc/                                      product brief, PRD, architecture, ep
 
 ## Build and test
 
-Requires the [.NET SDK 10.0.302](https://dotnet.microsoft.com/) or a later feature band (see `global.json`).
+Requires the [.NET SDK 10.0.302](https://dotnet.microsoft.com/) or a later feature band (see `global.json`). The five
+packages target `net9.0` and `net10.0`, and `dotnet test` runs each test project on both, so a full local run also
+needs the .NET 9 runtime; `dotnet test --framework net10.0` runs only the `net10.0` half.
 
 ```bash
 dotnet restore
@@ -1333,10 +1337,10 @@ dotnet build
 dotnet test
 ```
 
-Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests`, `MigratorLogSilenceTests`, `PostgresDeletionTests`, and `PostgresApplicationRoleTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres:16` image, proving the base schema needs nothing pgvector provides), and the `PostgresEmbeddingIndexTests` and `HybridRetrievalIntegrationTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. To skip the container-backed tests:
+Unit and MAF adapter tests run in memory, with no network, database, or model credentials. **No test anywhere needs model credentials**: every embedding in the test suite comes from a deterministic in-test generator. `AgentExperience.CompatibilityProof`, the `PostgresExperienceRecordStoreTests`, `PostgresExperienceCandidateSourceTests`, `PostgresLifecycleCommitTests`, `PostgresSupersessionAndAppendOnlyTests`, `PostgresGrantTests`, `PostgresConfidenceEvidenceTests`, `PostgresReuseFeedbackTests`, `PostgresFinalizationTests`, and `ExperienceSchemaMigratorTests`, `MigratorLogSilenceTests`, `PostgresDeletionTests`, and `PostgresApplicationRoleTests` in `AgentExperience.Storage.Postgres.Tests`, the `PlainPostgresMigrationTests` in the same project (a stock `postgres` image, proving the base schema needs nothing pgvector provides), the `PostgresServerVersionTests` in both storage test projects, and the `PostgresEmbeddingIndexTests`, `HybridRetrievalIntegrationTests` and `ApplicationRoleVectorsTests` in `AgentExperience.Storage.Postgres.Vectors.Tests` start a PostgreSQL/pgvector container through Testcontainers, so they need Docker. If Testcontainers' Ryuk container fails to start under your local Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. They run against PostgreSQL 16 unless `AGENTEXPERIENCE_POSTGRES_MAJOR` names another supported major (15, 16, 17 or 18), which is how CI runs them on each; any other value fails loudly rather than falling back. To skip the container-backed tests:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PostgresApplicationRoleTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests"
+dotnet test --filter "FullyQualifiedName!~CompatibilityProof&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PostgresApplicationRoleTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~HybridRetrievalIntegrationTests&FullyQualifiedName!~PostgresServerVersionTests&FullyQualifiedName!~ApplicationRoleVectorsTests"
 ```
 
 To accept a deliberate public API change, regenerate the baseline and review the diff it leaves before committing

@@ -24,9 +24,12 @@ To cut the next preview, bump the suffix (`preview.1` → `preview.2`) in `Direc
 ## Prerequisites
 
 - The commit you are releasing, checked out, with a clean tree.
-- Docker running: the storage tests start PostgreSQL 16 containers. If Testcontainers' Ryuk container fails under
-  your Docker setup (Rancher Desktop, for example), `export TESTCONTAINERS_RYUK_DISABLED=true` first.
-- Network access to nuget.org (restore, and the MAF probe in step 6).
+- Docker running: the storage tests start PostgreSQL containers (16 by default; step 3 runs every supported major).
+  If Testcontainers' Ryuk container fails under your Docker setup (Rancher Desktop, for example),
+  `export TESTCONTAINERS_RYUK_DISABLED=true` first.
+- The .NET 9 runtime installed beside the pinned SDK: the packages target `net9.0` and `net10.0`, and every test
+  project that exercises them runs on both.
+- Network access to nuget.org (restore, and the probes in step 6).
 
 ```bash
 ( test -z "$(git status --porcelain)" && echo "Clean tree OK" || echo "FAILED: the working tree is not clean" )
@@ -60,11 +63,29 @@ dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild
 ### 3. The full test suite
 
 Core, PostgreSQL, the MAF adapter, the end-to-end sample, the reuse baseline, the compatibility proofs, and the
-release gates, on the one supported target framework (`net10.0`). This is also the security suite: every test in
+release gates, on both supported target frameworks (`net9.0` and `net10.0`; the sample, its tests and the reuse
+baseline run on `net10.0` only), against PostgreSQL 16. This is also the security suite: every test in
 [`docs/security-suite.md`](docs/security-suite.md) runs here, and there is no separate, weaker security build.
 
 ```bash
 dotnet test --no-build --configuration Release
+```
+
+Then the container-backed suites once per supported PostgreSQL major. The list is read from CI's `postgres` matrix,
+which a release test holds equal to the list the fixtures accept, so this runs exactly what CI runs:
+
+```bash
+( ok=true
+  majors="$(sed -nE 's/^ *postgres: \[([0-9, ]+)\].*/\1/p' .github/workflows/ci.yml | tr -d ' ' | tr ',' ' ')"
+  [ -n "$majors" ] || { echo "FAILED: no postgres matrix in .github/workflows/ci.yml"; ok=false; }
+  for major in $majors; do
+    for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests \
+                   tests/AgentExperience.CompatibilityProof tests/AgentExperience.Sample.EndToEnd.Tests; do
+      AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
+        || { echo "FAILED: $project on PostgreSQL $major"; ok=false; }
+    done
+  done
+  $ok && echo "PostgreSQL matrix OK: $majors" )
 ```
 
 ### 4. The named gates, one by one
@@ -73,7 +94,7 @@ All of these already ran in step 3. Run them again by name so the release log sh
 line — and so a gate that was accidentally filtered out of step 3 cannot hide.
 
 ```bash
-# Story 4.5: deletion and retention, against a real PostgreSQL 16.
+# Story 4.5: deletion and retention, against a real PostgreSQL (16 unless AGENTEXPERIENCE_POSTGRES_MAJOR says otherwise).
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~PostgresDeletionTests"
 
 # Story 6.1: the two-role deployment. The application role owns nothing, cannot rewrite, remove or truncate a
@@ -104,8 +125,9 @@ regenerates it, and the resulting `git diff` is what gets reviewed and committed
 ### 5. Every pin has source-backed evidence
 
 [`docs/compatibility-evidence.md`](docs/compatibility-evidence.md) carries one row per SDK, MAF, storage, and
-telemetry pin: where it is declared, its nuget.org source, the content hash NuGet restored, and the test that proves
-it. These two loops check that the document and the committed lock files describe the same packages, byte for byte.
+telemetry pin — MAF's exact pin and every floor: where it is declared, its nuget.org source, the content hash NuGet
+restored, and the test that proves it. These two loops check that the document and the committed lock files describe
+the same packages, byte for byte, in every target framework's section.
 
 ```bash
 (
@@ -125,10 +147,10 @@ it. These two loops check that the document and the committed lock files describ
 )
 ```
 
-Then read the document's **Last verified** date. If any pin moved since, re-verify the moved rows against nuget.org
-and update the date before continuing.
+Then read the document's **Last verified** date. If any pin or floor moved since, re-verify the moved rows against
+nuget.org and update the date before continuing.
 
-### 6. The MAF compatibility matrix
+### 6. The MAF compatibility matrix, and the floating dependencies
 
 The pinned version must pass; the newest stable one is probed and reported, and does not block (story 4.3, AD-F).
 Both run on a throwaway copy of the **tracked files** (HEAD plus uncommitted changes to them); untracked files are not
@@ -143,15 +165,23 @@ eng/probe-maf-version.sh          # newest stable on nuget.org: record the resul
 A failing `latest` probe is not a release blocker. It is a fact about the ecosystem that belongs in the evidence
 document and, if it constrains hosts, in the Known limits table.
 
+Every other dependency is a floor, which claims every later release in its major, so the newest ones must pass too
+(story 6.3). This one **is** a release blocker. Like the MAF probe it works on a throwaway copy of the tracked files:
+
+```bash
+eng/probe-floating-dependencies.sh   # must print "... PASSED" and exit 0; record the resolved table in the evidence
+```
+
 ### 7. Pack, and verify the packages themselves
 
 Assertions are made against the built `.nupkg` and `.snupkg` files, not the csproj files: ten artifacts at
 `0.1.0-preview.N`; license, readme, tags, and repository metadata with the SourceLink commit; "Preview" in the
-description, release notes, and readme; the **exact** dependency set of each package — so Abstractions and Core carry
-no MAF, Npgsql, DbUp, Pgvector, model-provider or OpenTelemetry dependency; one repository commit across all five
-packages, equal to `git rev-parse HEAD`; and, in each symbol package, a PDB whose id matches its assembly's CodeView
-debug entry, whose every SourceLink target points at this repository, whose every path is mapped to `/_/`, and whose
-assembly is marked reproducible.
+description, release notes, and readme; exactly the `net9.0` and `net10.0` builds under `lib/`, and the **exact**
+dependency set — ids and version ranges — in each framework's dependency group, so Abstractions and Core carry no MAF,
+Npgsql, DbUp, Pgvector, model-provider or OpenTelemetry dependency; one repository commit across all five packages,
+equal to `git rev-parse HEAD`; and, per framework, in each symbol package, a PDB whose id matches its assembly's
+CodeView debug entry, whose every SourceLink target points at this repository, whose every path is mapped to `/_/`,
+and whose assembly is marked reproducible.
 
 ```bash
 rm -rf artifacts/packages

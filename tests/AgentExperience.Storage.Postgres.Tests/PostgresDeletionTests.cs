@@ -8,7 +8,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 4.5 against a real PostgreSQL 16 container: the one destructive operation this library has.
+/// Story 4.5 against a real PostgreSQL container: the one destructive operation this library has.
 /// Every claim here is proved against rows in a database rather than reasoned about -- what erasure
 /// removes, what it deliberately keeps, that a foreign scope cannot tell a refusal from an absence, that
 /// a tombstone is terminal for every write path, that the append-only guards stay armed in another

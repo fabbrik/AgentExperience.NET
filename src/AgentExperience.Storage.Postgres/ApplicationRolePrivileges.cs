@@ -239,7 +239,10 @@ internal static class ApplicationRolePrivileges
     /// <summary>
     /// A role reachable from the application role that bypasses every privilege and trigger (a superuser),
     /// reaches the server's files or programs (and from there the data directory), or may switch triggers
-    /// off with <c>session_replication_role = replica</c>, is refused: nothing in the schema binds it.
+    /// off with <c>session_replication_role = replica</c>, is refused: nothing in the schema binds it. So is
+    /// PostgreSQL 17's <c>pg_maintain</c>, which holds <c>MAINTAIN</c> on every table: no trigger fires on
+    /// <c>LOCK TABLE</c>, <c>CLUSTER</c>, <c>REINDEX</c> or <c>VACUUM</c>, so an application role that can
+    /// run them can hold every ledger's lock indefinitely or rewrite a table under the owner's feet.
     /// </summary>
     private static async Task RefuseDangerousMembershipsAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, RoleFacts role, CancellationToken cancellationToken)
@@ -249,10 +252,13 @@ internal static class ApplicationRolePrivileges
             "SELECT quote_ident(r.rolname), CASE " +
             "WHEN r.rolsuper THEN 'a superuser' " +
             "WHEN r.rolname IN ('pg_execute_server_program', 'pg_write_server_files', 'pg_read_server_files') THEN 'server file or program access' " +
+            "WHEN r.rolname = 'pg_maintain' THEN 'MAINTAIN on every table, which includes LOCK TABLE, CLUSTER and REINDEX' " +
             "ELSE 'SET on session_replication_role, which switches the guard triggers off' END " +
             "FROM reach JOIN pg_catalog.pg_roles r ON r.oid = reach.oid " +
             "WHERE r.rolsuper " +
             "OR r.rolname IN ('pg_execute_server_program', 'pg_write_server_files', 'pg_read_server_files') " +
+            // pg_maintain exists from PostgreSQL 17; on 15 and 16 no role has that name, so this matches nothing.
+            "OR r.rolname = 'pg_maintain' " +
             "OR pg_catalog.has_parameter_privilege(r.oid, 'session_replication_role', 'SET') ORDER BY 1",
             connection,
             transaction);
@@ -327,6 +333,13 @@ internal static class ApplicationRolePrivileges
         // predefined roles (pg_read_all_data, pg_write_all_data), which an owner's REVOKE cannot remove.
         // What must be present is checked on the role itself; what must be absent is checked on every
         // role in its reach, so a privilege one SET ROLE away is caught too.
+        //
+        // MAINTAIN (PostgreSQL 17+) is a table privilege of its own. The privilege name is not known to 15
+        // or 16, where has_table_privilege would raise on it, so the column is only asked for on 17+ and is
+        // a constant false below that; there is nothing to hold on a server that has no such privilege.
+        var maintain = connection.PostgreSqlVersion.Major >= 17
+            ? "c.relkind <> 'S' AND EXISTS (SELECT 1 FROM reach m WHERE pg_catalog.has_table_privilege(m.oid, c.oid, 'MAINTAIN')) "
+            : "false ";
         await using var command = new NpgsqlCommand(
             ReachCte +
             "SELECT c.relname::text, c.relkind = 'S', " +
@@ -346,7 +359,8 @@ internal static class ApplicationRolePrivileges
             "AND EXISTS (SELECT 1 FROM reach m WHERE pg_catalog.has_column_privilege(m.oid, c.oid, a.attnum, 'UPDATE')) ORDER BY a.attname), " +
             "ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 " +
             "AND NOT a.attisdropped AND c.relkind <> 'S' " +
-            "AND pg_catalog.has_column_privilege(@role, c.oid, a.attnum, 'UPDATE') ORDER BY a.attname) " +
+            "AND pg_catalog.has_column_privilege(@role, c.oid, a.attnum, 'UPDATE') ORDER BY a.attname), " +
+            maintain +
             "FROM pg_catalog.pg_class c WHERE c.relnamespace = @schema AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S') ORDER BY 1",
             connection,
             transaction);
@@ -370,6 +384,7 @@ internal static class ApplicationRolePrivileges
             var grantOption = reader.GetBoolean(10);
             var updatable = reader.GetFieldValue<string[]>(11);
             var ownUpdatable = reader.GetFieldValue<string[]>(12);
+            var maintainable = reader.GetBoolean(13);
 
             if (isSequence)
             {
@@ -383,7 +398,7 @@ internal static class ApplicationRolePrivileges
 
             if (!byName.TryGetValue(name, out var expected) || !existingTables.Contains(name))
             {
-                if (anyColumn || delete || truncate || trigger || grantOption)
+                if (anyColumn || delete || truncate || trigger || grantOption || maintainable)
                 {
                     violations.Add($"{name}: the role holds privileges on a table the stores do not use");
                 }
@@ -409,6 +424,11 @@ internal static class ApplicationRolePrivileges
             if (trigger)
             {
                 violations.Add($"{name}: the role can create triggers");
+            }
+
+            if (maintainable)
+            {
+                violations.Add($"{name}: the role holds MAINTAIN (LOCK TABLE, CLUSTER, REINDEX, VACUUM)");
             }
 
             if (references)

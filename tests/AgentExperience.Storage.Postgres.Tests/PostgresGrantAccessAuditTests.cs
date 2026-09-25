@@ -7,7 +7,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 3.5's grant access trail and grant lifetime bound against a real PostgreSQL 16 container:
+/// Story 3.5's grant access trail and grant lifetime bound against a real PostgreSQL container:
 /// one access row per record a grant delivered and none for anything else, both auditing modes, the
 /// row naming the grant the database actually used, an append-only table that refuses tampering, and
 /// an expiry that cannot outrun the configured maximum. Each test uses its own random tenant, so tests

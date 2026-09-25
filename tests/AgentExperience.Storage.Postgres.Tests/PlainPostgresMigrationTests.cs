@@ -4,8 +4,8 @@ using Testcontainers.PostgreSql;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Proves this package's schema needs nothing pgvector provides, against a stock <c>postgres:16</c>
-/// image with no <c>vector</c> extension available at all.
+/// Proves this package's schema needs nothing pgvector provides, against a stock <c>postgres</c>
+/// image (the major <see cref="AgentExperience.Tests.Shared.PostgresTestImage"/> selects) with no <c>vector</c> extension available at all.
 /// </summary>
 /// <remarks>
 /// This is the regression guard for a real defect: the embedding schema was briefly in this package's
@@ -23,8 +23,8 @@ public sealed class PlainPostgresMigrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        // Stock postgres:16, deliberately not pgvector/pgvector:pg16.
-        _container = new PostgreSqlBuilder("postgres:16").Build();
+        // Stock postgres, deliberately not pgvector/pgvector, at the same major as every other suite in this run.
+        _container = new PostgreSqlBuilder(AgentExperience.Tests.Shared.PostgresTestImage.Stock).Build();
         await _container.StartAsync();
         _dataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
     }
@@ -45,6 +45,11 @@ public sealed class PlainPostgresMigrationTests : IAsyncLifetime
     [Fact]
     public async Task The_base_schema_migrates_on_a_PostgreSQL_without_pgvector_available()
     {
+        // Sanity: this is the major the run selected (story 6.3), so a leg's evidence is about its own version.
+        Assert.Equal(
+            AgentExperience.Tests.Shared.PostgresTestImage.Major,
+            await ScalarAsync<int>("SELECT current_setting('server_version_num')::int") / 10000);
+
         // Sanity: the extension really is unavailable here, so the assertion below means something.
         Assert.Equal(
             0L,

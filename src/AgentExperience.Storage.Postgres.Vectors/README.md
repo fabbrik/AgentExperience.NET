@@ -18,18 +18,20 @@ It implements `IExperienceEmbeddingIndex` from `AgentExperience.Abstractions` an
 `AgentExperience.Storage.Postgres` deliberately takes **no** vector or model-provider dependency — its dependency
 boundary test pins its package set exactly and forbids `Pgvector`, `VectorData`, and `Microsoft.Extensions.AI`. A
 host that only wants canonical storage and text retrieval should not pull those in. So the vector work lives here,
-with its own exact pins, and references the store package for the column list, scope predicate, row decoder, and
+with its own dependency floors, and references the store package for the column list, scope predicate, row decoder, and
 failure translation the two channels must share.
 
 | Package | Version | Why |
 | --- | --- | --- |
-| `Npgsql` | `[10.0.3]` | Every statement, on the host's own data source |
-| `Pgvector` | `[0.3.2]` | The `vector` literal format |
-| `Microsoft.Extensions.AI.Abstractions` | `[10.10.0]` | Adapting an `IEmbeddingGenerator` to this library's own port |
-| `Microsoft.Extensions.DependencyInjection.Abstractions` | `[10.0.12]` | This package's own `Add…` registrations |
+| `Npgsql` | `10.0.3` or later, within 10.x | Every statement, on the host's own data source |
+| `Pgvector` | `0.3.2` or later, within 0.3.x | The `vector` literal format |
+| `Microsoft.Extensions.AI.Abstractions` | `10.10.0` or later, within 10.x | Adapting an `IEmbeddingGenerator` to this library's own port |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | `10.0.12` or later, within 10.x | This package's own `Add…` registrations |
 
-Every version was verified by Story 1.7's executable PostgreSQL/pgvector compatibility proof before this package
-was written.
+Every floor was verified by Story 1.7's executable PostgreSQL/pgvector compatibility proof before this package
+was written, and CI tests each floor and the newest release in the range above on every change. The package
+declares only the floor, never an upper bound, so a later major still restores; it is simply untested until a
+floor moves. See [the version policy](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#the-version-policy-floors-and-one-exact-pin).
 
 ## Usage
 
@@ -321,7 +323,8 @@ text-only retrieval — nothing here can fail a canonical write or a finalizatio
 
 ## Testing
 
-The integration tests run against an ephemeral `pgvector/pgvector:pg16` container through Testcontainers (Docker
+The integration tests run against an ephemeral `pgvector/pgvector` container through Testcontainers, on
+PostgreSQL 15, 16, 17 and 18 in CI (16 locally unless `AGENTEXPERIENCE_POSTGRES_MAJOR` names another; Docker
 required; set `TESTCONTAINERS_RYUK_DISABLED=true` if Ryuk fails under your local Docker setup) and embed through a
 deterministic in-test generator, so **no model credentials are ever needed**. One of them runs `EXPLAIN` over the
 adapter's real search statement with `enable_seqscan` off and asserts the HNSW index appears in the plan, so "the

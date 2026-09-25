@@ -13,7 +13,7 @@ namespace AgentExperience.Core.Diagnostics;
 /// <remarks>
 /// <para>
 /// <b>The BCL and nothing else.</b> <see cref="ActivitySource"/> and <see cref="Meter"/> ship in the
-/// <c>net10.0</c> shared framework, so instrumenting Core costs no package reference and Core's
+/// shared framework of every target framework, so instrumenting Core costs no package reference and Core's
 /// dependency boundary (AD-1) is unchanged. Nothing here constructs a tracer provider, a meter
 /// provider, an exporter, an <see cref="ActivityListener"/>, or a <see cref="MeterListener"/>: a host
 /// subscribes with <c>AddSource("AgentExperience.*")</c> and <c>AddMeter("AgentExperience.*")</c>, and

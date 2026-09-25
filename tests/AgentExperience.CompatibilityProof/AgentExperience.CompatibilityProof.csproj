@@ -16,8 +16,9 @@
 
   <!-- Story 1.7 proof-track dependencies, first chosen in story-1-7-research-digest.md (2026-09-07) and moved to
        the Microsoft.Agents.AI 1.22.0 train by story 5.1.
-       Every package a shipping project also pins is exact-pinned here too, to the same version, so this
-       proof always exercises what ships (story 4.3). AgentExperience.Release.Tests'
+       Every package a shipping project also references is exact-pinned here, to the shipping version (the
+       floor, for every package but MAF, since story 6.3), so this proof always exercises the bottom of what a
+       host can resolve (story 4.3); CI's floating leg re-runs it at the newest release in each major. AgentExperience.Release.Tests'
        CompatibilityPinAgreementTests fails if the two ever disagree, from the csproj files and the
        resolved lock files both. The evidence behind each pin is docs/compatibility-evidence.md. -->
   <ItemGroup>
@@ -32,6 +33,12 @@
     <!-- Track 4: evaluation & redaction -->
     <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="[10.10.0]" />
     <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
+         test project references another. -->
+    <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
   </ItemGroup>
 
   <ItemGroup>

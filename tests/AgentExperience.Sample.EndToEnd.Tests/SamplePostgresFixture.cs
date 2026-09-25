@@ -4,12 +4,12 @@ using Testcontainers.PostgreSql;
 namespace AgentExperience.Sample.EndToEnd.Tests;
 
 /// <summary>
-/// Starts one ephemeral stock <c>postgres:16</c> container for the collection and hands out an empty
+/// Starts one ephemeral stock <c>postgres</c> container for the collection and hands out an empty
 /// database per test. Set <c>TESTCONTAINERS_RYUK_DISABLED=true</c> if Ryuk fails under a local
 /// Docker setup.
 /// </summary>
 /// <remarks>
-/// Stock <c>postgres:16</c>, not <c>pgvector/pgvector:pg16</c>, on purpose: the sample never touches
+/// Stock <c>postgres</c>, not <c>pgvector/pgvector</c>, on purpose: the sample never touches
 /// the vector path, and running it against an image with no pgvector is how the sample's README
 /// claim that the base schema needs no extension and no superuser gets exercised rather than
 /// asserted. The sample runs <c>ExperienceSchemaMigrator.MigrateAsync</c> itself, so this
@@ -21,7 +21,7 @@ public sealed class SamplePostgresFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _container = new PostgreSqlBuilder("postgres:16").Build();
+        _container = new PostgreSqlBuilder(AgentExperience.Tests.Shared.PostgresTestImage.Stock).Build();
         await _container.StartAsync();
     }
 

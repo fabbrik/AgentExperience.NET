@@ -14,7 +14,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Tests;
 /// <para>
 /// This file exists because story 4.1 gave the adapter an <c>ActivitySource</c> and a <c>Meter</c>,
 /// and the obvious way to do that would have been to reach for the OpenTelemetry SDK. Both types
-/// ship in the <c>net10.0</c> shared framework instead, so the adapter's declared package set is
+/// ship in the shared framework instead (on <c>net9.0</c>, MAF's own graph may also bring a newer
+/// <c>System.Diagnostics.DiagnosticSource</c> package, which is still not one this adapter declares), so the adapter's declared package set is
 /// unchanged -- and this test is what keeps it that way when the next story adds an exporter-shaped
 /// temptation.
 /// </para>
@@ -79,6 +80,7 @@ public class DependencyBoundaryTests
     }
 
     [Fact]
+    [Trait("Category", "DeclaredPins")]
     public void AgentExperience_MicrosoftAgentFramework_csproj_declares_exactly_the_allowed_PackageReferences()
     {
         // The forbidden-substring checks above cannot catch a package that is merely unwanted rather
@@ -96,7 +98,7 @@ public class DependencyBoundaryTests
     [Fact]
     public void ActivitySource_and_Meter_come_from_the_shared_framework()
     {
-        // The reason no package was needed: both live in an assembly the net10.0 shared framework
+        // The reason no package was needed: both live in an assembly the shared framework of every target
         // already carries, so using them is using the BCL, not taking a dependency.
         foreach (var type in new[] { typeof(System.Diagnostics.ActivitySource), typeof(System.Diagnostics.Metrics.Meter) })
         {

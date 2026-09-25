@@ -23,6 +23,21 @@ namespace AgentExperience.Release.Tests.PublicApi;
 /// <para>
 /// The environment variable is read by <see cref="VerifySettings"/> and nothing else; CI never sets it.
 /// </para>
+/// <para>
+/// <b>One baseline for every target framework</b> (story 6.3). This project builds, and these tests run, once
+/// per framework the packages ship for, and each run compares the assembly built for its own framework with
+/// the same file. So the gate also asserts that the public surface is identical on every framework: a member
+/// that exists on one and not another fails here rather than surprising a host that multi-targets. If that
+/// ever has to change on purpose, give each framework its own file with
+/// <c>UseFileName($"{name}.{framework}")</c> and say why in review.
+/// </para>
+/// <para>
+/// Known and accepted: <c>dotnet test</c> runs the two framework test hosts in parallel, and on a mismatch
+/// share the same <c>*.received.txt</c>. When only one framework diverges, the other run can clean up or
+/// overwrite that file, so it may be missing or show no diff even though the test failed. The failing test's
+/// framework is in the test output; to see its received file, re-run it alone with
+/// <c>dotnet test --framework &lt;tfm&gt;</c>.
+/// </para>
 /// </remarks>
 public sealed class PublicApiTests
 {

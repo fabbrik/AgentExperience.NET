@@ -4,7 +4,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 2.4's atomic lifecycle commit against a real PostgreSQL 16 container: one transaction per
+/// Story 2.4's atomic lifecycle commit against a real PostgreSQL container: one transaction per
 /// commit, idempotency by event ID, optimistic concurrency by expected revision, and an append-only
 /// history. Each test uses its own random tenant, so tests sharing the container never see each other's
 /// rows.

@@ -7,7 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Exact pin: MAF compatibility is verified against this version only (Story 1.7 Track 1, Story 1.6). -->
+    <!-- The one exact pin left (story 6.3): MAF compatibility is verified against this version only (Story 1.7
+         Track 1, Story 1.6). MAF ships a minor release every week or two, has changed adapter-visible behaviour between
+         minors, and still marks neighbouring surface [Experimental], so a floor would claim versions nobody has
+         run. CI's MAF probe reports on the newest one; docs/compatibility-evidence.md has the reasoning. -->
     <PackageReference Include="Microsoft.Agents.AI" Version="[1.22.0]" />
   </ItemGroup>
 

@@ -6,8 +6,9 @@ using Testcontainers.PostgreSql;
 namespace AgentExperience.Storage.Postgres.Vectors.Tests;
 
 /// <summary>
-/// Starts one ephemeral <c>pgvector/pgvector:pg16</c> container for the whole collection and sets up the
-/// supported two-role deployment in it: a superuser creates the <c>vector</c> extension and grants the
+/// Starts one ephemeral <c>pgvector/pgvector</c> container for the whole collection, at the PostgreSQL major
+/// <see cref="AgentExperience.Tests.Shared.PostgresTestImage"/> selects (16 unless
+/// <c>AGENTEXPERIENCE_POSTGRES_MAJOR</c> says otherwise), and sets up the supported two-role deployment in it: a superuser creates the <c>vector</c> extension and grants the
 /// owner role <c>SET</c> on the two purge markers, the owner role (no superuser) runs
 /// <see cref="ExperienceSchemaMigrator"/> and <em>then</em> this package's own
 /// <see cref="ExperienceVectorSchemaMigrator"/>, exactly as a host's two calls are separate, and finally
@@ -35,7 +36,7 @@ public sealed class VectorsFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _container = new PostgreSqlBuilder("pgvector/pgvector:pg16").Build();
+        _container = new PostgreSqlBuilder(AgentExperience.Tests.Shared.PostgresTestImage.Pgvector).Build();
         await _container.StartAsync();
 
         await using (var superuser = NpgsqlDataSource.Create(_container.GetConnectionString()))

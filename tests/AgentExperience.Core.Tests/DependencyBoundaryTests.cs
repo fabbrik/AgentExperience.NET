@@ -83,6 +83,7 @@ public class DependencyBoundaryTests
     }
 
     [Fact]
+    [Trait("Category", "DeclaredPins")]
     public void AgentExperience_Core_csproj_declares_exactly_the_allowed_PackageReferences()
     {
         // The forbidden-substring checks above cannot catch a newly added package that is merely
@@ -94,13 +95,14 @@ public class DependencyBoundaryTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        // Both pins are exact. The DI abstractions pin matches AgentExperience.Storage.Postgres, so the
-        // two packages can never resolve different versions of the same dependency. The redaction pin
-        // was a floor until story 5.1 (KL-15).
+        // Both are floors (story 6.3, KL-13): the version CI proves, with the newest in the same major
+        // proven by CI's floating leg. The DI abstractions floor matches the two storage packages', so
+        // no host can resolve a lower one for one package than for another. Excluded from the floating
+        // leg by its trait, because that leg rewrites these versions on purpose.
         Assert.Equal(
             [
-                "Microsoft.Extensions.Compliance.Redaction [10.10.0]",
-                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
+                "Microsoft.Extensions.Compliance.Redaction 10.10.0",
+                "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
             ],
             declared);
     }

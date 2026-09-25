@@ -7,10 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="[10.10.0]" />
+    <!-- Floors, not exact pins (story 6.3, KL-13): the version CI proves, and the lowest a host can resolve.
+         CI's floating leg also proves the newest release in the same major; docs/compatibility-evidence.md
+         states the policy. -->
+    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" Version="10.10.0" />
     <!-- DI abstractions only (no container, no hosting): lets Core ship its own AddAgentExperienceCore
          registration extension. Abstractions stays BCL-only. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.12]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>

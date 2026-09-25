@@ -46,7 +46,8 @@ public class DependencyBoundaryTests
     }
 
     [Fact]
-    public void Storage_Postgres_csproj_declares_only_the_exact_Npgsql_DbUp_and_DI_abstractions_pins()
+    [Trait("Category", "DeclaredPins")]
+    public void Storage_Postgres_csproj_declares_only_the_Npgsql_DbUp_and_DI_abstractions_floors()
     {
         var csprojPath = GetCsprojPath();
         Assert.True(File.Exists(csprojPath), $"Could not locate AgentExperience.Storage.Postgres.csproj at '{csprojPath}'.");
@@ -57,12 +58,14 @@ public class DependencyBoundaryTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
+        // Floors since story 6.3 (KL-13); excluded from CI's floating leg by the trait above, because that
+        // leg rewrites them on purpose.
         Assert.Equal(
             [
-                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
-                "Npgsql [10.0.3]",
-                "dbup-core [6.1.1]",
-                "dbup-postgresql [7.0.1]",
+                "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+                "Npgsql 10.0.3",
+                "dbup-core 6.1.1",
+                "dbup-postgresql 7.0.1",
             ],
             packages);
     }

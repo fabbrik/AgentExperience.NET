@@ -5,7 +5,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 5.6 (KL-1): <see cref="PostgresExperienceRecordStore.GetManyAsync"/> against a real PostgreSQL 16
+/// Story 5.6 (KL-1): <see cref="PostgresExperienceRecordStore.GetManyAsync"/> against a real PostgreSQL
 /// container. The one question every test here asks is whether the batched read can see anything, or
 /// audit anything, differently from a loop of <see cref="PostgresExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
 /// calls: scope, grants (and which grant), disclosure, tombstones, status, and the access rows. The

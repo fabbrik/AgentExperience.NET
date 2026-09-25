@@ -12,11 +12,12 @@
 //   * license expression, readme (declared and present in the package), tags, project and repository URL,
 //     and the repository commit SourceLink stamped
 //   * description and release notes say "Preview"
-//   * the dependency set is EXACTLY the expected one, id and version range -- so Abstractions and Core can
-//     never gain an adapter dependency (MAF, Npgsql, DbUp, Pgvector, a model provider, OpenTelemetry)
-//     without this list being edited in review
+//   * the dependency set is EXACTLY the expected one, id and version range, in the dependency group of EVERY
+//     supported target framework -- so Abstractions and Core can never gain an adapter dependency (MAF,
+//     Npgsql, DbUp, Pgvector, a model provider, OpenTelemetry) without this list being edited in review
+//   * lib/ holds exactly the supported target frameworks (story 6.3), and each one below is checked on its own
 //   * all five packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
-//   * the .snupkg holds a portable PDB whose id matches the assembly's CodeView debug entry, every
+//   * per framework, the .snupkg holds a portable PDB whose id matches the assembly's CodeView debug entry, every
 //     SourceLink target points at the repository, every document path is deterministic-mapped (/_/), and the assembly is marked
 //     reproducible (deterministic build)
 #:property RestorePackagesWithLockFile=false
@@ -39,17 +40,24 @@ if (args.Length != 1 || !Directory.Exists(args[0]))
 const string RepositoryUrl = "https://github.com/fabbrik/AgentExperience.NET";
 var versionPattern = new Regex(@"^0\.1\.0-preview\.[1-9][0-9]*$", RegexOptions.CultureInvariant);
 
+// The supported target frameworks: AgentExperienceTargetFrameworks in Directory.Build.props. Kept as a literal
+// here so the check reads what shipped against what was intended, rather than against the same build input;
+// a release test fails if the two lists ever disagree.
+string[] frameworks = ["net9.0", "net10.0"];
+
 // The exact dependency set each package may declare. Editing this is a deliberate, reviewed act; a
 // forbidden adapter dependency showing up in Abstractions or Core fails here, from the built nuspec.
-// "{self}" is replaced by the version being verified: sibling packages always move in lockstep.
+// "{self}" is replaced by the version being verified: sibling packages always move in lockstep. A bare version
+// is NuGet's floor (">= x.y.z"), which is every third-party reference except Microsoft.Agents.AI since story 6.3
+// (KL-13); "[x.y.z]" is exact.
 var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
 {
     ["AgentExperience.Abstractions"] = [],
     ["AgentExperience.Core"] =
     [
         "AgentExperience.Abstractions {self}",
-        "Microsoft.Extensions.Compliance.Redaction [10.10.0]",
-        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
+        "Microsoft.Extensions.Compliance.Redaction 10.10.0",
+        "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
     ],
     ["AgentExperience.MicrosoftAgentFramework"] =
     [
@@ -59,18 +67,18 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     ["AgentExperience.Storage.Postgres"] =
     [
         "AgentExperience.Abstractions {self}",
-        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
-        "Npgsql [10.0.3]",
-        "dbup-core [6.1.1]",
-        "dbup-postgresql [7.0.1]",
+        "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+        "Npgsql 10.0.3",
+        "dbup-core 6.1.1",
+        "dbup-postgresql 7.0.1",
     ],
     ["AgentExperience.Storage.Postgres.Vectors"] =
     [
         "AgentExperience.Storage.Postgres {self}",
-        "Microsoft.Extensions.AI.Abstractions [10.10.0]",
-        "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
-        "Npgsql [10.0.3]",
-        "Pgvector [0.3.2]",
+        "Microsoft.Extensions.AI.Abstractions 10.10.0",
+        "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+        "Npgsql 10.0.3",
+        "Pgvector 0.3.2",
     ],
 };
 
@@ -197,26 +205,37 @@ foreach (var nupkgPath in nupkgs)
 
     var dependencies = metadata.Element(ns + "dependencies");
     var groups = dependencies?.Elements(ns + "group").ToList() ?? [];
-    if (groups.Any(g => g.Attribute("targetFramework")?.Value != "net10.0"))
+    var groupFrameworks = groups.Select(g => g.Attribute("targetFramework")?.Value ?? "(none)").Order(StringComparer.Ordinal).ToList();
+    if (!groupFrameworks.SequenceEqual(frameworks.Order(StringComparer.Ordinal), StringComparer.Ordinal))
     {
-        Fail(id, "declares a dependency group for a target framework other than net10.0");
+        Fail(id, $"declares dependency groups for [{string.Join(", ", groupFrameworks)}], expected exactly [{string.Join(", ", frameworks)}]");
     }
 
-    // Both shapes: dependencies inside a <group>, and legacy ones directly under <dependencies>.
-    var declared = groups
-        .SelectMany(g => g.Elements(ns + "dependency"))
-        .Concat(dependencies?.Elements(ns + "dependency") ?? [])
-        .Select(d => $"{d.Attribute("id")?.Value} {d.Attribute("version")?.Value}")
-        .Order(StringComparer.Ordinal)
-        .ToList();
+    if (dependencies?.Elements(ns + "dependency").Any() == true)
+    {
+        Fail(id, "declares dependencies outside a target-framework group, which would apply to every framework");
+    }
+
     var wanted = expectedDependencies
         .Select(d => d.Replace("{self}", version, StringComparison.Ordinal))
         .Order(StringComparer.Ordinal)
         .ToList();
 
-    if (!declared.SequenceEqual(wanted, StringComparer.Ordinal))
+    // Every framework's group must hold exactly the expected set: one framework quietly gaining (or losing) a
+    // dependency is as much a change as all of them doing so.
+    var declared = new List<string>();
+    foreach (var group in groups)
     {
-        Fail(id, $"dependencies are [{string.Join(", ", declared)}], expected [{string.Join(", ", wanted)}]");
+        var inGroup = group.Elements(ns + "dependency")
+            .Select(d => $"{d.Attribute("id")?.Value} {d.Attribute("version")?.Value}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        declared.AddRange(inGroup);
+
+        if (!inGroup.SequenceEqual(wanted, StringComparer.Ordinal))
+        {
+            Fail(id, $"{group.Attribute("targetFramework")?.Value} dependencies are [{string.Join(", ", inGroup)}], expected [{string.Join(", ", wanted)}]");
+        }
     }
 
     if (id is "AgentExperience.Abstractions" or "AgentExperience.Core")
@@ -233,16 +252,60 @@ foreach (var nupkgPath in nupkgs)
         }
     }
 
-    var assemblyEntry = nupkg.GetEntry($"lib/net10.0/{id}.dll");
-    if (assemblyEntry is null)
+    // Exactly the supported frameworks under lib/, nothing more and nothing less.
+    var libFrameworks = nupkg.Entries
+        .Where(e => e.FullName.StartsWith("lib/", StringComparison.Ordinal) && e.FullName.Count(c => c == '/') == 2)
+        .Select(e => e.FullName.Split('/')[1])
+        .Distinct(StringComparer.Ordinal)
+        .Order(StringComparer.Ordinal)
+        .ToList();
+    if (!libFrameworks.SequenceEqual(frameworks.Order(StringComparer.Ordinal), StringComparer.Ordinal))
     {
-        Fail(id, $"has no lib/net10.0/{id}.dll");
-        continue;
+        Fail(id, $"ships lib/ folders for [{string.Join(", ", libFrameworks)}], expected exactly [{string.Join(", ", frameworks)}]");
     }
 
-    if (nupkg.GetEntry($"lib/net10.0/{id}.xml") is null)
+    var snupkgPath = Path.Combine(directory, $"{id}.{version}.snupkg");
+    // A missing .snupkg fails the package, but the assembly checks below still run, so one missing file
+    // does not hide what else is wrong with the .nupkg; only the PDB checks are skipped.
+    using var snupkg = File.Exists(snupkgPath) ? ZipFile.OpenRead(snupkgPath) : null;
+    if (snupkg is null)
     {
-        Fail(id, "ships no XML documentation file");
+        Fail(id, "has no matching .snupkg at the same version");
+    }
+    else
+    {
+        var symbolFrameworks = snupkg.Entries
+            .Where(e => e.FullName.StartsWith("lib/", StringComparison.Ordinal) && e.FullName.Count(c => c == '/') == 2)
+            .Select(e => e.FullName.Split('/')[1])
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        if (!symbolFrameworks.SequenceEqual(frameworks.Order(StringComparer.Ordinal), StringComparer.Ordinal))
+        {
+            Fail(id, $"symbol package has lib/ folders for [{string.Join(", ", symbolFrameworks)}], expected exactly [{string.Join(", ", frameworks)}]");
+        }
+    }
+
+    foreach (var framework in frameworks)
+    {
+        VerifyFramework(id, version, framework, nupkg, snupkg);
+    }
+}
+
+// The assembly, its documentation, and its symbols, for one target framework of one package.
+void VerifyFramework(string id, string version, string framework, ZipArchive nupkg, ZipArchive? snupkg)
+{
+    var tag = $"{id} ({framework})";
+    var assemblyEntry = nupkg.GetEntry($"lib/{framework}/{id}.dll");
+    if (assemblyEntry is null)
+    {
+        Fail(tag, $"has no lib/{framework}/{id}.dll");
+        return;
+    }
+
+    if (nupkg.GetEntry($"lib/{framework}/{id}.xml") is null)
+    {
+        Fail(tag, "ships no XML documentation file");
     }
 
     BlobContentId? codeViewId = null;
@@ -258,13 +321,13 @@ foreach (var nupkgPath in nupkgs)
         var debugDirectory = pe.ReadDebugDirectory();
         if (!debugDirectory.Any(entry => entry.Type == DebugDirectoryEntryType.Reproducible))
         {
-            Fail(id, "assembly is not marked reproducible, so the build was not deterministic");
+            Fail(tag, "assembly is not marked reproducible, so the build was not deterministic");
         }
 
         var codeView = debugDirectory.Where(entry => entry.Type == DebugDirectoryEntryType.CodeView).ToList();
         if (codeView.Count != 1)
         {
-            Fail(id, $"assembly has {codeView.Count} CodeView debug entries, expected exactly one");
+            Fail(tag, $"assembly has {codeView.Count} CodeView debug entries, expected exactly one");
         }
         else
         {
@@ -289,23 +352,20 @@ foreach (var nupkgPath in nupkgs)
 
         if (informational is null || !informational.StartsWith(version + "+", StringComparison.Ordinal))
         {
-            Fail(id, $"assembly informational version '{informational}' is not '{version}+<commit>'");
+            Fail(tag, $"assembly informational version '{informational}' is not '{version}+<commit>'");
         }
     }
 
-    var snupkgPath = Path.Combine(directory, $"{id}.{version}.snupkg");
-    if (!File.Exists(snupkgPath))
+    if (snupkg is null)
     {
-        Fail(id, "has no matching .snupkg at the same version");
-        continue;
+        return; // already reported; nothing to compare the assembly's CodeView entry against
     }
 
-    using var snupkg = ZipFile.OpenRead(snupkgPath);
-    var pdbEntry = snupkg.GetEntry($"lib/net10.0/{id}.pdb");
+    var pdbEntry = snupkg.GetEntry($"lib/{framework}/{id}.pdb");
     if (pdbEntry is null)
     {
-        Fail(id, "symbol package has no portable PDB for the assembly");
-        continue;
+        Fail(tag, "symbol package has no portable PDB for the assembly");
+        return;
     }
 
     using var pdbBytes = new MemoryStream();
@@ -322,7 +382,7 @@ foreach (var nupkgPath in nupkgs)
     var pdbId = new BlobContentId(pdb.DebugMetadataHeader!.Id);
     if (codeViewId is not { } expectedPdbId || pdbId != expectedPdbId)
     {
-        Fail(id, $"PDB id {pdbId.Guid}/{pdbId.Stamp:X8} does not match the assembly's CodeView entry {codeViewId?.Guid}/{codeViewId?.Stamp:X8}");
+        Fail(tag, $"PDB id {pdbId.Guid}/{pdbId.Stamp:X8} does not match the assembly's CodeView entry {codeViewId?.Guid}/{codeViewId?.Stamp:X8}");
     }
 
     var sourceLinkKind = new Guid("CC110556-A091-4D38-9FEC-25AB9A351A6A");
@@ -338,7 +398,7 @@ foreach (var nupkgPath in nupkgs)
 
     if (sourceLink is null)
     {
-        Fail(id, "PDB carries no SourceLink");
+        Fail(tag, "PDB carries no SourceLink");
     }
     else
     {
@@ -346,7 +406,7 @@ foreach (var nupkgPath in nupkgs)
         var targets = json.RootElement.GetProperty("documents").EnumerateObject().Select(p => p.Value.GetString() ?? string.Empty).ToList();
         if (targets.Count == 0 || !targets.All(t => t.StartsWith("https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/", StringComparison.Ordinal)))
         {
-            Fail(id, $"SourceLink does not point at the repository: [{string.Join(", ", targets)}]");
+            Fail(tag, $"SourceLink does not point at the repository: [{string.Join(", ", targets)}]");
         }
     }
 
@@ -356,7 +416,7 @@ foreach (var nupkgPath in nupkgs)
         .ToList();
     if (unmapped.Count > 0)
     {
-        Fail(id, $"{unmapped.Count} PDB document path(s) are not deterministic-mapped to /_/ (build with -p:AgentExperienceReleaseBuild=true), e.g. '{unmapped[0]}'");
+        Fail(tag, $"{unmapped.Count} PDB document path(s) are not deterministic-mapped to /_/ (build with -p:AgentExperienceReleaseBuild=true), e.g. '{unmapped[0]}'");
     }
 }
 

@@ -9,7 +9,7 @@ using Npgsql;
 namespace AgentExperience.Sample.EndToEnd.Tests;
 
 /// <summary>
-/// Story 5.6 (KL-1), end to end against a real PostgreSQL 16: the MAF injection provider's final
+/// Story 5.6 (KL-1), end to end against a real PostgreSQL: the MAF injection provider's final
 /// eligibility check, run once through the PostgreSQL store's one-statement
 /// <see cref="PostgresExperienceRecordStore.GetManyAsync"/> and once through the port's sequential
 /// default -- one <c>GetAsync</c> per candidate, which is the re-read the provider made before this

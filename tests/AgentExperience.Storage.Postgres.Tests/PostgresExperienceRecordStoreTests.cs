@@ -4,7 +4,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Integration tests against a real PostgreSQL 16 container. Each test uses its own random tenant, so
+/// Integration tests against a real PostgreSQL container. Each test uses its own random tenant, so
 /// tests sharing the container never see each other's rows.
 /// </summary>
 [Collection(PostgresCollection.Name)]
