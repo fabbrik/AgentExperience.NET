@@ -199,11 +199,11 @@ jobs:
       - name: Test the storage suites on PostgreSQL ${{ matrix.postgres }}
         run: |
           set -euo pipefail
+          failed=0
           for project in \
             tests/AgentExperience.Storage.Postgres.Tests \
             tests/AgentExperience.Storage.Postgres.Vectors.Tests \
             tests/AgentExperience.CompatibilityProof \
-          failed=0
             tests/AgentExperience.Sample.EndToEnd.Tests; do
             dotnet test "$project" --no-build --configuration Release || failed=1
           done
