@@ -173,7 +173,11 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </summary>
     private const string ScanSql =
         "SELECT r.experience_id, r.revision, r.task_id, r.payload ->> 'taskSummary', " +
-        "r.payload -> 'reflection' ->> 'lesson', e.model_id, e.dimension, e.content_hash, e.source_revision " +
+        "r.payload -> 'reflection' ->> 'lesson', e.model_id, e.dimension, e.content_hash, e.source_revision, " +
+        // A sealed record (0016) carries its task ID, summary and lesson only inside the sealed payload, so
+        // the three columns above read the placeholder and nulls for it; this adapter opens the seal in
+        // process instead, with the record's key, and its own scope for the key reference.
+        "r.payload_version, r.payload ->> 'sealed', r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id " +
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"LEFT JOIN {Table} e ON e.experience_id = r.experience_id " +
         $"WHERE {PostgresExperienceRecordStore.RecordScopePredicate} " +
@@ -232,6 +236,8 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     private readonly TimeProvider _timeProvider;
 
+    private readonly ExperienceEncryption? _encryption;
+
     /// <summary>Creates an embedding index over a host-owned data source. The index never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="onGrantsUnavailable">
@@ -252,18 +258,26 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// driven to a known instant by a test, and every other timestamp this library writes is now
     /// controllable.
     /// </param>
+    /// <param name="encryption">
+    /// The deployment's crypto-shredding configuration: needed to open a sealed record's summary for the
+    /// re-index scan, and the sealed records a search returns. <see langword="null"/> -- the default -- is
+    /// plaintext mode. The vectors themselves are never sealed (PostgreSQL has to read them to search), so a
+    /// stored embedding is the residual the base package's README names.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceEmbeddingIndex(
         NpgsqlDataSource dataSource,
         Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
         ExperienceGrantAuditing? auditing = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ExperienceEncryption? encryption = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
         _auditing = auditing;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _encryption = ExperienceEncryption.Resolve(encryption);
     }
 
     /// <inheritdoc />
@@ -288,6 +302,18 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // Encrypted mode: a record whose key is destroyed is erased (its tombstone may not be written yet), and a
+        // vector derived from its text must not be stored again -- Missing, exactly as for a tombstone.
+        if (_encryption is not null)
+        {
+            var lookup = await _encryption.LookupAsync(write.ExperienceId, write.Scope, cancellationToken).ConfigureAwait(false);
+            lookup.Key?.Dispose();
+            if (lookup.Destroyed)
+            {
+                return new(ExperienceIndexOutcome.Missing, 0, NoErrors);
+            }
+        }
 
         try
         {
@@ -381,17 +407,24 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             parameters.Add(new NpgsqlParameter<int>("limit", scan.Limit));
 
             var targets = new List<ExperienceIndexTarget>();
+            Guid? lastRead = null;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                targets.Add(ReadTarget(reader));
+                // The cursor advances past every row read, including a crypto-shredded one that yields no
+                // target, so a page of erased records never stalls the walk.
+                lastRead = reader.GetGuid(0);
+                if (await ReadTargetAsync(reader, cancellationToken).ConfigureAwait(false) is { } target)
+                {
+                    targets.Add(target);
+                }
             }
 
             return new(
                 ExperienceStoreOutcome.Found,
                 targets,
                 NoErrors,
-                targets.Count > 0 ? targets[^1].ExperienceId : null);
+                lastRead);
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
         {
@@ -432,13 +465,13 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
             try
             {
-                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, _encryption, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only.
-                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, readable: false, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, readable: false, _encryption, cancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -562,6 +595,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         int dimension,
         string[] statuses,
         bool readable,
+        ExperienceEncryption? encryption,
         CancellationToken cancellationToken)
     {
         var candidates = new List<ExperienceCandidate>();
@@ -579,8 +613,15 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
+                // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
+                if (await PostgresExperienceRecordStore.ReadRecordAsync(reader, encryption, cancellationToken).ConfigureAwait(false)
+                    is not { } record)
+                {
+                    continue;
+                }
+
                 candidates.Add(new ExperienceCandidate(
-                    PostgresExperienceRecordStore.ReadRecord(reader),
+                    record,
                     ReadRelevance(reader),
                     PostgresExperienceRecordStore.ReadSharedByGrant(reader),
                     PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
@@ -713,31 +754,87 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         return sawThisModel ? ExperienceVectorSearchOutcome.DimensionMismatch : ExperienceVectorSearchOutcome.ModelMismatch;
     }
 
-    private static ExperienceIndexTarget ReadTarget(DbDataReader reader)
+    /// <summary>
+    /// One re-index target. For a sealed record the task ID, summary and lesson are opened in process with the
+    /// record's key -- the same three fields, so the summary (and its content hash) is exactly what the
+    /// plaintext record would have produced. <see langword="null"/> when the record is sealed and its key was
+    /// destroyed: it is erased, and nothing derived from it may be embedded again.
+    /// </summary>
+    private async ValueTask<ExperienceIndexTarget?> ReadTargetAsync(DbDataReader reader, CancellationToken cancellationToken)
     {
+        Guid experienceId;
+        long revision;
+        ExperienceEmbeddingDescriptor? stored;
+        string taskId;
+        string? summary;
+        string? lesson;
+        string? sealedPayload = null;
+        Scope? scope = null;
         try
         {
-            var stored = reader.IsDBNull(5)
+            experienceId = reader.GetGuid(0);
+            revision = reader.GetInt64(1);
+            stored = reader.IsDBNull(5)
                 ? null
                 : new ExperienceEmbeddingDescriptor(
                     reader.GetString(5),
                     reader.GetInt32(6),
                     reader.GetString(7),
                     reader.GetInt64(8));
+            taskId = reader.GetString(2);
+            summary = reader.IsDBNull(3) ? null : reader.GetString(3);
+            lesson = reader.IsDBNull(4) ? null : reader.GetString(4);
 
-            return new ExperienceIndexTarget(
-                reader.GetGuid(0),
-                reader.GetInt64(1),
-                ExperienceRetrievalSummary.For(
-                    reader.GetString(2),
-                    reader.IsDBNull(3) ? null : reader.GetString(3),
-                    reader.IsDBNull(4) ? null : reader.GetString(4)),
-                stored);
+            if (reader.GetInt32(9) == SealedText.SealedPayloadVersion)
+            {
+                sealedPayload = reader.IsDBNull(10) ? string.Empty : reader.GetString(10);
+                scope = new Scope(
+                    reader.GetString(11),
+                    reader.GetString(12),
+                    reader.GetString(13),
+                    reader.IsDBNull(14) ? null : reader.GetString(14),
+                    reader.IsDBNull(15) ? null : reader.GetString(15),
+                    reader.IsDBNull(16) ? null : reader.GetString(16));
+            }
         }
         catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
         {
             throw new ExperienceStoreException("Stored Experience Record could not be decoded.", ex);
         }
+
+        if (sealedPayload is not null)
+        {
+            if (_encryption is null)
+            {
+                throw new ExperienceStoreException(
+                    "Stored Experience Record is sealed (payload_version 2), and this embedding index was constructed without an "
+                    + "ExperienceEncryption. Give every component of an encrypted deployment the same ExperienceEncryption.");
+            }
+
+            using var key = await _encryption.ForReadAsync(experienceId, scope!, cancellationToken).ConfigureAwait(false);
+            if (key is null)
+            {
+                return null;
+            }
+
+            if (!SealedText.IsSealed(sealedPayload))
+            {
+                throw new ExperienceStoreException("Stored Experience Record has a sealed payload_version but no sealed payload.");
+            }
+
+            var (openedTaskId, payloadJson) = SealedText.ReadSealedRecordPlaintext(
+                key.Open(SealedText.PayloadColumn, Guid.Empty, sealedPayload));
+            var payload = ExperiencePayload.Deserialize(ExperiencePayload.CurrentVersion, payloadJson);
+            taskId = openedTaskId;
+            summary = payload.TaskSummary;
+            lesson = payload.Reflection?.Lesson;
+        }
+
+        return new ExperienceIndexTarget(
+            experienceId,
+            revision,
+            ExperienceRetrievalSummary.For(taskId, summary, lesson),
+            stored);
     }
 
     /// <summary>

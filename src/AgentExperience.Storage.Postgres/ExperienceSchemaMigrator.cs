@@ -139,7 +139,8 @@ public static class ExperienceSchemaMigrator
     /// rewrites -- it is derived, rebuildable data, not a ledger.</description></item>
     /// <item><description><c>EXECUTE</c> on the purge functions only as
     /// <see cref="ExperienceApplicationRoleOptions.AllowErasure"/> and
-    /// <see cref="ExperienceApplicationRoleOptions.AllowAccessLogPurge"/> say.</description></item>
+    /// <see cref="ExperienceApplicationRoleOptions.AllowAccessLogPurge"/> say, and on <c>0016</c>'s
+    /// sealing function only as <see cref="ExperienceApplicationRoleOptions.AllowSealing"/> says.</description></item>
     /// </list>
     /// <para>
     /// Finally it checks the role's <em>effective</em> privileges -- which also see grants to

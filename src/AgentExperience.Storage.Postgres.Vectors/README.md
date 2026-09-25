@@ -128,6 +128,15 @@ and lesson never reach a provider.
 | `embedding` | An **unconstrained** `vector`. The dimension belongs to whichever model a host configured, and `CHECK (vector_dims(embedding) = dimension)` keeps the two from ever disagreeing |
 | `created_at`, `updated_at` | UTC, truncated to whole microseconds like the rest of the schema |
 
+**Crypto-shredding does not seal this table.** With an `ExperienceEncryption` (see the base package's
+[crypto-shredding section](../AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy)),
+pass the same instance to `PostgresExperienceEmbeddingIndex`: the re-index scan then opens a sealed record's task ID,
+summary and lesson in process with the record's key, so the summary, its hash and its vector are exactly what the
+plaintext record would have produced, and a record whose key was destroyed is never scanned, embedded or returned
+again. But pgvector has to read a vector in the clear to search it, so `embedding` and `content_hash` are stored as
+before. They are derived from the erased text, erasure deletes them from the live table, and every copy made before
+the erasure — backups, replicas, WAL, the dead tuple — still holds them. That is the residual KL-2 names.
+
 None of this takes part in a lifecycle decision. Status, revision, and reuse confidence live on the record and are
 never read from or written to this table. Reuse confidence does move now — evidence submitted after a lesson is
 reused updates it through the canonical store (see

@@ -212,6 +212,26 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string VerifiedIndependenceScriptName = "0015_verified_independence.sql";
 
+    /// <summary>
+    /// The script that gives crypto-shredding its database side: the sealed record shape
+    /// (<c>payload_version</c> 2), the derived <c>search_vector_sealed</c> column and its index, the per-exposure
+    /// sealed rationale column, and <c>agent_experience.seal_experience_record</c>, the upgrade job's one write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It changes nothing for a deployment in plaintext mode, and it touches no data: existing rows are sealed
+    /// by <see cref="PostgresExperienceRecordStore.SealPlaintextRecordsAsync"/>, which the host runs when it
+    /// chooses, because sealing needs the key store and this script cannot reach one.
+    /// </para>
+    /// <para>
+    /// The function is <c>SECURITY DEFINER</c> with <c>EXECUTE</c> revoked from <c>PUBLIC</c>; the application
+    /// role reaches it only when the host sets <see cref="ExperienceApplicationRoleOptions.AllowSealing"/>. See
+    /// the script's header for the <c>CONCURRENTLY</c> runbook for its two indexes and the
+    /// <c>NOT VALID</c> checks.
+    /// </para>
+    /// </remarks>
+    public const string CryptoShreddingScriptName = "0016_crypto_shredding.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -236,6 +256,7 @@ public static class PostgresExperienceRecordSchema
         GrantAccessRetentionScriptName,
         RoleSeparationHardeningScriptName,
         VerifiedIndependenceScriptName,
+        CryptoShreddingScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

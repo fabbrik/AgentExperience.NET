@@ -140,6 +140,12 @@ public sealed class WorkflowTests
 
         Assert.Contains("dotnet test \"$project\" --no-build --configuration Release", job, StringComparison.Ordinal);
         Assert.DoesNotContain("continue-on-error", job, StringComparison.Ordinal);
+
+        // Story 6.4 (KL-2): the store and vector suites run a second time, in crypto-shredding mode, on every leg.
+        Assert.Contains("AGENTEXPERIENCE_TEST_ENCRYPTION: 'on'", job, StringComparison.Ordinal);
+        var encrypted = job[job.IndexOf("AGENTEXPERIENCE_TEST_ENCRYPTION", StringComparison.Ordinal)..];
+        Assert.Contains("tests/AgentExperience.Storage.Postgres.Tests", encrypted, StringComparison.Ordinal);
+        Assert.Contains("tests/AgentExperience.Storage.Postgres.Vectors.Tests", encrypted, StringComparison.Ordinal);
     }
 
     /// <summary>The text of one top-level job in a workflow, from its key to the next job's key.</summary>

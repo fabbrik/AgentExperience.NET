@@ -6,7 +6,7 @@ namespace AgentExperience.Storage.Postgres;
 /// <summary>
 /// The application role
 /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
-/// gives exactly the privileges the stores need, and the two powers a host must opt into.
+/// gives exactly the privileges the stores need, and the three powers a host must opt into.
 /// </summary>
 public sealed class ExperienceApplicationRoleOptions
 {
@@ -57,4 +57,16 @@ public sealed class ExperienceApplicationRoleOptions
     /// the record of who read a record is a different power from erasing the record.
     /// </summary>
     public bool AllowAccessLogPurge { get; init; }
+
+    /// <summary>
+    /// Grants <c>EXECUTE</c> on <c>agent_experience.seal_experience_record</c>: what
+    /// <see cref="PostgresExperienceRecordStore.SealPlaintextRecordsAsync"/>, the crypto-shredding upgrade job,
+    /// calls. <see langword="false"/> by default. It admits exactly one transition -- a live plaintext record into
+    /// its sealed shape, at the revision read -- and the role otherwise holds no <c>UPDATE</c> on a record's
+    /// payload or task ID. It is nonetheless a content-rewrite power: the function checks the shape of what it
+    /// stores, never its meaning, so a role holding it can replace a live plaintext record's content with a seal of
+    /// anything. Switch it on for the upgrade and off again once
+    /// <see cref="ExperienceSealingResult.MoreRemain"/> is <see langword="false"/> everywhere.
+    /// </summary>
+    public bool AllowSealing { get; init; }
 }

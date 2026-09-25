@@ -46,12 +46,17 @@ internal static class ApplicationRolePrivileges
             ["content_hash", "dimension", "embedding", "model_id", "source_revision", "updated_at"], Optional: true),
     ];
 
-    /// <summary>The purge functions, by signature, and the opt-in that grants each.</summary>
+    /// <summary>
+    /// The <c>SECURITY DEFINER</c> functions -- the three purges and <c>0016</c>'s sealing transition -- by
+    /// signature, and the opt-in that grants each. Every one is revoked from <c>PUBLIC</c> by its script, and
+    /// the verification refuses any <c>SECURITY DEFINER</c> function the role can reach without its opt-in.
+    /// </summary>
     internal static IReadOnlyList<(string Signature, Func<ExperienceApplicationRoleOptions, bool> Granted)> PurgeFunctions { get; } =
     [
         ("agent_experience.purge_experience_record(uuid, text, text, text, text, text, text, bigint, timestamptz)", o => o.AllowErasure),
         ("agent_experience.purge_expired_grants(text, text, text, text, text, text, timestamptz, integer)", o => o.AllowErasure),
         ("agent_experience.purge_grant_access(text, text, text, text, text, text, boolean, timestamptz, integer)", o => o.AllowAccessLogPurge),
+        ("agent_experience.seal_experience_record(uuid, text, text, text, text, text, text, bigint, jsonb)", o => o.AllowSealing),
     ];
 
     internal static async Task ApplyAsync(

@@ -405,10 +405,33 @@ public sealed class PostgresVerifiedIndependenceTests
 
     private async Task<bool> PayloadHasClosedRoundAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
-            "SELECT payload ? 'closedRoundId' FROM agent_experience.experience_records WHERE experience_id = @id");
-        command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
-        return (bool)(await command.ExecuteScalarAsync())!;
+        if (!EncryptionMode.IsOn)
+        {
+            await using var command = _fixture.DataSource.CreateCommand(
+                "SELECT payload ? 'closedRoundId' FROM agent_experience.experience_records WHERE experience_id = @id");
+            command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+            return (bool)(await command.ExecuteScalarAsync())!;
+        }
+
+        // Encrypted mode: the payload is sealed, so the stored JSON is the one inside the seal. Opened here with
+        // the suite's key store to make the same byte-level assertion about what was written.
+        await using var sealedRead = _fixture.DataSource.CreateCommand(
+            "SELECT payload ->> 'sealed', tenant_id, application_id, project_id, team_id, agent_id, user_id " +
+            "FROM agent_experience.experience_records WHERE experience_id = @id");
+        sealedRead.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+        await using var reader = await sealedRead.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        var scope = new Scope(
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6));
+        using var key = await EncryptionMode.Shared.ForReadAsync(experienceId, scope, CancellationToken.None);
+        var (_, payloadJson) = SealedText.ReadSealedRecordPlaintext(key!.Open(SealedText.PayloadColumn, Guid.Empty, reader.GetString(0)));
+        using var payload = System.Text.Json.JsonDocument.Parse(payloadJson);
+        return payload.RootElement.TryGetProperty("closedRoundId", out _);
     }
 
     private async Task<Guid?> ReadAssessmentAsync(Guid evidenceId)

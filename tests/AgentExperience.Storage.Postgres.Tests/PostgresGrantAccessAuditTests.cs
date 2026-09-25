@@ -1210,7 +1210,9 @@ public sealed class PostgresGrantAccessAuditTests
         var owner = Scope(tenant, team: "team-a");
         var recipient = Scope(tenant, team: "team-b");
         var record = Minimal(owner, status: ExperienceStatus.Validated) with { ReuseConfidence = 0.75 };
-        var plain = new PostgresExperienceRecordStore(dataSource);
+
+        // A database that predates 0016 can only hold plaintext rows, whichever mode the suite runs in.
+        var plain = new PostgresExperienceRecordStore(dataSource, encryption: ExperienceEncryption.ForcePlaintext);
         Assert.Equal(
             ExperienceStoreOutcome.Created,
             (await plain.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);

@@ -56,6 +56,10 @@ public sealed class PostgresApplicationRoleTests
         "agent_experience.purge_grant_access(text, text, text, text, text, text, boolean, timestamptz, integer)",
     ];
 
+    /// <summary>0016's sealing transition, the crypto-shredding upgrade job's one write.</summary>
+    private const string SealSignature =
+        "agent_experience.seal_experience_record(uuid, text, text, text, text, text, text, bigint, jsonb)";
+
     private const string Tombstone =
         "UPDATE agent_experience.experience_records SET payload = '{}'::jsonb, task_id = '(deleted)', " +
         "status = 'Deleted', source_run_id = '00000000-0000-0000-0000-000000000000'::uuid, " +
@@ -113,12 +117,12 @@ public sealed class PostgresApplicationRoleTests
             ],
             updatable.Order(StringComparer.Ordinal));
 
-        // No CREATE on the schema, nothing on the migration journal, and EXECUTE on the purges only
-        // because this fixture opted into both.
+        // No CREATE on the schema, nothing on the migration journal, and EXECUTE on the purges and the
+        // sealing function only because this fixture opted into all three.
         Assert.False(await OwnerScalarAsync<bool>($"SELECT has_schema_privilege('{App}', 'agent_experience', 'CREATE')"));
         Assert.False(await OwnerScalarAsync<bool>(
             $"SELECT has_table_privilege('{App}', 'agent_experience.schema_versions', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"));
-        foreach (var signature in PurgeSignatures)
+        foreach (var signature in PurgeSignatures.Append(SealSignature))
         {
             Assert.True(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{App}', '{signature}', 'EXECUTE')"));
         }
@@ -129,6 +133,8 @@ public sealed class PostgresApplicationRoleTests
     {
         foreach (var function in PurgeSignatures.Concat(
         [
+            SealSignature,
+            "agent_experience.guard_sealed_record_erasure()",
             "agent_experience.reject_event_log_mutation()",
             "agent_experience.enforce_grant_monotonicity()",
             "agent_experience.reject_audited_grant_delete()",
@@ -266,7 +272,9 @@ public sealed class PostgresApplicationRoleTests
         Assert.Equal(ExperienceStoreOutcome.Found, (await _store.GetAsync(auth, scope, record, CancellationToken.None)).Outcome);
 
         // The owner, which can, gets exactly the hole this closes: a tombstone whose history survives.
-        Assert.Equal(1, await ExecuteAsync(_fixture.OwnerDataSource, Tombstone, ["agent_experience.purge_authorized"], record));
+        // (Since 0016 a sealed row also needs the key-destruction marker, which only the owner's statement gets here.)
+        Assert.Equal(1, await ExecuteAsync(
+            _fixture.OwnerDataSource, Tombstone, ["agent_experience.purge_authorized", "agent_experience.erasure_destroys_key"], record));
         Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.GetAsync(auth, scope, record, CancellationToken.None)).Outcome);
         Assert.Equal(1L, await OwnerScalarAsync<long>(
             $"SELECT count(*) FROM agent_experience.lifecycle_events WHERE experience_id = '{record}'"));
@@ -306,6 +314,8 @@ public sealed class PostgresApplicationRoleTests
             "SELECT * FROM agent_experience.purge_experience_record(@id, @tenant, 'app-1', 'project-1', NULL, NULL, NULL, NULL, now())",
             "SELECT agent_experience.purge_expired_grants(@tenant, 'app-1', 'project-1', NULL, NULL, NULL, now(), 10)",
             "SELECT * FROM agent_experience.purge_grant_access(@tenant, 'app-1', 'project-1', NULL, NULL, NULL, true, now() - interval '100 days', 10)",
+            "SELECT agent_experience.seal_experience_record(@id, @tenant, 'app-1', 'project-1', NULL, NULL, NULL, 0, "
+                + "'{\"sealed\": \"aexp-sealed:v1:AAAA\"}'::jsonb)",
         })
         {
             await using var command = new NpgsqlCommand(call, connection);
@@ -321,11 +331,19 @@ public sealed class PostgresApplicationRoleTests
             _fixture.OwnerDataSource, new ExperienceApplicationRoleOptions(role) { AllowErasure = true }, CancellationToken.None);
         Assert.Equal(ExperienceStoreOutcome.Deleted, (await store.DeleteAsync(auth, scope, record.ExperienceId, CancellationToken.None)).Outcome);
         Assert.False(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{role}', '{PurgeSignatures[2]}', 'EXECUTE')"));
+        Assert.False(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{role}', '{SealSignature}', 'EXECUTE')"));
+
+        // Opting into sealing opens exactly the sealing function.
+        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+            _fixture.OwnerDataSource, new ExperienceApplicationRoleOptions(role) { AllowSealing = true }, CancellationToken.None);
+        Assert.True(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{role}', '{SealSignature}', 'EXECUTE')"));
+        Assert.False(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{role}', '{PurgeSignatures[0]}', 'EXECUTE')"));
 
         // And re-applying without it takes it away again.
         await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
             _fixture.OwnerDataSource, new ExperienceApplicationRoleOptions(role), CancellationToken.None);
         Assert.False(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{role}', '{PurgeSignatures[0]}', 'EXECUTE')"));
+        Assert.False(await OwnerScalarAsync<bool>($"SELECT has_function_privilege('{role}', '{SealSignature}', 'EXECUTE')"));
     }
 
     // ------------------------------------------------------------------ what the API refuses
@@ -733,7 +751,7 @@ public sealed class PostgresApplicationRoleTests
         await using var transaction = await connection.BeginTransactionAsync();
         foreach (var marker in markers)
         {
-            // Each marker is one of two literals in this file, never input.
+            // Each marker is one of three literals in this file, never input.
             await using var set = new NpgsqlCommand($"SET LOCAL {marker} = 'on'", connection, transaction);
             await set.ExecuteNonQueryAsync();
         }

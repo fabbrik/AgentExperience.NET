@@ -4,6 +4,7 @@
     {
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresCandidateSource(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresCandidateSource(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresEncryption(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, AgentExperience.Abstractions.IExperienceKeyStore keyStore) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresGrantAccessLog(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<AgentExperience.Abstractions.ExperienceGrantAccessFailure> onNotRecorded, AgentExperience.Abstractions.ExperienceGrantAuditingMode mode = 0) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresGrantAccessLog(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Abstractions.ExperienceGrantAccessFailure> onNotRecorded, AgentExperience.Abstractions.ExperienceGrantAuditingMode mode = 0) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresGrantStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
@@ -22,7 +23,13 @@ namespace AgentExperience.Storage.Postgres
         public ExperienceApplicationRoleOptions(string roleName) { }
         public bool AllowAccessLogPurge { get; init; }
         public bool AllowErasure { get; init; }
+        public bool AllowSealing { get; init; }
         public string RoleName { get; }
+    }
+    public sealed class ExperienceEncryption
+    {
+        public ExperienceEncryption(AgentExperience.Abstractions.IExperienceKeyStore keyStore) { }
+        public AgentExperience.Abstractions.IExperienceKeyStore KeyStore { get; }
     }
     public sealed class ExperienceGrantAccessPurgeResult : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceGrantAccessPurgeResult>
     {
@@ -82,9 +89,17 @@ namespace AgentExperience.Storage.Postgres
         public static System.Threading.Tasks.Task ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource ownerDataSource, AgentExperience.Storage.Postgres.ExperienceApplicationRoleOptions options, System.Threading.CancellationToken cancellationToken) { }
         public static System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceSchemaMigrationResult> MigrateAsync(Npgsql.NpgsqlDataSource dataSource, System.Threading.CancellationToken cancellationToken) { }
     }
+    public sealed class ExperienceSealingResult : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceSealingResult>
+    {
+        public ExperienceSealingResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, int SealedCount, bool MoreRemain, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public bool MoreRemain { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public int SealedCount { get; init; }
+    }
     public sealed class PostgresExperienceCandidateSource : AgentExperience.Abstractions.IExperienceCandidateSource
     {
-        public PostgresExperienceCandidateSource(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null) { }
+        public PostgresExperienceCandidateSource(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceCandidateSearchResult> SearchAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceCandidateQuery query, System.Threading.CancellationToken cancellationToken) { }
     }
     public sealed class PostgresExperienceGrantAccessLog : AgentExperience.Abstractions.IExperienceGrantAccessLog
@@ -106,7 +121,7 @@ namespace AgentExperience.Storage.Postgres
     }
     public sealed class PostgresExperienceGrantStore : AgentExperience.Abstractions.IExperienceGrantStore
     {
-        public PostgresExperienceGrantStore(Npgsql.NpgsqlDataSource dataSource, AgentExperience.Storage.Postgres.PostgresExperienceGrantPolicy? policy = null, System.TimeProvider? timeProvider = null) { }
+        public PostgresExperienceGrantStore(Npgsql.NpgsqlDataSource dataSource, AgentExperience.Storage.Postgres.PostgresExperienceGrantPolicy? policy = null, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public AgentExperience.Storage.Postgres.PostgresExperienceGrantPolicy Policy { get; }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceGrantResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.GrantAdministration? administration, AgentExperience.Abstractions.ExperienceGrantRequest request, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceGrantHistoryResult> GetHistoryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope recordScope, System.Guid grantId, System.Threading.CancellationToken cancellationToken) { }
@@ -117,6 +132,7 @@ namespace AgentExperience.Storage.Postgres
     public static class PostgresExperienceRecordSchema
     {
         public const string ConfidenceEvidenceScriptName = "0007_confidence_evidence.sql";
+        public const string CryptoShreddingScriptName = "0016_crypto_shredding.sql";
         public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";
         public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
         public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
@@ -137,7 +153,7 @@ namespace AgentExperience.Storage.Postgres
     {
         public const int MaxSweepBatchSize = 500;
         public const int MinSweepBatchSize = 1;
-        public PostgresExperienceRecordStore(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, System.TimeProvider? timeProvider = null) { }
+        public PostgresExperienceRecordStore(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken) { }
@@ -148,12 +164,13 @@ namespace AgentExperience.Storage.Postgres
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordHistoryResult> GetHistoryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordHistoryQuery query, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceSealingResult> SealPlaintextRecordsAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceRetentionSweepResult> SweepExpiredAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.TimeSpan retentionAge, int batchSize, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceRetentionSweepResult> SweepExpiredAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.TimeSpan retentionAge, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Threading.CancellationToken cancellationToken) { }
     }
     public sealed class PostgresExperienceReuseFeedbackStore : AgentExperience.Abstractions.IExperienceReuseFeedbackStore
     {
-        public PostgresExperienceReuseFeedbackStore(Npgsql.NpgsqlDataSource dataSource, System.TimeProvider? timeProvider = null) { }
+        public PostgresExperienceReuseFeedbackStore(Npgsql.NpgsqlDataSource dataSource, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken) { }
     }
     public enum ScopeMatch

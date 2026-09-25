@@ -13,6 +13,32 @@ namespace AgentExperience.Storage.Postgres.DependencyInjection;
 public static class AgentExperiencePostgresServiceCollectionExtensions
 {
     /// <summary>
+    /// Turns on crypto-shredding for every PostgreSQL component these extensions register: registers one
+    /// <see cref="ExperienceEncryption"/> over <paramref name="keyStore"/>, which the record store, the
+    /// candidate source, the grant store, the reuse-feedback store and the vectors package's embedding index
+    /// all pick up, however the registrations are ordered.
+    /// </summary>
+    /// <remarks>
+    /// <b>The key store must keep its keys outside the database's backup domain</b>, or erasing a record
+    /// destroys nothing that a restored backup cannot bring back. See <see cref="IExperienceKeyStore"/> and the
+    /// store README's key custody section. A component constructed directly, without the same
+    /// <see cref="ExperienceEncryption"/>, runs in plaintext mode.
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="keyStore">Custody of the per-record data keys.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> or <paramref name="keyStore"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresEncryption(this IServiceCollection services, IExperienceKeyStore keyStore)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(keyStore);
+
+        services.TryAddSingleton(new ExperienceEncryption(keyStore));
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers <see cref="PostgresExperienceRecordStore"/> as the singleton
     /// <see cref="IExperienceRecordStore"/>, over an <see cref="NpgsqlDataSource"/> resolved from the
     /// container.
@@ -43,7 +69,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
             new PostgresExperienceRecordStore(
                 provider.GetRequiredService<NpgsqlDataSource>(),
                 onGrantsUnavailable: null,
-                auditing: provider.GetService<ExperienceGrantAuditing>()));
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -68,7 +95,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
             new PostgresExperienceRecordStore(
                 dataSource,
                 onGrantsUnavailable: null,
-                auditing: provider.GetService<ExperienceGrantAuditing>()));
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -112,7 +140,10 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IExperienceGrantStore>(provider =>
-            new PostgresExperienceGrantStore(provider.GetRequiredService<NpgsqlDataSource>(), policy));
+            new PostgresExperienceGrantStore(
+                provider.GetRequiredService<NpgsqlDataSource>(),
+                policy,
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -131,7 +162,9 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(dataSource);
 
-        services.TryAddSingleton<IExperienceGrantStore>(new PostgresExperienceGrantStore(dataSource));
+        // A factory, so a registered ExperienceEncryption is picked up however the registrations are ordered.
+        services.TryAddSingleton<IExperienceGrantStore>(provider =>
+            new PostgresExperienceGrantStore(dataSource, encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -250,7 +283,9 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IExperienceReuseFeedbackStore>(provider =>
-            new PostgresExperienceReuseFeedbackStore(provider.GetRequiredService<NpgsqlDataSource>()));
+            new PostgresExperienceReuseFeedbackStore(
+                provider.GetRequiredService<NpgsqlDataSource>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -269,7 +304,9 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(dataSource);
 
-        services.TryAddSingleton<IExperienceReuseFeedbackStore>(new PostgresExperienceReuseFeedbackStore(dataSource));
+        // A factory, so a registered ExperienceEncryption is picked up however the registrations are ordered.
+        services.TryAddSingleton<IExperienceReuseFeedbackStore>(provider =>
+            new PostgresExperienceReuseFeedbackStore(dataSource, encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -297,7 +334,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
             new PostgresExperienceCandidateSource(
                 provider.GetRequiredService<NpgsqlDataSource>(),
                 onGrantsUnavailable: null,
-                auditing: provider.GetService<ExperienceGrantAuditing>()));
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -322,7 +360,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
             new PostgresExperienceCandidateSource(
                 dataSource,
                 onGrantsUnavailable: null,
-                auditing: provider.GetService<ExperienceGrantAuditing>()));
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }

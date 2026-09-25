@@ -40,7 +40,8 @@ public static class AgentExperiencePostgresVectorsServiceCollectionExtensions
             new PostgresExperienceEmbeddingIndex(
                 provider.GetRequiredService<NpgsqlDataSource>(),
                 onGrantsUnavailable: null,
-                auditing: provider.GetService<ExperienceGrantAuditing>()));
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }
@@ -67,7 +68,8 @@ public static class AgentExperiencePostgresVectorsServiceCollectionExtensions
             new PostgresExperienceEmbeddingIndex(
                 dataSource,
                 onGrantsUnavailable: null,
-                auditing: provider.GetService<ExperienceGrantAuditing>()));
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
 
         return services;
     }

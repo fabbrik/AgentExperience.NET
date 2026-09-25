@@ -153,6 +153,31 @@ internal static class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates one batch of the crypto-shredding upgrade: the scope, the scope match, the batch bound, and
+    /// that the store has an <see cref="ExperienceEncryption"/> to seal with at all.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateSealing(Scope scope, int batchSize, ScopeMatch match, bool encryptionConfigured)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScopeMatch(match, errors);
+
+        if (!encryptionConfigured)
+        {
+            errors.Add(new("Encryption", "this store was constructed without an ExperienceEncryption, so there is no key store to seal with."));
+        }
+
+        if (batchSize is < PostgresExperienceRecordStore.MinSweepBatchSize or > PostgresExperienceRecordStore.MaxSweepBatchSize)
+        {
+            errors.Add(new(
+                "BatchSize",
+                $"must be between {PostgresExperienceRecordStore.MinSweepBatchSize} and {PostgresExperienceRecordStore.MaxSweepBatchSize}."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates an access-log purge: the owner scope, the scope match, the cutoff, and the batch bound.
     /// Whether the cutoff is old enough is the database's decision, on its own clock; here it only has
     /// to be set.
@@ -309,6 +334,7 @@ internal static class ExperienceRecordValidator
 
         RequireDefined(lifecycleEvent.CurrentStatus, "CurrentStatus", errors);
         RequireNotBlank(lifecycleEvent.Reason, "Reason", errors);
+        RefuseReservedText(lifecycleEvent.Reason, "Reason", errors);
         RequireNotBlank(lifecycleEvent.Producer, "Producer", errors);
 
         if (lifecycleEvent.OccurredAt == default)
@@ -397,6 +423,8 @@ internal static class ExperienceRecordValidator
         }
 
         const string Path = "Confidence";
+
+        RefuseReservedText(update.Detail, $"{Path}.Detail", errors);
 
         if (update.EvidenceId == Guid.Empty)
         {
@@ -526,6 +554,7 @@ internal static class ExperienceRecordValidator
         ValidateScope(request.RecordScope, "RecordScope", errors);
         ValidateScope(request.RecipientScope, "RecipientScope", errors);
         RequireNotBlank(request.Reason, "Reason", errors);
+        RefuseReservedText(request.Reason, "Reason", errors);
 
         if (request.ExpiresAt == default)
         {
@@ -575,6 +604,7 @@ internal static class ExperienceRecordValidator
 
         ValidateScope(revocation.RecordScope, "RecordScope", errors);
         RequireNotBlank(revocation.Reason, "Reason", errors);
+        RefuseReservedText(revocation.Reason, "Reason", errors);
 
         return errors;
     }
@@ -745,6 +775,12 @@ internal static class ExperienceRecordValidator
             errors.Add(new(
                 "Benefit",
                 "must be Unknown exactly when there is no attribution source, and named otherwise."));
+        }
+
+        RefuseReservedText(feedback.Rationale, "Rationale", errors);
+        if (string.Equals(feedback.Rationale, SealedText.SealedPlaceholder, StringComparison.Ordinal))
+        {
+            errors.Add(new("Rationale", $"must not be exactly '{SealedText.SealedPlaceholder}', which the store reserves for a sealed rationale."));
         }
 
         switch (feedback.AttributionSource)
@@ -1344,6 +1380,18 @@ internal static class ExperienceRecordValidator
         if (value is null)
         {
             errors.Add(new(path, Required));
+        }
+    }
+
+    /// <summary>
+    /// Refuses free text that begins with the sealed-value format, in both modes: a stored value with that prefix
+    /// is opened as ciphertext, so a caller's plaintext with it would make every later read of the row throw.
+    /// </summary>
+    private static void RefuseReservedText(string? value, string path, List<StoreValidationError> errors)
+    {
+        if (value is not null && value.StartsWith(SealedText.Prefix, StringComparison.Ordinal))
+        {
+            errors.Add(new(path, $"must not begin with '{SealedText.Prefix}', which the store reserves for sealed values."));
         }
     }
 

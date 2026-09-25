@@ -10,7 +10,7 @@ namespace AgentExperience.Storage.Postgres.Tests;
 /// deployment</b> in it: a non-superuser owner role owns a fresh database and runs
 /// <see cref="ExperienceSchemaMigrator"/>, and a separate application role is given exactly the stores'
 /// privileges by <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync"/> (with both
-/// purge opt-ins). <see cref="DataSource"/> connects as the <em>application</em> role, so every store test
+/// purge opt-ins and the sealing opt-in). <see cref="DataSource"/> connects as the <em>application</em> role, so every store test
 /// in this project runs as the role a production host runs as. A test that deliberately acts as the owner
 /// -- tampering to prove a trigger binds a writer that holds the privilege, DDL, backdating a row -- says
 /// so by using <see cref="OwnerDataSource"/>. Migrator tests create their own databases in the same
@@ -70,7 +70,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await ExperienceSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
         await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
             _owner,
-            new ExperienceApplicationRoleOptions(ApplicationRoleName) { AllowErasure = true, AllowAccessLogPurge = true },
+            new ExperienceApplicationRoleOptions(ApplicationRoleName) { AllowErasure = true, AllowAccessLogPurge = true, AllowSealing = true },
             CancellationToken.None);
     }
 
@@ -117,6 +117,24 @@ public sealed class PostgresFixture : IAsyncLifetime
         await using var source = NpgsqlDataSource.Create(ConnectionString(database, username: null));
         await using var inDatabase = source.CreateCommand(sql);
         await inDatabase.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// A real <c>pg_dump</c> of <paramref name="tables"/> in <paramref name="database"/>, data only, run inside the
+    /// container as its superuser: what a logical backup of the database holds.
+    /// </summary>
+    public async Task<string> DumpAsync(string database, params string[] tables)
+    {
+        var command = new List<string> { "pg_dump", "--username", "postgres", "--dbname", database, "--data-only" };
+        foreach (var table in tables)
+        {
+            command.Add("--table");
+            command.Add(table);
+        }
+
+        var result = await _container!.ExecAsync(command);
+        Assert.True(result.ExitCode == 0, $"pg_dump failed: {result.Stderr}");
+        return result.Stdout;
     }
 
     /// <summary>

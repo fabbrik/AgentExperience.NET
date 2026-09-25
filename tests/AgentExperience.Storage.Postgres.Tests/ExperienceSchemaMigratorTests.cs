@@ -80,7 +80,8 @@ public sealed class ExperienceSchemaMigratorTests
             await command.ExecuteNonQueryAsync();
         }
 
-        var store = new PostgresExperienceRecordStore(dataSource);
+        // A database that predates 0016 can only hold plaintext rows, whichever mode the suite runs in.
+        var store = new PostgresExperienceRecordStore(dataSource, encryption: ExperienceEncryption.ForcePlaintext);
         var tenant = NewTenant();
         var record = Full(Scope(tenant));
         await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
@@ -113,7 +114,8 @@ public sealed class ExperienceSchemaMigratorTests
             await command.ExecuteNonQueryAsync();
         }
 
-        var store = new PostgresExperienceRecordStore(dataSource);
+        // A database that predates 0016 can only hold plaintext rows, whichever mode the suite runs in.
+        var store = new PostgresExperienceRecordStore(dataSource, encryption: ExperienceEncryption.ForcePlaintext);
         var tenant = NewTenant();
         var scope = Scope(tenant);
         var record = Minimal(scope);
@@ -213,7 +215,8 @@ public sealed class ExperienceSchemaMigratorTests
             await command.ExecuteNonQueryAsync();
         }
 
-        var store = new PostgresExperienceRecordStore(dataSource);
+        // A database that predates 0016 can only hold plaintext rows, whichever mode the suite runs in.
+        var store = new PostgresExperienceRecordStore(dataSource, encryption: ExperienceEncryption.ForcePlaintext);
         var tenant = NewTenant();
         var record = Full(Scope(tenant));
         Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
