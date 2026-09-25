@@ -47,9 +47,10 @@ public static class PostgresExperienceRecordSchema
     /// its expiry from being extended.
     /// </summary>
     /// <remarks>
-    /// Those triggers bind every writer using the application role, including one that bypasses this
-    /// package entirely. They do <em>not</em> bind a superuser, nor the tables' own owner, which can
-    /// disable or drop a trigger before writing; see the script's own header and the package README.
+    /// Those triggers bind every writer that holds the privilege to write, including one that bypasses
+    /// this package entirely. They do <em>not</em> bind a superuser, nor the tables' own owner, which can
+    /// disable or drop a trigger before writing -- which is why the supported deployment runs the
+    /// application as a separate role that owns nothing (see <see cref="RoleSeparationHardeningScriptName"/>).
     /// </remarks>
     public const string SupersessionAndAppendOnlyScriptName = "0006_lifecycle_supersession_and_append_only.sql";
 
@@ -110,9 +111,10 @@ public static class PostgresExperienceRecordSchema
     /// It replaces <c>0006</c>'s and <c>0007</c>'s trigger functions in place, so every
     /// <c>ENABLE ALWAYS</c> binding survives and no table is unguarded for an instant. The guards keep
     /// refusing <c>UPDATE</c> and <c>TRUNCATE</c> unconditionally and admit a <c>DELETE</c> only while
-    /// the purge function's transaction-scoped marker is set -- which is an auditability mechanism, not
-    /// a privilege boundary: a custom GUC is settable by any session, and the guards still do not bind a
-    /// role that can <c>ALTER TABLE</c>.
+    /// the purge function's transaction-scoped marker is set. The marker alone decides no permission -- a
+    /// custom GUC is settable by any session -- so in the supported two-role deployment the application
+    /// role holds no <c>DELETE</c> on these tables at all, and only the purge functions, running as the
+    /// owner, can delete (see <see cref="RoleSeparationHardeningScriptName"/>).
     /// <para>
     /// It also creates the only two triggers it adds, <c>experience_records_no_delete</c> and
     /// <c>experience_records_no_truncate</c>, which refuse removing a record row from every session with
@@ -122,8 +124,9 @@ public static class PostgresExperienceRecordSchema
     /// <para>
     /// The two purge functions are <c>SECURITY DEFINER</c>, so the script revokes <c>EXECUTE</c> on them
     /// from <c>PUBLIC</c> -- PostgreSQL's default would otherwise make erasure reachable by every role
-    /// that can connect -- and grants it to the migrating role. An application role that is not the
-    /// migrating role needs an explicit grant.
+    /// that can connect -- and grants it to the migrating role. The application role gets it from
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>,
+    /// only when the host opts in.
     /// </para>
     /// <para>
     /// Its three indexes are built with plain <c>CREATE INDEX</c> inside the migrator's per-script
@@ -179,6 +182,23 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
 
+    /// <summary>
+    /// The script that hardens the schema for the two-role deployment: it pins
+    /// <c>search_path = pg_catalog, agent_experience, pg_temp</c> on the three <c>SECURITY DEFINER</c>
+    /// purge functions and on every guard trigger function, and restates the <c>PUBLIC</c> revoke on the
+    /// purge functions.
+    /// </summary>
+    /// <remarks>
+    /// It grants nothing to a named role: the application role's privileges are applied, re-applied on
+    /// every deploy, and verified by
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>.
+    /// That deployment -- an owner role that owns this schema and runs the migrators, and an application
+    /// role with no ownership, no <c>DELETE</c> or <c>TRUNCATE</c> on any ledger, and column-level
+    /// <c>UPDATE</c> -- is what makes the append-only guards and the single erasure path bind the
+    /// application's own role. The owner and superusers remain unbound; see the script's header.
+    /// </remarks>
+    public const string RoleSeparationHardeningScriptName = "0013_role_separation_hardening.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -201,6 +221,7 @@ public static class PostgresExperienceRecordSchema
         DeleteAndExpireScriptName,
         GrantDisclosureScriptName,
         GrantAccessRetentionScriptName,
+        RoleSeparationHardeningScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

@@ -833,7 +833,7 @@ public sealed class PostgresRetentionReachTests
             Assert.Equal(510, await many.ExecuteNonQueryAsync());
         }
 
-        await using var connection = await _fixture.DataSource.OpenConnectionAsync();
+        await using var connection = await _fixture.OwnerDataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
 
         // A NULL limit is 500, never "no limit"; a NULL subtree flag is Exact, so t1's row is untouched.
@@ -1002,10 +1002,15 @@ public sealed class PostgresRetentionReachTests
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
-    /// <summary>Runs one statement with a marker hand-set (or none), which any session may do, and returns the rows it touched.</summary>
+    /// <summary>
+    /// Runs one statement with a marker hand-set (or none), which any session may do, and returns the rows
+    /// it touched. As the tables' owner, which holds DELETE: the guard under test is what a writer allowed
+    /// to delete still meets. The application role is refused before the guard, by the privilege system
+    /// (PostgresApplicationRoleTests).
+    /// </summary>
     private async Task<int> MarkedAsync(string? marker, string sql, Guid id)
     {
-        await using var connection = await _fixture.DataSource.OpenConnectionAsync();
+        await using var connection = await _fixture.OwnerDataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
 
         if (marker is not null)

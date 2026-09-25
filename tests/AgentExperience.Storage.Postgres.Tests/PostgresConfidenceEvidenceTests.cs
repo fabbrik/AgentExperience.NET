@@ -698,9 +698,10 @@ public sealed class PostgresConfidenceEvidenceTests
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
+    /// <summary>A hand-written statement, as the tables' owner: the guard under test must refuse a writer that holds the privilege.</summary>
     private async Task<int> ExecuteAsync(string sql, Guid? id)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
         if (id is { } value)
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", value));

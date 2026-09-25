@@ -629,7 +629,7 @@ public sealed class PostgresGrantAccessAuditTests
         var store = Audited(new List<ExperienceGrantAccessFailure>());
         await store.GetAsync(Authorize(tenant), recipient, id, CancellationToken.None);
 
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
         command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", id));
         await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
 
@@ -639,7 +639,7 @@ public sealed class PostgresGrantAccessAuditTests
     [Fact]
     public async Task The_access_table_cannot_be_truncated()
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.OwnerDataSource.CreateCommand(
             "TRUNCATE TABLE agent_experience.experience_grant_access");
 
         await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
@@ -727,14 +727,14 @@ public sealed class PostgresGrantAccessAuditTests
         var id = await SeedAsync(owner);
         var grant = await GrantAsync(tenant, id, owner, recipient);
 
-        await using (var shrink = _fixture.DataSource.CreateCommand(
+        await using (var shrink = _fixture.OwnerDataSource.CreateCommand(
             "UPDATE agent_experience.experience_grants SET expires_at = expires_at - interval '10 minutes' WHERE grant_id = @grant_id"))
         {
             shrink.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grant.GrantId));
             Assert.Equal(1, await shrink.ExecuteNonQueryAsync());
         }
 
-        await using var extend = _fixture.DataSource.CreateCommand(
+        await using var extend = _fixture.OwnerDataSource.CreateCommand(
             "UPDATE agent_experience.experience_grants SET expires_at = expires_at + interval '1 hour' WHERE grant_id = @grant_id");
         extend.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grant.GrantId));
         await Assert.ThrowsAsync<PostgresException>(() => extend.ExecuteNonQueryAsync());

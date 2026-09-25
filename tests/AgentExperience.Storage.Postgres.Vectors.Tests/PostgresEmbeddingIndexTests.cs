@@ -49,8 +49,8 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
 
         try
         {
-            await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(DataSource, Dimension);
-            await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(DataSource, Dimension);
+            await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(fixture.OwnerDataSource, Dimension);
+            await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(fixture.OwnerDataSource, Dimension);
 
             var definition = await ScalarAsync<string>(
                 $"SELECT indexdef FROM pg_indexes WHERE schemaname = 'agent_experience' AND indexname = '{name}'");
@@ -64,7 +64,7 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         }
         finally
         {
-            await ExperienceVectorIndexMaintenance.DropHnswIndexAsync(DataSource, Dimension);
+            await ExperienceVectorIndexMaintenance.DropHnswIndexAsync(fixture.OwnerDataSource, Dimension);
         }
 
         Assert.Equal(
@@ -82,7 +82,7 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         var id = await world.AddRecordAsync("refund-ticket", "Resolve a refund ticket", "Release the lock");
         await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
 
-        await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(DataSource, dimension);
+        await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(fixture.OwnerDataSource, dimension);
         try
         {
             var plan = await world.ExplainSearchAsync(TopicEmbeddingGenerator.VectorFor("refund stuck on a lock"));
@@ -93,7 +93,7 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         }
         finally
         {
-            await ExperienceVectorIndexMaintenance.DropHnswIndexAsync(DataSource, dimension);
+            await ExperienceVectorIndexMaintenance.DropHnswIndexAsync(fixture.OwnerDataSource, dimension);
         }
 
         // Dropped, the same search is still correct -- pgvector simply scans exactly.
@@ -613,7 +613,7 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
     private static NpgsqlDataSource Unreachable() =>
         NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Username=nobody;Password=nothing;Database=none;Timeout=3;Pooling=false");
 
-    private async Task<TestWorld> WorldAsync() => await TestWorld.CreateAsync(DataSource);
+    private async Task<TestWorld> WorldAsync() => await TestWorld.CreateAsync(fixture);
 
     private async Task<T?> ScalarAsync<T>(string sql)
     {

@@ -1013,9 +1013,10 @@ public sealed class PostgresGrantTests
         }
     }
 
+    /// <summary>A hand-written statement, as the tables' owner: rows and changes the store would never write.</summary>
     private async Task ExecuteAsync(string sql, params (string Name, object Value)[] parameters)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
         foreach (var (name, value) in parameters)
         {
             command.Parameters.Add(new NpgsqlParameter { ParameterName = name, Value = value });

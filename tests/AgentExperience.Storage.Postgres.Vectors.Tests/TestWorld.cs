@@ -15,9 +15,10 @@ internal sealed class TestWorld
 {
     private static readonly DateTimeOffset Stamp = new DateTimeOffset(2026, 9, 21, 10, 0, 0, TimeSpan.Zero).AddTicks(1_234_560);
 
-    private TestWorld(NpgsqlDataSource dataSource, Scope scope, TopicEmbeddingGenerator generator)
+    private TestWorld(NpgsqlDataSource dataSource, NpgsqlDataSource ownerDataSource, Scope scope, TopicEmbeddingGenerator generator)
     {
         DataSource = dataSource;
+        OwnerDataSource = ownerDataSource;
         Scope = scope;
         Generator = generator;
         Authorization = new AuthorizationContext(scope.TenantId, "host-principal", ["experience:write"], Stamp);
@@ -27,7 +28,14 @@ internal sealed class TestWorld
         Indexing = new ExperienceIndexingService(Index, generator);
     }
 
+    /// <summary>The application role: every store and index in this world connects as it.</summary>
     public NpgsqlDataSource DataSource { get; }
+
+    /// <summary>
+    /// The owner role, for staging what the application role may not do: rewriting a row in place,
+    /// disabling a guard, removing a record row.
+    /// </summary>
+    public NpgsqlDataSource OwnerDataSource { get; }
 
     public Scope Scope { get; }
 
@@ -43,9 +51,10 @@ internal sealed class TestWorld
 
     public ExperienceIndexingService Indexing { get; }
 
-    public static Task<TestWorld> CreateAsync(NpgsqlDataSource dataSource, TopicEmbeddingGenerator? generator = null) =>
+    public static Task<TestWorld> CreateAsync(VectorsFixture fixture, TopicEmbeddingGenerator? generator = null) =>
         Task.FromResult(new TestWorld(
-            dataSource,
+            fixture.DataSource,
+            fixture.OwnerDataSource,
             new Scope("tenant-" + Guid.NewGuid().ToString("N"), "app-1", "project-1"),
             generator ?? new TopicEmbeddingGenerator()));
 
@@ -189,7 +198,7 @@ internal sealed class TestWorld
     /// </summary>
     public async Task DeleteRecordAsync(Guid experienceId)
     {
-        await using var connection = await DataSource.OpenConnectionAsync();
+        await using var connection = await OwnerDataSource.OpenConnectionAsync();
         await using (var disable = new NpgsqlCommand(
             "ALTER TABLE agent_experience.experience_records DISABLE TRIGGER experience_records_no_delete",
             connection))
@@ -288,9 +297,10 @@ internal sealed class TestWorld
         return string.Join('\n', lines);
     }
 
+    /// <summary>A hand-written change the store would never make, staged as the owner.</summary>
     private async Task ExecuteAsync(string sql, Guid experienceId, params (string Name, object Value)[] extra)
     {
-        await using var command = DataSource.CreateCommand(sql);
+        await using var command = OwnerDataSource.CreateCommand(sql);
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         foreach (var (name, value) in extra)
         {

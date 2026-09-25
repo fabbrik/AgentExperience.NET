@@ -6,32 +6,86 @@ using Testcontainers.PostgreSql;
 namespace AgentExperience.Storage.Postgres.Vectors.Tests;
 
 /// <summary>
-/// Starts one ephemeral <c>pgvector/pgvector:pg16</c> container for the whole collection, migrates its
-/// default database with <see cref="ExperienceSchemaMigrator"/> and <em>then</em> with this package's
-/// own <see cref="ExperienceVectorSchemaMigrator"/>, and tears the container down afterwards. The two
-/// calls are separate exactly as a host's are: the base schema needs no extension privilege, and only
-/// this second call creates the <c>vector</c> extension. Set <c>TESTCONTAINERS_RYUK_DISABLED=true</c>
-/// if Ryuk fails under a local Docker setup.
+/// Starts one ephemeral <c>pgvector/pgvector:pg16</c> container for the whole collection and sets up the
+/// supported two-role deployment in it: a superuser creates the <c>vector</c> extension and grants the
+/// owner role <c>SET</c> on the two purge markers, the owner role (no superuser) runs
+/// <see cref="ExperienceSchemaMigrator"/> and <em>then</em> this package's own
+/// <see cref="ExperienceVectorSchemaMigrator"/>, exactly as a host's two calls are separate, and finally
+/// applies the application role's privileges -- after both migrators, so the embedding table is covered.
+/// <see cref="DataSource"/> connects as the application role; <see cref="OwnerDataSource"/> as the owner,
+/// for index maintenance (building an index needs ownership). Set
+/// <c>TESTCONTAINERS_RYUK_DISABLED=true</c> if Ryuk fails under a local Docker setup.
 /// </summary>
 public sealed class VectorsFixture : IAsyncLifetime
 {
+    public const string OwnerRoleName = "aen_vectors_owner";
+    public const string ApplicationRoleName = "aen_vectors_app";
+    private const string StoreDatabase = "aen_vectors_store";
+    private const string RolePassword = "aen-role-password";
+
     private PostgreSqlContainer? _container;
+    private NpgsqlDataSource? _owner;
     private NpgsqlDataSource? _dataSource;
 
+    /// <summary>The fixture database, connecting as the application role.</summary>
     public NpgsqlDataSource DataSource => _dataSource ?? throw new InvalidOperationException("Fixture not initialized.");
+
+    /// <summary>The fixture database, connecting as the owner role that ran both migrators.</summary>
+    public NpgsqlDataSource OwnerDataSource => _owner ?? throw new InvalidOperationException("Fixture not initialized.");
 
     public async Task InitializeAsync()
     {
         _container = new PostgreSqlBuilder("pgvector/pgvector:pg16").Build();
         await _container.StartAsync();
 
-        // Deliberately a plain data source: no UseVector() call. The adapter must work on whatever
+        await using (var superuser = NpgsqlDataSource.Create(_container.GetConnectionString()))
+        {
+            foreach (var sql in new[]
+            {
+                $"CREATE ROLE {OwnerRoleName} LOGIN PASSWORD '{RolePassword}'",
+                $"CREATE ROLE {ApplicationRoleName} LOGIN PASSWORD '{RolePassword}'",
+                $"CREATE DATABASE {StoreDatabase} OWNER {OwnerRoleName}",
+                "GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized " +
+                $"TO {OwnerRoleName}",
+            })
+            {
+                await using var command = superuser.CreateCommand(sql);
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        // pgvector is not a trusted extension, so only a superuser can create it; the vectors migrator's
+        // CREATE EXTENSION IF NOT EXISTS is then a no-op for the owner.
+        await using (var superuserInStore = NpgsqlDataSource.Create(ConnectionString(username: null)))
+        await using (var extension = superuserInStore.CreateCommand("CREATE EXTENSION IF NOT EXISTS vector"))
+        {
+            await extension.ExecuteNonQueryAsync();
+        }
+
+        // Deliberately plain data sources: no UseVector() call. The adapter must work on whatever
         // data source the host built, and these tests would not notice if it had silently started
         // depending on the Pgvector type mapping being registered.
-        _dataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
+        _owner = NpgsqlDataSource.Create(ConnectionString(OwnerRoleName));
+        _dataSource = NpgsqlDataSource.Create(ConnectionString(ApplicationRoleName));
 
-        await ExperienceSchemaMigrator.MigrateAsync(_dataSource, CancellationToken.None);
-        await ExperienceVectorSchemaMigrator.MigrateAsync(_dataSource, CancellationToken.None);
+        await ExperienceSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
+        await ExperienceVectorSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
+        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+            _owner,
+            new ExperienceApplicationRoleOptions(ApplicationRoleName) { AllowErasure = true, AllowAccessLogPurge = true },
+            CancellationToken.None);
+    }
+
+    private string ConnectionString(string? username)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(_container!.GetConnectionString()) { Database = StoreDatabase };
+        if (username is not null)
+        {
+            builder.Username = username;
+            builder.Password = RolePassword;
+        }
+
+        return builder.ConnectionString;
     }
 
     public async Task DisposeAsync()
@@ -39,6 +93,11 @@ public sealed class VectorsFixture : IAsyncLifetime
         if (_dataSource is not null)
         {
             await _dataSource.DisposeAsync();
+        }
+
+        if (_owner is not null)
+        {
+            await _owner.DisposeAsync();
         }
 
         if (_container is not null)

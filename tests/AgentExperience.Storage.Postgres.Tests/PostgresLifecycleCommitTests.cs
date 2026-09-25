@@ -673,9 +673,10 @@ public sealed class PostgresLifecycleCommitTests
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
+    /// <summary>A hand-written statement, as the tables' owner (DDL, and rows the store would never write).</summary>
     private async Task ExecuteAsync(string sql)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
         await command.ExecuteNonQueryAsync();
     }
 }

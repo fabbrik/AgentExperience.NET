@@ -48,11 +48,15 @@ services.AddAgentExperienceIndexing();                       // ExperienceIndexi
 services.AddAgentExperienceRetrieval();                      // hybrid, because both halves above are registered
 ```
 
-Apply the schema once at startup, in two calls:
+Apply the schema on every deploy, as the owner role of the base package's
+[two-role deployment](../AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles), and grant the
+application role its privileges last, so the embedding table is covered:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(dataSource, cancellationToken);        // 0001-0003 and 0005, base schema
-await ExperienceVectorSchemaMigrator.MigrateAsync(dataSource, cancellationToken);  // 0004, this package's schema
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0013, base schema
+await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004, this package's schema
+await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+    ownerDataSource, new ExperienceApplicationRoleOptions("agent_experience_app"), cancellationToken);
 ```
 
 They are separate on purpose. `0004` begins with `CREATE EXTENSION vector`, and pgvector is **not** a trusted
@@ -61,11 +65,14 @@ designates). A text-only deployment never calls the second line and therefore ne
 operators install the extension out of band, this call runs fine as an ordinary role — `CREATE EXTENSION IF NOT
 EXISTS` is a no-op once it exists. Run the base migration first: `0004` has a foreign key to `experience_records`.
 
-The searching role needs `SELECT` on `agent_experience.experience_embeddings` and
-`agent_experience.experience_records`, plus `INSERT`/`UPDATE` on the embedding table to index. To honour sharing
-grants it also needs `SELECT` on `agent_experience.experience_grants`; that one is optional, and a role without it
-(or a database that has not applied `0005`) falls back to the exact-scope predicate and reports it once through the
-`onGrantsUnavailable` callback.
+`ApplyApplicationRolePrivilegesAsync` gives the application role `SELECT`, `INSERT` and `DELETE` on
+`agent_experience.experience_embeddings` — the table is derived and rebuildable, not a ledger, and removing a vector
+is an ordinary index operation — and `UPDATE` only on the columns the upsert rewrites (`model_id`, `dimension`,
+`content_hash`, `source_revision`, `embedding`, `updated_at`), never the record ID or the scope columns a removal
+matches on. That is alongside what the base package's stores need. It never gets `TRUNCATE` or
+ownership, so it cannot build or drop the out-of-band HNSW index: run `ExperienceVectorIndexMaintenance` as the owner.
+A role without `SELECT` on `agent_experience.experience_grants` (or a database that has not applied `0005`) falls
+back to the exact-scope predicate and reports it once through the `onGrantsUnavailable` callback.
 
 Both migrators share the `agent_experience.schema_versions` journal and the same advisory lock, so they serialize
 against each other and against another host, and neither can claim the other's journal entries.
@@ -282,7 +289,8 @@ Core turns either mismatch into an explicit text-only retrieval result carrying 
 runs. So it is an explicit call:
 
 ```csharp
-await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(dataSource, dimension: 1536, cancellationToken);
+// As the owner role: creating an index needs ownership of the table.
+await ExperienceVectorIndexMaintenance.EnsureHnswIndexAsync(ownerDataSource, dimension: 1536, cancellationToken);
 ```
 
 which creates, idempotently,

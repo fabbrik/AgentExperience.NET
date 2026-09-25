@@ -578,7 +578,9 @@ public sealed class PostgresDeletionTests
         var erasing = await ValidatedAsync(auth, scope);
         var bystander = await ValidatedAsync(auth, scope);
 
-        await using var connection = await _fixture.DataSource.OpenConnectionAsync();
+        // As the owner, which holds DELETE: for the application role the privilege system would refuse the
+        // statement below before the marker was ever consulted, and this test is about the marker.
+        await using var connection = await _fixture.OwnerDataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
 
         await using (var purge = new NpgsqlCommand(
@@ -1783,7 +1785,10 @@ public sealed class PostgresDeletionTests
     /// <summary>Runs one statement with the purge marker hand-set, which any session may do.</summary>
     private async Task<int> MarkedAsync(string sql, Guid id)
     {
-        await using var connection = await _fixture.DataSource.OpenConnectionAsync();
+        // As the tables' owner, which holds DELETE: the marker is only meaningful to a writer that could
+        // delete at all. The application role is refused by the privilege system first
+        // (PostgresApplicationRoleTests).
+        await using var connection = await _fixture.OwnerDataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
 
         await using (var marker = new NpgsqlCommand("SET LOCAL agent_experience.purge_authorized = 'on'", connection, transaction))
@@ -1817,9 +1822,10 @@ public sealed class PostgresDeletionTests
         await CountGrantEventsAsync(experienceId),
         await CountAsync("experience_grant_access", experienceId));
 
+    /// <summary>A hand-written statement, as the tables' owner: the guard under test must refuse a writer that holds the privilege.</summary>
     private async Task<int> ExecuteAsync(string sql, Guid? id, string? tenant = null)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.OwnerDataSource.CreateCommand(sql);
         if (id is { } value)
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", value));
