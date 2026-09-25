@@ -8,7 +8,7 @@ namespace AgentExperience.CompatibilityProof;
 
 /// <summary>
 /// Story 1.7, Track 3 (AC3): proves scoped text+vector retrieval via <c>CommunityToolkit.VectorData.PgVector</c>
-/// 1.0.1 against an ephemeral Testcontainers-spun PostgreSQL 16 + pgvector, and proves (by actually running two
+/// 1.0.1 against an ephemeral Testcontainers-spun PostgreSQL + pgvector, and proves (by actually running two
 /// connections against the same pooled <see cref="NpgsqlDataSource"/>, not just by reading the source) that a
 /// plain-<c>Npgsql</c> canonical write cannot share a transaction with the vector connector.
 /// </summary>
@@ -22,7 +22,7 @@ namespace AgentExperience.CompatibilityProof;
 /// <c>CommunityToolkit.VectorData.PgVector</c> 1.0.1 -- the current, actively-maintained connector, successor to
 /// the now-legacy <c>Microsoft.SemanticKernel.Connectors.PgVector</c>
 /// (https://www.nuget.org/packages/CommunityToolkit.VectorData.PgVector/). Container image:
-/// <c>pgvector/pgvector:pg16</c>.
+/// <c>pgvector/pgvector</c> (at the major <c>AGENTEXPERIENCE_POSTGRES_MAJOR</c> selects).
 /// </remarks>
 /// <remarks>
 /// This is the one track this story allows to be blocked independently (e.g. a Docker-unavailable CI runner):
@@ -40,7 +40,20 @@ public sealed class PostgresVectorProof : IClassFixture<PostgresVectorProof.Post
     public PostgresVectorProof(PostgresContainerFixture fixture) => _container = fixture.Container;
 
     /// <summary>
-    /// Starts one ephemeral <c>pgvector/pgvector:pg16</c> container for every test in this class, and tears it
+    /// Story 6.3: this proof really ran on the PostgreSQL major <c>AGENTEXPERIENCE_POSTGRES_MAJOR</c> selected,
+    /// so a CI leg cannot report it as evidence for a major it did not reach.
+    /// </summary>
+    [Fact]
+    public async Task The_container_reports_the_major_version_this_run_selected()
+    {
+        await using var dataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
+        await using var command = dataSource.CreateCommand("SELECT current_setting('server_version_num')::int");
+
+        Assert.Equal(AgentExperience.Tests.Shared.PostgresTestImage.Major, (int)(await command.ExecuteScalarAsync())! / 10000);
+    }
+
+    /// <summary>
+    /// Starts one ephemeral <c>pgvector/pgvector</c> (at the major <c>AGENTEXPERIENCE_POSTGRES_MAJOR</c> selects) container for every test in this class, and tears it
     /// down once the class's tests complete -- per this story's "Track 3's Postgres container is ephemeral
     /// (Testcontainers), torn down after the test run" constraint.
     /// </summary>
@@ -52,7 +65,7 @@ public sealed class PostgresVectorProof : IClassFixture<PostgresVectorProof.Post
 
         public async Task InitializeAsync()
         {
-            var container = new PostgreSqlBuilder("pgvector/pgvector:pg16").Build();
+            var container = new PostgreSqlBuilder(AgentExperience.Tests.Shared.PostgresTestImage.Pgvector).Build();
             await container.StartAsync();
             _container = container;
         }

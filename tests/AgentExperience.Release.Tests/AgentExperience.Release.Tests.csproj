@@ -20,6 +20,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
+         test project references another. -->
+    <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

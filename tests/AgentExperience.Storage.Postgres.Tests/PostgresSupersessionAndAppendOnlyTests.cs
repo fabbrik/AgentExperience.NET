@@ -6,7 +6,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 3.2 against a real PostgreSQL 16 container: the completed transition table driven end to end,
+/// Story 3.2 against a real PostgreSQL container: the completed transition table driven end to end,
 /// supersession's recorded replacement and its refusals (self, cross-scope, ineligible, cyclic), the
 /// bounded and cursored history, and the two event logs now being append-only in the database rather
 /// than by convention. Each test uses its own random tenant, so tests sharing the container never see

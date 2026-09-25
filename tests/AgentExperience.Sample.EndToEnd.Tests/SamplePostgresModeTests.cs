@@ -3,7 +3,7 @@ using System.Globalization;
 namespace AgentExperience.Sample.EndToEnd.Tests;
 
 /// <summary>
-/// The opt-in PostgreSQL mode, against a real stock <c>postgres:16</c> container.
+/// The opt-in PostgreSQL mode, against a real stock <c>postgres</c> container.
 /// </summary>
 /// <remarks>
 /// <para>

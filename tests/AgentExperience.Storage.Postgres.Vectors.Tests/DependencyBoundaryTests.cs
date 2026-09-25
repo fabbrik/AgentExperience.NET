@@ -4,7 +4,7 @@ using System.Xml.Linq;
 namespace AgentExperience.Storage.Postgres.Vectors.Tests;
 
 /// <summary>
-/// Proves <c>AgentExperience.Storage.Postgres.Vectors</c> takes exactly the pins Story 1.7's proof
+/// Proves <c>AgentExperience.Storage.Postgres.Vectors</c> takes exactly the floors Story 1.7's proof
 /// verified -- plain Npgsql, Pgvector, the model-provider <em>abstractions</em>, and the
 /// dependency-injection abstractions its own registration extension needs -- and nothing else: no
 /// MAF, EF Core, Dapper, Semantic Kernel, or concrete model-provider dependency.
@@ -47,7 +47,8 @@ public class DependencyBoundaryTests
     }
 
     [Fact]
-    public void Storage_Postgres_Vectors_csproj_declares_only_the_exact_verified_pins()
+    [Trait("Category", "DeclaredPins")]
+    public void Storage_Postgres_Vectors_csproj_declares_only_the_verified_floors()
     {
         var csprojPath = GetCsprojPath();
         Assert.True(File.Exists(csprojPath), $"Could not locate AgentExperience.Storage.Postgres.Vectors.csproj at '{csprojPath}'.");
@@ -58,14 +59,15 @@ public class DependencyBoundaryTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        // Every version here is an exact pin, and every one was verified by Story 1.7's executable
-        // Postgres/pgvector proof before this package was written.
+        // Every version here is a floor (story 6.3, KL-13) that Story 1.7's executable Postgres/pgvector
+        // proof and CI verify; CI's floating leg proves the newest in each major, and is kept away from
+        // this test by the trait above because it rewrites these versions on purpose.
         Assert.Equal(
             [
-                "Microsoft.Extensions.AI.Abstractions [10.10.0]",
-                "Microsoft.Extensions.DependencyInjection.Abstractions [10.0.12]",
-                "Npgsql [10.0.3]",
-                "Pgvector [0.3.2]",
+                "Microsoft.Extensions.AI.Abstractions 10.10.0",
+                "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+                "Npgsql 10.0.3",
+                "Pgvector 0.3.2",
             ],
             packages);
     }

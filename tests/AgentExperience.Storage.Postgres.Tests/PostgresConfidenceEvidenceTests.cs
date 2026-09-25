@@ -6,7 +6,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 3.4 against a real PostgreSQL 16 container: the evidence ledger, its unique independence index,
+/// Story 3.4 against a real PostgreSQL container: the evidence ledger, its unique independence index,
 /// the counters and score moving in the same transaction as the evidence row and the lifecycle event, the
 /// duplicate that is recorded and counted zero times, the concurrent submission that loses on revision,
 /// and the database refusing a direct rewrite of the confidence columns. Each test uses its own random

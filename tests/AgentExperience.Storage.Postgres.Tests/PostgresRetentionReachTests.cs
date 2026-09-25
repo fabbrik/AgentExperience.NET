@@ -5,7 +5,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 5.4 against a real PostgreSQL 16 container: a retention sweep that can reach a scope and
+/// Story 5.4 against a real PostgreSQL container: a retention sweep that can reach a scope and
 /// everything beneath it (KL-3), and a bounded, authorized retention path for the grant access log
 /// (KL-10). Every "beneath" claim is proved against a corpus of stored scopes at every field level,
 /// and every cross-scope claim against a neighbour that shares every other field. Each test uses its

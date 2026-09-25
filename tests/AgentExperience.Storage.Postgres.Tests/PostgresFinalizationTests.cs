@@ -3,7 +3,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 2.5 end to end against a real PostgreSQL 16 container: capture a run, finalize it through
+/// Story 2.5 end to end against a real PostgreSQL container: capture a run, finalize it through
 /// Core's <see cref="ExperienceFinalizationService"/>, and read the durable record and its lifecycle
 /// history back through the real store. Nothing here is faked below the service under test -- the
 /// sanitizer, the capture service, the reflector, the lifecycle service, and the PostgreSQL store are

@@ -5,7 +5,7 @@ namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
 /// Integration tests for the SQL behind <see cref="PostgresExperienceCandidateSource"/>, against a
-/// real PostgreSQL 16 container: what the generated <c>search_vector</c> indexes, that scope, status,
+/// real PostgreSQL container: what the generated <c>search_vector</c> indexes, that scope, status,
 /// and confidence are all decided inside the query, and that a matched record still decodes into the
 /// full canonical record. Each test uses its own random tenant, so tests sharing the container never
 /// see each other's rows.

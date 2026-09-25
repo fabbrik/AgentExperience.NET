@@ -5,7 +5,7 @@ namespace AgentExperience.Storage.Postgres.Vectors.Tests;
 
 /// <summary>
 /// Container-backed coverage of <see cref="PostgresExperienceEmbeddingIndex"/> against a real
-/// PostgreSQL 16 + pgvector: ingestion after a commit, the conditional write's stale and deleted
+/// PostgreSQL + pgvector: ingestion after a commit, the conditional write's stale and deleted
 /// cases, re-index idempotence, and the scope isolation both retrieval channels have to share. Every
 /// embedding is produced by a deterministic in-test generator -- no model, no network, no credentials.
 /// </summary>

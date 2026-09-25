@@ -8,7 +8,9 @@ Records Microsoft Agent Framework (MAF) invocations and their tool calls as Agen
 and injects applicable past experience back into later invocations as a labeled Historical Reference.
 Capture covers ordinary, streaming, failed, and cancelled invocations, plus streams the consumer stops reading early.
 
-Pinned to `Microsoft.Agents.AI` **1.22.0** (exact). No other MAF version is verified.
+Pinned to `Microsoft.Agents.AI` **1.22.0** (exact), for `net9.0` and `net10.0`. No other MAF version is verified. It is
+the one exact pin this library keeps; every other dependency is a floor. The reasons are in
+[the version policy](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#the-version-policy-floors-and-one-exact-pin).
 
 ## Usage
 

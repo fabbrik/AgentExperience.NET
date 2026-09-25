@@ -6,7 +6,7 @@ namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
 /// One test per row of the migrator's edge-case matrix, each on its own freshly created database in the
-/// shared PostgreSQL 16 container, so a migration in one test can never be seen by another.
+/// shared PostgreSQL container, so a migration in one test can never be seen by another.
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class ExperienceSchemaMigratorTests

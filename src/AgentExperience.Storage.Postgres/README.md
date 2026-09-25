@@ -9,11 +9,14 @@ them by task text through the `IExperienceCandidateSource` port, administers exp
 `IExperienceGrantStore` port, and records reuse feedback through the `IExperienceReuseFeedbackStore` port, using
 plain Npgsql.
 
-Pinned to `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
-`Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12** (all exact; the DI package is abstractions only —
-no container, no hosting — and exists for this package's own registration extension). Integration tests run against
-PostgreSQL 16 (`pgvector/pgvector:pg16`) through `Testcontainers.PostgreSql` 4.15.0. This package does not use EF
-Core, Dapper, Pgvector, or the pgvector extension.
+Requires `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
+`Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12**, or any later release in the same major. Each is a
+floor: CI tests the floor itself and the newest release in its major (the DI package is abstractions only — no
+container, no hosting — and exists for this package's own registration extension). Built for `net9.0` and `net10.0`.
+Integration tests run against PostgreSQL 15, 16, 17 and 18 (`pgvector/pgvector:pg{N}`, and stock `postgres:{N}` for
+the text-only schema) through `Testcontainers.PostgreSql` 4.15.0; PostgreSQL 14 is not supported, because
+`0005_create_experience_grants` uses PostgreSQL 15 syntax. See [the supported matrix](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#supported-matrix). This
+package does not use EF Core, Dapper, Pgvector, or the pgvector extension.
 
 ## Usage
 

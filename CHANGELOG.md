@@ -89,6 +89,40 @@ A host that skips all of this keeps working exactly as before, as a single-role 
   every trial, mean, verdict, experience ID and confidence is identical. A new test shows the allowlist is
   load-bearing: with it off, the agent reads no strategy from the block and the harness refuses to report reuse.
 
+**Story 6.3** widens the supported matrix to everything CI can prove, and narrows KL-13 to what it cannot (see the
+[supported matrix](docs/compatibility-evidence.md#supported-matrix)).
+
+### Supported matrix
+
+- **Target frameworks: `net9.0` and `net10.0`.** Every package ships both builds and declares the same dependencies
+  for each; the public API is identical on both, and one baseline per assembly gates it. `net8.0` is not targeted:
+  its `System.Text.Json` lacks `JsonElement.DeepEquals` and the strict payload-decoding options the store relies on.
+  .NET 9 leaves support on 10 November 2026, and the first preview after that drops `net9.0`.
+- **PostgreSQL 15, 16, 17 and 18.** CI runs the store, vector, proof and sample suites on each major (the store, vector
+  and proof suites on both frameworks, the sample on `net10.0`). PostgreSQL 14 is not supported: migration `0005`
+  uses `NULLS NOT DISTINCT`, which needs 15.
+
+### Dependency policy
+
+- **Every dependency except MAF is now a floor, not an exact pin.** `Microsoft.Extensions.DependencyInjection.Abstractions`
+  10.0.12, `Microsoft.Extensions.Compliance.Redaction` 10.10.0, `Microsoft.Extensions.AI.Abstractions` 10.10.0,
+  `Npgsql` 10.0.3, `dbup-postgresql` 7.0.1, `dbup-core` 6.1.1 and `Pgvector` 0.3.2 are declared `>=` with no upper
+  bound. A host that needs a newer release of any of them, or a MAF that raises one, no longer gets a restore conflict.
+- **What is tested:** each floor itself, and the newest release in its major (the same minor for `Pgvector`), on
+  every change. The second is the new `floating-dependencies` CI job, `eng/probe-floating-dependencies.sh`. It
+  gates pushes and the weekly schedule, and reports without blocking on pull requests. A later major restores but
+  is not claimed.
+- **`Microsoft.Agents.AI` stays exact at `[1.22.0]`.** MAF ships a minor every week or two, has changed
+  adapter-visible behaviour between minors, and keeps `[Experimental]` surface next to the adapter's hooks. The MAF
+  probe still reports the newest version without blocking.
+
+### For contributors
+
+- A full local test run needs the .NET 9 runtime beside the pinned SDK. `AGENTEXPERIENCE_POSTGRES_MAJOR` selects the
+  PostgreSQL major the container tests start (16 by default; 15 to 18 are accepted, and anything else fails).
+- `RELEASING.md` step 3 runs the container suites on every supported major, and step 6 runs the floating-dependency
+  probe as a release blocker.
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

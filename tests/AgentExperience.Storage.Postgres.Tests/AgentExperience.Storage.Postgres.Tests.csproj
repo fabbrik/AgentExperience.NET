@@ -14,8 +14,15 @@
     <!-- Test-only: a real container, so the package's own AddAgentExperience... registrations are
          resolved rather than merely declared. The shipping package takes only the DI abstractions. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
-    <!-- Ephemeral pgvector/pgvector:pg16 container (Docker required). Pin verified 2026-09-15. -->
+    <!-- Ephemeral pgvector/pgvector container (Docker required), at the PostgreSQL major
+         AGENTEXPERIENCE_POSTGRES_MAJOR selects (16 by default). Pin verified 2026-09-15. -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
+         test project references another. -->
+    <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
   </ItemGroup>
 
   <ItemGroup>

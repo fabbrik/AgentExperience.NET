@@ -5,7 +5,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 3.3 against a real PostgreSQL 16 container: the feedback ledger, its idempotency on the
+/// Story 3.3 against a real PostgreSQL container: the feedback ledger, its idempotency on the
 /// feedback ID, the exposure rows written in the same transaction as the submission, the duplicate
 /// evidence the independence rule declines to count, one record's failure leaving the rest applied, and
 /// the database refusing to rewrite or remove a recorded submission. Each test uses its own random

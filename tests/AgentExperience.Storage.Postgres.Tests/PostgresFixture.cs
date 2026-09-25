@@ -4,8 +4,10 @@ using Testcontainers.PostgreSql;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Starts one ephemeral <c>pgvector/pgvector:pg16</c> container for the whole collection and sets up the
-/// supported <b>two-role deployment</b> in it: a non-superuser owner role owns a fresh database and runs
+/// Starts one ephemeral <c>pgvector/pgvector</c> container for the whole collection, at the PostgreSQL major
+/// <see cref="AgentExperience.Tests.Shared.PostgresTestImage"/> selects (16 unless
+/// <c>AGENTEXPERIENCE_POSTGRES_MAJOR</c> says otherwise), and sets up the supported <b>two-role
+/// deployment</b> in it: a non-superuser owner role owns a fresh database and runs
 /// <see cref="ExperienceSchemaMigrator"/>, and a separate application role is given exactly the stores'
 /// privileges by <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync"/> (with both
 /// purge opt-ins). <see cref="DataSource"/> connects as the <em>application</em> role, so every store test
@@ -45,7 +47,7 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _container = new PostgreSqlBuilder("pgvector/pgvector:pg16").Build();
+        _container = new PostgreSqlBuilder(AgentExperience.Tests.Shared.PostgresTestImage.Pgvector).Build();
         await _container.StartAsync();
         _superuser = NpgsqlDataSource.Create(_container.GetConnectionString());
 

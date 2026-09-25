@@ -5,7 +5,7 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 3.1's explicit sharing grants against a real PostgreSQL 16 container: a grant and its audit
+/// Story 3.1's explicit sharing grants against a real PostgreSQL container: a grant and its audit
 /// event committed together, reads widened by an active grant and by nothing else, expiry and
 /// revocation decided by the database, and a grant conferring no write, no history, and no delegation.
 /// Each test uses its own random tenant, so tests sharing the container never see each other's rows.

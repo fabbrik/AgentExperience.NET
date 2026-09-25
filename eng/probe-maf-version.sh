@@ -60,7 +60,7 @@ done
 echo "Probing Microsoft.Agents.AI $version (pinned: $pinned) in $work"
 
 # Two stages, reported separately: "does the dependency graph even resolve" and "do the tests pass". An
-# exact pin elsewhere in the graph (for example Core's DI abstractions) can make a newer MAF unresolvable
+# exact pin elsewhere in the graph (for example the compatibility proof's pins at each floor) can make a newer MAF unresolvable
 # before a single test runs, and that is a different finding from a behavioural break.
 # The pinned leg restores the committed lock graph exactly (--locked-mode); any other version has to
 # re-evaluate it, because the re-pin changes what the projects ask for.
@@ -98,7 +98,7 @@ if [ "$status" -eq 0 ]; then
   detail="The adapter's tests and the MAF proofs pass against $version. This is not a support claim: $pinned remains the only supported version until the pin is moved deliberately."
 elif [ "$stage" = "restore" ]; then
   verdict="FAILED (dependencies do not resolve)"
-  detail="$version cannot be restored alongside this repository's other exact pins, so no test ran. The NU1605/NU1608 lines above name the conflicting package. $pinned remains the supported version."
+  detail="$version cannot be restored alongside this repository's other dependencies, so no test ran. The NU1605/NU1608 lines above name the conflicting package. $pinned remains the supported version."
 else
   verdict="FAILED (tests)"
   detail="The dependency graph resolves against $version, but the adapter does not build or its tests fail. $pinned remains the supported version; see the log above for what broke."

@@ -5,7 +5,7 @@ using Npgsql;
 namespace AgentExperience.Storage.Postgres.Vectors.Tests;
 
 /// <summary>
-/// End-to-end hybrid retrieval over a real PostgreSQL 16 + pgvector: a record found by meaning rather
+/// End-to-end hybrid retrieval over a real PostgreSQL + pgvector: a record found by meaning rather
 /// than by words, both channels merging into one ranked answer, and every documented fallback -- a
 /// model mismatch, a dimension mismatch, and a provider that is down -- producing an explicit
 /// text-only result that still carries the text candidates. All embeddings come from a deterministic

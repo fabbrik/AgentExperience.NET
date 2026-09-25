@@ -6,7 +6,8 @@ namespace AgentExperience.Release.Tests.Workflows;
 /// Story 4.3, frozen rule 3: nothing is published by automation. Pushing a package to NuGet is the
 /// maintainer's manual step in <c>RELEASING.md</c>, so no workflow in this repository may carry a step,
 /// a secret, or a permission that would let one fire on its own -- and the MAF compatibility probe's
-/// floating leg must stay non-blocking (AD-F).
+/// floating leg must stay non-blocking (AD-F). Story 6.3 adds the floating-dependency leg, which gates
+/// outside pull requests.
 /// </summary>
 public sealed class WorkflowTests
 {
@@ -99,5 +100,75 @@ public sealed class WorkflowTests
         Assert.Contains("leg: [pinned, latest]", ci, StringComparison.Ordinal);
         Assert.Contains("continue-on-error: ${{ matrix.leg == 'latest' }}", ci, StringComparison.Ordinal);
         Assert.Contains("eng/probe-maf-version.sh", ci, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Story 6.3 (KL-13): the PostgreSQL matrix CI runs is exactly the set the test fixtures accept, so the
+    /// supported list in the evidence document cannot name a major no leg runs, or the other way round.
+    /// </summary>
+    [Fact]
+    public void The_CI_PostgreSQL_matrix_runs_exactly_the_supported_majors_and_passes_each_one_to_the_tests()
+    {
+        var ci = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "ci.yml"));
+
+        var legs = Regex.Match(ci, @"^\s*postgres: \[(?<legs>[0-9, ]+)\]\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        Assert.True(legs.Success, "ci.yml has no 'postgres: [..]' matrix.");
+        Assert.Equal(
+            AgentExperience.Tests.Shared.PostgresTestImage.SupportedMajors,
+            legs.Groups["legs"].Value.Split(',', StringSplitOptions.TrimEntries).Select(int.Parse).ToList());
+
+        Assert.Contains(
+            $"{AgentExperience.Tests.Shared.PostgresTestImage.MajorVariable}: ${{{{ matrix.postgres }}}}",
+            ci,
+            StringComparison.Ordinal);
+        Assert.Contains(AgentExperience.Tests.Shared.PostgresTestImage.DefaultMajor, AgentExperience.Tests.Shared.PostgresTestImage.SupportedMajors);
+
+        // Every container-backed suite runs on every leg: dropping one from the loop would leave the evidence
+        // document claiming coverage CI no longer produces.
+        var job = Job(ci.ReplaceLineEndings("\n"), "postgres");
+        var tokens = job.Split([' ', '\n', '\\'], StringSplitOptions.RemoveEmptyEntries).Select(t => t.TrimEnd(';'));
+        foreach (var project in new[]
+        {
+            "tests/AgentExperience.Storage.Postgres.Tests",
+            "tests/AgentExperience.Storage.Postgres.Vectors.Tests",
+            "tests/AgentExperience.CompatibilityProof",
+            "tests/AgentExperience.Sample.EndToEnd.Tests",
+        })
+        {
+            Assert.Contains(project, tokens);
+        }
+
+        Assert.Contains("dotnet test \"$project\" --no-build --configuration Release", job, StringComparison.Ordinal);
+        Assert.DoesNotContain("continue-on-error", job, StringComparison.Ordinal);
+    }
+
+    /// <summary>The text of one top-level job in a workflow, from its key to the next job's key.</summary>
+    private static string Job(string workflow, string name)
+    {
+        var start = workflow.IndexOf($"\n  {name}:\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"The workflow has no {name} job.");
+        var next = Regex.Match(workflow[(start + 1)..], @"\n  [a-z-]+:\n", RegexOptions.CultureInvariant);
+        return next.Success ? workflow.Substring(start, next.Index + 1) : workflow[start..];
+    }
+
+    /// <summary>
+    /// Story 6.3 (KL-13): the floors are a support claim for every later release in their major, so the leg
+    /// that tests the newest one must gate the build on push and on the schedule. On a pull request it may
+    /// only report (AD-F), and nothing else may soften it: the one allowed <c>continue-on-error</c> is keyed
+    /// on the pull_request event.
+    /// </summary>
+    [Fact]
+    public void The_CI_floating_dependency_leg_exists_and_gates_the_build_outside_pull_requests()
+    {
+        var ci = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "ci.yml")).ReplaceLineEndings("\n");
+
+        var job = Job(ci, "floating-dependencies");
+
+        Assert.Contains("run: eng/probe-floating-dependencies.sh", job, StringComparison.Ordinal);
+        var softeners = job.Split('\n').Where(line => line.Contains("continue-on-error", StringComparison.Ordinal)).Select(line => line.Trim()).ToList();
+        Assert.Equal(["continue-on-error: ${{ github.event_name == 'pull_request' }}"], softeners);
+        Assert.Contains("push:", ci, StringComparison.Ordinal);
+        Assert.Contains("schedule:", ci, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(RepositoryRoot.Path, "eng", "probe-floating-dependencies.sh")));
     }
 }

@@ -1,23 +1,25 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Preview, not production ready. PostgreSQL adapter for AgentExperience.NET: persists canonical, scoped Experience Records through the IExperienceRecordStore port with plain Npgsql, host-authorization checks before any database access, exact scope predicates applied in SQL, and a journaled schema migration runner over embedded, versioned scripts. Pinned to Npgsql 10.0.3, dbup-postgresql 7.0.1, and dbup-core 6.1.1.</Description>
+    <Description>Preview, not production ready. PostgreSQL adapter for AgentExperience.NET: persists canonical, scoped Experience Records through the IExperienceRecordStore port with plain Npgsql, host-authorization checks before any database access, exact scope predicates applied in SQL, and a journaled schema migration runner over embedded, versioned scripts. Requires Npgsql 10.0.3, dbup-postgresql 7.0.1, and dbup-core 6.1.1 or later within the same major.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Exact pin: verified against this version only (Story 1.7 Track 3, Story 2.1). -->
-    <PackageReference Include="Npgsql" Version="[10.0.3]" />
-    <!-- Exact pins: journaled schema migrations, verified against Npgsql 10.0.3 on 2026-09-17. -->
-    <PackageReference Include="dbup-postgresql" Version="[7.0.1]" />
-    <!-- dbup-postgresql's own dependency, pinned directly so the version is explicit. Bump the two DbUp pins
+    <!-- Floors, not exact pins (story 6.3, KL-13): the version CI proves, and the lowest a host can resolve.
+         CI's floating leg also proves the newest release in the same major; docs/compatibility-evidence.md
+         states the policy. -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <!-- Journaled schema migrations. -->
+    <PackageReference Include="dbup-postgresql" Version="7.0.1" />
+    <!-- dbup-postgresql's own dependency, referenced directly so the floor is explicit. Move the two DbUp floors
          in lockstep, to the dbup-core version the new dbup-postgresql depends on; DependencyBoundaryTests
-         asserts this exact set of three PackageReferences. -->
-    <PackageReference Include="dbup-core" Version="[6.1.1]" />
+         asserts this exact set of PackageReferences. -->
+    <PackageReference Include="dbup-core" Version="6.1.1" />
     <!-- DI abstractions only (no container, no hosting): lets this adapter ship its own
          AddAgentExperiencePostgresStore registration extension. -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.12]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>

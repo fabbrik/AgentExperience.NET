@@ -11,10 +11,16 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[17.14.1]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />
     <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.4]" />
-    <!-- Ephemeral postgres:16 container (Docker required), for the opt-in PostgreSQL mode only. The
+    <!-- Ephemeral stock postgres container (Docker required; the major AGENTEXPERIENCE_POSTGRES_MAJOR selects), for the opt-in PostgreSQL mode only. The
          sample's base schema needs nothing pgvector provides, so the stock image is enough. Pin
          verified 2026-09-22 against the version AgentExperience.Storage.Postgres.Tests already uses. -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="[4.15.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
+         test project references another. -->
+    <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
   </ItemGroup>
 
   <ItemGroup>
