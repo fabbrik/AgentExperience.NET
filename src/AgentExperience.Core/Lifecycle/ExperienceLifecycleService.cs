@@ -1,5 +1,6 @@
 using System.Globalization;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Capture;
 using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Indexing;
@@ -115,8 +116,13 @@ public sealed class ExperienceLifecycleService
 
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceIndexingService? _indexingService;
+    private readonly IndependenceVerifier _independence;
 
-    /// <summary>Creates a lifecycle service over a record store, with no de-indexing hook.</summary>
+    /// <summary>
+    /// Creates a lifecycle service over a record store, with no de-indexing hook, verifying independence
+    /// (<see cref="IndependenceVerification.Verified"/>) against finalized records only, and with no
+    /// assessment token key.
+    /// </summary>
     /// <param name="store">The port that persists events and projections atomically.</param>
     /// <exception cref="ArgumentNullException"><paramref name="store"/> is <see langword="null"/>.</exception>
     public ExperienceLifecycleService(IExperienceRecordStore store)
@@ -142,10 +148,39 @@ public sealed class ExperienceLifecycleService
         IExperienceRecordStore store,
         ExperienceIndexingService? indexingService,
         TimeSpan? deindexingTimeout = null)
+        : this(store, indexingService, new ExperienceIndependenceOptions(), captureService: null, deindexingTimeout)
+    {
+    }
+
+    /// <summary>
+    /// Creates a lifecycle service with an optional post-commit de-indexing hook and explicit independence
+    /// verification.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="captureService"/> is what lets evidence name a run that is captured but not (yet)
+    /// finalized; without it, only runs finalized into a record in the evidence's scope are known. It is
+    /// only ever asked whether it holds a run, and in which scope.
+    /// </remarks>
+    /// <param name="store">The port that persists events and projections atomically.</param>
+    /// <param name="indexingService">Optional. Removes the record's stored vector once it leaves eligibility.</param>
+    /// <param name="independence">How independence is verified, and the assessment token key.</param>
+    /// <param name="captureService">Optional. The capture service whose runs count as known.</param>
+    /// <param name="deindexingTimeout">Optional. How long the de-indexing hook may take. Must be strictly positive. Defaults to <see cref="DefaultDeindexingTimeout"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="store"/> or <paramref name="independence"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="independence"/> is invalid: an undefined mode, a key shorter than <see cref="ExperienceIndependenceOptions.MinimumAssessmentTokenKeyBytes"/>, a lifetime out of range, or no clock.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="deindexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceLifecycleService(
+        IExperienceRecordStore store,
+        ExperienceIndexingService? indexingService,
+        ExperienceIndependenceOptions independence,
+        IExperienceCaptureService? captureService = null,
+        TimeSpan? deindexingTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(independence);
         _store = store;
         _indexingService = indexingService;
+        _independence = new IndependenceVerifier(store, captureService, independence);
         DeindexingTimeout = deindexingTimeout ?? DefaultDeindexingTimeout;
 
         if (DeindexingTimeout <= TimeSpan.Zero || DeindexingTimeout.TotalMilliseconds > int.MaxValue)
@@ -163,6 +198,12 @@ public sealed class ExperienceLifecycleService
 
     /// <summary>The budget this service gives the post-commit de-indexing hook.</summary>
     public TimeSpan DeindexingTimeout { get; }
+
+    /// <summary>Whether this service verifies independence keys or trusts the host's identifiers.</summary>
+    public IndependenceVerification IndependenceVerification => _independence.Mode;
+
+    /// <summary>The one independence rule, shared with the reuse-feedback service.</summary>
+    internal IndependenceVerifier Independence => _independence;
 
     /// <summary>
     /// Determines whether the lifecycle allows moving a record from <paramref name="priorStatus"/> to
@@ -368,6 +409,21 @@ public sealed class ExperienceLifecycleService
     /// <see cref="AuthorizationContext.PrincipalId"/>. The request has no field for it, because the
     /// count of distinct human reviewers is exactly what the independence rule protects.
     /// </para>
+    /// <para>
+    /// <b>The rest of the key is verified, not trusted</b> (unless the host opted out with
+    /// <see cref="IndependenceVerification.TrustHostSuppliedIdentifiers"/>). After the eligibility gate and
+    /// before anything is computed, the run must be one the library knows in the request's scope -- a
+    /// record finalization derived for it there, or a run the wired capture service holds there -- and never
+    /// the record's own source run (refused in every mode); machine evidence must name the round that run
+    /// was finalized with (<see cref="ExperienceRecord.ClosedRoundId"/>); and human evidence must present an
+    /// <see cref="ApplyConfidenceEvidenceRequest.AssessmentToken"/> minted by
+    /// <see cref="AssessmentTokenIssuer"/> for this scope, run, reviewer, kind and record, which has not
+    /// expired. The store spends the token's assessment once per record, atomically with the evidence.
+    /// Any failure is <see cref="ConfidenceUpdateOutcome.Unverified"/> with
+    /// <see cref="ApplyConfidenceEvidenceResult.Refusal"/> naming it, and nothing written. What this cannot
+    /// prove is that a real run was exposed to the record: a caller able to choose among real runs gets one
+    /// key per run, not one per call.
+    /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do. Also the source of the reviewer identity for human evidence.</param>
     /// <param name="request">The evidence to apply.</param>
@@ -504,6 +560,36 @@ public sealed class ExperienceLifecycleService
                 "The stored record's evidence counters cannot have evidence applied to them.");
         }
 
+        // The independence key's inputs, checked against what the library itself knows before anything is
+        // computed or written: an invented run, round or assessment is refused here rather than becoming a
+        // fresh key. Deliberately after the eligibility gate, so an ineligible record is reported as such
+        // whatever the submission names.
+        var independence = await _independence
+            .VerifyAsync(
+                authorization,
+                request.Scope,
+                record,
+                request.Source,
+                request.Kind,
+                request.RunId,
+                request.VerificationRoundId,
+                request.AssessmentToken,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (independence.Refusal is { } refusal)
+        {
+            return new(
+                ConfidenceUpdateOutcome.Unverified,
+                null,
+                null,
+                record.Revision,
+                record.Status,
+                NoErrors,
+                independence.Reason,
+                Refusal: refusal);
+        }
+
         var update = ReuseConfidenceHeuristic.Apply(
             record,
             request.EvidenceId,
@@ -512,7 +598,12 @@ public sealed class ExperienceLifecycleService
             request.RunId,
             request.VerificationRoundId,
             request.Source == ConfidenceEvidenceSource.Human ? authorization.PrincipalId : null,
-            request.Detail);
+            request.Detail) with
+        {
+            // Carried to the store, which spends it: one assessment lands at most one piece of evidence
+            // per record, atomically with the evidence itself.
+            AssessmentId = independence.AssessmentId,
+        };
 
         var currentStatus = ReuseConfidenceHeuristic.StatusAfter(record.Status, request.Kind);
 
@@ -533,6 +624,23 @@ public sealed class ExperienceLifecycleService
             .ConfigureAwait(false);
 
         var outcome = ToConfidenceOutcome(result.Outcome);
+
+        if (outcome == ConfidenceUpdateOutcome.Conflict
+            && update.AssessmentId is not null
+            && result.Errors.Any(error => string.Equals(error.Path, ConfidenceUpdate.AssessmentIdPath, StringComparison.Ordinal)))
+        {
+            // The store found this assessment already spent on this record by other evidence. Reported like
+            // every other Unverified: no event (nothing was written), and the record as Core read it.
+            return new(
+                ConfidenceUpdateOutcome.Unverified,
+                null,
+                null,
+                record.Revision,
+                record.Status,
+                NoErrors,
+                IndependenceVerifier.Describe(IndependenceRefusal.AssessmentTokenReplayed),
+                Refusal: IndependenceRefusal.AssessmentTokenReplayed);
+        }
 
         if (outcome != ConfidenceUpdateOutcome.Applied)
         {
@@ -644,6 +752,13 @@ public sealed class ExperienceLifecycleService
                 errors.Add(new(
                     nameof(request.VerificationRoundId),
                     $"is required for {ConfidenceEvidenceSource.Machine} evidence, which is counted once per run and round."));
+            }
+
+            if (request.AssessmentToken is not null)
+            {
+                errors.Add(new(
+                    nameof(request.AssessmentToken),
+                    $"must be null for {ConfidenceEvidenceSource.Machine} evidence, which is verified against the round its run was finalized with."));
             }
         }
         else

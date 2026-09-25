@@ -38,7 +38,10 @@ namespace AgentExperience.Sample.EndToEnd.Doubles;
 /// <c>ExperienceRecordValidator</c>, which is <see langword="internal"/> to
 /// <c>AgentExperience.Storage.Postgres</c> and visible only to that package's own tests and to the
 /// vectors package. The sample cannot call it, so <see cref="SampleRecordValidation"/> restates the
-/// subset the sample's records can violate and says so here rather than implying full fidelity.
+/// subset the sample's records can violate and says so here rather than implying full fidelity. Nor
+/// does it keep the adapter's evidence ledger: it writes whatever counters Core submits, so the
+/// independence key and an assessment's single use (story 6.6) are the adapter's to enforce, not this
+/// double's -- the sample submits no attributed feedback, so it never relies on either.
 /// </para>
 /// </remarks>
 internal sealed class InMemoryRecordStore : IExperienceRecordStore

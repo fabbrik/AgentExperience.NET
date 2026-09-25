@@ -55,7 +55,9 @@
     }
     public sealed class ConfidenceUpdate : System.IEquatable<AgentExperience.Abstractions.ConfidenceUpdate>
     {
+        public const string AssessmentIdPath = "Confidence.AssessmentId";
         public ConfidenceUpdate(System.Guid EvidenceId, AgentExperience.Abstractions.ConfidenceEvidenceKind Kind, AgentExperience.Abstractions.ConfidenceEvidenceSource Source, System.Guid RunId, System.Guid? VerificationRoundId, string? ReviewerIdentity, string RuleVersion, double PriorReuseConfidence, double NewReuseConfidence, int PriorSupportingValidations, int NewSupportingValidations, int PriorContradictions, int NewContradictions, string? Detail = null) { }
+        public System.Guid? AssessmentId { get; init; }
         public bool Counted { get; }
         public string? Detail { get; init; }
         public System.Guid EvidenceId { get; init; }
@@ -418,6 +420,7 @@
                     System.DateTimeOffset CreatedAt,
                     System.DateTimeOffset UpdatedAt) { }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Attempt> Attempts { get; init; }
+        public System.Guid? ClosedRoundId { get; init; }
         public double CompletionScore { get; init; }
         public int Contradictions { get; init; }
         public System.DateTimeOffset CreatedAt { get; init; }
@@ -672,9 +675,10 @@
     }
     public sealed class HumanReuseAssessment : System.IEquatable<AgentExperience.Abstractions.HumanReuseAssessment>
     {
-        public HumanReuseAssessment(System.Guid AssessmentId, AgentExperience.Abstractions.ExperienceReuseBenefit Benefit, System.Collections.Generic.IReadOnlyList<System.Guid> AttributedExperienceIds, string Rationale, System.DateTimeOffset AssessedAt, System.Guid? VerificationRoundId = default) { }
+        public HumanReuseAssessment(System.Guid AssessmentId, AgentExperience.Abstractions.ExperienceReuseBenefit Benefit, System.Collections.Generic.IReadOnlyList<System.Guid> AttributedExperienceIds, string Rationale, System.DateTimeOffset AssessedAt, System.Guid? VerificationRoundId = default, string? AssessmentToken = null) { }
         public System.DateTimeOffset AssessedAt { get; init; }
         public System.Guid AssessmentId { get; init; }
+        public string? AssessmentToken { get; init; }
         public System.Collections.Generic.IReadOnlyList<System.Guid> AttributedExperienceIds { get; init; }
         public AgentExperience.Abstractions.ExperienceReuseBenefit Benefit { get; init; }
         public string Rationale { get; init; }

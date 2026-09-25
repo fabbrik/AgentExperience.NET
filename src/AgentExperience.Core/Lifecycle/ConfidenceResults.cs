@@ -31,22 +31,31 @@ namespace AgentExperience.Core.Lifecycle;
 /// <param name="Kind">Whether the reuse succeeded (<see cref="ConfidenceEvidenceKind.Supporting"/>) or did not (<see cref="ConfidenceEvidenceKind.Contradicting"/>).</param>
 /// <param name="Source">Whether a machine evaluator or a human reviewer observed it.</param>
 /// <param name="RunId">
-/// The run the reuse was observed in -- not the run the record came from. Must not be
-/// <see cref="Guid.Empty"/>, and must be established by the host: it is half of every independence key,
-/// nothing here can check that the run happened, and a caller that invents one on every submission gets
-/// a fresh key every time and can drive the score as high as it likes. Treat it exactly as you treat
-/// <see cref="AuthorizationContext"/> -- never a value an agent produced.
+/// The run the reuse was observed in -- never the run the record came from, which is refused
+/// (<see cref="IndependenceRefusal.OwnRun"/>) in every mode. Must not be <see cref="Guid.Empty"/>. It is
+/// half of every independence key, so under <see cref="IndependenceVerification.Verified"/> it must be a
+/// run the library knows in <paramref name="Scope"/>: one finalized into a record there, or one the
+/// capture service wired into the lifecycle service holds there. An invented run is refused
+/// (<see cref="IndependenceRefusal.UnknownRun"/>) rather than becoming a fresh key.
 /// </param>
 /// <param name="VerificationRoundId">
 /// The verification round the observation came from. Required for
 /// <see cref="ConfidenceEvidenceSource.Machine"/> and rejected for
-/// <see cref="ConfidenceEvidenceSource.Human"/>. The same host trust boundary as
-/// <paramref name="RunId"/>: nothing here can check that a round was closed.
+/// <see cref="ConfidenceEvidenceSource.Human"/>. Under verification it must be the round finalization
+/// closed for <paramref name="RunId"/> (<see cref="ExperienceRecord.ClosedRoundId"/>); any other is
+/// refused (<see cref="IndependenceRefusal.UnknownRound"/>).
 /// </param>
 /// <param name="Reason">Auditable, human-readable reason, stamped on the lifecycle event. Never private reasoning. Must be non-blank.</param>
 /// <param name="Producer">Identity of whatever produced this evidence (an evaluator name, a tool, or a review process). Must be non-blank.</param>
 /// <param name="OccurredAt">When the observation was made. Part of the event's stored identity, so it must not be regenerated on a retry.</param>
 /// <param name="Detail">Optional sanitized, human-readable detail. Never private reasoning.</param>
+/// <param name="AssessmentToken">
+/// For <see cref="ConfidenceEvidenceSource.Human"/> evidence under verification: the token
+/// <see cref="AssessmentTokenIssuer.Issue"/> minted for this review -- for <paramref name="Scope"/>,
+/// <paramref name="RunId"/>, the reviewing principal, <paramref name="Kind"/>, and a set of records that
+/// includes <paramref name="ExperienceId"/>. Must be <see langword="null"/> for machine evidence, and is
+/// ignored when the host opted out of verification. A bearer credential: never an agent's output.
+/// </param>
 public sealed record ApplyConfidenceEvidenceRequest(
     Guid EventId,
     Guid ExperienceId,
@@ -59,7 +68,30 @@ public sealed record ApplyConfidenceEvidenceRequest(
     string Reason,
     string Producer,
     DateTimeOffset OccurredAt,
-    string? Detail = null);
+    string? Detail = null,
+    string? AssessmentToken = null)
+{
+    /// <summary>Prints the request without its assessment token, which is a bearer credential for one review.</summary>
+    /// <param name="builder">The builder the members are printed into.</param>
+    /// <returns>Always <see langword="true"/>.</returns>
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("EventId = ").Append(EventId)
+            .Append(", ExperienceId = ").Append(ExperienceId)
+            .Append(", Scope = ").Append(Scope)
+            .Append(", EvidenceId = ").Append(EvidenceId)
+            .Append(", Kind = ").Append(Kind)
+            .Append(", Source = ").Append(Source)
+            .Append(", RunId = ").Append(RunId)
+            .Append(", VerificationRoundId = ").Append(VerificationRoundId)
+            .Append(", Reason = ").Append(Reason)
+            .Append(", Producer = ").Append(Producer)
+            .Append(", OccurredAt = ").Append(OccurredAt)
+            .Append(", Detail = ").Append(Detail)
+            .Append(", AssessmentToken = ").Append(AssessmentToken is null ? "null" : "<redacted>");
+        return true;
+    }
+}
 
 /// <summary>
 /// The disposition an <see cref="ExperienceLifecycleService.ApplyEvidenceAsync"/> call reached. Every
@@ -134,6 +166,18 @@ public enum ConfidenceUpdateOutcome
     /// </para>
     /// </summary>
     Deleted,
+
+    /// <summary>
+    /// The submission's independence key could not be verified: its run is the record's own, or not one
+    /// the library knows in the record's scope, its round is not the one finalization closed for that
+    /// run, or its assessment token is missing, invalid, expired, for another record, or already spent.
+    /// <see cref="ApplyConfidenceEvidenceResult.Refusal"/> says which. This call wrote nothing and moved no
+    /// counter. It is not proof that the evidence was never written: verification runs before the store's
+    /// replay check, so a retry of evidence that did land, made after its token expired, its key rotated, or
+    /// its run stopped being known, is refused here although the original is durable -- reconcile against
+    /// the record's history. Nor is it always permanent: a run that is finalized later becomes known.
+    /// </summary>
+    Unverified,
 }
 
 /// <summary>
@@ -162,6 +206,7 @@ public enum ConfidenceUpdateOutcome
 /// channels filter on the record's status anyway. See
 /// <see cref="CommitLifecycleTransitionResult.Deindexing"/> for what a host should do with it.
 /// </param>
+/// <param name="Refusal">Which identifier failed verification, on <see cref="ConfidenceUpdateOutcome.Unverified"/>; otherwise <see langword="null"/>.</param>
 public sealed record ApplyConfidenceEvidenceResult(
     ConfidenceUpdateOutcome Outcome,
     LifecycleEvent? Event,
@@ -170,7 +215,8 @@ public sealed record ApplyConfidenceEvidenceResult(
     ExperienceStatus? Status,
     IReadOnlyList<StoreValidationError> Errors,
     string? Reason = null,
-    ExperienceDeindexingResult? Deindexing = null)
+    ExperienceDeindexingResult? Deindexing = null,
+    IndependenceRefusal? Refusal = null)
 {
     /// <summary>
     /// Whether this submission moved a counter. <see langword="false"/> for an accepted submission whose

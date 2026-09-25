@@ -1,3 +1,4 @@
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Feedback;
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Indexing;
@@ -45,6 +46,19 @@ internal sealed class ExperienceLoop
 
     internal static readonly ClosedVerificationRound Round = new(Guid.Parse("11111111-1111-1111-1111-111111111111"), ArtifactRevision);
 
+    /// <summary>
+    /// The later run the stored lesson is reused in. Evidence about reuse has to name a run other than the
+    /// record's own, and one the library knows: it is seeded as finalized, with <see cref="ReuseRoundId"/>
+    /// as its closed round, directly into the store double so the call table below is unchanged.
+    /// </summary>
+    internal static readonly Guid ReuseRunId = Guid.Parse("22222222-2222-4222-8222-222222222222");
+
+    /// <summary>The round the reuse run was finalized with.</summary>
+    internal static readonly Guid ReuseRoundId = Guid.Parse("33333333-3333-4333-8333-333333333333");
+
+    /// <summary>The loop's assessment token key. A test key: 32 fixed bytes.</summary>
+    internal static readonly byte[] AssessmentKey = [.. Enumerable.Range(1, 32).Select(value => (byte)value)];
+
     private static readonly SanitizationOptions Permissive = new(new Dictionary<string, SanitizationPolicy>(StringComparer.Ordinal)
     {
         ["ToolArguments"] = new SanitizationPolicy(
@@ -67,7 +81,9 @@ internal sealed class ExperienceLoop
     {
         Capture = new InMemoryExperienceCaptureService(new DefaultSanitizer(Permissive), new CaptureLimits(8, 8, 1_000, 1_000));
         Indexing = new ExperienceIndexingService(Index, Generator);
-        Lifecycle = new ExperienceLifecycleService(Store, Indexing);
+        var independence = new ExperienceIndependenceOptions { AssessmentTokenKey = AssessmentKey };
+        Lifecycle = new ExperienceLifecycleService(Store, Indexing, independence, Capture);
+        Issuer = new AssessmentTokenIssuer(independence);
         Finalization = new ExperienceFinalizationService(Capture, new DefaultExperienceReflector(), Store, Lifecycle, Indexing);
         Retrieval = new ExperienceRetrievalService(Candidates, RetrievalPolicy.Default, RankingWeights.Default, TimeProvider.System);
         FeedbackService = new ExperienceReuseFeedbackService(FeedbackStore, Lifecycle);
@@ -94,6 +110,8 @@ internal sealed class ExperienceLoop
     internal ExperienceRetrievalService Retrieval { get; }
 
     internal ExperienceReuseFeedbackService FeedbackService { get; }
+
+    internal AssessmentTokenIssuer Issuer { get; }
 
     /// <summary>
     /// Drives capture, verification, reflection, finalization, indexing, retrieval, reuse feedback and
@@ -200,6 +218,18 @@ internal sealed class ExperienceLoop
                 ExpectedRevision: 1),
             cancellationToken).ConfigureAwait(false);
 
+        // The later run the lesson is reused in, as finalization would have left it. Seeded rather than
+        // driven, so the call table is exactly one pass through each operation.
+        if (Store.Find(experienceId) is { } source)
+        {
+            Store.Seed(source with
+            {
+                ExperienceId = ExperienceFinalizationService.ExperienceIdFor(ReuseRunId, Scope),
+                SourceRunId = ReuseRunId,
+                ClosedRoundId = ReuseRoundId,
+            });
+        }
+
         // confidence.apply, driven directly. The reuse-feedback submission below applies evidence once
         // per exposed record, so the drive covers both the direct call and the nested one.
         var confidence = await Lifecycle.ApplyEvidenceAsync(
@@ -211,8 +241,8 @@ internal sealed class ExperienceLoop
                 EvidenceId: Guid.NewGuid(),
                 Kind: ConfidenceEvidenceKind.Supporting,
                 Source: ConfidenceEvidenceSource.Machine,
-                RunId: runId,
-                VerificationRoundId: Round.RoundId,
+                RunId: ReuseRunId,
+                VerificationRoundId: ReuseRoundId,
                 Reason: $"a later run reused the lesson about {Marker}",
                 Producer: $"tests-{Marker}",
                 OccurredAt: Now.AddMinutes(1),
@@ -234,11 +264,12 @@ internal sealed class ExperienceLoop
                 CorrelationId: CorrelationId),
             cancellationToken).ConfigureAwait(false);
 
+        var assessment = Issuer.Issue(Authorization, Scope, ReuseRunId, ConfidenceEvidenceKind.Supporting, [experienceId]);
         var feedback = await FeedbackService.RecordAsync(
             Authorization,
             new ExperienceReuseFeedback(
                 FeedbackId: Guid.NewGuid(),
-                RunId: Guid.NewGuid(),
+                RunId: ReuseRunId,
                 Scope: Scope,
                 ExposedExperienceIds: [experienceId],
                 RunOutcome: TaskVerificationStatus.Verified,
@@ -246,11 +277,12 @@ internal sealed class ExperienceLoop
                 ObservedAt: Now.AddMinutes(2))
             {
                 HumanAssessment = new HumanReuseAssessment(
-                    Guid.NewGuid(),
+                    assessment.AssessmentId,
                     ExperienceReuseBenefit.Improved,
                     [experienceId],
                     $"the lesson about {Marker} applied",
-                    Now.AddMinutes(2)),
+                    Now.AddMinutes(2),
+                    AssessmentToken: assessment.Token),
             },
             cancellationToken).ConfigureAwait(false);
 
@@ -375,6 +407,10 @@ internal sealed class LoopRecordStore : IExperienceRecordStore
     /// </summary>
     /// <param name="experienceId">The record to erase.</param>
     internal void Erase(Guid experienceId) => _erased.Add(experienceId);
+
+    /// <summary>Stores a record as it stands, with no store call and so no telemetry: a run finalized elsewhere.</summary>
+    /// <param name="record">The record to store.</param>
+    internal void Seed(ExperienceRecord record) => _records[record.ExperienceId] = record;
 
     public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken)
     {

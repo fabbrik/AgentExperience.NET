@@ -69,16 +69,16 @@ public enum ConfidenceEvidenceSource
 /// <param name="Kind">Whether this evidence supports reuse or contradicts it.</param>
 /// <param name="Source">Whether a machine evaluator or a human reviewer observed it.</param>
 /// <param name="RunId">
-/// The run the reuse was observed in. Not <see cref="ExperienceRecord.SourceRunId"/>, which is the run
-/// the record came from. A host trust boundary: nothing in this library can check that the run happened,
-/// so a caller that invents one gets a fresh independence key and can drive the score at will. Establish
-/// it from your own run bookkeeping, exactly as you establish <see cref="AuthorizationContext"/>, and
-/// never pass through an identifier an agent produced.
+/// The run the reuse was observed in. Never <see cref="ExperienceRecord.SourceRunId"/>, which is the run
+/// the record came from. Core verifies it before a store sees it (unless the host opted out): it must be a
+/// run the library knows in the record's scope -- one finalized into a record there, or one the capture
+/// service holds -- so a caller that invents one is refused rather than handed a fresh independence key.
 /// </param>
 /// <param name="VerificationRoundId">
 /// The verification round the observation came from. Required for
-/// <see cref="ConfidenceEvidenceSource.Machine"/>, and <see langword="null"/> for a human submission. The
-/// same host trust boundary as <paramref name="RunId"/>: nothing here can check that a round was closed.
+/// <see cref="ConfidenceEvidenceSource.Machine"/>, and <see langword="null"/> for a human submission. Core
+/// verifies it is the round finalization closed for <paramref name="RunId"/>
+/// (<see cref="ExperienceRecord.ClosedRoundId"/>), unless the host opted out.
 /// </param>
 /// <param name="ReviewerIdentity">The reviewing principal. Required for <see cref="ConfidenceEvidenceSource.Human"/>, and <see langword="null"/> for a machine submission. Always the host's <see cref="AuthorizationContext.PrincipalId"/>, never agent input.</param>
 /// <param name="RuleVersion">The version of the confidence rule that produced <paramref name="NewReuseConfidence"/>, so a later rule change stays auditable against updates computed under an earlier one.</param>
@@ -125,4 +125,27 @@ public sealed record ConfidenceUpdate(
         NewSupportingValidations = PriorSupportingValidations,
         NewContradictions = PriorContradictions,
     };
+
+    /// <summary>
+    /// The <see cref="StoreValidationError.Path"/> a store reports, with
+    /// <see cref="ExperienceStoreOutcome.Conflict"/>, when <see cref="AssessmentId"/> has already landed
+    /// evidence for this record under another evidence ID: the assessment token was replayed.
+    /// </summary>
+    public const string AssessmentIdPath = "Confidence.AssessmentId";
+
+    /// <summary>
+    /// The assessment this human evidence came out of: the ID of the library-minted assessment token it
+    /// presented, or <see langword="null"/> for machine evidence and for evidence submitted without
+    /// verification. Must not be <see cref="Guid.Empty"/> when set, and is only ever set on
+    /// <see cref="ConfidenceEvidenceSource.Human"/> evidence.
+    /// </summary>
+    /// <remarks>
+    /// A store makes it single-use: one assessment lands at most one piece of evidence per record, so a
+    /// token cannot be replayed under a fresh evidence ID. Resubmitting the <em>same</em> evidence ID with
+    /// identical content (the same assessment included) is still a replay of the original, never a second
+    /// use. A store that finds the assessment already used by another piece of evidence for the record
+    /// writes nothing and reports <see cref="ExperienceStoreOutcome.Conflict"/> with an error on
+    /// <see cref="AssessmentIdPath"/>.
+    /// </remarks>
+    public Guid? AssessmentId { get; init; }
 }

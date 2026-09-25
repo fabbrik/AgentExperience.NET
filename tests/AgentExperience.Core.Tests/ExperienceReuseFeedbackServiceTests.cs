@@ -1,5 +1,6 @@
 using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Feedback;
+using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
 
 namespace AgentExperience.Core.Tests;
@@ -228,7 +229,7 @@ public class ExperienceReuseFeedbackServiceTests
         records.Records[succeeding] = Validated(succeeding);
 
         var ledger = new FakeReuseFeedbackLedger();
-        var service = new ExperienceReuseFeedbackService(ledger, new ExperienceLifecycleService(records));
+        var service = new ExperienceReuseFeedbackService(ledger, Trusting(records));
 
         var feedback = Feedback([failing, succeeding]) with
         {
@@ -637,7 +638,7 @@ public class ExperienceReuseFeedbackServiceTests
         var order = new List<string>();
         var ledger = new FakeReuseFeedbackLedger { Order = order };
         var records = new FeedbackRecordStore(Validated(experienceId)) { Order = order };
-        var service = new ExperienceReuseFeedbackService(ledger, new ExperienceLifecycleService(records));
+        var service = new ExperienceReuseFeedbackService(ledger, Trusting(records));
 
         await service.RecordAsync(
             Authorization,
@@ -676,7 +677,7 @@ public class ExperienceReuseFeedbackServiceTests
             () => service.RecordAsync(null!, Feedback([Guid.NewGuid()]), CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentNullException>(
             () => service.RecordAsync(Authorization, null!, CancellationToken.None));
-        Assert.Throws<ArgumentNullException>(() => new ExperienceReuseFeedbackService(null!, new ExperienceLifecycleService(new FeedbackRecordStore(null))));
+        Assert.Throws<ArgumentNullException>(() => new ExperienceReuseFeedbackService(null!, Trusting(new FeedbackRecordStore(null))));
         Assert.Throws<ArgumentNullException>(() => new ExperienceReuseFeedbackService(new FakeReuseFeedbackLedger(), null!));
     }
 
@@ -735,7 +736,7 @@ public class ExperienceReuseFeedbackServiceTests
         records.OnCommit = () => cancellation.Cancel();
 
         var ledger = new FakeReuseFeedbackLedger();
-        var service = new ExperienceReuseFeedbackService(ledger, new ExperienceLifecycleService(records));
+        var service = new ExperienceReuseFeedbackService(ledger, Trusting(records));
 
         var ordered = new[] { first, second }.Order().ToArray();
         var result = await service.RecordAsync(
@@ -856,7 +857,7 @@ public class ExperienceReuseFeedbackServiceTests
     {
         var ledger = new FakeReuseFeedbackLedger();
         var records = new FeedbackRecordStore(record);
-        return (new ExperienceReuseFeedbackService(ledger, new ExperienceLifecycleService(records)), ledger, records);
+        return (new ExperienceReuseFeedbackService(ledger, Trusting(records)), ledger, records);
     }
 
     private static ExperienceReuseFeedback Feedback(IReadOnlyList<Guid> exposed) => new(
@@ -925,6 +926,15 @@ public class ExperienceReuseFeedbackServiceTests
     /// An in-memory feedback ledger with the real one's idempotency rule: the feedback ID is the key, an
     /// identical resubmission writes nothing, and anything else under that ID is refused.
     /// </summary>
+    /// <summary>
+    /// These tests are about the arithmetic, the store contract and the reviewer rule, not about verifying
+    /// an independence key's inputs (<c>VerifiedIndependenceTests</c> covers that against a store that
+    /// knows runs), so they run with the host's identifiers trusted: the opt-out, which keeps only the
+    /// own-run rule.
+    /// </summary>
+    private static ExperienceLifecycleService Trusting(IExperienceRecordStore store, ExperienceIndexingService? indexing = null) =>
+        new(store, indexing, new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
+
     private sealed class FakeReuseFeedbackLedger : IExperienceReuseFeedbackStore
     {
         private readonly Dictionary<Guid, RecordedExperienceReuseFeedback> _stored = [];

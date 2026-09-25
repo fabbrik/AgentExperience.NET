@@ -2,6 +2,7 @@ using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Core.Feedback;
+using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.Core.Sanitization;
 using AgentExperience.ReuseBaseline.Experiment;
@@ -48,6 +49,21 @@ public class ComparativeEvaluationTests
         Assert.Equal(ExperienceReuseFeedbackOutcome.Recorded, recorded.Outcome);
         Assert.Equal(ReuseAttributionSource.ComparativeEvaluation, recorded.AttributionSource);
         Assert.Equal(ExperienceReuseBenefit.Improved, recorded.Benefit);
+    }
+
+    [Fact]
+    public async Task A_valid_result_about_a_run_the_library_never_finalized_costs_the_attribution()
+    {
+        // Story 6.6: the run and the round are half of the machine independence key, so a result naming
+        // a run with no finalized record in the scope is not attribution. The exposure is still recorded.
+        var ledger = new InMemoryReuseFeedbackStore();
+
+        var recorded = await RecordAsync(Feedback(Comparative()), ledger, finalizeRun: false);
+
+        Assert.Equal(ExperienceReuseFeedbackOutcome.Recorded, recorded.Outcome);
+        Assert.Equal(ReuseAttributionSource.None, recorded.AttributionSource);
+        Assert.Contains("RunId", recorded.Reason!, StringComparison.Ordinal);
+        Assert.Single(ledger.Rows);
     }
 
     [Fact]
@@ -173,6 +189,29 @@ public class ComparativeEvaluationTests
         Summary: "Synthetic evidence. Nothing observed here; this exists to exercise the validation rules.",
         EvaluatedAt: At);
 
+    private static ExperienceRecord FinalizedRunRecord() => new(
+        ExperienceId: ExperienceFinalizationService.ExperienceIdFor(RunId, TestScope),
+        SourceRunId: RunId,
+        Scope: TestScope,
+        TaskId: "synthetic-task",
+        TaskSummary: null,
+        Attempts: [],
+        Outcome: new Outcome(TaskVerificationStatus.Unknown, [], "synthetic", At),
+        CompletionScore: 0,
+        Reflection: null,
+        Environment: new EnvironmentFingerprint("synthetic", "net10.0", "linux", null, new Dictionary<string, string>()),
+        Provenance: new Provenance("synthetic", null, At, null),
+        Status: ExperienceStatus.Candidate,
+        ReuseConfidence: 0,
+        SupportingValidations: 0,
+        Contradictions: 0,
+        Revision: 0,
+        CreatedAt: At,
+        UpdatedAt: At)
+    {
+        ClosedRoundId = RoundId,
+    };
+
     private static Evidence Evidence(Guid roundId) => new(
         EvidenceId: TrialIdentities.Derive("synthetic", 0, "evidence", 0),
         VerificationRoundId: roundId,
@@ -199,9 +238,18 @@ public class ComparativeEvaluationTests
 
     private static async Task<ExperienceReuseFeedbackResult> RecordAsync(
         ExperienceReuseFeedback feedback,
-        InMemoryReuseFeedbackStore? ledger = null)
+        InMemoryReuseFeedbackStore? ledger = null,
+        bool finalizeRun = true)
     {
         var records = new InMemoryRecordStore();
+        if (finalizeRun)
+        {
+            // The evaluated run, as finalization would have left it: a record derived from it in this
+            // scope, carrying the round it closed. Without it the run is not one the library knows.
+            var created = await records.CreateAsync(Authorization, FinalizedRunRecord(), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Created, created.Outcome);
+        }
+
         var services = new ServiceCollection();
 
         services.AddSingleton<IExperienceRecordStore>(records);

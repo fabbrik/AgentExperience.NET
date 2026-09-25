@@ -107,7 +107,8 @@ internal static class ExperiencePayload
             record.Provenance.Source,
             record.Provenance.SourceVersion,
             Utc(record.Provenance.RecordedAt),
-            record.Provenance.CorrelationId));
+            record.Provenance.CorrelationId),
+        record.ClosedRoundId);
 
     /// <summary>Maps a stored payload plus its column values back to the domain record.</summary>
     public static ExperienceRecord ToRecord(
@@ -193,7 +194,10 @@ internal static class ExperiencePayload
             contradictions,
             revision,
             Utc(createdAt),
-            Utc(updatedAt));
+            Utc(updatedAt))
+        {
+            ClosedRoundId = payload.ClosedRoundId,
+        };
 
     private static DateTimeOffset Utc(DateTimeOffset value) => value.ToUniversalTime();
 
@@ -228,6 +232,12 @@ internal static class ExperiencePayload
         _ => throw new ExperienceStoreException("Stored tool-call argument has an unsupported JSON kind."),
     };
 
+    /// <summary>The version-1 payload.</summary>
+    /// <remarks>
+    /// <c>ClosedRoundId</c> was added within version 1 (story 6.6): it is optional, omitted when null, and
+    /// absent from every payload written before it, which reads back as no closed round. An older reader
+    /// ignores it.
+    /// </remarks>
     internal sealed record PayloadV1(
         string? TaskSummary,
         IReadOnlyList<AttemptV1> Attempts,
@@ -235,7 +245,8 @@ internal static class ExperiencePayload
         double CompletionScore,
         ReflectionV1? Reflection,
         EnvironmentV1 Environment,
-        ProvenanceV1 Provenance);
+        ProvenanceV1 Provenance,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ClosedRoundId = null);
 
     internal sealed record AttemptV1(
         Guid AttemptId,

@@ -239,7 +239,7 @@ public sealed class PostgresGrantAccessAuditTests
                 failures.Add,
                 ExperienceGrantAuditingMode.Required));
 
-        var result = await new ExperienceLifecycleService(strict).ApplyEvidenceAsync(
+        var result = await TestRecords.TrustingLifecycle(strict).ApplyEvidenceAsync(
             Authorize(tenant),
             new ApplyConfidenceEvidenceRequest(
                 EventId: Guid.NewGuid(),

@@ -1,5 +1,6 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Feedback;
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Indexing;
@@ -45,6 +46,17 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// No sanitization policy or capture limit is invented here: both are host decisions with real
     /// security and memory consequences, so both are required arguments.
     /// </para>
+    /// <para>
+    /// <b>Independence verification.</b> The lifecycle service verifies every confidence submission's
+    /// run, round and assessment token (<see cref="IndependenceVerification.Verified"/>), counting as known
+    /// the runs finalized into records and the runs the registered <see cref="IExperienceCaptureService"/>
+    /// holds. Register an <see cref="ExperienceIndependenceOptions"/> singleton, before or after this call,
+    /// to supply the assessment token key or to opt out with
+    /// <see cref="IndependenceVerification.TrustHostSuppliedIdentifiers"/>; without one, verification is on
+    /// and human evidence is refused for want of a key. <see cref="AssessmentTokenIssuer"/> is deliberately
+    /// <em>not</em> registered: anything that can resolve it can mint, so construct it where your review flow
+    /// records a person's decision, not in a container agent-driven components resolve from.
+    /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="sanitizationOptions">The per-<c>Kind</c> sanitization policy the default sanitizer applies.</param>
@@ -75,7 +87,9 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         // registered it -- which is what a text-only deployment is.
         services.TryAddSingleton(provider => new ExperienceLifecycleService(
             provider.GetRequiredService<IExperienceRecordStore>(),
-            provider.GetService<ExperienceIndexingService>()));
+            provider.GetService<ExperienceIndexingService>(),
+            provider.GetService<ExperienceIndependenceOptions>() ?? new ExperienceIndependenceOptions(),
+            provider.GetRequiredService<IExperienceCaptureService>()));
 
         // The indexing hook is resolved optionally, not required: a host that never registered
         // AddAgentExperienceIndexing gets finalization with no hook at all, which is exactly the

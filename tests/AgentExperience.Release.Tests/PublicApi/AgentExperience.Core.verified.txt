@@ -95,6 +95,11 @@
 }
 namespace AgentExperience.Core.Confidence
 {
+    public sealed class AssessmentTokenIssuer
+    {
+        public AssessmentTokenIssuer(AgentExperience.Core.Confidence.ExperienceIndependenceOptions options) { }
+        public AgentExperience.Core.Confidence.IssuedAssessmentToken Issue(AgentExperience.Abstractions.AuthorizationContext reviewer, AgentExperience.Abstractions.Scope scope, System.Guid runId, AgentExperience.Abstractions.ConfidenceEvidenceKind kind, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds) { }
+    }
     public readonly struct ConfidenceIndependenceKey : System.IEquatable<AgentExperience.Core.Confidence.ConfidenceIndependenceKey>
     {
         public ConfidenceIndependenceKey(AgentExperience.Abstractions.ConfidenceEvidenceSource Source, string Value) { }
@@ -102,6 +107,42 @@ namespace AgentExperience.Core.Confidence
         public string Value { get; init; }
         public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey ForHuman(string reviewerIdentity, System.Guid runId) { }
         public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey ForMachine(System.Guid runId, System.Guid verificationRoundId) { }
+    }
+    public sealed class ExperienceIndependenceOptions
+    {
+        public const int MinimumAssessmentTokenKeyBytes = 32;
+        public static readonly System.TimeSpan DefaultAssessmentTokenLifetime;
+        public static readonly System.TimeSpan MaximumAssessmentTokenLifetime;
+        public ExperienceIndependenceOptions() { }
+        public byte[]? AssessmentTokenKey { get; init; }
+        public System.TimeSpan AssessmentTokenLifetime { get; init; }
+        public System.TimeProvider TimeProvider { get; init; }
+        public AgentExperience.Core.Confidence.IndependenceVerification Verification { get; init; }
+    }
+    public enum IndependenceRefusal
+    {
+        OwnRun = 0,
+        UnknownRun = 1,
+        UnknownRound = 2,
+        AssessmentTokenMissing = 3,
+        AssessmentTokenInvalid = 4,
+        AssessmentTokenExpired = 5,
+        AssessmentTokenNotForRecord = 6,
+        AssessmentTokenReplayed = 7,
+        AssessmentKeyNotConfigured = 8,
+    }
+    public enum IndependenceVerification
+    {
+        Verified = 0,
+        TrustHostSuppliedIdentifiers = 1,
+    }
+    public sealed class IssuedAssessmentToken : System.IEquatable<AgentExperience.Core.Confidence.IssuedAssessmentToken>
+    {
+        public IssuedAssessmentToken(System.Guid AssessmentId, string Token, System.DateTimeOffset IssuedAt, System.DateTimeOffset ExpiresAt) { }
+        public System.Guid AssessmentId { get; init; }
+        public System.DateTimeOffset ExpiresAt { get; init; }
+        public System.DateTimeOffset IssuedAt { get; init; }
+        public string Token { get; init; }
     }
     public static class ReuseConfidenceHeuristic
     {
@@ -323,7 +364,8 @@ namespace AgentExperience.Core.Lifecycle
 {
     public sealed class ApplyConfidenceEvidenceRequest : System.IEquatable<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest>
     {
-        public ApplyConfidenceEvidenceRequest(System.Guid EventId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope Scope, System.Guid EvidenceId, AgentExperience.Abstractions.ConfidenceEvidenceKind Kind, AgentExperience.Abstractions.ConfidenceEvidenceSource Source, System.Guid RunId, System.Guid? VerificationRoundId, string Reason, string Producer, System.DateTimeOffset OccurredAt, string? Detail = null) { }
+        public ApplyConfidenceEvidenceRequest(System.Guid EventId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope Scope, System.Guid EvidenceId, AgentExperience.Abstractions.ConfidenceEvidenceKind Kind, AgentExperience.Abstractions.ConfidenceEvidenceSource Source, System.Guid RunId, System.Guid? VerificationRoundId, string Reason, string Producer, System.DateTimeOffset OccurredAt, string? Detail = null, string? AssessmentToken = null) { }
+        public string? AssessmentToken { get; init; }
         public string? Detail { get; init; }
         public System.Guid EventId { get; init; }
         public System.Guid EvidenceId { get; init; }
@@ -339,7 +381,7 @@ namespace AgentExperience.Core.Lifecycle
     }
     public sealed class ApplyConfidenceEvidenceResult : System.IEquatable<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult>
     {
-        public ApplyConfidenceEvidenceResult(AgentExperience.Core.Lifecycle.ConfidenceUpdateOutcome Outcome, AgentExperience.Abstractions.LifecycleEvent? Event, AgentExperience.Abstractions.ConfidenceUpdate? Update, long Revision, AgentExperience.Abstractions.ExperienceStatus? Status, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, string? Reason = null, AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing = null) { }
+        public ApplyConfidenceEvidenceResult(AgentExperience.Core.Lifecycle.ConfidenceUpdateOutcome Outcome, AgentExperience.Abstractions.LifecycleEvent? Event, AgentExperience.Abstractions.ConfidenceUpdate? Update, long Revision, AgentExperience.Abstractions.ExperienceStatus? Status, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, string? Reason = null, AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing = null, AgentExperience.Core.Confidence.IndependenceRefusal? Refusal = default) { }
         public int? Contradictions { get; }
         public bool Counted { get; }
         public AgentExperience.Core.Indexing.ExperienceDeindexingResult? Deindexing { get; init; }
@@ -347,6 +389,7 @@ namespace AgentExperience.Core.Lifecycle
         public AgentExperience.Abstractions.LifecycleEvent? Event { get; init; }
         public AgentExperience.Core.Lifecycle.ConfidenceUpdateOutcome Outcome { get; init; }
         public string? Reason { get; init; }
+        public AgentExperience.Core.Confidence.IndependenceRefusal? Refusal { get; init; }
         public double? ReuseConfidence { get; }
         public long Revision { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus? Status { get; init; }
@@ -389,6 +432,7 @@ namespace AgentExperience.Core.Lifecycle
         Denied = 6,
         Invalid = 7,
         Deleted = 8,
+        Unverified = 9,
     }
     public sealed class ExperienceLifecycleService
     {
@@ -396,7 +440,9 @@ namespace AgentExperience.Core.Lifecycle
         public static readonly System.TimeSpan DefaultDeindexingTimeout;
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store) { }
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? deindexingTimeout = default) { }
+        public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, AgentExperience.Core.Confidence.ExperienceIndependenceOptions independence, AgentExperience.Core.Capture.IExperienceCaptureService? captureService = null, System.TimeSpan? deindexingTimeout = default) { }
         public System.TimeSpan DeindexingTimeout { get; }
+        public AgentExperience.Core.Confidence.IndependenceVerification IndependenceVerification { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest request, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.CommitLifecycleTransitionResult> CommitAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.CommitLifecycleTransitionRequest request, System.Threading.CancellationToken cancellationToken) { }
         public static bool IsEligible(AgentExperience.Abstractions.ExperienceStatus status) { }

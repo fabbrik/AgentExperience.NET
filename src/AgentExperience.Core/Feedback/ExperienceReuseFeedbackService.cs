@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Lifecycle;
 
@@ -81,10 +82,14 @@ namespace AgentExperience.Core.Feedback;
 /// needs one; what has been decided by then is still reported.
 /// </para>
 /// <para>
-/// <b><see cref="ExperienceReuseFeedback.RunId"/> and a comparative result's verification round remain a
-/// host trust boundary</b>, exactly as the confidence path states: nothing here can check that a run
-/// happened or that a round was closed, so a caller inventing them gets a fresh independence key every
-/// time. Establish both from your own bookkeeping, never from anything an agent produced.
+/// <b>An attribution's identifiers are verified before the ledger is written</b>, with the confidence
+/// path's own rule (unless the host opted out): <see cref="ExperienceReuseFeedback.RunId"/> must be a run the
+/// library knows in the feedback's scope, a comparative result's round the one that run was finalized with,
+/// and a human assessment must present an assessment token minted for this scope, run, reviewer and
+/// direction, covering every attributed record, whose ID is its <see cref="HumanReuseAssessment.AssessmentId"/>.
+/// A failure degrades the attribution like any other. Each record's evidence is then verified again, and the
+/// token spent, by the confidence path. Exposure without attribution is recorded against the run as given:
+/// it keys nothing.
 /// </para>
 /// </remarks>
 public sealed class ExperienceReuseFeedbackService
@@ -175,7 +180,7 @@ public sealed class ExperienceReuseFeedbackService
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>What happened to the submission, and to each record it named.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="feedback"/>, or the feedback's <see cref="ExperienceReuseFeedback.Scope"/>, is <see langword="null"/>.</exception>
-    /// <exception cref="ExperienceStoreException">The feedback ledger write failed. Nothing was recorded and no score moved.</exception>
+    /// <exception cref="ExperienceStoreException">The feedback ledger write, or the read that verifies an attribution's run before it, failed. Nothing was recorded and no score moved.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled before the ledger write completed, so nothing was recorded. Cancellation after it is reported per record instead.</exception>
     public async Task<ExperienceReuseFeedbackResult> RecordAsync(
         AuthorizationContext authorization,
@@ -233,6 +238,18 @@ public sealed class ExperienceReuseFeedbackService
                 feedback.FeedbackId,
                 NoErrors,
                 "The feedback's scope lies outside the host-established authorization.");
+        }
+
+        // An attribution is only as good as the independence key it would produce, so under verification
+        // its run, round and assessment token are checked here, before the ledger is written -- a forged
+        // one is dropped like any other attribution that fails its evidence requirements, rather than
+        // being stored as an attributed benefit that the confidence path then refuses record by record.
+        if (validation.Degrading.Count == 0
+            && feedback is { HumanAssessment: not null } or { ComparativeEvaluation: not null }
+            && _lifecycleService.Independence.Verifies)
+        {
+            validation.Degrading.AddRange(
+                await VerifyAttributionAsync(authorization, feedback, cancellationToken).ConfigureAwait(false));
         }
 
         // An attribution that failed its evidence requirements is dropped, not fatal: the exposure is
@@ -388,7 +405,9 @@ public sealed class ExperienceReuseFeedbackService
             // The caller's own observation time, never a fresh clock read: it is part of the stored
             // event's identity, so a retry that regenerated it would stop being a retry.
             OccurredAt: feedback.ObservedAt,
-            Detail: attribution.Rationale);
+            Detail: attribution.Rationale,
+            // Re-verified, and spent for this record, by the confidence path itself.
+            AssessmentToken: attribution.AssessmentToken);
 
         ApplyConfidenceEvidenceResult applied;
         try
@@ -582,7 +601,8 @@ public sealed class ExperienceReuseFeedbackService
         string? Rationale,
         IReadOnlyList<Guid> EvidenceIds,
         DateTimeOffset? AttributedAt,
-        string? Producer)
+        string? Producer,
+        string? AssessmentToken = null)
     {
         /// <summary>
         /// No attribution: every field an attribution would carry is absent, including the producer,
@@ -619,7 +639,8 @@ public sealed class ExperienceReuseFeedbackService
                 assessment.Rationale,
                 EvidenceIds: [],
                 assessment.AssessedAt,
-                HumanAssessmentProducer),
+                HumanAssessmentProducer,
+                assessment.AssessmentToken),
 
             { ComparativeEvaluation: { } comparative } => new(
                 ReuseAttributionSource.ComparativeEvaluation,
@@ -975,6 +996,93 @@ public sealed class ExperienceReuseFeedbackService
                 fatal.Add(new(path, "must name only records the run was exposed to."));
             }
         }
+    }
+
+    /// <summary>
+    /// The independence checks an attribution must pass before it is recorded as one, under verification:
+    /// the run must be one the library knows in the feedback's scope; a comparative result's round must be
+    /// the one finalization closed for that run; and a human assessment must carry an assessment token that
+    /// verifies for this scope, run, reviewer and direction, covers every attributed record, and whose ID
+    /// is the assessment's. Every failure degrades the attribution; none is fatal, because the exposure is
+    /// still a true fact about the run.
+    /// </summary>
+    /// <remarks>
+    /// The same checks run again, record by record, when the evidence is applied, and the token is spent
+    /// there -- so this is not the enforcement point, only what keeps a forged or own-run attribution out of
+    /// the ledger's benefit column. It cannot see whether a genuine token was already spent: a second
+    /// feedback submission presenting one is recorded as attributed, and each of its records is then
+    /// refused by the confidence path, so a ledger reader counting reviews must join the evidence ledger.
+    /// </remarks>
+    private async Task<List<StoreValidationError>> VerifyAttributionAsync(
+        AuthorizationContext authorization,
+        ExperienceReuseFeedback feedback,
+        CancellationToken cancellationToken)
+    {
+        var errors = new List<StoreValidationError>();
+        var verifier = _lifecycleService.Independence;
+
+        var run = await verifier
+            .LookUpRunAsync(authorization, feedback.Scope, feedback.RunId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!run.Known)
+        {
+            errors.Add(new(
+                nameof(feedback.RunId),
+                "must be a run the library knows in the feedback's scope (finalized there, or held by the capture service) for an attribution to count."));
+            return errors;
+        }
+
+        var attributed = feedback.HumanAssessment?.AttributedExperienceIds ?? feedback.ComparativeEvaluation!.AttributedExperienceIds;
+        if (await verifier
+            .IsSourceRunOfAnyAsync(authorization, feedback.Scope, feedback.RunId, attributed, cancellationToken)
+            .ConfigureAwait(false))
+        {
+            errors.Add(new(
+                nameof(feedback.RunId),
+                "must not be an attributed record's own source run: a lesson is not reused in the run it came from."));
+            return errors;
+        }
+
+        if (feedback.ComparativeEvaluation is { } comparative)
+        {
+            if (!run.Finalized || run.ClosedRoundId is not { } closed || comparative.VerificationRoundId != closed)
+            {
+                errors.Add(new(
+                    $"{nameof(feedback.ComparativeEvaluation)}.{nameof(comparative.VerificationRoundId)}",
+                    "must be the verification round finalization closed for the run."));
+            }
+
+            return errors;
+        }
+
+        var assessment = feedback.HumanAssessment!;
+        const string TokenPath = $"{nameof(ExperienceReuseFeedback.HumanAssessment)}.{nameof(HumanReuseAssessment.AssessmentToken)}";
+
+        var kind = assessment.Benefit == ExperienceReuseBenefit.Harmed
+            ? ConfidenceEvidenceKind.Contradicting
+            : ConfidenceEvidenceKind.Supporting;
+        var token = verifier.CheckToken(assessment.AssessmentToken, feedback.Scope, feedback.RunId, authorization.PrincipalId, kind);
+
+        if (token.Refusal is { } refusal)
+        {
+            errors.Add(new(TokenPath, IndependenceVerifier.Describe(refusal)));
+            return errors;
+        }
+
+        if (token.AssessmentId != assessment.AssessmentId)
+        {
+            errors.Add(new(
+                $"{nameof(ExperienceReuseFeedback.HumanAssessment)}.{nameof(HumanReuseAssessment.AssessmentId)}",
+                "must be the ID of the assessment token it presents."));
+        }
+
+        if (assessment.AttributedExperienceIds.Any(id => !token.Covered.Contains(id)))
+        {
+            errors.Add(new(TokenPath, IndependenceVerifier.Describe(IndependenceRefusal.AssessmentTokenNotForRecord)));
+        }
+
+        return errors;
     }
 
     /// <summary>What validation found, split by whether losing the whole submission is the right price.</summary>

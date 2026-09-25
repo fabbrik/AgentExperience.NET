@@ -25,7 +25,7 @@ public sealed class PostgresReuseFeedbackTests
         _fixture = fixture;
         _store = new PostgresExperienceRecordStore(fixture.DataSource);
         _ledger = new PostgresExperienceReuseFeedbackStore(fixture.DataSource);
-        _lifecycle = new ExperienceLifecycleService(_store);
+        _lifecycle = TestRecords.TrustingLifecycle(_store);
         _feedback = new ExperienceReuseFeedbackService(_ledger, _lifecycle);
     }
 

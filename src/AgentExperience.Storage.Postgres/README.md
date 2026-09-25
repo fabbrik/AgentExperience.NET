@@ -468,12 +468,24 @@ Two rules are the adapter's, because only the transaction that writes the counte
 - **Independence is a unique index.** `confidence_evidence.independence_key` is a **generated** column:
   `'machine:' || run_id || ':' || verification_round_id` for machine evidence, `'human:' || reviewer_identity || ':'
   || run_id` for human evidence. A partial unique index on `(experience_id, independence_key) WHERE counted` admits
-  the first submission for a key and no other. Generating it here means no writer picks the key *string*; it does
-  **not** stop a writer inventing the key's inputs, and there is no foreign key behind `run_id` or
-  `verification_round_id` because nothing in this schema knows what a run or a closed round is. Those two are a host
-  trust boundary exactly like `reviewer_identity` — see the script header and the
-  [main README](../../README.md#updating-confidence-from-evidence). Core computes the same string in
-  `ConfidenceIndependenceKey`, and an integration test pins the two against each other.
+  the first submission for a key and no other. Generating it here means no writer picks the key *string*; the index
+  itself does **not** stop a writer inventing the key's inputs, and there is no foreign key behind `run_id` or
+  `verification_round_id` because nothing in this schema knows what a run or a closed round is. Since story 6.6 Core
+  checks the inputs before anything reaches this store: the run must be finalized into a record in the evidence's
+  scope (or held by the capture service), a machine round must be the `closedRoundId` that record's payload carries,
+  and human evidence must present a library-minted assessment token — see the
+  [main README](../../README.md#updating-confidence-from-evidence). A writer that bypasses Core is still unchecked
+  here, exactly as it always was. Core computes the same string in `ConfidenceIndependenceKey`, and an integration
+  test pins the two against each other.
+- **An assessment is spent once per record.** `confidence_evidence.assessment_id` (from `0015`) records the
+  assessment token a human submission presented, and a unique index on `(experience_id, assessment_id) WHERE
+  assessment_id IS NOT NULL` — not partial on `counted` — lets one assessment land one piece of evidence per record.
+  Another evidence ID presenting it is refused with nothing written: `Conflict`, with an error on
+  `ConfidenceUpdate.AssessmentIdPath`, which Core reports as `Unverified`/`AssessmentTokenReplayed`. A resubmission
+  of the *same* evidence ID is still a replay: because PostgreSQL does not promise which unique index a statement
+  that violates several reports first, the store answers an assessment violation by looking for the evidence ID and
+  compares the stored row exactly as the primary-key path does. The counted human event carries the same ID in
+  `lifecycle_events.confidence_assessment_id`, surfaced as `ConfidenceUpdate.AssessmentId`.
 - **A duplicate is recorded, and changes nothing else.** The first insert claims the key with `counted = true`,
   under a savepoint, because losing that race is an expected outcome the commit has to survive — a unique violation
   would otherwise abort the transaction that is supposed to record the duplicate. On the violation the statement is
@@ -486,7 +498,7 @@ Two rules are the adapter's, because only the transaction that writes the counte
   while `result.Revision` and `result.CurrentStatus` report the record the call left untouched.
 
 `EvidenceId` is a second idempotency key alongside `EventId`. Resubmitting it with identical content — the same
-record, kind, source, run and round or reviewer, rule version, and detail — reports the original outcome and the
+record, kind, source, run and round or reviewer, assessment, rule version, and detail — reports the original outcome and the
 revision that commit produced, and writes nothing. Resubmitting it with different content is `Conflict` with nothing
 written. The counters are deliberately *not* compared: they are derived from whatever the record held when the
 submission was first made, so comparing them would report a genuine replay as a conflict for agreeing with itself.
@@ -524,9 +536,12 @@ before any connection opens.
   the same rule from its own side, so a writer bypassing this package is refused too.
 - **A human assessment is the weakest trust boundary here.** Nothing in this schema or in Core can check that a
   human made one. `reviewer_identity` is the host's `AuthorizationContext.PrincipalId` rather than anything on the
-  submission, and `assessment_id` names a review the host established — which makes a moved score traceable, and
-  nothing more. The caller supplies `run_id`, so a host that lets agent output populate `run_id` or `assessment_id`
-  has handed the agent a fresh independence key on every call. See the script's own header.
+  submission. Since story 6.6, `assessment_id` is the ID of an assessment token Core verified (minted under the
+  host's key for this scope, run, reviewer, direction and records) before the attribution was recorded, and `run_id`
+  was checked to be a run the library knows in the scope, so agent output can no longer mint either; the evidence
+  ledger then spends the token once per record. A host that opted out of verification is back to 0008's header:
+  the caller supplies both, and one that lets agent output populate them hands the agent a fresh independence key
+  on every call.
 - **Idempotency is the feedback ID.** The insert is `ON CONFLICT (feedback_id) DO NOTHING`, so the primary key is
   the arbiter and two hosts submitting at once cannot both decide they were first. A collision is then read back
   inside the same transaction and compared field by field — every stored column, and the exposures in order.
@@ -1512,6 +1527,22 @@ its triggers as to `0006`'s: read them above before relying on them.
   applies; the purge functions keep their marker-reset `SET` clauses.
 - `REVOKE ALL … FROM PUBLIC` on the three purge functions, restated so a hand-widened ACL is narrowed back.
 - It grants nothing to a named role: that is `ApplyApplicationRolePrivilegesAsync`'s job, on every deploy.
+
+`0015_verified_independence.sql` makes an assessment single-use (story 6.6, KL-11; see
+[Confidence evidence](#confidence-evidence)):
+
+- `confidence_evidence.assessment_id uuid NULL` and `lifecycle_events.confidence_assessment_id uuid NULL`, each with
+  a `CHECK` keeping it on human rows only and off the empty UUID, added `NOT VALID` so neither ledger is scanned; the
+  header has the `VALIDATE` statements (every existing row is `NULL`, so both pass).
+- `ux_confidence_evidence_assessment`, unique on `(experience_id, assessment_id) WHERE assessment_id IS NOT NULL`,
+  built with plain `CREATE UNIQUE INDEX`, which blocks evidence appends while it builds; the header carries the
+  `CONCURRENTLY` runbook for building it out of band first.
+- No table, function, trigger or grant, so the application role's manifest is unchanged: its table-level `INSERT`
+  and `SELECT` on both ledgers cover the new columns, and it has no `UPDATE` on either.
+- The closed round a finalized record vouches for needs no schema: it travels in the payload as `closedRoundId`,
+  written only when finalization closed a round (a payload with none is byte for byte what it was), and read back as
+  `ExperienceRecord.ClosedRoundId`. The payload version stays `1`; an older reader ignores the field. A record
+  written before this version has none, so machine evidence about its run is refused unless the host opts out.
 
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package

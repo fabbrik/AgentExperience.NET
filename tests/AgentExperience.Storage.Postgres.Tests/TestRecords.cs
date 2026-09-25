@@ -14,6 +14,18 @@ internal static class TestRecords
 
     public static string NewTenant() => "tenant-" + Guid.NewGuid().ToString("N");
 
+    /// <summary>
+    /// A lifecycle service that trusts the host's run, round and assessment identifiers: the opt-out. For
+    /// the tests about the store's own mechanics -- the independence index, the counters, replay, erasure
+    /// -- which submit invented runs on purpose. <c>PostgresVerifiedIndependenceTests</c> covers the
+    /// default, verifying mode against the same store.
+    /// </summary>
+    public static Core.Lifecycle.ExperienceLifecycleService TrustingLifecycle(IExperienceRecordStore store) =>
+        new(store, indexingService: null, new Core.Confidence.ExperienceIndependenceOptions
+        {
+            Verification = Core.Confidence.IndependenceVerification.TrustHostSuppliedIdentifiers,
+        });
+
     public static Scope Scope(string tenant, string project = "project-1", string? team = null) =>
         new(tenant, "app-1", project, team, AgentId: null, UserId: null);
 
