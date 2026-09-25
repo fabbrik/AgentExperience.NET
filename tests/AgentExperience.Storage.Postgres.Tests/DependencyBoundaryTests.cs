@@ -47,14 +47,14 @@ public class DependencyBoundaryTests
 
     [Fact]
     [Trait("Category", "DeclaredPins")]
-    public void Storage_Postgres_csproj_declares_only_the_Npgsql_DbUp_and_DI_abstractions_floors()
+    public void Storage_Postgres_csproj_declares_only_the_Npgsql_DbUp_DI_abstractions_and_net8_System_Text_Json_floors()
     {
         var csprojPath = GetCsprojPath();
         Assert.True(File.Exists(csprojPath), $"Could not locate AgentExperience.Storage.Postgres.csproj at '{csprojPath}'.");
 
         var packages = XDocument.Load(csprojPath)
             .Descendants("PackageReference")
-            .Select(e => $"{e.Attribute("Include")?.Value} {e.Attribute("Version")?.Value}")
+            .Select(e => $"{e.Attribute("Include")?.Value} {e.Attribute("Version")?.Value}{Condition(e)}")
             .Order(StringComparer.Ordinal)
             .ToList();
 
@@ -64,11 +64,22 @@ public class DependencyBoundaryTests
             [
                 "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
                 "Npgsql 10.0.3",
+                "System.Text.Json 10.0.12 when '$(TargetFramework)' == 'net8.0'",
                 "dbup-core 6.1.1",
                 "dbup-postgresql 7.0.1",
             ],
             packages);
     }
+
+    /// <summary>
+    /// Story 7.2 (KL-13): the net8.0-only System.Text.Json floor (the .NET 10 train's package, for the strict
+    /// payload decoder's options the .NET 8 shared framework lacks) is pinned with its condition, so it can
+    /// never quietly apply to every framework.
+    /// </summary>
+    private static string Condition(XElement packageReference) =>
+        (packageReference.Attribute("Condition") ?? packageReference.Parent?.Attribute("Condition"))?.Value is { } condition
+            ? $" when {condition}"
+            : string.Empty;
 
     private static string GetCsprojPath([CallerFilePath] string testSourceFilePath = "") =>
         Path.GetFullPath(Path.Combine(

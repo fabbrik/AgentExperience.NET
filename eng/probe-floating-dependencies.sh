@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# The floating-dependency leg (story 6.3, KL-13). Every shipping PackageReference except Microsoft.Agents.AI is a
-# floor: the version the committed lock files resolve, and the lowest a host can get. The default CI run proves
-# the floors. This script proves the other end: it restores every floor at the NEWEST release in the same major
-# (the same minor, for a 0.x package), builds, and runs the whole test suite against that graph, on every target
-# framework and the default PostgreSQL major. The one exception is the tests tagged Category=DeclaredPins, which
+# The floating-dependency leg (story 6.3, KL-13). Every shipping PackageReference is a floor: the version the
+# committed lock files resolve, and the lowest a host can get. Microsoft.Agents.AI is a floor with an upper bound at
+# its next major, [x.y.z, N.0.0) (story 7.2), and is floated the same way. The default CI run proves the floors.
+# This script proves the other end: it restores every floor at the NEWEST release in the same major (the same
+# minor, for a 0.x package), builds, and runs the whole test suite against that graph, on every target framework
+# and the default PostgreSQL major. The one exception is the tests tagged Category=DeclaredPins, which
 # check the versions the committed csproj files declare; this script rewrites those on purpose.
 #
 #   eng/probe-floating-dependencies.sh
@@ -32,25 +33,34 @@ trap 'rm -rf "$work"' EXIT
 snapshot="$(git -C "$root" stash create)"
 git -C "$root" archive "${snapshot:-HEAD}" | tar -x -C "$work"
 
-# Every floor a shipping project declares: a PackageReference whose Version is a bare x.y.z. An exact pin
-# ([x.y.z]) is not a floor and is left alone.
-floors="$(sed -nE 's/.*<PackageReference Include="([^"]+)" Version="([0-9]+\.[0-9]+\.[0-9]+)".*/\1 \2/p' \
+# Every floor a shipping project declares: a PackageReference whose Version is a bare x.y.z, or the lower bound of
+# a range bounded at the next major, [x.y.z, N.0.0). Floated within that major, a range's float never crosses its
+# own upper bound. An exact pin ([x.y.z]) is not a floor and is left alone (none is left since story 7.2).
+floors="$(sed -nE -e 's/.*<PackageReference Include="([^"]+)" Version="([0-9]+\.[0-9]+\.[0-9]+)".*/\1 \2/p' \
+  -e 's/.*<PackageReference Include="([^"]+)" Version="\[([0-9]+\.[0-9]+\.[0-9]+), *[0-9]+\.0\.0\)".*/\1 \2/p' \
   "$work"/src/*/*.csproj | sort -u)"
+# Floating a range within its lower bound's major only stays inside it, and only covers it, when the bound is the
+# next major; CompatibilityPinAgreementTests allows no other, but that test is excluded from this leg.
+wide="$(sed -nE 's/.*<PackageReference Include="([^"]+)" Version="\[([0-9]+)\.[0-9]+\.[0-9]+, *([0-9]+)\.0\.0\)".*/\1 \2 \3/p' \
+  "$work"/src/*/*.csproj | awk '$3 != $2 + 1')"
+if [ -n "$wide" ]; then
+  echo "A range whose upper bound is not the next major would not be covered by floating within the major: $wide" >&2
+  exit 2
+fi
 if [ -z "$floors" ]; then
   echo "No floors found in src/*/*.csproj; nothing to float." >&2
   exit 2
 fi
 
-# Every PackageReference in src/ must be one of the two shapes this script understands, on one line: a floor
-# (above) or an exact pin. Anything else (a prerelease or four-part version, a range, Version on another line) would
-# be silently left out of the float, and the leg would pass without testing it.
+# Every PackageReference in src/ must be one of the shapes this script understands, on one line: a floor (x.y.z),
+# a major-bounded range ([x.y.z, N.0.0)) or an exact pin. Anything else (a prerelease or four-part version, another
+# range, Version on another line) would be silently left out of the float, and the leg would pass without testing it.
+shapes='<PackageReference Include="[^"]+" Version="(\[[0-9]+\.[0-9]+\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+|\[[0-9]+\.[0-9]+\.[0-9]+, *[0-9]+\.0\.0\))"'
 references="$(grep -h '<PackageReference ' "$work"/src/*/*.csproj | wc -l | tr -d ' ')"
-understood="$(grep -hE '<PackageReference Include="[^"]+" Version="(\[[0-9]+\.[0-9]+\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+)"' \
-  "$work"/src/*/*.csproj | wc -l | tr -d ' ')"
+understood="$(grep -hE "$shapes" "$work"/src/*/*.csproj | wc -l | tr -d ' ')"
 if [ "$references" != "$understood" ]; then
-  echo "Only $understood of the $references PackageReferences in src/*/*.csproj are a one-line floor (x.y.z) or exact pin ([x.y.z]):" >&2
-  grep -hE '<PackageReference ' "$work"/src/*/*.csproj \
-    | grep -vE '<PackageReference Include="[^"]+" Version="(\[[0-9]+\.[0-9]+\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+)"' >&2
+  echo "Only $understood of the $references PackageReferences in src/*/*.csproj are a one-line floor (x.y.z), major-bounded range ([x.y.z, N.0.0)) or exact pin ([x.y.z]):" >&2
+  grep -hE '<PackageReference ' "$work"/src/*/*.csproj | grep -vE "$shapes" >&2
   exit 2
 fi
 

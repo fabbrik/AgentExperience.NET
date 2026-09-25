@@ -1,16 +1,15 @@
 <Project>
 
-  <!-- The supported target frameworks (story 6.3, KL-13), each built and tested in CI. The five shipping packages
-       and every test project that exercises them multi-target both. net8.0 is left out on purpose: its
-       System.Text.Json lacks APIs Core and the store compile against (JsonElement.DeepEquals, and the strict
-       RespectNullableAnnotations/RespectRequiredConstructorParameters payload decoding), which only a new package
-       reference or a per-framework rewrite of that decoding could supply. The
+  <!-- The supported target frameworks (stories 6.3 and 7.2, KL-13), each built and tested in CI. The five shipping
+       packages and every test project that exercises them multi-target all three. net8.0 (story 7.2) takes the APIs
+       its shared framework lacks from the .NET 10 train's System.Text.Json and Microsoft.Bcl.Memory packages,
+       referenced for net8.0 only in Core and the store. The
        end-to-end sample, its tests and the reuse baseline are demonstrations, not a supported surface, and stay
        on the newest one, so the sample runs with no framework argument; so does
        anything outside src/ and tests/ (eng/verify-packages.cs is a file-based app and imports this file too).
        docs/compatibility-evidence.md records why nothing older is targeted. -->
   <PropertyGroup>
-    <AgentExperienceTargetFrameworks>net9.0;net10.0</AgentExperienceTargetFrameworks>
+    <AgentExperienceTargetFrameworks>net8.0;net9.0;net10.0</AgentExperienceTargetFrameworks>
     <_AgentExperienceRelativeDirectory>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/'))</_AgentExperienceRelativeDirectory>
     <AgentExperienceMultiTarget>false</AgentExperienceMultiTarget>
     <AgentExperienceMultiTarget Condition="($(_AgentExperienceRelativeDirectory.StartsWith('src/')) Or $(_AgentExperienceRelativeDirectory.StartsWith('tests/'))) And '$(MSBuildProjectName)' != 'AgentExperience.Sample.EndToEnd.Tests' And '$(MSBuildProjectName)' != 'AgentExperience.ReuseBaseline'">true</AgentExperienceMultiTarget>

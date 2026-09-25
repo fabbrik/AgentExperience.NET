@@ -228,7 +228,7 @@
         "type": "Project",
         "dependencies": {
           "AgentExperience.Core": "[0.1.0-preview.2, )",
-          "Microsoft.Agents.AI": "[1.22.0, 1.22.0]"
+          "Microsoft.Agents.AI": "[1.22.0, 2.0.0)"
         }
       },
       "agentexperience.storage.postgres": {

@@ -27,8 +27,8 @@ To cut the next preview, bump the suffix (`preview.1` → `preview.2`) in `Direc
 - Docker running: the storage tests start PostgreSQL containers (16 by default; step 3 runs every supported major).
   If Testcontainers' Ryuk container fails under your Docker setup (Rancher Desktop, for example),
   `export TESTCONTAINERS_RYUK_DISABLED=true` first.
-- The .NET 9 runtime installed beside the pinned SDK: the packages target `net9.0` and `net10.0`, and every test
-  project that exercises them runs on both.
+- The .NET 8 and .NET 9 runtimes installed beside the pinned SDK: the packages target `net8.0`, `net9.0` and
+  `net10.0`, and every test project that exercises them runs on all three.
 - Network access to nuget.org (restore, and the probes in step 6).
 
 ```bash
@@ -63,7 +63,7 @@ dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild
 ### 3. The full test suite
 
 Core, PostgreSQL, the MAF adapter, the end-to-end sample, the reuse baseline, the compatibility proofs, and the
-release gates, on both supported target frameworks (`net9.0` and `net10.0`; the sample, its tests and the reuse
+release gates, on every supported target framework (`net8.0`, `net9.0` and `net10.0`; the sample, its tests and the reuse
 baseline run on `net10.0` only), against PostgreSQL 16. This is also the security suite: every test in
 [`docs/security-suite.md`](docs/security-suite.md) runs here, and there is no separate, weaker security build.
 
@@ -130,8 +130,8 @@ regenerates it, and the resulting `git diff` is what gets reviewed and committed
 ### 5. Every pin has source-backed evidence
 
 [`docs/compatibility-evidence.md`](docs/compatibility-evidence.md) carries one row per SDK, MAF, storage, and
-telemetry pin — MAF's exact pin and every floor: where it is declared, its nuget.org source, the content hash NuGet
-restored, and the test that proves it. These two loops check that the document and the committed lock files describe
+telemetry pin — MAF's range and every floor, including the `net8.0`-only ones: where it is declared, its nuget.org
+source, the content hash NuGet restored, and the test that proves it. These two loops check that the document and the committed lock files describe
 the same packages, byte for byte, in every target framework's section.
 
 ```bash
@@ -157,21 +157,23 @@ nuget.org and update the date before continuing.
 
 ### 6. The MAF compatibility matrix, and the floating dependencies
 
-The pinned version must pass; the newest stable one is probed and reported, and does not block (story 4.3, AD-F).
-Both run on a throwaway copy of the **tracked files** (HEAD plus uncommitted changes to them); untracked files are not
-copied, and the script warns when `src/` or `tests/` has any. The pinned leg restores the committed lock files
-exactly (`--locked-mode`); the latest leg has to re-evaluate them.
+`Microsoft.Agents.AI` is a range, `[floor, next major)` (story 7.2), so both ends are support claims and both probes
+**are** release blockers: the floor, and the newest stable version inside the range. Both run on a throwaway copy of
+the **tracked files** (HEAD plus uncommitted changes to them); untracked files are not copied, and the script warns
+when `src/` or `tests/` has any. The floor restores the committed lock files exactly (`--locked-mode`); a newer
+version has to re-evaluate them.
 
 ```bash
-eng/probe-maf-version.sh pinned   # must print "... PASSED" and exit 0
-eng/probe-maf-version.sh          # newest stable on nuget.org: record the result in docs/compatibility-evidence.md
+eng/probe-maf-version.sh pinned   # the range's floor: must print "... PASSED" and exit 0
+eng/probe-maf-version.sh          # newest stable inside the range: must print "... PASSED" and exit 0; record it in docs/compatibility-evidence.md
 ```
 
-A failing `latest` probe is not a release blocker. It is a fact about the ecosystem that belongs in the evidence
-document and, if it constrains hosts, in the Known limits table.
+If the newest stable MAF on nuget.org is outside the range (a new major), the second command says so and probes the
+newest version inside it. Probing the new major itself (`eng/probe-maf-version.sh <version>`) is information for the
+evidence document, not a release blocker; widening the range is a deliberate change.
 
 Every other dependency is a floor, which claims every later release in its major, so the newest ones must pass too
-(story 6.3). This one **is** a release blocker. Like the MAF probe it works on a throwaway copy of the tracked files:
+(story 6.3). This one is a release blocker as well. Like the MAF probe it works on a throwaway copy of the tracked files:
 
 ```bash
 eng/probe-floating-dependencies.sh   # must print "... PASSED" and exit 0; record the resolved table in the evidence
@@ -181,8 +183,9 @@ eng/probe-floating-dependencies.sh   # must print "... PASSED" and exit 0; recor
 
 Assertions are made against the built `.nupkg` and `.snupkg` files, not the csproj files: ten artifacts at
 `0.1.0-preview.N`; license, readme, tags, and repository metadata with the SourceLink commit; "Preview" in the
-description, release notes, and readme; exactly the `net9.0` and `net10.0` builds under `lib/`, and the **exact**
-dependency set — ids and version ranges — in each framework's dependency group, so Abstractions and Core carry no MAF,
+description, release notes, and readme; exactly the `net8.0`, `net9.0` and `net10.0` builds under `lib/`, and the
+**exact** dependency set — ids and version ranges — in each framework's dependency group (the `net8.0` group also
+carrying the `net8.0`-only floors, and no other group carrying them), so Abstractions and Core carry no MAF,
 Npgsql, DbUp, Pgvector, model-provider or OpenTelemetry dependency; one repository commit across all five packages,
 equal to `git rev-parse HEAD`; and, per framework, in each symbol package, a PDB whose id matches its assembly's
 CodeView debug entry, whose every SourceLink target points at this repository, whose every path is mapped to `/_/`,

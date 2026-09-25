@@ -31,7 +31,7 @@ failure translation the two channels must share.
 Every floor was verified by Story 1.7's executable PostgreSQL/pgvector compatibility proof before this package
 was written, and CI tests each floor and the newest release in the range above on every change. The package
 declares only the floor, never an upper bound, so a later major still restores; it is simply untested until a
-floor moves. See [the version policy](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#the-version-policy-floors-and-one-exact-pin).
+floor moves. See [the version policy](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#the-version-policy-floors-and-one-bounded-range).
 
 ## Usage
 

@@ -1403,7 +1403,7 @@ public class ExperienceInjectionTests
             Assert.Equal(InjectionOutcome.Injected, run.Result.Outcome);
             Assert.Equal([InjectionRecords.Id(1), InjectionRecords.Id(2), InjectionRecords.Id(3)], run.Result.InjectedExperienceIds);
             Assert.Equal(expectedOmissions, run.Result.Omitted);
-            Assert.Equal(PreBatchBlockSha256, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(run.Block!))));
+            Assert.Equal(PreBatchBlockSha256, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(run.Block!))).ToLowerInvariant());
 
             // One access row per grant-delivered record, naming its grant and the level it was read at.
             Assert.Equal(

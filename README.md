@@ -29,7 +29,6 @@ preview.
 | KL-8 | **An approach shows argument values only for scalars the host allowlisted, and never for a borrowed record.** An object- or array-valued argument renders as a marker, and a record read through a sharing grant shows none — its approach is tool names only under `LessonAndApproach` and withheld under `LessonOnly`; a host whose lessons turn on either needs its own reflector to say so in the lesson | [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values) |
 | KL-11 | **Verified independence proves a run is real, not that it saw the lesson; and the opt-out trusts the host outright.** By default a confidence submission's run must be finalized into a record in its scope or held by the capture service (never the record's own), a machine round must be the one finalization closed for that run, and a human assessment must present an unexpired, single-use HMAC token the library minted under the host's key. Nothing can check that a real run in the scope was *exposed* to the record, so a caller able to choose among real runs gets one key per real run rather than one per call; nor that the round a host closed at finalization, or a record it wrote by hand through `CreateAsync`, is honest. A host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` is back to trusting every `RunId`, `VerificationRoundId` and `AssessmentId` it passes, and one that lets agent output populate them hands the agent a fresh independence key per call. A direct caller of the aggregator still binds an evaluation to whatever run ID it names | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is revoked, superseded, erased or un-granted — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
-| KL-13 | **The supported matrix stops short of three things.** `Microsoft.Agents.AI` is still pinned exactly, at 1.22.0, so a host whose graph needs a newer MAF gets NuGet's NU1608 warning about the adapter (an error under warnings-as-errors), or NU1107 if the newer MAF arrives through another package; CI's MAF probe reports when the newest MAF stops passing. `net8.0` is not targeted, because its `System.Text.Json` lacks APIs Core and the store compile against. PostgreSQL 14 is not supported, because migration `0005` needs 15. Everything else is covered: `net9.0` and `net10.0`, PostgreSQL 15 to 18, and every other dependency a floor that CI tests at the floor and at the newest release in its major (the same minor for `Pgvector`), so a newer `Microsoft.Extensions.*`, `Npgsql`, DbUp or `Pgvector` no longer conflicts | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 
 Resolved since `0.1.0-preview.2` (unreleased):
 
@@ -77,6 +76,23 @@ Resolved since `0.1.0-preview.2` (unreleased):
   spend `AssessmentId` once per record. `IndependenceVerification.TrustHostSuppliedIdentifiers` restores
   the previous behaviour for a host that cannot adopt the new flow. See
   [Updating confidence from evidence](#updating-confidence-from-evidence).
+- KL-13 (the supported matrix stopping short of a newer MAF, `net8.0` and PostgreSQL 14) is resolved by story 7.2,
+  with one boundary left on purpose. **MAF** is no longer pinned exactly: the adapter declares
+  `Microsoft.Agents.AI` `[1.22.0, 2.0.0)`, so a host needing a newer 1.x resolves it with no warning. CI tests the
+  floor and the newest 1.x on every change, and both gate pushes and the weekly schedule (reporting only on pull
+  requests), so a MAF minor that breaks the adapter fails `main` on the next push or weekly run. The bound sits at 2.0 because MAF
+  states no SemVer promise and changed caller-visible behaviour five times between 1.15 and 1.22 (one on a hook the
+  adapter uses, which its tests caught); a host on a MAF 2.x, which does not exist yet, gets NU1608 about this
+  adapter. **`net8.0`** is a third target framework of all five packages, tested like the other two: on `net8.0`
+  only, Core and the store take `System.Text.Json` 10.0.12+ and Core `Microsoft.Bcl.Memory` 10.0.12+, the .NET 10
+  train's packages for three of the four .NET 9 APIs the library uses (the fourth is a one-line `#if`), so every
+  framework runs the same decoder and token codec. **PostgreSQL 14 stays out**, and that is the boundary: DbUp journals scripts by name, `0005` is PostgreSQL
+  15 syntax, and no path to 14 leaves `0005` untouched without a second schema lineage (a PostgreSQL 14 database
+  upgraded in place would keep it for life); PostgreSQL 14 itself reaches end of life on 12 November 2026. The row
+  leaves the table because what remains is not a limit of this library but an upstream end-of-life date seven weeks
+  out, and a major bound on a dependency that has no next major yet; neither restricts a host on a supported
+  PostgreSQL or any MAF release that exists. `net8.0` and `net9.0` also leave support on 10 November 2026, and the
+  first preview after that drops them. See [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix).
 
 Resolved in `0.1.0-preview.2`:
 
@@ -102,13 +118,13 @@ Resolved in `0.1.0-preview.2`:
 - KL-14 (exact pins blocking a newer MAF) is resolved by moving the supported pin to `Microsoft.Agents.AI` 1.22.0,
   with `Microsoft.Extensions.DependencyInjection.Abstractions` `[10.0.12]` in Core and both stores and
   `Microsoft.Extensions.AI.Abstractions` `[10.10.0]` in the vectors package (story 5.1). The general hazard remains
-  and is part of KL-13: a later MAF can need newer shared pins. See
+  was part of KL-13 (a later MAF needing newer shared pins), which story 7.2 resolved. See
   [Compatibility evidence](docs/compatibility-evidence.md#the-maf-compatibility-matrix).
 - KL-15 (Core's redaction dependency a floor) is resolved by exact-pinning `Microsoft.Extensions.Compliance.Redaction`
   at `[10.10.0]` (story 5.1). Every `PackageReference` a shipping project declares is now exact, and a release test
   fails on a new floor; the dependencies those packages declare in turn are still whatever NuGet floors they carry.
   (Story 6.3, after this preview, replaced that policy: every reference but MAF is now a floor CI tests at both ends
-  of its major. See KL-13.)
+  of its major, and story 7.2 made MAF a range to its next major, tested the same way. See KL-13 above.)
 - KL-16 (erasure emitting no library telemetry) is resolved by story 5.2. Deletion, the retention sweep and the grant
   purge are now the `delete`, `retention.sweep` and `grant.purge` operations on the `AgentExperience.Storage.Postgres`
   source and meter, and they carry nothing that was erased; see [`docs/telemetry.md`](docs/telemetry.md#operations).
@@ -1422,8 +1438,8 @@ _sdlc/                                      product brief, PRD, architecture, ep
 ## Build and test
 
 Requires the [.NET SDK 10.0.302](https://dotnet.microsoft.com/) or a later feature band (see `global.json`). The five
-packages target `net9.0` and `net10.0`, and `dotnet test` runs each test project on both, so a full local run also
-needs the .NET 9 runtime; `dotnet test --framework net10.0` runs only the `net10.0` half.
+packages target `net8.0`, `net9.0` and `net10.0`, and `dotnet test` runs each test project on all three, so a full
+local run also needs the .NET 8 and .NET 9 runtimes; `dotnet test --framework net10.0` runs only the `net10.0` part.
 
 ```bash
 dotnet restore

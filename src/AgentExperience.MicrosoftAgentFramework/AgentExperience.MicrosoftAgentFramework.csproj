@@ -1,17 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Preview, not production ready. Microsoft Agent Framework (MAF) adapter for AgentExperience.NET: one AIAgentBuilder.UseExperienceCapture(...) call records every MAF invocation (ordinary, streaming, failed, cancelled, or abandoned mid-stream) and its tool calls as a sanitized Experience Run through AgentExperience.Core's IExperienceCaptureService. Pinned to Microsoft.Agents.AI 1.22.0.</Description>
+    <Description>Preview, not production ready. Microsoft Agent Framework (MAF) adapter for AgentExperience.NET: one AIAgentBuilder.UseExperienceCapture(...) call records every MAF invocation (ordinary, streaming, failed, cancelled, or abandoned mid-stream) and its tool calls as a sanitized Experience Run through AgentExperience.Core's IExperienceCaptureService. Requires Microsoft.Agents.AI 1.22.0 or any later 1.x.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The one exact pin left (story 6.3): MAF compatibility is verified against this version only (Story 1.7
-         Track 1, Story 1.6). MAF ships a minor release every week or two, has changed adapter-visible behaviour between
-         minors, and still marks neighbouring surface [Experimental], so a floor would claim versions nobody has
-         run. CI's MAF probe reports on the newest one; docs/compatibility-evidence.md has the reasoning. -->
-    <PackageReference Include="Microsoft.Agents.AI" Version="[1.22.0]" />
+    <!-- A tested range, not a bare floor (story 7.2, KL-13): 1.22.0 up to, but not including, 2.0.0. The floor is
+         what the committed lock files resolve and every test runs; the newest 1.x is proven by CI's MAF probe
+         (latest leg) and floating-dependency leg, which both gate pushes and the weekly schedule. The upper bound
+         is MAF's next major: MAF states no SemVer promise and shipped five caller-visible behaviour changes between
+         1.15 and 1.22, so a major is where a break is expected, and a host on it is told (NU1608) rather than
+         silently run against an adapter nobody built for it. A newer 1.x minor restores with no warning.
+         docs/compatibility-evidence.md has the evidence. -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="[1.22.0, 2.0.0)" />
   </ItemGroup>
 
   <ItemGroup>

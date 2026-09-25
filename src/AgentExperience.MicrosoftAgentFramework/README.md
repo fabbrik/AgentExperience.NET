@@ -8,9 +8,11 @@ Records Microsoft Agent Framework (MAF) invocations and their tool calls as Agen
 and injects applicable past experience back into later invocations as a labeled Historical Reference.
 Capture covers ordinary, streaming, failed, and cancelled invocations, plus streams the consumer stops reading early.
 
-Pinned to `Microsoft.Agents.AI` **1.22.0** (exact), for `net9.0` and `net10.0`. No other MAF version is verified. It is
-the one exact pin this library keeps; every other dependency is a floor. The reasons are in
-[the version policy](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#the-version-policy-floors-and-one-exact-pin).
+Requires `Microsoft.Agents.AI` **1.22.0 or any later 1.x** (declared `[1.22.0, 2.0.0)`), for `net8.0`, `net9.0` and
+`net10.0`. CI tests the floor and the newest 1.x on every change and on a weekly schedule, and a 1.x that breaks
+the adapter fails `main` on the next push or scheduled run. MAF 2.0 and later are outside the range, and NuGet warns (NU1608) about this package when a host resolves
+one. The reasons are in
+[the version policy](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/compatibility-evidence.md#the-version-policy-floors-and-one-bounded-range).
 
 ## Usage
 
@@ -740,9 +742,9 @@ boundary that nothing in the library can check. See
 - **Late tool calls.** A tool call that finishes after its run was finalized is not recorded. This can happen after an
   early stream break.
 
-## MAF caveats (1.22.0)
+## MAF caveats (1.22.0 and later 1.x)
 
-- **Reusing a `ChatClientAgentRunOptions` instance for one invocation after another is safe at 1.22.0.** At 1.20.0,
+- **Reusing a `ChatClientAgentRunOptions` instance for one invocation after another is safe from 1.22.0.** At 1.20.0,
   MAF's function middleware wrote its `ChatClientFactory` onto the options instance it received, so a reused instance
   stacked a middleware layer per invocation. 1.22.0 works on a per-run clone and leaves the caller's instance, and any
   factory the host set on it, unchanged. The three `ExperienceCaptureTests.A_reused_ChatClientAgentRunOptions_instance_…`

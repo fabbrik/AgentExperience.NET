@@ -34,9 +34,10 @@ internal static class PostgresTestImage
     /// <summary>
     /// Every PostgreSQL major the project supports: each one the PostgreSQL project still supports and
     /// <c>pgvector/pgvector</c> publishes an image for, except 14. PostgreSQL 14 is still supported upstream
-    /// (until November 2026), but the journaled migration <c>0005_create_experience_grants</c> creates a
+    /// (until 12 November 2026), but the journaled migration <c>0005_create_experience_grants</c> creates a
     /// <c>NULLS NOT DISTINCT</c> unique index, which is PostgreSQL 15 syntax, and journaled scripts are never
-    /// edited. The evidence document records the failing run.
+    /// edited. Story 7.2 found no PostgreSQL 14 path that leaves <c>0005</c> untouched without a second schema
+    /// lineage (DbUp journals by script name). The evidence document records the failing run and that analysis.
     /// </summary>
     internal static readonly IReadOnlyList<int> SupportedMajors = [15, 16, 17, 18];
 

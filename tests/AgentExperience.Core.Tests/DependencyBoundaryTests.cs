@@ -91,21 +91,33 @@ public class DependencyBoundaryTests
         // a deliberate, reviewed change to this list.
         var declared = XDocument.Load(GetCoreCsprojPath())
             .Descendants("PackageReference")
-            .Select(element => $"{element.Attribute("Include")?.Value} {element.Attribute("Version")?.Value}")
+            .Select(element => $"{element.Attribute("Include")?.Value} {element.Attribute("Version")?.Value}{Condition(element)}")
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        // Both are floors (story 6.3, KL-13): the version CI proves, with the newest in the same major
+        // All floors (story 6.3, KL-13): the version CI proves, with the newest in the same major
         // proven by CI's floating leg. The DI abstractions floor matches the two storage packages', so
         // no host can resolve a lower one for one package than for another. Excluded from the floating
         // leg by its trait, because that leg rewrites these versions on purpose.
         Assert.Equal(
             [
+                "Microsoft.Bcl.Memory 10.0.12 when '$(TargetFramework)' == 'net8.0'",
                 "Microsoft.Extensions.Compliance.Redaction 10.10.0",
                 "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+                "System.Text.Json 10.0.12 when '$(TargetFramework)' == 'net8.0'",
             ],
             declared);
     }
+
+    /// <summary>
+    /// Story 7.2 (KL-13): the two net8.0-only references (the .NET 10 train's System.Text.Json and
+    /// Microsoft.Bcl.Memory, supplying APIs the .NET 8 shared framework lacks) are part of the pinned set, with
+    /// their condition, so one quietly applying to every framework, or a new conditional one, is a reviewed change.
+    /// </summary>
+    private static string Condition(XElement packageReference) =>
+        (packageReference.Attribute("Condition") ?? packageReference.Parent?.Attribute("Condition"))?.Value is { } condition
+            ? $" when {condition}"
+            : string.Empty;
 
     private static string GetCoreCsprojPath([CallerFilePath] string testSourceFilePath = "")
     {

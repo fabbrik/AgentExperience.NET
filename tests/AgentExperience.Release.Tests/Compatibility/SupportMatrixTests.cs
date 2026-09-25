@@ -31,7 +31,7 @@ public sealed class SupportMatrixTests
         var ci = File.ReadAllText(Path.Combine(Root, ".github", "workflows", "ci.yml")).ReplaceLineEndings("\n");
         var sdkMajor = Regex.Match(File.ReadAllText(Path.Combine(Root, "global.json")), "\"version\": *\"(?<major>[0-9]+)\\.").Groups["major"].Value;
 
-        // Per job, not per file: one job losing the runtime would lose its net9.0 test runs on its own.
+        // Per job, not per file: one job losing a runtime would lose that framework's test runs on its own.
         var jobs = Regex.Split(ci[ci.IndexOf("\njobs:\n", StringComparison.Ordinal)..], @"\n(?=  [a-z-]+:\n)", RegexOptions.CultureInvariant)
             .Where(job => job.Contains("actions/setup-dotnet", StringComparison.Ordinal))
             .ToList();
@@ -41,12 +41,33 @@ public sealed class SupportMatrixTests
         {
             var major = Regex.Match(framework, "^net(?<major>[0-9]+)\\.0$").Groups["major"].Value;
             Assert.False(string.IsNullOrEmpty(major), $"'{framework}' is not a netN.0 framework.");
-            Assert.All(jobs, job => Assert.Contains($"dotnet-version: {major}.0.x", job, StringComparison.Ordinal));
+            Assert.All(jobs, job => Assert.Contains($"{major}.0.x", InstalledDotnetVersions(job)));
         }
     }
 
     /// <summary>
-    /// The net9.0 builds of the packages are only ever executed by the test projects' net9.0 runs, so every
+    /// The versions a job's <c>actions/setup-dotnet</c> step asks for: the inline value of
+    /// <c>dotnet-version:</c>, or each line of its block scalar (<c>dotnet-version: |</c>).
+    /// </summary>
+    private static List<string> InstalledDotnetVersions(string job)
+    {
+        // Every setup-dotnet step in the job, so a second one cannot hide a missing runtime. A version in any one of
+        // them installs it for the job; the check is that the job as a whole asks for it.
+        var matches = Regex.Matches(job, @"\n(?<indent> +)dotnet-version: *(?<inline>[^\n]*)\n(?<rest>(?:\k<indent>  +[^\n]*\n)*)", RegexOptions.CultureInvariant);
+        Assert.True(matches.Count > 0, "A job that sets up .NET names no dotnet-version.");
+        return matches
+            .SelectMany(match =>
+            {
+                var inline = match.Groups["inline"].Value.Trim();
+                return Regex.IsMatch(inline, @"^[|>][+-]?[0-9]?[+-]?$", RegexOptions.CultureInvariant)
+                    ? match.Groups["rest"].Value.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(line => !line.StartsWith('#'))
+                    : [inline];
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// The net8.0 and net9.0 builds of the packages are only ever executed by the test projects' runs on those frameworks, so every
     /// test project must record every supported framework, except the three demonstrations that are
     /// deliberately single-target (Directory.Build.props says why).
     /// </summary>

@@ -195,7 +195,11 @@ public sealed record ExperienceEmbeddingDescriptor(
         // one character surviving every editor, diff, and patch tool that ever touches this file, and
         // an unprintable byte in source does not.
         var bytes = Encoding.UTF8.GetBytes(string.Concat(modelId, "\u001F", summary));
+#if NET9_0_OR_GREATER
         return Convert.ToHexStringLower(SHA256.HashData(bytes));
+#else
+        return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+#endif
     }
 }
 
