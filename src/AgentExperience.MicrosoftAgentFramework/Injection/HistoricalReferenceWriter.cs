@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Retrieval;
 
@@ -41,20 +42,26 @@ public sealed record HistoricalReferencePayload(
 /// reuse confidence, its applicability (the rank score and every normalized component with the
 /// weight applied to it), an evidence <em>summary</em> -- lesson, reuse guidance, preconditions,
 /// warnings, verification status, and how many evidence IDs back it -- and, for a verified record,
-/// the ordered tool <em>names</em> of its verified approach. Nothing else.
+/// the ordered tool <em>names</em> of its verified approach, with the values of only those tool
+/// arguments the host allowlisted. Nothing else.
 /// </para>
 /// <para>
-/// <b>What a record never carries, and what changed.</b> Tool <em>arguments</em>, tool
-/// <em>results</em>, attempt <em>results</em>, attempt <em>errors</em> and evidence <em>detail</em>
-/// are never serialized here, so a raw captured payload cannot reach a model through injection. The
-/// ordered tool <em>names</em> of the verified approach are -- that is the one thing this writer
-/// deliberately carries out of <see cref="ExperienceRecord.Attempts"/>, and it was added in story
-/// 4.6 because a lesson that cannot say <em>what was done</em> teaches a later agent nothing. The
-/// earlier wording of this paragraph promised that attempts and tool calls were never serialized at
-/// all; it is amended here rather than quietly dropped.
+/// <b>What a record never carries, and what changed.</b> Tool <em>results</em>, attempt
+/// <em>results</em>, attempt <em>errors</em> and evidence <em>detail</em> are never serialized here,
+/// and neither is any tool <em>argument</em> the host did not allowlist, so a raw captured payload
+/// cannot reach a model through injection. The ordered tool <em>names</em> of the verified approach
+/// are -- that was added in story 4.6 because a lesson that cannot say <em>what was done</em> teaches
+/// a later agent nothing, and it amended an earlier promise that attempts and tool calls were never
+/// serialized at all. Story 6.2 amends it once more, just as precisely: an argument's value is
+/// serialized when, and only when, the host named that argument key for that tool name in
+/// <see cref="ExperienceInjectionOptions.ApproachArguments"/>, the record is the reader's own, and
+/// the value is a string, a number or a boolean -- and it is the value the capture-time sanitizer
+/// stored, bounded as <see cref="MaxArgumentValueLength"/> and
+/// <see cref="MaxApproachArgumentsLength"/> describe. With no allowlist the block is byte for byte
+/// what it was before, arguments included: none.
 /// </para>
 /// <para>
-/// <b>Why the widening stops at names: provenance, not shape.</b> A tool name is fixed when the tool
+/// <b>Why a name crosses by default: provenance, not shape.</b> A tool name is fixed when the tool
 /// is <em>registered</em> and is not derived from the captured run's own data flow. The framework
 /// resolves the name a model emitted against the caller's tool inventory and refuses one that does
 /// not resolve before any capture happens, so what is recorded is an identifier that already existed
@@ -66,6 +73,18 @@ public sealed record HistoricalReferencePayload(
 /// either -- <see cref="AgentExperience.Core.Capture.RawToolCall.ToolName"/> is the one captured
 /// field a host's sanitizer never sees -- so <see cref="Approach"/> does the bounding itself, here,
 /// where the name is about to enter a model's context.
+/// </para>
+/// <para>
+/// <b>Why an argument crosses only by allowlist.</b> An argument value has no such provenance: the
+/// model chose it during the captured run, from whatever was in its context -- a user's message, a
+/// retrieved document, an earlier tool's result -- so it is attacker-influenced payload. The
+/// capture-time sanitizer classifies it by field <em>name</em>, not content, so being stored is no
+/// evidence it is safe to replay. That is why nothing crosses unless the host names the exact tool
+/// and argument key, and why what does cross is bounded as tightly as a tool name and then quoted
+/// and neutralized: a value is shown only as a quoted scalar inside the line it belongs to, never as a
+/// line, a field or a marker of its own, and never with a double quote or the step separator inside
+/// it. It is still text a later model reads, and the host that allowlists a key is choosing to let that argument's values be read; tool authorization, outside
+/// this block, is still what decides what a later agent may do.
 /// </para>
 /// <para>
 /// <b>The sequence is derived from the record, never from the reflection.</b>
@@ -85,7 +104,7 @@ public sealed record HistoricalReferencePayload(
 /// A record is never cut to fit -- not even a single record larger than the entire budget, which is
 /// omitted instead of truncated. Every omission is returned with its reason. The <em>record</em>
 /// limit is not applied here: <see cref="ExperienceContextProvider"/> owns it, because it must trim
-/// before the final eligibility re-read rather than after it. <see cref="Write"/> therefore
+/// before the final eligibility re-read rather than after it. <see cref="Write(IReadOnlyList{RankedExperience}, ExperienceInjectionLimits)"/> therefore
 /// <em>rejects</em> a list longer than the limit instead of silently trimming it a second time, so
 /// the two can never disagree or double-report an omission.
 /// </para>
@@ -99,6 +118,9 @@ public sealed record HistoricalReferencePayload(
 /// withhold, the <c>Shared:</c> line ends with <see cref="ApproachWithheld"/>. Only the <c>Approach:</c>
 /// line is governed: the reflection's prose is rendered unfiltered under either level. The record a store returns to host code is unaffected -- this
 /// writer is the boundary, not the store. A record in the reader's own scope is rendered as always.
+/// A borrowed record's <c>Approach:</c> line, when a grant does permit it, never shows an argument
+/// value, whatever the reader allowlisted: the allowlist is the reader's configuration, and no
+/// grant level was issued as the owner's consent to show its argument values.
 /// </para>
 /// <para>
 /// <b>Delimiter spoofing is neutralized.</b> Record text that contains one of this block's own
@@ -166,6 +188,40 @@ public static class HistoricalReferenceWriter
 
     /// <summary>What closes an <c>Approach:</c> line whose sequence was cut to <see cref="MaxApproachToolNames"/>.</summary>
     public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
+
+    /// <summary>
+    /// The standing qualifier closing an <c>Approach:</c> line that shows at least one argument
+    /// value, in place of <see cref="ApproachSuffix"/>. Written only when the host allowlisted an
+    /// argument through <see cref="ExperienceInjectionOptions.ApproachArguments"/> and a call on the
+    /// line carried it; a line that shows no argument keeps <see cref="ApproachSuffix"/> unchanged.
+    /// </summary>
+    public const string ApproachArgumentsSuffix =
+        " Tool names, plus only the argument values the host allowlisted, as stored after capture-time sanitization -- no other arguments, no results, no error text.";
+
+    /// <summary>
+    /// The most characters one argument value contributes to an <c>Approach:</c> line, counted
+    /// before quoting. A longer value is cut to it and marked with
+    /// <see cref="ClampedName"/>, written after the closing quote so the marker can never be read as
+    /// part of the value.
+    /// </summary>
+    public const int MaxArgumentValueLength = 64;
+
+    /// <summary>
+    /// The most characters every shown argument together -- key, <c>=</c>, quoted value,
+    /// and separator -- contributes to one <c>Approach:</c> line. An argument that would take the line
+    /// past it is not shown, nor is any argument after it, and the line ends with
+    /// <see cref="ApproachArgumentsClamped"/>. An argument is never cut to fit this limit.
+    /// </summary>
+    public const int MaxApproachArgumentsLength = 512;
+
+    /// <summary>What closes an <c>Approach:</c> line some of whose allowlisted argument values were left out by <see cref="MaxApproachArgumentsLength"/>.</summary>
+    public const string ApproachArgumentsClamped = " Some allowlisted argument values are not shown: the line's argument limit was reached.";
+
+    /// <summary>
+    /// What an allowlisted argument's value is written as when it is not a string, a number or a
+    /// boolean: an object, an array, or any other shape. The value itself is never written.
+    /// </summary>
+    public const string ArgumentNotShown = "(not shown: not a string, number or boolean)";
 
     /// <summary>The <c>Shared:</c> line written for every record read through a sharing grant.</summary>
     internal const string SharedLine = "this lesson belongs to another scope and was read through an explicit sharing grant.";
@@ -254,10 +310,45 @@ public static class HistoricalReferenceWriter
     /// <returns>The block and the records the budget dropped. <see cref="HistoricalReferencePayload.IsEmpty"/> when nothing fit.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="records"/> or <paramref name="limits"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="records"/> holds more than <see cref="ExperienceInjectionLimits.MaxRecords"/> entries, or any entry (or its <see cref="RankedExperience.Record"/>) is <see langword="null"/>. Trimming and null-checking belong to the caller, which must do both before the final eligibility re-read.</exception>
-    public static HistoricalReferencePayload Write(IReadOnlyList<RankedExperience> records, ExperienceInjectionLimits limits)
+    public static HistoricalReferencePayload Write(IReadOnlyList<RankedExperience> records, ExperienceInjectionLimits limits) =>
+        Write(records, limits, ApproachArgumentAllowlist.Empty);
+
+    /// <summary>
+    /// Renders <paramref name="records"/> as one Historical Reference block, exactly as
+    /// <see cref="Write(IReadOnlyList{RankedExperience}, ExperienceInjectionLimits)"/> does, except
+    /// that an <c>Approach:</c> line may also show the values of the tool arguments
+    /// <paramref name="approachArguments"/> allowlists.
+    /// </summary>
+    /// <param name="records">As for the two-argument overload.</param>
+    /// <param name="limits">As for the two-argument overload.</param>
+    /// <param name="approachArguments">
+    /// Per tool name, the argument keys whose stored values an <c>Approach:</c> line may show; see
+    /// <see cref="ExperienceInjectionOptions.ApproachArguments"/> for every bound applied to them.
+    /// <see langword="null"/> or empty renders byte for byte what the two-argument overload does.
+    /// </param>
+    /// <returns>As for the two-argument overload.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="records"/> or <paramref name="limits"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">As for the two-argument overload, or <paramref name="approachArguments"/> is malformed (see <see cref="ExperienceInjectionOptions.ApproachArguments"/>).</exception>
+    public static HistoricalReferencePayload Write(
+        IReadOnlyList<RankedExperience> records,
+        ExperienceInjectionLimits limits,
+        IEnumerable<KeyValuePair<string, IReadOnlyList<string>>>? approachArguments)
+    {
+        // Checked before the allowlist, so a null record list is reported as exactly that.
+        ArgumentNullException.ThrowIfNull(records);
+        ArgumentNullException.ThrowIfNull(limits);
+        return Write(records, limits, ApproachArgumentAllowlist.From(approachArguments, nameof(approachArguments)));
+    }
+
+    /// <summary>The one implementation, over an allowlist already validated and snapshotted.</summary>
+    internal static HistoricalReferencePayload Write(
+        IReadOnlyList<RankedExperience> records,
+        ExperienceInjectionLimits limits,
+        ApproachArgumentAllowlist approachArguments)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(approachArguments);
 
         if (records.Count > limits.MaxRecords)
         {
@@ -294,7 +385,7 @@ public static class HistoricalReferenceWriter
 
             if (!dropping)
             {
-                var rendered = Render(ranked, included.Count + 1);
+                var rendered = Render(ranked, included.Count + 1, approachArguments);
                 var size = Utf8(rendered);
                 if (used + size <= limits.MaxBytes)
                 {
@@ -321,7 +412,7 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>Renders one record, delimiters included, as it appears inside the block.</summary>
-    private static string Render(RankedExperience ranked, int ordinal)
+    private static string Render(RankedExperience ranked, int ordinal, ApproachArgumentAllowlist approachArguments)
     {
         var record = ranked.Record;
         var reflection = record.Reflection;
@@ -341,7 +432,11 @@ public static class HistoricalReferenceWriter
         // Anything else, a level the store did not report included, is the least disclosure: fail closed.
         // The withheld sentence is written only when there is an approach to withhold, so the block never
         // implies one exists for a record that has none.
-        var approach = Approach(record);
+        //
+        // A borrowed record never shows an argument value, whatever the grant's level: the allowlist is
+        // the reader's configuration, not the owner's, and no grant level was ever issued as consent to
+        // show the lending scope's argument values. See ExperienceInjectionOptions.ApproachArguments.
+        var approach = Approach(record, ranked.SharedByGrant ? ApproachArgumentAllowlist.Empty : approachArguments);
         var approachWithheld = ranked.SharedByGrant
             && ranked.GrantDisclosure != ExperienceGrantDisclosure.LessonAndApproach;
         if (ranked.SharedByGrant)
@@ -471,11 +566,15 @@ public static class HistoricalReferenceWriter
     /// produced, and the two components must not disagree about which records are well-formed.
     /// </para>
     /// <para>
-    /// <b>Names, in call order, and nothing else.</b> Every tool call of that attempt contributes its
-    /// <see cref="ToolCallRecord.ToolName"/> in <see cref="ToolCallRecord.SequenceNumber"/> order,
-    /// repeats included, because the repetition is part of the sequence. A call that itself errored
-    /// contributes its name like any other and nothing says so: whether a call failed is one more
-    /// thing out of the captured run, and the widening stops at names.
+    /// <b>Names, in call order, and by default nothing else.</b> Every tool call of that attempt
+    /// contributes its <see cref="ToolCallRecord.ToolName"/> in <see cref="ToolCallRecord.SequenceNumber"/>
+    /// order, repeats included, because the repetition is part of the sequence. A call that itself
+    /// errored contributes its name like any other and nothing says so: whether a call failed is one
+    /// more thing out of the captured run, and the widening does not reach it. When the host allowlisted
+    /// argument keys for a call's tool name, the call is written as <c>name(key="value", ...)</c> with
+    /// only those keys, in the allowlist's order, and only for a record in the reader's own scope; a
+    /// call that carried none of them is written as its bare name, and a line that shows no argument
+    /// at all is byte for byte the names-only line.
     /// </para>
     /// <para>
     /// <b>Each name is bounded here, because nothing else bounds it.</b> A name's whitespace is
@@ -485,9 +584,12 @@ public static class HistoricalReferenceWriter
     /// own markers cannot forge structure with it, and then it is cut to
     /// <see cref="MaxToolNameLength"/> characters. The sequence itself is cut to
     /// <see cref="MaxApproachToolNames"/> names. Both cuts are marked in the text rather than silent.
+    /// Argument values are bounded by <see cref="Value"/>, and all of a line's arguments together by
+    /// <see cref="MaxApproachArgumentsLength"/>; the record as a whole is still subject to the byte
+    /// budget, which drops it whole rather than cutting it.
     /// </para>
     /// </remarks>
-    private static string? Approach(ExperienceRecord record)
+    private static string? Approach(ExperienceRecord record, ApproachArgumentAllowlist approachArguments)
     {
         // Two different fields, deliberately both checked: Outcome.Status is the verification the run
         // reached, record.Status is where the record's lifecycle has since put it.
@@ -543,29 +645,283 @@ public static class HistoricalReferenceWriter
             return NoToolsUsed;
         }
 
-        var names = calls
+        var ordered = calls
             .Where(call => call is not null)
             .OrderBy(call => call.SequenceNumber)
             .Take(MaxApproachToolNames + 1)
-            .Select(call => Name(call.ToolName))
             .ToList();
 
-        if (names.Count == 0)
+        if (ordered.Count == 0)
         {
             return NoToolsUsed;
         }
 
         // One more than the cap was taken, purely to tell "exactly at the cap" from "over it".
-        var clamped = names.Count > MaxApproachToolNames;
+        var clamped = ordered.Count > MaxApproachToolNames;
         if (clamped)
         {
-            names.RemoveAt(names.Count - 1);
+            ordered.RemoveAt(ordered.Count - 1);
+        }
+
+        var budget = new ArgumentBudget();
+        var steps = new List<string>(ordered.Count);
+        foreach (var call in ordered)
+        {
+            var name = Name(call.ToolName);
+            var shown = approachArguments.IsEmpty ? null : Arguments(call, approachArguments.KeysFor(call.ToolName), budget);
+            steps.Add(shown is null ? name : name + "(" + shown + ")");
         }
 
         return ApproachPrefix
-            + string.Join(ApproachSeparator, names)
+            + string.Join(ApproachSeparator, steps)
             + (clamped ? ApproachClamped : ".")
-            + ApproachSuffix;
+            + (budget.Shown ? ApproachArgumentsSuffix : ApproachSuffix)
+            + (budget.Exhausted ? ApproachArgumentsClamped : string.Empty);
+    }
+
+    /// <summary>What separates two arguments of one call on an <c>Approach:</c> line.</summary>
+    private const string ArgumentSeparator = ", ";
+
+    /// <summary>What one <c>Approach:</c> line has spent of <see cref="MaxApproachArgumentsLength"/>, and what it has shown.</summary>
+    private sealed class ArgumentBudget
+    {
+        /// <summary>The characters every shown argument on the line has taken so far.</summary>
+        public int Used { get; set; }
+
+        /// <summary>Whether at least one argument has been shown on the line.</summary>
+        public bool Shown { get; set; }
+
+        /// <summary>Whether an argument was left out because it would have taken the line past its limit. Every later one is left out too.</summary>
+        public bool Exhausted { get; set; }
+    }
+
+    /// <summary>
+    /// The allowlisted arguments one call carried, as <c>key=value</c> pairs in the allowlist's
+    /// order, or <see langword="null"/> when the call carried none of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only the allowlist decides which keys are read.</b> The call's own argument dictionary is
+    /// only ever <em>looked up</em>, by each allowlisted key in turn; it is never enumerated, so a key
+    /// the host did not name cannot reach the line by any path through this method. A key the call
+    /// did not carry -- including one the capture-time sanitizer omitted -- is skipped silently.
+    /// </para>
+    /// <para>
+    /// <b>The value is the stored one.</b> What a record carries is what the sanitizer returned at
+    /// capture, so a value it redacted is rendered in its redacted form, and nothing here can reach
+    /// the raw value it replaced. See <see cref="Value"/> for every bound applied to it.
+    /// </para>
+    /// </remarks>
+    private static string? Arguments(ToolCallRecord call, IReadOnlyList<string> keys, ArgumentBudget budget)
+    {
+        if (keys.Count == 0 || call.Arguments is null || budget.Exhausted)
+        {
+            return null;
+        }
+
+        StringBuilder? text = null;
+        foreach (var key in keys)
+        {
+            // The key is confirmed ordinally against the call's own keys before its value is read: a
+            // store or a custom sanitizer may hand back a dictionary with a looser comparer, whose
+            // lookup of "strategy" would return the value stored under "STRATEGY". Only keys are
+            // compared here; no value but the allowlisted key's is ever read.
+            if (!call.Arguments.Keys.Any(stored => string.Equals(stored, key, StringComparison.Ordinal))
+                || !call.Arguments.TryGetValue(key, out var value))
+            {
+                continue;
+            }
+
+            // Keys were validated when the allowlist was built -- no whitespace, no control character
+            // and none of the line's delimiters -- so a key is written as configured.
+            var pair = key + "=" + SafeValue(value);
+            var cost = pair.Length + (text is null ? 0 : ArgumentSeparator.Length);
+            if (budget.Used + cost > MaxApproachArgumentsLength)
+            {
+                // Whole arguments only: this one and every later one on the line are left out, and
+                // the line says so.
+                budget.Exhausted = true;
+                break;
+            }
+
+            budget.Used += cost;
+            budget.Shown = true;
+            text = text is null ? new StringBuilder(pair) : text.Append(ArgumentSeparator).Append(pair);
+        }
+
+        return text?.ToString();
+    }
+
+    /// <summary>
+    /// <see cref="Value"/>, except that a value that cannot be read -- a <see cref="JsonElement"/>
+    /// whose document was disposed, a custom store's value whose formatting throws -- is written as
+    /// <see cref="ArgumentNotShown"/> rather than failing the whole injection.
+    /// </summary>
+    private static string SafeValue(object? value)
+    {
+        try
+        {
+            return Value(value);
+        }
+#pragma warning disable CA1031 // One unreadable value must not suppress every record in the block.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return ArgumentNotShown;
+        }
+    }
+
+    /// <summary>
+    /// One allowlisted argument's stored value as the <c>Approach:</c> line carries it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Scalars only.</b> A string, a number or a boolean is written; so is a <c>null</c>, as
+    /// <c>null</c>. Anything else -- an object, an array, or any other shape a store or a sanitizer
+    /// left in the dictionary -- is written as <see cref="ArgumentNotShown"/> and its content is never
+    /// read. A <see cref="JsonElement"/> is classified by its kind, because that is how an in-memory
+    /// record can hold what MAF captured, while the PostgreSQL store hands back plain CLR values; a
+    /// JSON number is rendered exactly as that store would normalize it (an integer that fits a
+    /// <see cref="long"/>, otherwise a round-trippable <see cref="double"/>), so the two stores render
+    /// the same record the same way. A number is any CLR integer or floating-point type, including
+    /// <see cref="decimal"/>, <see cref="Int128"/> and <see cref="System.Numerics.BigInteger"/>; an enum is
+    /// written as its quoted name. A <see cref="Guid"/>, a date or any other value type is not a scalar
+    /// here and gets the marker.
+    /// </para>
+    /// <para>
+    /// <b>A string is bounded exactly as a tool name is, and then quoted.</b> Whitespace is collapsed
+    /// to single spaces and trimmed from both ends, so the value cannot add a line (a value that is
+    /// only whitespace is therefore written as <c>""</c>, the same as an empty one); it goes through <see cref="Clean"/>, so it
+    /// cannot carry one of the block's markers; it is cut to <see cref="MaxArgumentValueLength"/>
+    /// characters, never between a surrogate pair; and it is wrapped in double quotes, having had every
+    /// double quote (and look-alike) turned into a single quote and every <c>-&gt;</c> broken up first
+    /// (see <see cref="Quoted"/>), so the value's end is unambiguous to a reader that does not parse
+    /// escapes. It can still contain words that <em>read</em> like a call; it cannot be parsed as one.
+    /// The cut is marked with <see cref="ClampedName"/> <em>outside</em> the quotes. A
+    /// number is written in invariant culture and cut the same way, since a JSON number's text has no
+    /// length limit of its own.
+    /// </para>
+    /// </remarks>
+    private static string Value(object? value) => value switch
+    {
+        null => "null",
+        string text => Quoted(text),
+        bool flag => flag ? "true" : "false",
+        JsonElement element => element.ValueKind switch
+        {
+            JsonValueKind.String => Quoted(element.GetString() ?? string.Empty),
+            JsonValueKind.Number => Bounded(element.TryGetInt64(out var integral)
+                ? integral.ToString(CultureInfo.InvariantCulture)
+                : element.GetDouble().ToString("R", CultureInfo.InvariantCulture)),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => "null",
+            _ => ArgumentNotShown,
+        },
+        Enum named => Quoted(named.ToString()),
+        sbyte or byte or short or ushort or int or uint or long or ulong or decimal
+            or nint or nuint or Int128 or UInt128 or System.Numerics.BigInteger =>
+            Bounded(((IFormattable)value).ToString(null, CultureInfo.InvariantCulture)),
+        Half half => Bounded(half.ToString("R", CultureInfo.InvariantCulture)),
+        float single => Bounded(single.ToString("R", CultureInfo.InvariantCulture)),
+        double number => Bounded(number.ToString("R", CultureInfo.InvariantCulture)),
+        _ => ArgumentNotShown,
+    };
+
+    /// <summary>A number's text, cut to <see cref="MaxArgumentValueLength"/> and marked when cut. Never quoted.</summary>
+    private static string Bounded(string number)
+    {
+        var (text, cut) = Clamp(number, MaxArgumentValueLength);
+        return cut ? text + ClampedName : text;
+    }
+
+    /// <summary>A string value, bounded, neutralized and quoted; see <see cref="Value"/>.</summary>
+    /// <remarks>
+    /// <para>
+    /// Characters are classified by Unicode scalar value, not by UTF-16 unit, so a character outside
+    /// the Basic Multilingual Plane is seen for what it is. A control, format, private-use or
+    /// unassigned character -- an escape sequence's introducer, a bidirectional override, a zero-width
+    /// joiner, a TAG character that can smuggle invisible ASCII to a model -- and a lone surrogate are
+    /// each treated as whitespace before anything else.
+    /// </para>
+    /// <para>
+    /// The line's own syntax is then taken out of the value rather than escaped, because the reader is
+    /// a language model, not a parser: every double quote and double-quote look-alike becomes a single
+    /// quote, and the sequence separator <c>-&gt;</c> becomes <c>- &gt;</c>. So the only double quotes on
+    /// an argument are the two that delimit it, and a value cannot spell the separator that joins two
+    /// steps. Parentheses, commas and equals signs inside the quotes are left alone: they cannot end
+    /// the value, because only a double quote can.
+    /// </para>
+    /// </remarks>
+    private static string Quoted(string value)
+    {
+        var mapped = new StringBuilder(value.Length);
+        var index = 0;
+        while (index < value.Length)
+        {
+            if (Rune.DecodeFromUtf16(value.AsSpan(index), out var rune, out var consumed) != System.Buffers.OperationStatus.Done)
+            {
+                // A lone surrogate: not a character.
+                mapped.Append(' ');
+                index += Math.Max(consumed, 1);
+                continue;
+            }
+
+            index += consumed;
+            var category = Rune.GetUnicodeCategory(rune);
+            if (category is UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.PrivateUse
+                or UnicodeCategory.OtherNotAssigned or UnicodeCategory.Surrogate)
+            {
+                mapped.Append(' ');
+            }
+            else if (QuoteLookAlikes.Contains(rune.Value))
+            {
+                mapped.Append('\'');
+            }
+            else
+            {
+                mapped.Append(rune.ToString());
+            }
+        }
+
+        var collapsed = CollapseWhitespace(mapped.ToString()).Replace("->", "- >", StringComparison.Ordinal);
+
+        // Clean maps a blank string to NoValue, which is right for a lesson and wrong here: an empty
+        // value -- which is what the default redactor leaves in place of a secret -- is written as the
+        // empty string it is.
+        var cleaned = collapsed.Length == 0 ? string.Empty : Clean(collapsed);
+        var (text, cut) = Clamp(cleaned, MaxArgumentValueLength);
+        return "\"" + text + "\"" + (cut ? ClampedName : string.Empty);
+    }
+
+    /// <summary>
+    /// Code points a reader could take for the double quote that delimits an argument value: the
+    /// ASCII one, the typographic ones, the full-width one, and the double primes. Each becomes a
+    /// single quote inside a value.
+    /// </summary>
+    private static readonly HashSet<int> QuoteLookAlikes =
+        [0x0022, 0x201C, 0x201D, 0x201E, 0x201F, 0x2033, 0x2036, 0x02BA, 0x02DD, 0x02EE, 0x3003, 0x301D, 0x301E, 0x301F, 0xFF02];
+
+    /// <summary>
+    /// <paramref name="value"/> cut to at most <paramref name="length"/> characters, never between a
+    /// surrogate pair, and whether a cut happened.
+    /// </summary>
+    private static (string Text, bool Cut) Clamp(string value, int length)
+    {
+        if (value.Length <= length)
+        {
+            return (value, false);
+        }
+
+        // Never between a surrogate pair: half of one is not a character and would be written as a
+        // replacement character in the block's UTF-8.
+        var cut = length;
+        if (char.IsHighSurrogate(value[cut - 1]))
+        {
+            cut--;
+        }
+
+        return (value[..cut], true);
     }
 
     /// <summary>
@@ -587,21 +943,8 @@ public static class HistoricalReferenceWriter
             return NoValue;
         }
 
-        var cleaned = Clean(CollapseWhitespace(value));
-        if (cleaned.Length <= MaxToolNameLength)
-        {
-            return cleaned;
-        }
-
-        // Never between a surrogate pair: half of one is not a character and would be written as a
-        // replacement character in the block's UTF-8.
-        var cut = MaxToolNameLength;
-        if (char.IsHighSurrogate(cleaned[cut - 1]))
-        {
-            cut--;
-        }
-
-        return cleaned[..cut] + ClampedName;
+        var (text, cut) = Clamp(Clean(CollapseWhitespace(value)), MaxToolNameLength);
+        return cut ? text + ClampedName : text;
     }
 
     /// <summary>Every run of whitespace -- newlines included -- as one space, with the ends trimmed.</summary>

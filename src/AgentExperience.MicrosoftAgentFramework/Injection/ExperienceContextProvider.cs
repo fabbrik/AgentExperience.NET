@@ -99,6 +99,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private readonly ExperienceRetrievalService _retrieval;
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceInjectionOptions _options;
+    private readonly ApproachArgumentAllowlist _approachArguments;
 
     /// <summary>
     /// Creates a provider over Core's retrieval service, the record store its final eligibility check
@@ -107,7 +108,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="retrieval">Core's retrieval service. It owns eligibility, ranking, and the retrieval timeout.</param>
     /// <param name="store">The record store each selected candidate is re-read through, in the request's own authorization and scope.</param>
     /// <param name="options">Host configuration: the resolver, the limits, the risk decision, and the result callback.</param>
-    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.ResolveRequest"/> or <see cref="ExperienceInjectionOptions.Limits"/>, is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.ResolveRequest"/>, <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/> or <see cref="ExperienceInjectionOptions.ApproachArguments"/>, is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><see cref="ExperienceInjectionOptions.ApproachArguments"/> is malformed; see its remarks.</exception>
     public ExperienceContextProvider(
         ExperienceRetrievalService retrieval,
         IExperienceRecordStore store,
@@ -116,11 +118,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
         ArgumentNullException.ThrowIfNull(retrieval);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(options);
-        options.Validate(nameof(options));
+        var approachArguments = options.Validate(nameof(options));
 
         _retrieval = retrieval;
         _store = store;
         _options = options;
+        _approachArguments = approachArguments;
     }
 
     /// <summary>
@@ -289,7 +292,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         HistoricalReferencePayload payload;
         try
         {
-            payload = HistoricalReferenceWriter.Write(recheck.Injectable, _options.Limits);
+            payload = HistoricalReferenceWriter.Write(recheck.Injectable, _options.Limits, _approachArguments);
         }
         catch (Exception ex)
         {

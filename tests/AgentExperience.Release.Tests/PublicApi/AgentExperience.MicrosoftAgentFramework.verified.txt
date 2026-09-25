@@ -111,6 +111,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     public sealed class ExperienceInjectionOptions
     {
         public ExperienceInjectionOptions() { }
+        public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; init; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
@@ -145,15 +146,22 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     }
     public static class HistoricalReferenceWriter
     {
+        public const string ApproachArgumentsClamped = " Some allowlisted argument values are not shown: the line\'s argument limit was re" +
+            "ached.";
+        public const string ApproachArgumentsSuffix = " Tool names, plus only the argument values the host allowlisted, as stored after " +
+            "capture-time sanitization -- no other arguments, no results, no error text.";
         public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
         public const string ApproachPrefix = "the verified run\'s final attempt called these tools, in order: ";
         public const string ApproachSeparator = " -> ";
         public const string ApproachSuffix = " Tool names only -- no arguments, no results, no error text.";
         public const string ApproachWithheld = " The grant withholds this lesson\'s approach.";
+        public const string ArgumentNotShown = "(not shown: not a string, number or boolean)";
         public const string BlockBegin = "=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===";
         public const string BlockEnd = "=== END HISTORICAL REFERENCE ===";
         public const string ClampedName = "[...]";
+        public const int MaxApproachArgumentsLength = 512;
         public const int MaxApproachToolNames = 20;
+        public const int MaxArgumentValueLength = 64;
         public const int MaxToolNameLength = 96;
         public const string NeutralizedMarker = "[delimiter removed]";
         public const string NoToolsUsed = "the verified run\'s final attempt completed without calling any tool.";
@@ -161,6 +169,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string NotANumber = "(unavailable)";
         public static int BlockOverheadBytes { get; }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits) { }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments) { }
     }
     public sealed class InjectionDecision : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>
     {

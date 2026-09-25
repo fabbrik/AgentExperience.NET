@@ -3,6 +3,42 @@
 AgentExperience.NET is a **preview**. It is not production ready, and public APIs may change between previews. The
 [Known limits](README.md#known-limits) table lists every limit that is still unresolved.
 
+## Unreleased
+
+### Added
+
+- **`ExperienceInjectionOptions.ApproachArguments`: selected argument values on the `Approach:` line** (story 6.2,
+  KL-8). A host can allowlist, per tool name, the argument keys whose values the injected `Approach:` line shows, for
+  example `ApproachArguments = { ["run_incident_check"] = ["strategy"] }`, which renders
+  `run_incident_check(strategy="wait-for-lock")`. It is empty by default, and without it the block is byte for byte
+  what it was. `HistoricalReferenceWriter.Write` gains an overload that takes the same allowlist.
+  - Only keys named for that exact tool are read, and only the value the capture-time sanitizer stored, so a redacted
+    value stays redacted.
+  - Only a string, number, boolean, null or enum name is shown. An object or array becomes `(not shown: not a string, number or
+    boolean)`.
+  - A string has invisible characters (per Unicode scalar) and whitespace collapsed and trimmed, its markers
+    neutralized, its double quotes turned into single quotes and `->` broken up, and is cut to 64 characters and
+    quoted. A line's
+    arguments are capped at 512 characters in total, and the byte budget still drops whole records.
+  - A record borrowed through a sharing grant never shows an argument value, under either disclosure level. No
+    migration is needed.
+  - A malformed allowlist is refused when `ExperienceContextProvider` is constructed, and the provider keeps a copy.
+
+### Known limits
+
+- **KL-8 is narrowed, not closed.** Approaches that differ by an allowlisted scalar argument now render differently.
+  What remains: an object- or array-valued argument still renders as a marker, and a borrowed record shows no
+  argument value (names only under `LessonAndApproach`, no `Approach:` line under `LessonOnly`).
+
+### Reuse baseline
+
+- The reference experiment no longer registers a host `WorkingApproachReflector`. The learning phase runs the shipped
+  `DefaultExperienceReflector` alone, and the trials allowlist the `strategy` argument instead. The three golden
+  reports changed only in prose: the learned-records line now reads the strategy off the record's final attempt, and
+  the paragraph explaining what the harness supplies names the allowlist rather than a reflector. No number moved:
+  every trial, mean, verdict, experience ID and confidence is identical. A new test shows the allowlist is
+  load-bearing: with it off, the agent reads no strategy from the block and the harness refuses to report reuse.
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

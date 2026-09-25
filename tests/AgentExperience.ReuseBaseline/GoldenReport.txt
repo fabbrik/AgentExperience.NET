@@ -194,25 +194,24 @@ instead of taking it on trust.
 LEARNED RECORDS -- produced by the learning phase, read back out of the store:
     learn-settlement-batch-stalled     experience 05cfee0f-f21f-853d-beaf-0f5c49c0e2f1
       ExperienceStatus.Validated, reuse confidence 0.667, 2 failed attempt(s) in the learning run
-      working approach in the lesson: 'wait-for-lock' (read out of the run's final successful attempt, not from the task set)
+      working approach on its Approach: line: 'wait-for-lock' (read out of the record's final attempt, not from the task set)
     learn-settlement-gateway-shedding  experience 3308130e-1e7a-8c8d-a04b-ae736bfb0828
       ExperienceStatus.Validated, reuse confidence 0.667, 3 failed attempt(s) in the learning run
-      working approach in the lesson: 'escalate-to-oncall' (read out of the run's final successful attempt, not from the task set)
+      working approach on its Approach: line: 'escalate-to-oncall' (read out of the record's final attempt, not from the task set)
 
   Trials never write a record. Only the learning phase does, so every trial in both conditions
   faces exactly the same stored experience and the two arms differ by the condition alone.
 
-  The 'working approach' line above is the harness's own, and a reader should weigh it as such.
-  The library's shipped DefaultExperienceReflector is domain-blind -- its lesson names the task
-  and the checks that passed, never how. The injected Historical Reference block does now carry the
-  ordered tool NAMES of a verified run's final attempt, but never a tool's arguments -- and in this
-  experiment every strategy is the same single tool, distinguished only by its 'strategy' argument.
-  So the block's own approach line cannot tell the conditions apart here, and with the default
-  reflector alone nothing about a working approach would reach a later run. This harness fills that
-  gap through IExperienceReflector, the documented seam for it, with a host reflector that reads the
-  strategy out of the captured run's final successful attempt. That is a legitimate host
-  responsibility and it is also a load-bearing part of why the arms differ, so it is named here
-  rather than left in source.
+  The records were written by the library's shipped DefaultExperienceReflector alone; this harness
+  registers no reflector of its own. That reflector is domain-blind -- its lesson names the task
+  and the checks that passed, never how -- and in this experiment every strategy is the same single
+  tool, distinguished only by its 'strategy' argument, so the ordered tool NAMES on the block's
+  Approach: line cannot tell the strategies apart either. What carries the working approach to a
+  later run is one host setting: ExperienceInjectionOptions.ApproachArguments allowlists the
+  'strategy' argument of run_incident_check, so the library's own Approach: line shows its
+  sanitized value next to the tool name. That allowlist is a legitimate host responsibility and it
+  is also a load-bearing part of why the arms differ, so it is named here rather than left in
+  source. Without it, nothing about a working approach would reach a later run.
 
 PER-CONDITION RESULTS -- sample size and dispersion, per condition, per metric.
 

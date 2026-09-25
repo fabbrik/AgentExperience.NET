@@ -30,7 +30,7 @@ public class ApprovalBoundaryTests
         var result = await ReuseBaselineExperiment.RunAsync(new ExperimentOptions
         {
             Arm = ReuseBaselineArms.Reference,
-            DecorateReflector = inner => new PoisonedReflector(new WorkingApproachReflector(inner)),
+            DecorateReflector = inner => new PoisonedReflector(inner),
         });
 
         var enabled = result.Trials.Where(trial => trial.Condition == TrialCondition.MemoryEnabled).ToList();
@@ -98,7 +98,7 @@ public class ApprovalBoundaryTests
         var refused = await Assert.ThrowsAsync<HarnessIntegrityException>(() => ReuseBaselineExperiment.RunAsync(new ExperimentOptions
         {
             Arm = ReuseBaselineArms.Reference,
-            DecorateReflector = inner => new PoisonedReflector(new WorkingApproachReflector(inner)),
+            DecorateReflector = inner => new PoisonedReflector(inner),
 
             // Index 1 is the first memory-enabled trial, so it is the first one the block reaches.
             UnguardTheGuardedToolAt = index => index == 1,

@@ -38,6 +38,7 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_candidate_no_longer_readable_in_scope_is_omitted_indistinguishably_from_a_missing_one` | A re-scoped record drops out, revealing nothing |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_LessonOnly_grant_withholds_the_approach_says_so_and_the_access_row_records_the_level` | A borrowed record's `Approach:` line — the lending scope's tool names — is withheld unless its grant permits it |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_store_that_says_shared_but_reports_no_level_is_rendered_LessonOnly` | A store that reports no disclosure level fails closed to the least disclosure |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_borrowed_record_never_shows_an_argument_value_whatever_its_grant` | The reader's `ApproachArguments` allowlist never reaches a borrowed record: the lending scope's argument values are shown under no disclosure level |
 
 ### Write
 
@@ -81,6 +82,9 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Core.Tests | `InMemoryExperienceCaptureServiceTests.AC6_secret_classified_argument_field_never_reaches_the_stored_tool_call_only_the_sanitizer_allowed_result_does` | Tool-call arguments |
 | Core.Tests | `ExperienceIndexingServiceTests.Only_the_sanitized_retrieval_summary_is_ever_handed_to_the_provider` | Nothing else is sent to an embedding provider |
 | MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachTests.A_host_reflectors_secret_in_SuccessfulApproaches_never_reaches_the_block` | A host reflector cannot widen what injection emits |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_of_an_argument_not_on_the_allowlist_never_reaches_the_block` | Only the argument keys a host allowlisted for that exact tool can reach the `Approach:` line — planted markers in every other key, a case variant and another tool stay out |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_the_capture_sanitizer_redacted_stays_redacted_and_one_it_omitted_stays_absent` | Through real capture and `DefaultSanitizer`: an allowlisted key shows the stored value, so a redacted secret stays redacted and an omitted field stays absent |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_non_scalar_value_is_omitted_with_a_marker_and_its_content_never_read` | An allowlisted object or array is never rendered, so nothing nested inside it can reach a model |
 | MicrosoftAgentFramework.Tests | `InjectionTelemetryTests.Injection_telemetry_never_contains_the_block_it_injected` | Telemetry carries no injected content |
 | Sample.EndToEnd.Tests | `SampleRunTests.Secret_tool_argument_reaches_neither_the_transcript_the_capture_nor_the_record` | End to end, through the MAF adapter |
 | Storage.Postgres.Tests | `MigratorLogSilenceTests.A_failing_script_reaches_no_console_trace_logger_or_activity_sink` | The migrator leaks no error text to the host's sinks **(DB)** |
@@ -108,6 +112,8 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.Injected_text_that_orders_an_unauthorized_tool_call_is_still_denied_by_the_existing_boundary` | A model that *obeys* an injected instruction is still denied by the approval boundary |
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_injected_approach_line_naming_a_guarded_tool_is_still_denied_by_the_existing_boundary` | The same, for the `Approach:` line |
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_injection_shaped_guarded_tool_name_is_escaped_in_the_block_and_its_call_is_still_denied` | A tool name crafted to break out of the block |
+| MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_allowlisted_argument_value_that_orders_a_guarded_call_is_still_denied_by_the_existing_boundary` | The same, for an allowlisted argument value: the first model-chosen text the `Approach:` line can carry |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_cannot_add_a_line_forge_a_marker_or_a_label_or_close_its_own_quotes` | An argument value crafted to break out of its quotes, its line or the block forges no structure |
 | ReuseBaseline | `ApprovalBoundaryTests.A_poisoned_lesson_is_obeyed_denied_counted_and_fails_the_guardrail` | A poisoned lesson, measured: obeyed, denied, and counted against the experiment |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.The_injected_message_is_reference_material_in_the_user_role_not_a_host_instruction` | Never injected as a system instruction |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_host_denial_omits_the_record_whatever_its_confidence_or_status_and_leaves_it_unchanged` | The host's risk policy overrides confidence |
@@ -125,3 +131,9 @@ The label on an injected block is hygiene, not a control: nothing here claims a 
 as data. The control is the approval boundary around tools, which lives outside the block, and section 4 is what
 proves that boundary holds when the model does obey. The residual risk — injected blocks accumulating in a reused
 session — is a row in the root README's Known limits table.
+
+Nor does it prove that an argument value a host allowlists through `ExperienceInjectionOptions.ApproachArguments` is
+safe to show. Such a value was chosen by the captured run's model and is only as clean as the capture-time sanitizer,
+which classifies by field name, not content, left it. The suite proves the structural bounds — only allowlisted keys,
+only stored scalars, quoted with no double quote or step separator inside, clamped and capped, never for a borrowed record — and that the approval boundary
+still holds when a shown value orders a guarded call; which keys are harmless to show is the host's decision.

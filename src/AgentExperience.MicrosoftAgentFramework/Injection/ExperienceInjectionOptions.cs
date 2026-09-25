@@ -232,16 +232,85 @@ public sealed class ExperienceInjectionOptions
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
+    /// Optional, empty by default. Per tool name, the argument keys whose values the injected
+    /// <c>Approach:</c> line may show next to that tool's name, for example
+    /// <c>ApproachArguments = { ["run_incident_check"] = ["strategy"] }</c>. Leave it empty and the
+    /// block is byte for byte what it is without this option: tool names only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why it exists.</b> Two approaches that call the same tool with different arguments --
+    /// <c>retry_refund(delay: 0)</c> failing and <c>retry_refund(delay: 30)</c> working -- otherwise
+    /// render as the same line. A host that knows which of its arguments carry the <em>choice</em>
+    /// can name them here instead of writing a reflector to restate them in prose.
+    /// </para>
+    /// <para>
+    /// <b>What an allowlisted value is, and every bound on it.</b>
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>It is the value the record stores, which is what the capture-time
+    /// <c>ISanitizer</c> returned -- never the raw value. A value the sanitizer redacted is shown in its
+    /// redacted form (the default redactor leaves an empty string, shown as <c>""</c>); a key it omitted
+    /// is absent and shows nothing.</description></item>
+    /// <item><description>Only a string, a number or a boolean is shown (and a null, as <c>null</c>,
+    /// and an enum, as its quoted name).
+    /// An object, an array or any other shape is written as
+    /// <see cref="HistoricalReferenceWriter.ArgumentNotShown"/>, and its content is never
+    /// read.</description></item>
+    /// <item><description>A string's whitespace, control and format characters are collapsed to single
+    /// spaces and trimmed from the ends (so an all-whitespace value reads as <c>""</c>),
+    /// the block's markers are neutralized as in every other field, it is cut to
+    /// <see cref="HistoricalReferenceWriter.MaxArgumentValueLength"/> characters with the cut marked,
+    /// and it is written in double quotes, with every double quote or look-alike inside it turned into
+    /// a single quote and every <c>-&gt;</c> broken up, so it can neither add a line, nor end its own
+    /// quotes, nor spell the step separator.</description></item>
+    /// <item><description>All the arguments on one line together are capped at
+    /// <see cref="HistoricalReferenceWriter.MaxApproachArgumentsLength"/> characters; an argument that
+    /// would pass the cap is left out whole, with every later one, and the line says so. The record as
+    /// a whole still counts against <see cref="ExperienceInjectionLimits.MaxBytes"/>, which drops it
+    /// whole rather than cutting it.</description></item>
+    /// <item><description>A value of any key not listed for that exact tool name is never shown: the
+    /// writer looks keys up from this list and never enumerates a call's arguments. Tool names and
+    /// keys are matched ordinally.</description></item>
+    /// <item><description>A record borrowed through a sharing grant never shows an argument value,
+    /// whatever its grant's disclosure level. The allowlist is the reader's configuration, not the
+    /// owner's, and a <see cref="ExperienceGrantDisclosure.LessonAndApproach"/> grant was issued as
+    /// consent to show tool names only.</description></item>
+    /// </list>
+    /// <para>
+    /// <b>Allowlisting a key lets a later model read that argument's values.</b> A value is still text
+    /// the captured run's model chose, from whatever was in its context, and the sanitizer classifies
+    /// by field name rather than content. List only keys whose values are choices from a small, known
+    /// set -- a strategy, a mode, a delay -- never free text, identifiers of people, or anything a
+    /// secret could be written into. The authorization boundary outside the block still decides what
+    /// a later agent may call, whatever a shown value says.
+    /// </para>
+    /// <para>
+    /// <b>Snapshotted at construction.</b> <see cref="ExperienceContextProvider"/> validates and
+    /// copies this dictionary when it is constructed, so changing it afterwards changes nothing about
+    /// that provider. A blank tool name, a <see langword="null"/> key list, or a key that is blank,
+    /// longer than 64 characters, listed twice, or contains whitespace, a control, format or surrogate
+    /// character, or one of <c>= ( ) , " \</c> is refused with an <see cref="ArgumentException"/> there.
+    /// </para>
+    /// </remarks>
+    public IDictionary<string, IReadOnlyList<string>> ApproachArguments { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
+    /// <summary>
     /// Validates this instance, in the same style as
     /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/>: a misconfigured
     /// provider fails when it is constructed, not on the first invocation it silently does nothing on.
     /// </summary>
     /// <param name="paramName">The parameter name to report on a validation failure.</param>
-    /// <exception cref="ArgumentNullException"><see cref="ResolveRequest"/>, <see cref="Limits"/>, or <see cref="TimeProvider"/> is <see langword="null"/>.</exception>
-    internal void Validate(string paramName)
+    /// <returns>The validated snapshot of <see cref="ApproachArguments"/>.</returns>
+    /// <exception cref="ArgumentNullException"><see cref="ResolveRequest"/>, <see cref="Limits"/>, <see cref="TimeProvider"/>, or <see cref="ApproachArguments"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><see cref="ApproachArguments"/> is malformed.</exception>
+    internal ApproachArgumentAllowlist Validate(string paramName)
     {
         ArgumentNullException.ThrowIfNull(ResolveRequest, $"{paramName}.{nameof(ResolveRequest)}");
         ArgumentNullException.ThrowIfNull(Limits, $"{paramName}.{nameof(Limits)}");
         ArgumentNullException.ThrowIfNull(TimeProvider, $"{paramName}.{nameof(TimeProvider)}");
+        ArgumentNullException.ThrowIfNull(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
+        return ApproachArgumentAllowlist.From(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
     }
 }

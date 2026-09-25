@@ -102,9 +102,20 @@ public sealed record ExperimentOptions
 
     /// <summary>
     /// Wraps the reflector the learning phase uses. The reference experiment leaves this at
-    /// <see langword="null"/>, which is <see cref="WorkingApproachReflector"/> over the default.
+    /// <see langword="null"/>, which is the shipped <see cref="DefaultExperienceReflector"/> alone.
     /// </summary>
     public Func<IExperienceReflector, IExperienceReflector>? DecorateReflector { get; init; }
+
+    /// <summary>
+    /// Leaves the <c>ApproachArguments</c> allowlist off the trials' injection options. Test-only, and
+    /// <see langword="false"/> in every pre-registered arm.
+    /// </summary>
+    /// <remarks>
+    /// It exists to show the allowlist is load-bearing: with it off, the block's <c>Approach:</c> line
+    /// is tool names only, every strategy is the same tool, and the shipped default reflector's lesson
+    /// names none -- so nothing in the block can reorder the agent's candidates.
+    /// </remarks>
+    public bool OmitApproachArguments { get; init; }
 
     /// <summary>The fault to inject into a trial index, if any. Always <see langword="null"/> in the reference experiment.</summary>
     public Func<int, TrialFault?>? FaultAt { get; init; }
@@ -141,7 +152,11 @@ public sealed record ExperimentOptions
 /// <param name="Status">Its lifecycle status.</param>
 /// <param name="ReuseConfidence">Its reuse confidence, which must clear retrieval's floor to be reachable at all.</param>
 /// <param name="FailedAttempts">How many attempts the learning run failed before it resolved its task.</param>
-/// <param name="WorkingStrategy">The strategy the reflector read out of the run's final successful attempt.</param>
+/// <param name="WorkingStrategy">
+/// The strategy the stored record's final attempt used, read by <see cref="WorkingApproach.StrategyIn"/>
+/// from the same final attempt the injected <c>Approach:</c> line reads; for every record this experiment
+/// learns, it is the value that line shows (see <see cref="WorkingApproach"/> for where the two rules differ).
+/// </param>
 /// <param name="LessonNamesGuardedTool">
 /// Whether the stored lesson names the guarded tool. It is read back out of the store, and it is what
 /// decides whether the <c>unauthorized_tool_executions</c> gate term could have failed in this arm at
@@ -562,7 +577,7 @@ public static class ReuseBaselineExperiment
                 readBack.Record.Status,
                 readBack.Record.ReuseConfidence,
                 execution.Run.Attempts.Count(attempt => attempt.Error is not null),
-                WorkingApproachReflector.WorkingStrategyIn(execution.Run),
+                WorkingApproach.StrategyIn(readBack.Record.Attempts),
                 readBack.Record.Reflection?.Lesson?.Contains(ToolApprovalBoundary.GuardedToolName, StringComparison.Ordinal) == true);
 
             learned.Add(record);
@@ -867,6 +882,15 @@ public static class ReuseBaselineExperiment
                             Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = options.RetrievalTimeout },
                             OnContextInjected = injections.Add,
                             TimeProvider = clock,
+
+                            // Story 6.2: the one argument that distinguishes this experiment's
+                            // approaches, allowlisted so the block's own Approach: line carries it.
+                            ApproachArguments = options.OmitApproachArguments
+                                ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                                : new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                                {
+                                    [IncidentCheckTool.ToolName] = [WorkingApproach.StrategyArgument],
+                                },
                         })]
                     : [],
             };
@@ -884,7 +908,7 @@ public static class ReuseBaselineExperiment
 
             var strategy = recorder.Calls
                 .LastOrDefault(call => string.Equals(call.ToolName, IncidentCheckTool.ToolName, StringComparison.Ordinal))
-                ?.Arguments.TryGetValue(WorkingApproachReflector.StrategyArgument, out var value) == true && value is string named
+                ?.Arguments.TryGetValue(WorkingApproach.StrategyArgument, out var value) == true && value is string named
                     ? named
                     : "(none)";
 
@@ -1010,13 +1034,15 @@ public static class ReuseBaselineExperiment
             ? new FaultingCandidateSource()
             : new InMemoryCandidateSource(records));
 
-        // Registered before AddAgentExperienceCore, whose TryAdd leaves a host's own reflector in
-        // place. The seam is the documented one; see WorkingApproachReflector's remarks for why the
-        // default reflector alone cannot carry a working approach into a later run.
-        IExperienceReflector reflector = new WorkingApproachReflector(new DefaultExperienceReflector());
-        services.AddSingleton(options.DecorateReflector is null
-            ? reflector
-            : options.DecorateReflector(new DefaultExperienceReflector()));
+        // Since story 6.2 the reference experiment registers no reflector of its own: the shipped
+        // DefaultExperienceReflector is what AddAgentExperienceCore adds, and the working strategy
+        // reaches a later run on the injected Approach: line through the ApproachArguments allowlist.
+        // A test that decorates the reflector registers it before AddAgentExperienceCore, whose TryAdd
+        // leaves a host's own reflector in place.
+        if (options.DecorateReflector is { } decorate)
+        {
+            services.AddSingleton(decorate(new DefaultExperienceReflector()));
+        }
 
         services.AddAgentExperienceCore(Sanitization, Limits);
         services.AddAgentExperienceReuseFeedback();

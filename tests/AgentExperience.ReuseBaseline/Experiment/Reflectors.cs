@@ -1,74 +1,57 @@
-using System.Globalization;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Reflections;
 
 namespace AgentExperience.ReuseBaseline.Experiment;
 
 /// <summary>
-/// Adds one sentence to the default reflector's lesson: which strategy the run's final, successful
-/// attempt actually used.
+/// Which strategy a run's final attempt used, read the way the injected <c>Approach:</c> line reads it.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why a host reflector at all, still, after story 4.6.</b> <c>DefaultExperienceReflector</c> is
-/// deliberately domain-blind -- it cannot know what a tool's arguments mean, so its lesson names the
-/// task and the checks that passed and nothing about how. Story 4.6 gave the injected Historical
-/// Reference block an <c>Approach:</c> line carrying the ordered tool <em>names</em> of a verified
-/// run's final attempt, which closes that gap for a task whose approaches are <em>different tools</em>.
-/// This experiment's are not: every strategy is the same single tool,
-/// <see cref="IncidentCheckTool.ToolName"/>, distinguished only by its <c>strategy</c> argument -- and
-/// arguments are exactly what the block still never carries, deliberately, because an argument is
-/// free-form payload and a tool name is not. So the shipped default still cannot express which
-/// strategy worked here, and this reflector still has to.
-/// <see cref="IExperienceReflector"/> is the documented seam for exactly this, and a host that knows
-/// its own tool schema is the thing that can fill it.
+/// <b>Why there is no host reflector any more (story 6.2).</b> Every strategy in this experiment is
+/// the same single tool, <see cref="IncidentCheckTool.ToolName"/>, distinguished only by its
+/// <c>strategy</c> argument. Until story 6.2 the injected block carried tool <em>names</em> only, so
+/// the shipped <c>DefaultExperienceReflector</c> could not express which strategy worked, and this
+/// file held a host <c>WorkingApproachReflector</c> that appended it to the lesson. The experiment now
+/// allowlists that one argument through <c>ExperienceInjectionOptions.ApproachArguments</c> instead,
+/// and the shipped default reflector alone is what the learning phase runs: the working strategy
+/// reaches a later run on the block's own <c>Approach:</c> line, derived by the library from the
+/// record's attempts.
 /// </para>
 /// <para>
-/// <b>The sentence is derived, not asserted.</b> It is read out of the captured run's own final
-/// successful attempt -- the sanitized <c>strategy</c> argument of its first tool call -- and not
-/// from the task set's ground truth, which this type never sees. A run whose final attempt has no
-/// such argument gets the default lesson unchanged.
+/// <b>A simplified reading of the writer's rule.</b> The final attempt is the one with the greatest
+/// sequence number, and only when it carries no error; its first call to the incident check names the
+/// strategy. It is read out of the stored record, never from the task set's ground truth, which this
+/// type never sees. It does not repeat the writer's other conditions -- a verified, unquarantined,
+/// owned record with unique attempt numbers and the call within the first
+/// <c>MaxApproachToolNames</c> -- all of which hold for every record this experiment learns; a
+/// record that broke one would name a strategy here that its <c>Approach:</c> line does not show,
+/// and the attribution check would then refuse the run rather than credit it.
 /// </para>
 /// </remarks>
-internal sealed class WorkingApproachReflector(IExperienceReflector inner) : IExperienceReflector
+internal static class WorkingApproach
 {
-    /// <summary>The tool-call argument the working approach is read from.</summary>
+    /// <summary>The tool-call argument the working approach is read from, and the one the experiment allowlists.</summary>
     public const string StrategyArgument = "strategy";
 
-    /// <inheritdoc />
-    public async Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var reflection = await inner.ReflectAsync(request, cancellationToken).ConfigureAwait(false);
-
-        return WorkingStrategyIn(request.Run) is not { } strategy
-            ? reflection
-            : reflection with { Lesson = reflection.Lesson + Sentence(strategy) };
-    }
-
-    /// <summary>The sentence appended for <paramref name="strategy"/>.</summary>
-    /// <param name="strategy">The strategy the final successful attempt used.</param>
-    public static string Sentence(string strategy) => string.Format(
-        CultureInfo.InvariantCulture,
-        " Working approach: strategy '{0}', read from the final successful attempt's captured tool call.",
-        strategy);
-
     /// <summary>
-    /// The <c>strategy</c> argument of the first tool call of the run's last attempt that carried no
-    /// error, or <see langword="null"/> when there is none.
+    /// The <c>strategy</c> argument of the first incident-check call of the final attempt, when that
+    /// attempt carries no error; otherwise <see langword="null"/>.
     /// </summary>
-    /// <param name="run">The captured run.</param>
-    public static string? WorkingStrategyIn(ExperienceRun run)
+    /// <param name="attempts">The record's, or the run's, attempts.</param>
+    public static string? StrategyIn(IReadOnlyList<Attempt> attempts)
     {
-        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(attempts);
 
-        var succeeded = run.Attempts
-            .OrderBy(attempt => attempt.SequenceNumber)
-            .LastOrDefault(attempt => attempt.Error is null);
+        var final = attempts.MaxBy(attempt => attempt.SequenceNumber);
+        if (final is null || final.Error is not null)
+        {
+            return null;
+        }
 
-        var call = succeeded?.ToolCalls.FirstOrDefault(
-            call => string.Equals(call.ToolName, IncidentCheckTool.ToolName, StringComparison.Ordinal));
+        var call = final.ToolCalls
+            .OrderBy(call => call.SequenceNumber)
+            .FirstOrDefault(call => string.Equals(call.ToolName, IncidentCheckTool.ToolName, StringComparison.Ordinal));
 
         return call?.Arguments.TryGetValue(StrategyArgument, out var value) == true && value is string { Length: > 0 } strategy
             ? strategy
@@ -81,8 +64,8 @@ internal sealed class WorkingApproachReflector(IExperienceReflector inner) : IEx
 /// counting a denial rather than only reporting zero.
 /// </summary>
 /// <remarks>
-/// It exists for one test. The reference experiment never registers it: its records say only what
-/// <see cref="WorkingApproachReflector"/> derived from a real captured run. What it proves is that
+/// It exists for one test. The reference experiment never registers it: its records carry only what
+/// the shipped default reflector wrote about a real captured run. What it proves is that
 /// <c>unauthorized_tool_executions</c> is a measure that can be non-zero -- a guardrail that has
 /// only ever been observed at zero tells a reader nothing about whether it works.
 /// </remarks>
