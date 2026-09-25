@@ -46,8 +46,8 @@ public sealed record ExperienceRunContext(
 /// <para>
 /// <b>It is an explicit identifier, not session identity.</b> Keying continuation on
 /// <see cref="AgentSession"/> would silently group two unrelated tasks that happened to share a
-/// session -- and injection already documents that blocks accumulate in a reused session, so a
-/// session is not a task. The host says what it means instead. The identifier of the run an
+/// session -- and injection already documents that a reused session keeps every block injected into
+/// it, so a session is not a task. The host says what it means instead. The identifier of the run an
 /// invocation opened is readable afterwards from
 /// <see cref="ExperienceCaptureAgentBuilderExtensions.RunIdStateKey"/> when a session was supplied.
 /// </para>

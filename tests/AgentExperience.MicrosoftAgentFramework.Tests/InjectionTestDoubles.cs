@@ -307,11 +307,39 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         }
     }
 
+    /// <summary>
+    /// Replaces a record in the store and its snapshot in the index, keeping its relevance, as a
+    /// lifecycle change the index has caught up with would.
+    /// </summary>
+    public void Replace(ExperienceRecord record)
+    {
+        Store(record);
+        lock (_indexed)
+        {
+            for (var i = 0; i < _indexed.Count; i++)
+            {
+                if (_indexed[i].Record.ExperienceId == record.ExperienceId)
+                {
+                    _indexed[i] = _indexed[i] with { Record = record };
+                }
+            }
+        }
+    }
+
+    /// <summary>How many times <see cref="SearchAsync"/> ran.</summary>
+    public int Searches => Volatile.Read(ref _searches);
+
+    private int _searches;
+
+    /// <summary>Thrown by a batched read declared <see cref="ExperienceReadPurpose.ScopeCheck"/> when set, while every other read succeeds.</summary>
+    public Exception? ScopeCheckThrows { get; set; }
+
     public async Task<ExperienceCandidateSearchResult> SearchAsync(
         AuthorizationContext authorization,
         ExperienceCandidateQuery query,
         CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref _searches);
         Entered.TrySetResult();
 
         if (SearchDelay is { } delay)
@@ -514,6 +542,11 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         ExperienceReadOptions options,
         CancellationToken cancellationToken)
     {
+        if (options.Purpose == ExperienceReadPurpose.ScopeCheck && ScopeCheckThrows is { } scopeCheckFailure)
+        {
+            throw scopeCheckFailure;
+        }
+
         if (SequentialGetMany)
         {
             return await this.GetManySequentiallyAsync(authorization, scope, experienceIds, options, cancellationToken);

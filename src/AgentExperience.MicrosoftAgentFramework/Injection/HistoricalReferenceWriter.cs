@@ -20,8 +20,14 @@ public sealed record HistoricalReferencePayload(
     IReadOnlyList<Guid> ExperienceIds,
     IReadOnlyList<OmittedExperience> Omitted)
 {
-    /// <summary>Whether the payload carries no record at all, in which case nothing should be injected.</summary>
-    public bool IsEmpty => ExperienceIds.Count == 0;
+    /// <summary>
+    /// The records whose withdrawal notice <see cref="Text"/> carries, in the order written. Only
+    /// <see cref="ExperienceContextProvider"/>'s session tracking produces them; empty otherwise.
+    /// </summary>
+    public IReadOnlyList<Guid> RetractedExperienceIds { get; init; } = [];
+
+    /// <summary>Whether the payload carries neither a record nor a withdrawal notice, in which case nothing should be injected.</summary>
+    public bool IsEmpty => ExperienceIds.Count == 0 && RetractedExperienceIds.Count == 0;
 }
 
 /// <summary>
@@ -123,11 +129,23 @@ public sealed record HistoricalReferencePayload(
 /// grant level was issued as the owner's consent to show its argument values.
 /// </para>
 /// <para>
+/// <b>A withdrawal notice is fixed text.</b> When session tracking finds that a record delivered earlier
+/// in the same session has since been revoked, superseded, erased, or otherwise withdrawn, the block opens
+/// with a <see cref="RetractionBegin"/> section carrying one line per record: <c>Withdrawn: experience
+/// &lt;id&gt;</c> followed by <see cref="WithdrawnNotice"/>. The line carries the record's ID and nothing
+/// else -- no reason, no field of the record, no scope -- so a revoked record, an erased one and one that
+/// is no longer the reader's cannot be told apart by it. It is a statement, not an instruction, and like
+/// the rest of the block it is advisory: the earlier block is still in the conversation, and a model that
+/// read it cannot be made to forget it. Notices are written before any record and take the byte budget
+/// first; when one does not fit, no record is written either.
+/// </para>
+/// <para>
 /// <b>Delimiter spoofing is neutralized.</b> Record text that contains one of this block's own
 /// markers, or that starts a line with one of its field labels, has that marker or label replaced
 /// before it is written -- so a stored lesson can forge neither an end of block nor a
-/// <c>Source:</c>/<c>Confidence:</c>/<c>Verification:</c> line that reads as provenance. This too is
-/// hygiene rather than a control.
+/// <c>Source:</c>/<c>Confidence:</c>/<c>Verification:</c> line that reads as provenance, nor a
+/// withdrawal notice: the section markers and the notice's fixed wording are markers too, and
+/// <c>Withdrawn:</c> is a field label. This too is hygiene rather than a control.
 /// </para>
 /// </remarks>
 public static class HistoricalReferenceWriter
@@ -137,6 +155,19 @@ public static class HistoricalReferenceWriter
 
     /// <summary>The line that closes the injected block.</summary>
     public const string BlockEnd = "=== END HISTORICAL REFERENCE ===";
+
+    /// <summary>The line that opens the section of withdrawal notices, written before any record.</summary>
+    public const string RetractionBegin = "--- WITHDRAWN ---";
+
+    /// <summary>The line that closes the section of withdrawal notices.</summary>
+    public const string RetractionEnd = "--- END WITHDRAWN ---";
+
+    /// <summary>
+    /// The fixed wording that follows <c>Withdrawn: experience &lt;id&gt;</c> on each withdrawal notice. It
+    /// states a fact, and gives no instruction and no reason.
+    /// </summary>
+    public const string WithdrawnNotice =
+        ", delivered earlier in this conversation, is withdrawn and is no longer valid reference material.";
 
     /// <summary>What a marker found inside record text is replaced with before the record is written.</summary>
     public const string NeutralizedMarker = "[delimiter removed]";
@@ -263,6 +294,9 @@ public static class HistoricalReferenceWriter
         "=== END HISTORICAL REFERENCE",
         "--- RECORD",
         "--- END RECORD",
+        "--- WITHDRAWN",
+        "--- END WITHDRAWN",
+        "is withdrawn and is no longer valid reference material",
     ];
 
     /// <summary>
@@ -286,6 +320,7 @@ public static class HistoricalReferenceWriter
         "Warnings:",
         "Recorded:",
         "Environment:",
+        "Withdrawn:",
     ];
 
     private static readonly IReadOnlyList<Guid> NoIds = [];
@@ -296,6 +331,14 @@ public static class HistoricalReferenceWriter
     /// against it, so a budget that could never fit a record is rejected where it is configured.
     /// </summary>
     public static int BlockOverheadBytes { get; } = Utf8(Header()) + Utf8(Footer());
+
+    /// <summary>
+    /// The UTF-8 size of a block that carries exactly one withdrawal notice and no record. When session
+    /// tracking is on, <see cref="ExperienceInjectionLimits.MaxBytes"/> must be at least this, or a notice
+    /// could never be delivered.
+    /// </summary>
+    public static int RetractionBlockBytes { get; } =
+        BlockOverheadBytes + Utf8(RetractionOpen()) + Utf8(RetractionClose()) + Utf8(RetractionLine(Guid.Empty));
 
     /// <summary>
     /// Renders <paramref name="records"/> as one Historical Reference block, in the order given --
@@ -340,15 +383,37 @@ public static class HistoricalReferenceWriter
         return Write(records, limits, ApproachArgumentAllowlist.From(approachArguments, nameof(approachArguments)));
     }
 
-    /// <summary>The one implementation, over an allowlist already validated and snapshotted.</summary>
+    /// <summary>The records-only form, over an allowlist already validated and snapshotted.</summary>
     internal static HistoricalReferencePayload Write(
         IReadOnlyList<RankedExperience> records,
         ExperienceInjectionLimits limits,
-        ApproachArgumentAllowlist approachArguments)
+        ApproachArgumentAllowlist approachArguments) =>
+        Write(records, limits, approachArguments, NoIds, sessionBytesRemaining: null);
+
+    /// <summary>
+    /// The one implementation: withdrawal notices first, then records in rank order, within
+    /// <paramref name="limits"/> and, for records, within <paramref name="sessionBytesRemaining"/>.
+    /// </summary>
+    /// <param name="records">As for the public overloads.</param>
+    /// <param name="limits">As for the public overloads.</param>
+    /// <param name="approachArguments">The validated allowlist.</param>
+    /// <param name="retractions">Records delivered earlier in the session and since withdrawn, in the order their notices are written.</param>
+    /// <param name="sessionBytesRemaining">
+    /// What the session's byte budget has left, or <see langword="null"/> with no session tracking. A record
+    /// is written only if the whole block, with it, fits in this as well as in the block budget; a
+    /// withdrawal notice is never refused by it.
+    /// </param>
+    internal static HistoricalReferencePayload Write(
+        IReadOnlyList<RankedExperience> records,
+        ExperienceInjectionLimits limits,
+        ApproachArgumentAllowlist approachArguments,
+        IReadOnlyList<Guid> retractions,
+        long? sessionBytesRemaining)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(limits);
         ArgumentNullException.ThrowIfNull(approachArguments);
+        ArgumentNullException.ThrowIfNull(retractions);
 
         if (records.Count > limits.MaxRecords)
         {
@@ -376,8 +441,47 @@ public static class HistoricalReferenceWriter
         var body = new StringBuilder();
         var included = new List<Guid>(records.Count);
 
+        // Withdrawal notices first, ahead of every record: a notice that is owed takes the budget before
+        // anything new does. The section is written only when at least one notice fits in it.
+        var withdrawn = new StringBuilder();
+        var retracted = new List<Guid>(retractions.Count);
+        var owed = false;
+        if (retractions.Count > 0)
+        {
+            var withSection = used + Utf8(RetractionOpen()) + Utf8(RetractionClose());
+            foreach (var experienceId in retractions)
+            {
+                var line = RetractionLine(experienceId);
+                var size = Utf8(line);
+                if (withSection + size > limits.MaxBytes)
+                {
+                    // The rest stay owed, and are found again on the session's next invocation.
+                    owed = true;
+                    break;
+                }
+
+                withdrawn.Append(line);
+                withSection += size;
+                retracted.Add(experienceId);
+            }
+
+            if (retracted.Count > 0)
+            {
+                used = withSection;
+            }
+        }
+
         // Can never be true for a validated limits instance, which must exceed the block overhead.
         var dropping = used > limits.MaxBytes;
+        var reason = InjectionOmissionReason.OverByteBudget;
+        var detail = $"The record did not fit in the remaining part of the {limits.MaxBytes}-byte budget, and a record is never cut to fit.";
+
+        if (owed)
+        {
+            // No new record is shown while a notice that an earlier one is withdrawn is still owed.
+            dropping = true;
+            detail = $"Withdrawal notices owed to this session took the {limits.MaxBytes}-byte budget first, and no record is written while one is still owed.";
+        }
 
         for (var index = 0; index < records.Count; index++)
         {
@@ -387,7 +491,9 @@ public static class HistoricalReferenceWriter
             {
                 var rendered = Render(ranked, included.Count + 1, approachArguments);
                 var size = Utf8(rendered);
-                if (used + size <= limits.MaxBytes)
+                var fitsBlock = used + size <= limits.MaxBytes;
+                var fitsSession = sessionBytesRemaining is not { } remaining || used + size <= remaining;
+                if (fitsBlock && fitsSession)
                 {
                     body.Append(rendered);
                     used += size;
@@ -398,18 +504,40 @@ public static class HistoricalReferenceWriter
                 // Whole records are dropped from the tail: once one does not fit, the rest go with it,
                 // so a lower-ranked record is never shown in place of a higher-ranked one.
                 dropping = true;
+                if (fitsBlock)
+                {
+                    reason = InjectionOmissionReason.OverSessionBudget;
+                    detail = "The record did not fit in what the session's byte budget has left, and a record is never cut to fit.";
+                }
             }
 
-            omitted.Add(new OmittedExperience(
-                ranked.Record.ExperienceId,
-                InjectionOmissionReason.OverByteBudget,
-                $"The record did not fit in the remaining part of the {limits.MaxBytes}-byte budget, and a record is never cut to fit."));
+            omitted.Add(new OmittedExperience(ranked.Record.ExperienceId, reason, detail));
         }
 
-        return included.Count == 0
-            ? new HistoricalReferencePayload(string.Empty, 0, NoIds, omitted)
-            : new HistoricalReferencePayload(header + body.ToString() + footer, used, included, omitted);
+        if (included.Count == 0 && retracted.Count == 0)
+        {
+            return new HistoricalReferencePayload(string.Empty, 0, NoIds, omitted);
+        }
+
+        var section = retracted.Count == 0 ? string.Empty : RetractionOpen() + withdrawn + RetractionClose();
+        return new HistoricalReferencePayload(header + section + body.ToString() + footer, used, included, omitted)
+        {
+            RetractedExperienceIds = retracted,
+        };
     }
+
+    /// <summary>What opens the withdrawal section inside the block.</summary>
+    private static string RetractionOpen() => "\n" + RetractionBegin + "\n";
+
+    /// <summary>What closes the withdrawal section inside the block.</summary>
+    private static string RetractionClose() => RetractionEnd + "\n";
+
+    /// <summary>
+    /// One withdrawal notice: fixed text around the record's ID, formatted here, so nothing a record says
+    /// can reach it.
+    /// </summary>
+    private static string RetractionLine(Guid experienceId) =>
+        "Withdrawn: experience " + experienceId.ToString("D", CultureInfo.InvariantCulture) + WithdrawnNotice + "\n";
 
     /// <summary>Renders one record, delimiters included, as it appears inside the block.</summary>
     private static string Render(RankedExperience ranked, int ordinal, ApproachArgumentAllowlist approachArguments)
@@ -1032,6 +1160,15 @@ public static class HistoricalReferenceWriter
     /// replaced where a line starts with one. A record can then forge neither the structure around
     /// it nor a provenance line inside it.
     /// </summary>
+    /// <remarks>
+    /// Matching is deliberately loose, because the reader is a model, not a parser. Every Unicode line
+    /// separator is a line break (<c>U+2028</c>, <c>U+2029</c>, <c>U+0085</c>, vertical tab and form feed
+    /// included); invisible format characters -- zero-width spaces and joiners, bidirectional controls --
+    /// are removed, so they cannot split a marker; a marker matches across any run of whitespace, line
+    /// breaks included, and with any dash or equals look-alike; and a label matches after leading
+    /// whitespace. What it does not catch is a marker spelled with letters from another script: that stays
+    /// hygiene, as the whole label does.
+    /// </remarks>
     private static string Clean(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1039,13 +1176,13 @@ public static class HistoricalReferenceWriter
             return NoValue;
         }
 
-        var cleaned = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-        foreach (var marker in Markers)
+        var cleaned = Normalize(value);
+        foreach (var marker in MarkerPatterns)
         {
-            cleaned = cleaned.Replace(marker, NeutralizedMarker, StringComparison.OrdinalIgnoreCase);
+            cleaned = marker.Replace(cleaned, NeutralizedMarker);
         }
 
-        if (!StartsAnyLine(cleaned))
+        if (!FieldLabels.Any(label => cleaned.Contains(label, StringComparison.OrdinalIgnoreCase)))
         {
             return cleaned;
         }
@@ -1053,11 +1190,13 @@ public static class HistoricalReferenceWriter
         var lines = cleaned.Split('\n');
         for (var index = 0; index < lines.Length; index++)
         {
+            var line = lines[index];
+            var indent = line.Length - line.TrimStart().Length;
             foreach (var label in FieldLabels)
             {
-                if (lines[index].StartsWith(label, StringComparison.OrdinalIgnoreCase))
+                if (line.AsSpan(indent).StartsWith(label, StringComparison.OrdinalIgnoreCase))
                 {
-                    lines[index] = NeutralizedMarker + lines[index][label.Length..];
+                    lines[index] = line[..indent] + NeutralizedMarker + line[(indent + label.Length)..];
                     break;
                 }
             }
@@ -1066,19 +1205,63 @@ public static class HistoricalReferenceWriter
         return string.Join('\n', lines);
     }
 
-    /// <summary>Whether any line could begin with a field label, so the split-and-rejoin is skipped for the usual case.</summary>
-    private static bool StartsAnyLine(string value)
+    /// <summary>
+    /// Line endings to <c>\n</c>, every other Unicode line separator to <c>\n</c> as well, and invisible
+    /// format characters removed. Nothing else about the text changes.
+    /// </summary>
+    private static string Normalize(string value)
     {
-        foreach (var label in FieldLabels)
+        var text = new StringBuilder(value.Length);
+        for (var index = 0; index < value.Length; index++)
         {
-            if (value.StartsWith(label, StringComparison.OrdinalIgnoreCase)
-                || value.Contains('\n' + label, StringComparison.OrdinalIgnoreCase))
+            var character = value[index];
+            switch (character)
             {
-                return true;
+                case '\r':
+                    text.Append('\n');
+                    if (index + 1 < value.Length && value[index + 1] == '\n')
+                    {
+                        index++;
+                    }
+
+                    break;
+                case '\u2028' or '\u2029' or '\u0085' or '\v' or '\f':
+                    text.Append('\n');
+                    break;
+                default:
+                    if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.Format)
+                    {
+                        text.Append(character);
+                    }
+
+                    break;
             }
         }
 
-        return false;
+        return text.ToString();
+    }
+
+    /// <summary><see cref="Markers"/> as patterns: case-insensitive, any whitespace run for a space, any look-alike for a dash or an equals sign.</summary>
+    private static readonly System.Text.RegularExpressions.Regex[] MarkerPatterns = Markers.Select(MarkerPattern).ToArray();
+
+    private static System.Text.RegularExpressions.Regex MarkerPattern(string marker)
+    {
+        var pattern = new StringBuilder();
+        foreach (var character in marker)
+        {
+            pattern.Append(character switch
+            {
+                ' ' => @"\s+",
+                '-' => @"[-‐-―−⸺⸻﹘﹣－]",
+                '=' => @"[=═﹦＝]",
+                _ => System.Text.RegularExpressions.Regex.Escape(character.ToString()),
+            });
+        }
+
+        return new System.Text.RegularExpressions.Regex(
+            pattern.ToString(),
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            TimeSpan.FromSeconds(1));
     }
 
     private static int Utf8(string value) => Encoding.UTF8.GetByteCount(value);

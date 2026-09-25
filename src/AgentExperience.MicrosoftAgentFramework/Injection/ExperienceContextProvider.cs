@@ -51,17 +51,40 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// invocation's critical path and retrieval's own timeout has already been spent.
 /// </para>
 /// <para>
-/// <b>What the check cannot do is reach backwards.</b> Once a block has been handed to a model, a
-/// later revocation cannot retract it, and the provider does not pretend otherwise. This is sharper
-/// than it sounds when an <see cref="AgentSession"/> is reused: a block injected on one turn can
-/// stay in that session's conversation, so a later turn may show the model the fresh block
-/// <em>and</em> the earlier one, verbatim -- including a record the fresh check has just omitted as
-/// revoked. MAF filters this provider's input to external messages, so the provider cannot reliably
-/// see, let alone strip, its own earlier blocks, and it does not claim to. Two consequences to plan
-/// for: <see cref="ExperienceInjectionLimits.MaxBytes"/> bounds one injected block, not a
-/// conversation; and revocation only takes effect for injections that have not happened yet. Where
-/// either matters, use a fresh session per task, or a chat-history provider that drops earlier
-/// injected blocks.
+/// <b>A reused session is tracked.</b> MAF's <see cref="ChatClientAgent"/> keeps an invocation's request
+/// messages, this provider's block included, in the session's chat history, so every later turn of that
+/// session shows the model every earlier block too. With
+/// <see cref="ExperienceInjectionOptions.SessionLimits"/> set (the default), the provider keeps a small
+/// account of what it gave the session in the session's <see cref="AgentSession.StateBag"/>, under
+/// <see cref="SessionStateKey"/>, and it survives MAF's session serialization like any other state. It
+/// uses that account to bound the conversation (records and bytes across invocations, reported as
+/// <see cref="InjectionOutcome.SessionBudgetExhausted"/> and
+/// <see cref="InjectionOmissionReason.OverSessionBudget"/>), to never inject a record revision the
+/// session already holds (<see cref="InjectionOmissionReason.AlreadyDelivered"/>), and to withdraw what no
+/// longer stands: every record the session holds is re-read on every invocation, in one
+/// <see cref="IExperienceRecordStore.GetManyAsync"/> call with <see cref="ExperienceReadPurpose.ScopeCheck"/>
+/// (nothing is handed over, so nothing is audited as a delivery), and one that is no longer readable in
+/// scope, no longer in an eligible status, below the confidence floor, past the maximum age, or read
+/// through a grant that now withholds an approach the session was shown, is named in a fixed withdrawal
+/// notice ahead of any new record (<see cref="ExperienceInjectionResult.RetractedExperienceIds"/>).
+/// </para>
+/// <para>
+/// <b>What tracking cannot do is reach backwards.</b> The earlier block is still in the session's history,
+/// verbatim, and a model that read it cannot be made to forget it: the notice is advisory, like every
+/// other word in the block. MAF filters this provider's input to external messages, so it cannot reliably
+/// see, let alone strip, its own earlier blocks, and it does not claim to. Where that matters, use a fresh
+/// session per task, or a chat-history provider that drops earlier injected blocks -- and then turn session
+/// tracking off, because its deduplication assumes the session keeps what was injected.
+/// </para>
+/// <para>
+/// <b>A delivery is charged when MAF says it happened.</b> The block's delivery is staged in the session
+/// state when it is handed to MAF, and committed in <see cref="InvokedCoreAsync"/> once MAF reports the
+/// invocation succeeded. A failed invocation discards it -- MAF keeps no history for it, so its records
+/// are not deduplicated against a block the session never kept, and its withdrawal notices stay owed. A
+/// stage nothing settled, such as a stream its consumer abandoned before MAF reported, is committed at the
+/// session's next invocation: when unsure, the session is charged, its records are tracked so they can still
+/// be withdrawn but are not deduplicated against, and its withdrawal notices stay owed. The account is only as trustworthy as
+/// the host's session storage, and invocations that run concurrently on one session race on it.
 /// </para>
 /// <para>
 /// <b>Labeling is not a control.</b> The injected block says it is untrusted reference material, and
@@ -89,6 +112,22 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// its text, and is metadata only -- it confers no trust on the content.
     /// </summary>
     public const string HistoricalReferenceKey = "AgentExperience.HistoricalReference";
+
+    /// <summary>
+    /// The single <see cref="AgentSession.StateBag"/> key session tracking keeps its account under, and the
+    /// provider's one entry in <see cref="StateKeys"/>. Its value is a small JSON object of counters and
+    /// record IDs with revisions -- never record content. Removing it resets the session's budget and
+    /// forgets what the session was given, so withdrawal notices for it are no longer delivered.
+    /// </summary>
+    public const string SessionStateKey = "AgentExperience.InjectionSession";
+
+    /// <summary>
+    /// The <see cref="ChatMessage.AdditionalProperties"/> key that ties an injected message to the delivery
+    /// its invocation staged in the session state, so that only that invocation settles it. Metadata only.
+    /// </summary>
+    internal const string StageKey = "AgentExperience.HistoricalReference.Stage";
+
+    private static readonly IReadOnlyList<string> SessionStateKeys = [SessionStateKey];
 
     private static readonly IReadOnlyList<Guid> NoIds = [];
 
@@ -210,55 +249,94 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // not only for the ones that produced a result to read it back off.
         InjectionDiagnostics.Tag(trace, InjectionDiagnostics.CorrelationIdAttribute, request.CorrelationId);
 
-        ExperienceRetrievalResult retrieved;
+        // The session's account, when tracking is on and there is a session to keep it in. A state that
+        // does not read is neither trusted nor overwritten: nothing is injected, because the provider can
+        // no longer tell what the session was given, what it may still be given, or what it is owed.
+        SessionTracker? session;
         try
         {
-            retrieved = await _retrieval.RetrieveAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // The invocation itself is being cancelled. That is not a provider failure, and swallowing
-            // it here would hide the cancellation from the run that asked for it.
-            throw;
+            session = OpenSession(context.Session, out var unreadable);
+            if (unreadable)
+            {
+                return Nothing(
+                    trace,
+                    InjectionOutcome.Failed,
+                    NoOmissions,
+                    retrieved: null,
+                    request.CorrelationId,
+                    new InjectionFailure(UnreadableSessionState, Exception: null));
+            }
         }
         catch (Exception ex)
         {
             return Nothing(
                 trace,
-                InjectionOutcome.RetrievalFailed,
+                InjectionOutcome.Failed,
                 NoOmissions,
                 retrieved: null,
                 request.CorrelationId,
-                new InjectionFailure($"Retrieval threw {ex.GetType().FullName}.", ex));
+                new InjectionFailure($"Reading the session's injection state threw {ex.GetType().FullName}, so nothing was injected.", ex));
         }
 
-        if (retrieved.Outcome is not RetrievalOutcome.Completed)
+        // Why there are no candidates, when there are none: a budget already spent (retrieval is then not
+        // run at all), or a retrieval that did not complete. Neither stops the withdrawal check below,
+        // which needs only the request's authorization and scope.
+        ExperienceRetrievalResult? retrieved = null;
+        InjectionOutcome? stopped = null;
+        InjectionFailure? stoppedFailure = null;
+        if (session is { Exhausted: true })
         {
-            return Nothing(
-                trace,
-                retrieved.Outcome switch
+            stopped = InjectionOutcome.SessionBudgetExhausted;
+        }
+        else
+        {
+            try
+            {
+                retrieved = await _retrieval.RetrieveAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The invocation itself is being cancelled. That is not a provider failure, and swallowing
+                // it here would hide the cancellation from the run that asked for it.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                stopped = InjectionOutcome.RetrievalFailed;
+                stoppedFailure = new InjectionFailure($"Retrieval threw {ex.GetType().FullName}.", ex);
+            }
+
+            if (retrieved is { Outcome: not RetrievalOutcome.Completed })
+            {
+                stopped = retrieved.Outcome switch
                 {
                     RetrievalOutcome.TimedOut => InjectionOutcome.RetrievalTimedOut,
                     RetrievalOutcome.Denied => InjectionOutcome.RetrievalDenied,
                     _ => InjectionOutcome.RetrievalFailed,
-                },
-                NoOmissions,
-                retrieved,
-                retrieved.CorrelationId,
-                retrieved.Failure is { } failure ? new InjectionFailure(failure.Reason, failure.Exception) : null);
+                };
+                stoppedFailure = retrieved.Failure is { } failure ? new InjectionFailure(failure.Reason, failure.Exception) : null;
+            }
         }
 
+        var correlationId = retrieved?.CorrelationId ?? request.CorrelationId;
         var omitted = new List<OmittedExperience>();
-        var selected = Select(retrieved.Records, omitted);
-        if (selected.Count == 0)
+        var selected = stopped is null && retrieved is not null ? Select(retrieved.Records, omitted, session) : [];
+
+        // Every record the session holds and has not withdrawn, other than those re-read as candidates
+        // anyway: their answer there decides them too.
+        var recheck = session is null
+            ? []
+            : session.State.Active.Where(entry => !selected.Exists(candidate => candidate.Record.ExperienceId == entry.ExperienceId)).ToList();
+
+        if (selected.Count == 0 && recheck.Count == 0)
         {
-            return Nothing(trace, InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
+            return Nothing(trace, stopped ?? Quiet(omitted), omitted, retrieved, correlationId, stoppedFailure, session);
         }
 
-        CheckOutcome recheck;
+        CheckOutcome recheckOutcome;
         try
         {
-            recheck = await CheckAsync(request, selected, omitted, cancellationToken).ConfigureAwait(false);
+            recheckOutcome = await CheckAsync(request, selected, recheck, omitted, session, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -273,26 +351,32 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 InjectionOutcome.Failed,
                 omitted,
                 retrieved,
-                retrieved.CorrelationId,
-                new InjectionFailure($"The final eligibility check threw {ex.GetType().FullName}.", ex));
+                correlationId,
+                new InjectionFailure($"The final eligibility check threw {ex.GetType().FullName}.", ex),
+                session);
         }
 
-        if (recheck.Failure is { } checkFailure)
+        if (recheckOutcome.Failure is { } checkFailure)
         {
-            // The check ran out of time. Nothing is injected rather than injecting the part of it that
-            // had been re-checked before the bound was reached.
-            return Nothing(trace, InjectionOutcome.Failed, omitted, retrieved, retrieved.CorrelationId, checkFailure);
+            // The check ran out of time, or the withdrawal check could not be made. Nothing is injected
+            // rather than injecting the part of it that had been re-checked before it stopped.
+            return Nothing(trace, InjectionOutcome.Failed, omitted, retrieved, correlationId, checkFailure, session);
         }
 
-        if (recheck.Injectable.Count == 0)
+        if (recheckOutcome.Injectable.Count == 0 && recheckOutcome.Withdrawn.Count == 0)
         {
-            return Nothing(trace, InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
+            return Nothing(trace, stopped ?? Quiet(omitted), omitted, retrieved, correlationId, stoppedFailure, session);
         }
 
         HistoricalReferencePayload payload;
         try
         {
-            payload = HistoricalReferenceWriter.Write(recheck.Injectable, _options.Limits, _approachArguments);
+            payload = HistoricalReferenceWriter.Write(
+                recheckOutcome.Injectable,
+                _options.Limits,
+                _approachArguments,
+                recheckOutcome.Withdrawn,
+                session?.RemainingBytes);
         }
         catch (Exception ex)
         {
@@ -301,56 +385,220 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 InjectionOutcome.Failed,
                 omitted,
                 retrieved,
-                retrieved.CorrelationId,
-                new InjectionFailure($"Building the Historical Reference threw {ex.GetType().FullName}.", ex));
+                correlationId,
+                new InjectionFailure($"Building the Historical Reference threw {ex.GetType().FullName}.", ex),
+                session);
         }
 
         omitted.AddRange(payload.Omitted);
 
         if (payload.IsEmpty)
         {
-            return Nothing(trace, InjectionOutcome.NothingToInject, omitted, retrieved, retrieved.CorrelationId, failure: null);
+            return Nothing(trace, stopped ?? Quiet(omitted), omitted, retrieved, correlationId, stoppedFailure, session);
         }
+
+        if (session is not null)
+        {
+            // Staged before the block is handed over, and saved: a block the account does not know about
+            // would be neither deduplicated, nor charged, nor withdrawn later. If it cannot be saved,
+            // nothing is injected.
+            try
+            {
+                session.Stage(Delivery(payload, recheckOutcome.Injectable));
+                session.Save();
+            }
+            catch (Exception ex)
+            {
+                return Nothing(
+                    trace,
+                    InjectionOutcome.Failed,
+                    omitted,
+                    retrieved,
+                    correlationId,
+                    new InjectionFailure($"Writing the session's injection state threw {ex.GetType().FullName}, so nothing was injected.", ex));
+            }
+        }
+
+        var injectedRecords = payload.ExperienceIds.Count > 0;
 
         // A user-role message, not a system one: the block is reference material the model may read,
         // never an instruction from the host. MAF merges it with the invocation's own messages. Built
         // before the report so that nothing which could throw remains after the span has been closed.
+        var properties = new AdditionalPropertiesDictionary
+        {
+            [HistoricalReferenceKey] = true,
+        };
+
+        if (session?.State.Pending is { } staged)
+        {
+            properties[StageKey] = staged.Stage.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         var injected = new AIContext
         {
             Messages =
             [
                 new ChatMessage(ChatRole.User, payload.Text)
                 {
-                    AdditionalProperties = new AdditionalPropertiesDictionary
-                    {
-                        [HistoricalReferenceKey] = true,
-                    },
+                    AdditionalProperties = properties,
                 },
             ],
         };
 
         Report(trace, new ExperienceInjectionResult(
-            InjectionOutcome.Injected,
+            injectedRecords ? InjectionOutcome.Injected : InjectionOutcome.Retracted,
             payload.ExperienceIds,
             omitted,
-            retrieved.Excluded,
-            retrieved.Truncated,
-            retrieved.EnvironmentUnrestricted,
+            retrieved?.Excluded ?? NoExclusions,
+            retrieved?.Truncated ?? false,
+            retrieved?.EnvironmentUnrestricted ?? false,
             payload.ByteCount,
-            retrieved.CorrelationId,
-            Failure: null,
-            retrieved.VectorFallback));
+            correlationId,
+            // A block of withdrawal notices alone still carries why no record came with it.
+            Failure: injectedRecords ? null : stoppedFailure,
+            retrieved?.VectorFallback)
+        {
+            RetractedExperienceIds = payload.RetractedExperienceIds,
+            Session = session?.Usage(),
+        });
 
         return injected;
     }
 
+    /// <summary>The content-free failure reason for a session state that does not read.</summary>
+    internal const string UnreadableSessionState =
+        "The session's injection state could not be read, so nothing was injected. It is left as it is; remove the '"
+        + SessionStateKey + "' state bag key to reset it.";
+
+    /// <summary>
+    /// Why nothing was injected when every step ran: the session's budget could not take the records that
+    /// survived, or nothing survived at all.
+    /// </summary>
+    private static InjectionOutcome Quiet(List<OmittedExperience> omitted) =>
+        omitted.Exists(omission => omission.Reason == InjectionOmissionReason.OverSessionBudget)
+            ? InjectionOutcome.SessionBudgetExhausted
+            : InjectionOutcome.NothingToInject;
+
+    /// <summary>
+    /// The session's account for this invocation, or <see langword="null"/> when tracking is off or there
+    /// is no session. A stage an earlier invocation left unsettled is committed first.
+    /// </summary>
+    private SessionTracker? OpenSession(AgentSession? agentSession, out bool unreadable)
+    {
+        unreadable = false;
+        if (_options.SessionLimits is not { } limits || agentSession is null)
+        {
+            return null;
+        }
+
+        if (!InjectionSessionState.TryLoad(agentSession.StateBag, out var state, out var absent))
+        {
+            unreadable = true;
+            return null;
+        }
+
+        if (absent)
+        {
+            // Written on first use, even with nothing to inject, so that later invocations find the key
+            // and never have to tell "absent" from "present as another type" again.
+            return new SessionTracker(agentSession, state, limits, dirty: true);
+        }
+
+        // An earlier invocation's stage that MAF never settled -- a stream abandoned before it reported,
+        // say. The block was handed over, so the session is charged for it: when unsure, charge. But its
+        // withdrawal notices stay owed: MAF keeps no history for an abandoned stream, so a notice marked
+        // delivered here could be lost for good. When unsure, withdraw again.
+        return new SessionTracker(agentSession, state.Commit(settled: false), limits, dirty: state.Pending is not null);
+    }
+
+    /// <summary>What this invocation's block gives the session, as it will be tracked.</summary>
+    private static PendingDelivery Delivery(HistoricalReferencePayload payload, List<RankedExperience> injectable)
+    {
+        var delivered = new List<DeliveredRecord>(payload.ExperienceIds.Count);
+        foreach (var experienceId in payload.ExperienceIds)
+        {
+            var ranked = injectable.Find(candidate => candidate.Record.ExperienceId == experienceId)!;
+            delivered.Add(new DeliveredRecord(
+                experienceId,
+                ranked.Record.Revision,
+                ApproachByGrant: ranked.SharedByGrant && ranked.GrantDisclosure == ExperienceGrantDisclosure.LessonAndApproach,
+                Withdrawn: false));
+        }
+
+        return new PendingDelivery(Guid.NewGuid(), payload.ByteCount, delivered, payload.RetractedExperienceIds);
+    }
+
+    /// <summary>Whether <paramref name="messages"/> holds the block that staged <paramref name="stage"/>.</summary>
+    private static bool Carries(IEnumerable<ChatMessage>? messages, Guid stage)
+    {
+        if (messages is null)
+        {
+            return false;
+        }
+
+        var text = stage.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var message in messages)
+        {
+            if (message?.AdditionalProperties is { } properties
+                && properties.TryGetValue(StageKey, out var value)
+                && string.Equals(value?.ToString(), text, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Settles the delivery this invocation staged: charged when MAF reports success, discarded when it
+    /// reports a failure. Never throws into the invocation.
+    /// </summary>
+    /// <param name="context">How the invocation ended.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>A task that completes when the stage is settled.</returns>
+    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        await base.InvokedCoreAsync(context, cancellationToken).ConfigureAwait(false);
+
+        if (_options.SessionLimits is null || context?.Session is not { } agentSession)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!InjectionSessionState.TryLoad(agentSession.StateBag, out var state)
+                || state.Pending is not { } pending
+                || !Carries(context.RequestMessages, pending.Stage))
+            {
+                // Nothing staged, a stage this invocation's request did not carry -- another invocation's,
+                // which only that one may settle -- or a state that does not read, which the next
+                // invocation reports.
+                return;
+            }
+
+            (context.InvokeException is null ? state.Commit() : state.Discard()).Save(agentSession.StateBag);
+        }
+        catch (Exception)
+        {
+            // Settling is bookkeeping. An unsettled stage is committed by the next invocation.
+        }
+    }
+
+    /// <summary>The one state bag key this provider uses: <see cref="SessionStateKey"/>.</summary>
+    public override IReadOnlyList<string> StateKeys => SessionStateKeys;
+
     /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the
     /// rest, so the final eligibility check only ever re-reads records that could actually be injected.
+    /// With session tracking, a revision the session already holds takes no slot, and the session's
+    /// remaining record budget caps the selection too.
     /// </summary>
-    private List<RankedExperience> Select(IReadOnlyList<RankedExperience> ranked, List<OmittedExperience> omitted)
+    private List<RankedExperience> Select(IReadOnlyList<RankedExperience> ranked, List<OmittedExperience> omitted, SessionTracker? session)
     {
-        var limit = _options.Limits.MaxRecords;
+        var sessionRemaining = session?.RemainingRecords ?? int.MaxValue;
+        var limit = Math.Min(_options.Limits.MaxRecords, sessionRemaining);
         var selected = new List<RankedExperience>(Math.Min(ranked.Count, limit));
 
         for (var index = 0; index < ranked.Count; index++)
@@ -369,6 +617,15 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 continue;
             }
 
+            // A revision the session already holds is in its conversation already. Decided on the ranked
+            // revision here, so it takes no slot, and again on the re-read one.
+            if (session?.State.ActiveFor(candidate.Record.ExperienceId) is { Confirmed: true } delivered
+                && delivered.Revision >= candidate.Record.Revision)
+            {
+                omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.AlreadyDelivered, AlreadyDeliveredDetail));
+                continue;
+            }
+
             // Counted by what has actually been selected, not by rank index: a skip above must not
             // silently cost a slot that a later record could have filled.
             if (selected.Count < limit)
@@ -377,10 +634,15 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 continue;
             }
 
-            omitted.Add(new OmittedExperience(
-                candidate.Record.ExperienceId,
-                InjectionOmissionReason.OverRecordLimit,
-                $"Ranked {index + 1} of {ranked.Count}, beyond the limit of {limit} records."));
+            omitted.Add(sessionRemaining < _options.Limits.MaxRecords
+                ? new OmittedExperience(
+                    candidate.Record.ExperienceId,
+                    InjectionOmissionReason.OverSessionBudget,
+                    $"Ranked {index + 1} of {ranked.Count}, beyond the {sessionRemaining} record deliveries the session's budget has left.")
+                : new OmittedExperience(
+                    candidate.Record.ExperienceId,
+                    InjectionOmissionReason.OverRecordLimit,
+                    $"Ranked {index + 1} of {ranked.Count}, beyond the limit of {limit} records."));
         }
 
         return selected;
@@ -394,13 +656,22 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// read and the per-record checks after it are bounded together by
     /// <see cref="ExperienceInjectionLimits.EligibilityCheckTimeout"/>.
     /// </summary>
+    /// <remarks>
+    /// With session tracking, it also decides which records the session holds no longer stand: those among
+    /// the candidates by their own re-read, and the rest by a second batched read, with
+    /// <see cref="ExperienceReadPurpose.ScopeCheck"/>, inside the same bound. That read failing fails the
+    /// check: no new record is injected while the provider cannot tell whether an earlier one still stands.
+    /// </remarks>
     private async Task<CheckOutcome> CheckAsync(
         RetrieveExperienceRequest request,
         List<RankedExperience> selected,
+        List<DeliveredRecord> recheck,
         List<OmittedExperience> omitted,
+        SessionTracker? session,
         CancellationToken cancellationToken)
     {
         var injectable = new List<RankedExperience>(selected.Count);
+        var withdrawn = new HashSet<Guid>();
         var policy = _retrieval.Policy;
         var now = _options.TimeProvider.GetUtcNow();
         var required = request.RequiredEnvironmentAttributes;
@@ -434,10 +705,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             // A delivery, and named: this re-read is what actually hands the records to the model, so an
             // access log records it, and the request's correlation ID ties each row to the invocation it
-            // was injected into.
-            batch = await _store
-                .GetManyAsync(request.Authorization, request.Scope, ids, readOptions, bounded.Token)
-                .ConfigureAwait(false);
+            // was injected into. With no candidate -- only records the session holds to re-check -- there
+            // is nothing to deliver and no read.
+            if (ids.Length > 0)
+            {
+                batch = await _store
+                    .GetManyAsync(request.Authorization, request.Scope, ids, readOptions, bounded.Token)
+                    .ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -464,6 +739,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
             var candidate = selected[index];
             var experienceId = ids[index];
 
+            // The session's delivery of this record that still stands, if any: a newer revision was
+            // selected, and this re-read decides whether the delivered one is withdrawn as well.
+            var delivered = session?.State.ActiveFor(experienceId);
+
             ExperienceRecordGetResult? result;
             if (perRecord)
             {
@@ -484,7 +763,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 }
                 catch (Exception ex)
                 {
-                    // Fail-closed, per record: a record that could not be re-checked is not injected.
+                    // Fail-closed, per record: a record that could not be re-checked is not injected. A
+                    // failed read says nothing about the record itself, so a delivery of it is not
+                    // withdrawn on this: it is re-checked on the next invocation.
                     omitted.Add(new OmittedExperience(
                         experienceId,
                         InjectionOmissionReason.Unreadable,
@@ -526,26 +807,58 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // then the record must lie inside the boundary no grant can cross. So a store that hands
             // back a foreign record without declaring it, and one that declares a record from another
             // tenant, application, or project, are both still dropped here.
-            if (result is not { Outcome: ExperienceStoreOutcome.Found, Record: { } current }
-                || current.ExperienceId != experienceId
-                || current.Scope is null
-                || !(result.SharedByGrant
-                    ? current.Scope.SharesGrantBoundary(request.Scope)
-                    : current.Scope == request.Scope))
+            if (!ReadableInScope(result, experienceId, request.Scope, out var current))
             {
                 omitted.Add(new OmittedExperience(
                     experienceId,
                     InjectionOmissionReason.Unreadable,
                     "The record could not be read in the requested scope at injection time."));
+                if (delivered is not null)
+                {
+                    withdrawn.Add(experienceId);
+                }
+
                 continue;
             }
 
             // Every rule retrieval applies, re-applied to the record as it stands now. Checking only
-            // the status would leave a record retrieval would exclude today still injectable.
-            if (Ineligible(current, policy, now, unrestricted, required) is { } reason)
+            // the status would leave a record retrieval would exclude today still injectable. The
+            // record's own rules withdraw a delivery of it; the request's environment attributes do not,
+            // because they say nothing about the record.
+            if (RecordIneligible(current, policy, now) is { } recordReason)
+            {
+                omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.Ineligible, recordReason));
+                if (delivered is not null)
+                {
+                    withdrawn.Add(experienceId);
+                }
+
+                continue;
+            }
+
+            if (EnvironmentIneligible(current, unrestricted, required) is { } reason)
             {
                 omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.Ineligible, reason));
                 continue;
+            }
+
+            if (delivered is not null)
+            {
+                // A grant that now withholds the approach the session was shown withdraws that delivery,
+                // and the record is not shown again in the same block that says so.
+                if (Narrowed(delivered, result))
+                {
+                    withdrawn.Add(experienceId);
+                    omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.Ineligible, NarrowedDetail));
+                    continue;
+                }
+
+                // The ranked revision was newer, but the record as it stands now is not.
+                if (delivered.Confirmed && delivered.Revision >= current.Revision)
+                {
+                    omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.AlreadyDelivered, AlreadyDeliveredDetail));
+                    continue;
+                }
             }
 
             // The re-read decides sharing too: a grant that expired since retrieval leaves the record
@@ -600,24 +913,133 @@ public sealed class ExperienceContextProvider : AIContextProvider
             injectable.Add(refreshed);
         }
 
+        if (recheck.Count > 0)
+        {
+            if (Expired())
+            {
+                return CheckOutcome.TimedOut(timeout);
+            }
+
+            var heldIds = new Guid[recheck.Count];
+            for (var i = 0; i < heldIds.Length; i++)
+            {
+                heldIds[i] = recheck[i].ExperienceId;
+            }
+
+            ExperienceRecordGetManyResult held;
+            try
+            {
+                // A scope check, not a delivery: nothing of these records is handed to the model -- at
+                // most their ID, in a withdrawal notice -- so no access row claims otherwise.
+                held = await _store
+                    .GetManyAsync(
+                        request.Authorization,
+                        request.Scope,
+                        heldIds,
+                        new ExperienceReadOptions(ExperienceReadPurpose.ScopeCheck, request.CorrelationId),
+                        bounded.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (OperationCanceledException) when (expiry.IsCancellationRequested)
+            {
+                return CheckOutcome.TimedOut(timeout);
+            }
+            catch (Exception ex)
+            {
+                return CheckOutcome.Failed(new InjectionFailure(
+                    $"Re-checking the records this session was given threw {ex.GetType().FullName}, so nothing was injected.",
+                    ex));
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // A request-wide refusal (Denied, Invalid), a missing position and any other answer that is not
+            // the record, readable in this scope and still standing, all withdraw: a notice the record did
+            // not need costs a line, and one it needed and did not get is the failure this exists to stop.
+            var answers = held is { Outcome: ExperienceStoreOutcome.Found, Results: { } heldResults } ? heldResults : null;
+            for (var i = 0; i < recheck.Count; i++)
+            {
+                var answer = answers is not null && i < answers.Count ? answers[i] : null;
+                if (!Stands(answer, recheck[i], request.Scope, policy, now))
+                {
+                    withdrawn.Add(recheck[i].ExperienceId);
+                }
+            }
+        }
+
         // And once more after the last record: the whole check is bounded, the last decision included.
         // The per-record loop never looked again after its last callback, so a slow decision on the last
         // record used to inject past the bound.
-        return Expired() ? CheckOutcome.TimedOut(timeout) : CheckOutcome.Checked(injectable);
+        if (Expired())
+        {
+            return CheckOutcome.TimedOut(timeout);
+        }
+
+        // Notices in the order the records were delivered, so the block is deterministic.
+        var withdrawals = session is null || withdrawn.Count == 0
+            ? []
+            : session.State.Delivered.Where(entry => withdrawn.Contains(entry.ExperienceId)).Select(entry => entry.ExperienceId).ToList();
+        return CheckOutcome.Checked(injectable, withdrawals);
+    }
+
+    /// <summary>The omission detail for a revision the session already holds.</summary>
+    private const string AlreadyDeliveredDetail =
+        "This revision of the record was already delivered earlier in this session, and has not been withdrawn.";
+
+    /// <summary>The omission detail for a delivery withdrawn because its grant no longer shows the approach.</summary>
+    private const string NarrowedDetail =
+        "The grant this record is read through no longer permits the approach the session was shown, so that delivery is withdrawn; the record can be delivered again on a later invocation.";
+
+    /// <summary>
+    /// Whether a re-read answered with the record itself, readable in <paramref name="scope"/>: found, under
+    /// the ID asked for, and either in exactly that scope or declared shared by the store and inside the
+    /// boundary no grant can cross.
+    /// </summary>
+    private static bool ReadableInScope([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] ExperienceRecordGetResult? result, Guid experienceId, Scope scope, out ExperienceRecord current)
+    {
+        current = null!;
+        if (result is not { Outcome: ExperienceStoreOutcome.Found, Record: { } record }
+            || record.ExperienceId != experienceId
+            || record.Scope is null
+            || !(result.SharedByGrant ? record.Scope.SharesGrantBoundary(scope) : record.Scope == scope))
+        {
+            return false;
+        }
+
+        current = record;
+        return true;
     }
 
     /// <summary>
-    /// Re-applies retrieval's own eligibility rules to a re-read record: eligible status, the
-    /// policy's reuse-confidence floor, the policy's <see cref="RetrievalPolicy.MaxAge"/>, and the
-    /// request's required environment attributes. Returns the content-free reason the record is no
-    /// longer eligible, or <see langword="null"/> when it still is.
+    /// Whether a delivery the session holds still stands: the record is readable in scope, passes the
+    /// record's own eligibility rules, and is not read through a grant that now withholds an approach the
+    /// session was shown.
     /// </summary>
-    private static string? Ineligible(
-        ExperienceRecord record,
-        RetrievalPolicy policy,
-        DateTimeOffset now,
-        bool unrestricted,
-        IReadOnlyDictionary<string, string>? required)
+    private static bool Stands(ExperienceRecordGetResult? result, DeliveredRecord delivered, Scope scope, RetrievalPolicy policy, DateTimeOffset now) =>
+        ReadableInScope(result, delivered.ExperienceId, scope, out var current)
+        && RecordIneligible(current, policy, now) is null
+        && !Narrowed(delivered, result);
+
+    /// <summary>
+    /// Whether the session was shown this record's approach through a grant, and the grant it is read
+    /// through now withholds it -- or reports no level, which is the least disclosure.
+    /// </summary>
+    private static bool Narrowed(DeliveredRecord delivered, ExperienceRecordGetResult result) =>
+        delivered.ApproachByGrant
+        && result.SharedByGrant
+        && result.GrantDisclosure != ExperienceGrantDisclosure.LessonAndApproach;
+
+    /// <summary>
+    /// Re-applies retrieval's own eligibility rules that are about the record itself: eligible status,
+    /// the policy's reuse-confidence floor, and the policy's <see cref="RetrievalPolicy.MaxAge"/>. Returns
+    /// the content-free reason the record is no longer eligible, or <see langword="null"/> when it still is.
+    /// </summary>
+    private static string? RecordIneligible(ExperienceRecord record, RetrievalPolicy policy, DateTimeOffset now)
     {
         if (!ExperienceRetrievalService.EligibleStatuses.Contains(record.Status))
         {
@@ -634,6 +1056,18 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return "The record's last lifecycle activity is older than the retrieval policy's maximum age.";
         }
 
+        return null;
+    }
+
+    /// <summary>
+    /// Re-applies the request's required environment attributes to a re-read record. Returns the
+    /// content-free reason the record no longer satisfies them, or <see langword="null"/> when it does.
+    /// </summary>
+    private static string? EnvironmentIneligible(
+        ExperienceRecord record,
+        bool unrestricted,
+        IReadOnlyDictionary<string, string>? required)
+    {
         if (!unrestricted)
         {
             foreach (var (key, value) in required!)
@@ -658,8 +1092,22 @@ public sealed class ExperienceContextProvider : AIContextProvider
         IReadOnlyList<OmittedExperience> omitted,
         ExperienceRetrievalResult? retrieved,
         string? correlationId,
-        InjectionFailure? failure)
+        InjectionFailure? failure,
+        SessionTracker? session = null)
     {
+        if (session is not null)
+        {
+            try
+            {
+                // Only an unsettled earlier stage, committed on the way in, can have changed it.
+                session.Save();
+            }
+            catch (Exception)
+            {
+                // The commit is found and made again on the next invocation.
+            }
+        }
+
         Report(trace, new ExperienceInjectionResult(
             outcome,
             NoIds,
@@ -670,20 +1118,88 @@ public sealed class ExperienceContextProvider : AIContextProvider
             PayloadBytes: 0,
             correlationId ?? retrieved?.CorrelationId,
             failure,
-            retrieved?.VectorFallback));
+            retrieved?.VectorFallback)
+        {
+            Session = session?.Usage(),
+        });
         return new AIContext();
     }
 
-    /// <summary>What the final eligibility check produced: what survived it, or the bound that ended it.</summary>
-    private readonly record struct CheckOutcome(List<RankedExperience> Injectable, InjectionFailure? Failure)
+    /// <summary>
+    /// What the final eligibility check produced: what survived it and which of the session's deliveries
+    /// no longer stand, or the failure that ended it.
+    /// </summary>
+    private readonly record struct CheckOutcome(List<RankedExperience> Injectable, List<Guid> Withdrawn, InjectionFailure? Failure)
     {
-        public static CheckOutcome Checked(List<RankedExperience> injectable) => new(injectable, null);
+        public static CheckOutcome Checked(List<RankedExperience> injectable, List<Guid> withdrawn) => new(injectable, withdrawn, null);
 
-        public static CheckOutcome TimedOut(TimeSpan timeout) => new(
-            [],
+        public static CheckOutcome Failed(InjectionFailure failure) => new([], [], failure);
+
+        public static CheckOutcome TimedOut(TimeSpan timeout) => Failed(
             new InjectionFailure(
                 $"The final eligibility check exceeded its {timeout} bound, so nothing was injected.",
                 Exception: null));
+    }
+
+    /// <summary>
+    /// One invocation's view of its session's account: the state as loaded (with any unsettled earlier
+    /// stage committed), the limits it runs under, and what this invocation staged.
+    /// </summary>
+    private sealed class SessionTracker(
+        AgentSession session,
+        InjectionSessionState state,
+        ExperienceInjectionSessionLimits limits,
+        bool dirty)
+    {
+        private bool _dirty = dirty;
+
+        /// <summary>The account, as this invocation sees and changes it.</summary>
+        public InjectionSessionState State { get; private set; } = state;
+
+        /// <summary>What the session's byte budget has left for records.</summary>
+        public long RemainingBytes => Math.Max(0, limits.MaxBytes - State.BytesUsed);
+
+        /// <summary>
+        /// How many more record deliveries the session may be given: its record budget, and never so
+        /// many that the account could hold more than <see cref="ExperienceInjectionSessionLimits.MaxTrackedRecords"/> entries.
+        /// </summary>
+        public int RemainingRecords => (int)Math.Max(
+            0,
+            Math.Min(
+                (long)limits.MaxRecords - State.RecordsUsed,
+                ExperienceInjectionSessionLimits.MaxTrackedRecords - State.Delivered.Count));
+
+        /// <summary>Whether the budget cannot take another record at all, so retrieval need not run.</summary>
+        public bool Exhausted => RemainingRecords == 0 || RemainingBytes <= HistoricalReferenceWriter.BlockOverheadBytes;
+
+        /// <summary>Stages this invocation's delivery, to be settled when MAF reports how it ended.</summary>
+        public void Stage(PendingDelivery pending)
+        {
+            State = State with { Pending = pending };
+            _dirty = true;
+        }
+
+        /// <summary>Writes the account back when this invocation changed it.</summary>
+        public void Save()
+        {
+            if (_dirty)
+            {
+                State.Save(session.StateBag);
+                _dirty = false;
+            }
+        }
+
+        /// <summary>The account as reported: counting what this invocation staged as though it succeeds.</summary>
+        public ExperienceInjectionSessionUsage Usage()
+        {
+            var settled = State.Commit();
+            return new ExperienceInjectionSessionUsage(
+                settled.RecordsUsed,
+                settled.BytesUsed,
+                limits.MaxRecords,
+                limits.MaxBytes,
+                settled.Active.Count());
+        }
     }
 
     /// <summary>
@@ -711,6 +1227,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private void Report(InjectionTrace trace, ExperienceInjectionResult result)
     {
         InjectionDiagnostics.Tag(trace, InjectionDiagnostics.OmittedCountAttribute, result.Omitted.Count);
+        if (result.RetractedExperienceIds.Count > 0)
+        {
+            InjectionDiagnostics.Tag(trace, InjectionDiagnostics.RetractedCountAttribute, result.RetractedExperienceIds.Count);
+        }
 
         try
         {

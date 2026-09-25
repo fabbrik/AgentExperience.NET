@@ -110,6 +110,12 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Storage.Postgres.Vectors.Tests | `HybridRetrievalIntegrationTests.A_revoked_and_a_superseded_record_are_unreachable_through_both_channels_even_with_their_vectors_left_in_place` | Both channels at once, with the vectors deliberately *not* removed — the status predicate is the boundary, not de-indexing **(DB)** |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_candidate_revoked_between_retrieval_and_injection_is_omitted_and_the_rest_still_injected` | Injection re-checks immediately before building the block |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_grant_revoked_between_retrieval_and_injection_delivers_nothing_and_records_nothing` | A revoked *grant* is honoured at injection too |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_record_withdrawn_after_delivery_is_retracted_once_on_the_next_invocation` | A record revoked, superseded, quarantined, erased, un-granted, aged out or re-scored below the floor *after* it was delivered is withdrawn on the session's next invocation, by a fixed notice carrying its ID and no content |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_withdrawal_check_that_throws_injects_nothing_and_changes_nothing` | A withdrawal check that cannot be made injects no new record and withdraws nothing (fail closed) |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.Withdrawal_notices_take_the_block_budget_first_and_the_rest_stay_owed` | A notice cannot be crowded out: it takes the budget first, and no new record is shown while one is owed |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_failed_invocation_leaves_its_withdrawal_notice_owed` | A notice whose invocation failed is delivered again |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_stream_abandoned_while_carrying_a_withdrawal_notice_leaves_the_notice_owed` | A notice whose stream was abandoned, so MAF kept no history of it, is delivered again rather than counted as delivered |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_held_record_selected_again_and_withdrawn_at_the_re_read_is_retracted` | A held record revoked or made unreadable between retrieval and injection is withdrawn, not only omitted |
 | Storage.Postgres.Tests | `PostgresGrantTests.A_revoked_grant_denies_the_read_and_the_history_keeps_both_events` | **(DB)** |
 | Storage.Postgres.Vectors.Tests | `HybridRetrievalIntegrationTests.A_record_shared_by_a_grant_is_retrieved_through_both_channels_until_the_grant_is_revoked` | **(DB)** |
 | Storage.Postgres.Tests | `PostgresDeletionTests.Every_read_path_reports_the_tombstone_as_erased_or_not_at_all` | An erased record, the strongest form of revocation **(DB)** |
@@ -125,6 +131,12 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_injection_shaped_guarded_tool_name_is_escaped_in_the_block_and_its_call_is_still_denied` | A tool name crafted to break out of the block |
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_allowlisted_argument_value_that_orders_a_guarded_call_is_still_denied_by_the_existing_boundary` | The same, for an allowlisted argument value: the first model-chosen text the `Approach:` line can carry |
 | MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_cannot_add_a_line_forge_a_marker_or_a_label_or_close_its_own_quotes` | An argument value crafted to break out of its quotes, its line or the block forges no structure |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.Record_content_cannot_forge_a_withdrawal_notice` | A lesson, reuse guidance or tool name that spells a withdrawal notice for another record forges no notice |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.Loose_spellings_of_a_withdrawal_notice_in_record_text_are_neutralized` | The same with doubled whitespace, dash look-alikes, zero-width characters, Unicode line separators and indented labels |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_value_set_in_process_as_another_type_is_neither_trusted_nor_overwritten` | Session state that is present but not readable is never mistaken for absent, so the budget and what is owed cannot be reset that way |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_state_that_does_not_validate_is_neither_trusted_nor_overwritten` | Session state edited into a malformed, oversized or out-of-range shape injects nothing rather than resetting the budget or forgetting a notice owed |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_state_naming_records_the_reader_cannot_read_widens_nothing_and_discloses_only_their_ids` | Session state naming another tenant's record reads it only in the request's own scope and discloses nothing of it |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.The_withdrawal_check_is_a_scope_check_that_writes_no_access_row` | The withdrawal re-check hands nothing over and is not audited as a delivery |
 | ReuseBaseline | `ApprovalBoundaryTests.A_poisoned_lesson_is_obeyed_denied_counted_and_fails_the_guardrail` | A poisoned lesson, measured: obeyed, denied, and counted against the experiment |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.The_injected_message_is_reference_material_in_the_user_role_not_a_host_instruction` | Never injected as a system instruction |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_host_denial_omits_the_record_whatever_its_confidence_or_status_and_leaves_it_unchanged` | The host's risk policy overrides confidence |
@@ -140,8 +152,10 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 
 The label on an injected block is hygiene, not a control: nothing here claims a model will *treat* retrieved text
 as data. The control is the approval boundary around tools, which lives outside the block, and section 4 is what
-proves that boundary holds when the model does obey. The residual risk — injected blocks accumulating in a reused
-session — is a row in the root README's Known limits table.
+proves that boundary holds when the model does obey. The same goes for a withdrawal notice: the suite proves one is
+delivered, once, carrying nothing but an ID, and that record text cannot forge one — not that a model that already
+read the withdrawn text stops using it. That residual, and that the earlier block stays in a reused session's
+history, is KL-12 in the root README's Known limits table.
 
 Nor does it prove that an argument value a host allowlists through `ExperienceInjectionOptions.ApproachArguments` is
 safe to show. Such a value was chosen by the captured run's model and is only as clean as the capture-time sanitizer,

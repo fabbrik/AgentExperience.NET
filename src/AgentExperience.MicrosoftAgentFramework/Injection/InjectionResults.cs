@@ -72,6 +72,22 @@ public enum InjectionOmissionReason
     /// truncated.
     /// </summary>
     OverByteBudget,
+
+    /// <summary>
+    /// Session tracking: this revision of the record was already delivered earlier in the same
+    /// <see cref="Microsoft.Agents.AI.AgentSession"/> and has not been withdrawn, so the session's
+    /// conversation already carries it. A strictly newer revision is injected again. Checked on the ranked
+    /// revision before the record limit is applied, so a duplicate never takes a slot, and again on the
+    /// re-read revision.
+    /// </summary>
+    AlreadyDelivered,
+
+    /// <summary>
+    /// Session tracking: the session's <see cref="ExperienceInjectionSessionLimits"/> could not take this
+    /// record -- its record budget is spent, or the block with this record would not fit in what its byte
+    /// budget has left. Dropped whole, like <see cref="OverByteBudget"/>.
+    /// </summary>
+    OverSessionBudget,
 }
 
 /// <summary>
@@ -109,6 +125,21 @@ public enum InjectionOutcome
 
     /// <summary>The provider itself failed -- a throwing resolver, or an unexpected exception anywhere inside it. Nothing was injected; the failure is reported, never thrown.</summary>
     Failed,
+
+    /// <summary>
+    /// Session tracking: a block was injected that carries withdrawal notices for records delivered
+    /// earlier in the session, and no new record. Takes precedence over <see cref="NothingToInject"/>,
+    /// <see cref="SessionBudgetExhausted"/> and the retrieval outcomes, because a block was injected; a
+    /// retrieval failure is still carried on <see cref="ExperienceInjectionResult.Failure"/>.
+    /// </summary>
+    Retracted,
+
+    /// <summary>
+    /// Session tracking: nothing was injected because the session's <see cref="ExperienceInjectionSessionLimits"/>
+    /// cannot take another record. When the budget was already spent, retrieval was not run at all;
+    /// otherwise the records that survived are omitted as <see cref="InjectionOmissionReason.OverSessionBudget"/>.
+    /// </summary>
+    SessionBudgetExhausted,
 }
 
 /// <summary>
@@ -128,18 +159,14 @@ public sealed record InjectionFailure(string Reason, Exception? Exception);
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Injection is not retractable, and it is not even per-invocation when a session is reused.</b>
-/// <see cref="InjectedExperienceIds"/> is a record of what this invocation handed to the model. A
-/// record revoked, re-scoped, or re-statused afterwards is excluded from <em>later</em> injections
-/// only; nothing here can be taken back out of a model that has already seen it.
-/// </para>
-/// <para>
-/// That matters more than it first looks, because a block injected into an
-/// <see cref="Microsoft.Agents.AI.AgentSession"/> can persist in that session's conversation. On the
-/// next turn of the same session the model may therefore see <em>both</em> the fresh block and the
-/// earlier one, verbatim -- including records this result reports as omitted. See
-/// <see cref="ExperienceContextProvider"/> for what that means for
-/// <see cref="ExperienceInjectionLimits.MaxBytes"/> and for revocation.
+/// <b>Injection cannot be taken back, only withdrawn.</b> <see cref="InjectedExperienceIds"/> is a
+/// record of what this invocation handed to the model. A block injected into an
+/// <see cref="Microsoft.Agents.AI.AgentSession"/> persists in that session's conversation, so on a later
+/// turn the model still sees it. With session tracking on (the default), a record delivered earlier in
+/// the session and since revoked, superseded, erased or un-granted is named on a later turn in
+/// <see cref="RetractedExperienceIds"/>, and that turn's block tells the model it is withdrawn. That notice
+/// is advisory: the earlier text is not removed, and a model that read it cannot be made to forget it.
+/// See <see cref="ExperienceContextProvider"/>.
 /// </para>
 /// </remarks>
 /// <param name="Outcome">What the attempt ended as.</param>
@@ -158,7 +185,7 @@ public sealed record InjectionFailure(string Reason, Exception? Exception);
 /// search as a partial answer.
 /// </param>
 /// <param name="EnvironmentUnrestricted"><see langword="true"/> when the request named no required environment attributes, copied from the retrieval result, so every candidate passed that check unconditionally.</param>
-/// <param name="PayloadBytes">The UTF-8 size of the injected block, at most <see cref="ExperienceInjectionLimits.MaxBytes"/>; 0 when nothing was injected.</param>
+/// <param name="PayloadBytes">The UTF-8 size of the injected block, at most <see cref="ExperienceInjectionLimits.MaxBytes"/>; 0 when nothing was injected. A block that carries only withdrawal notices counts too.</param>
 /// <param name="CorrelationId">The retrieval request's correlation identifier, echoed back on every outcome including a timeout.</param>
 /// <param name="Failure">Why the attempt failed, on <see cref="InjectionOutcome.RetrievalFailed"/> or <see cref="InjectionOutcome.Failed"/>; otherwise <see langword="null"/>.</param>
 /// <param name="VectorFallback">
@@ -187,4 +214,38 @@ public sealed record ExperienceInjectionResult(
 
     /// <summary>Whether this block was built from the text channel alone, that is, whether <see cref="VectorFallback"/> is present.</summary>
     public bool TextOnly => VectorFallback is not null;
+
+    /// <summary>
+    /// Session tracking: the records delivered earlier in this session whose withdrawal notice this
+    /// invocation's block carries, in the order written. Empty with tracking off, with no session, or when
+    /// nothing delivered earlier has been withdrawn. IDs only, as everywhere on this result.
+    /// </summary>
+    public IReadOnlyList<Guid> RetractedExperienceIds { get; init; } = [];
+
+    /// <summary>
+    /// Session tracking: what the session has been given, counting this invocation's block as though it
+    /// succeeds; <see langword="null"/> with tracking off or no session. It is charged for real only once MAF
+    /// reports the invocation succeeded.
+    /// </summary>
+    public ExperienceInjectionSessionUsage? Session { get; init; }
+}
+
+/// <summary>
+/// What one <see cref="Microsoft.Agents.AI.AgentSession"/> has been given, against its
+/// <see cref="ExperienceInjectionSessionLimits"/>. Counts only: no record content.
+/// </summary>
+/// <param name="RecordsUsed">Record deliveries charged to the session, this invocation's included.</param>
+/// <param name="BytesUsed">UTF-8 bytes of Historical Reference charged to the session, this invocation's block included. Can exceed <paramref name="MaxBytes"/> only by withdrawal notices, which are never refused.</param>
+/// <param name="MaxRecords">The session's record budget.</param>
+/// <param name="MaxBytes">The session's byte budget.</param>
+/// <param name="TrackedRecords">How many distinct records the session holds as delivered and not withdrawn, each re-checked on every invocation.</param>
+public sealed record ExperienceInjectionSessionUsage(
+    int RecordsUsed,
+    long BytesUsed,
+    int MaxRecords,
+    int MaxBytes,
+    int TrackedRecords)
+{
+    /// <summary>Whether the session's record budget is spent. The byte budget can be spent without it, and then shows as <see cref="InjectionOmissionReason.OverSessionBudget"/> omissions.</summary>
+    public bool RecordsExhausted => RecordsUsed >= MaxRecords;
 }

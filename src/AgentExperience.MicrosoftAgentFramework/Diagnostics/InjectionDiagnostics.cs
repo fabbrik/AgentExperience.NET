@@ -74,6 +74,12 @@ internal static class InjectionDiagnostics
     /// <summary>How many ranked records this injection left out. A count: the omission reasons themselves stay on the typed result.</summary>
     internal const string OmittedCountAttribute = "agentexperience.omitted_count";
 
+    /// <summary>
+    /// How many withdrawal notices this injection's block carried, for records delivered earlier in the
+    /// session. A count, set only when it is not zero: the IDs stay on the typed result.
+    /// </summary>
+    internal const string RetractedCountAttribute = "agentexperience.retracted_count";
+
     // ---------------------------------------------------------------------------------------------
     // Restated from Core. Every one of these is asserted equal to Core's own value by
     // AgentExperience.MicrosoftAgentFramework.Tests' diagnostics-agreement test.

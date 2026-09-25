@@ -24,9 +24,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// </para>
 /// <para>
 /// <b><see cref="MaxBytes"/> bounds one injected block, not a conversation.</b> When the same
-/// <see cref="AgentSession"/> is reused across turns, an earlier block can remain in the session's
-/// conversation, so what the model sees can exceed this budget several times over. See
-/// <see cref="ExperienceContextProvider"/>.
+/// <see cref="AgentSession"/> is reused across turns, earlier blocks remain in the session's
+/// conversation. What bounds the conversation is <see cref="ExperienceInjectionOptions.SessionLimits"/>.
+/// See <see cref="ExperienceContextProvider"/>.
 /// </para>
 /// </remarks>
 /// <param name="MaxRecords">
@@ -122,7 +122,8 @@ public sealed record ExperienceInjectionLimits(int MaxRecords, int MaxBytes)
 /// The messages for this invocation that MAF passed to the provider. MAF filters its input with the
 /// provider's <c>ProvideInputMessageFilter</c>, which by default keeps only <em>external</em>
 /// messages, so this is the caller-facing conversation -- not necessarily everything the model will
-/// receive, and not this provider's own earlier blocks. It may be empty, so read it defensively
+/// receive, and not this provider's own earlier blocks (session tracking keeps its own account of those,
+/// in the session's state bag). It may be empty, so read it defensively
 /// (<c>LastOrDefault(...)</c>, never <c>Last()</c>: a resolver that throws injects nothing for the
 /// rest of that agent's life and says so only through the result callback).
 /// </param>
@@ -204,6 +205,44 @@ public sealed class ExperienceInjectionOptions
     /// <see cref="ExperienceInjectionLimits.Default"/> (8 records, 16 KB).
     /// </summary>
     public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
+
+    /// <summary>
+    /// Session tracking, on by default with <see cref="ExperienceInjectionSessionLimits.Default"/> (32 record
+    /// deliveries, 64 KB). Set to <see langword="null"/> to turn it off, which restores the behaviour of
+    /// earlier previews exactly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// With a session supplied, the provider keeps a small state in the session's
+    /// <see cref="AgentSession.StateBag"/>, under <see cref="ExperienceContextProvider.SessionStateKey"/>,
+    /// and uses it to do three things across the session's invocations:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><b>Bound the conversation.</b> The session is given at most these many record
+    /// deliveries and bytes; when the budget cannot take another record the outcome is
+    /// <see cref="InjectionOutcome.SessionBudgetExhausted"/>.</description></item>
+    /// <item><description><b>Never repeat a revision.</b> A record revision the session already holds is
+    /// omitted as <see cref="InjectionOmissionReason.AlreadyDelivered"/>; a strictly newer revision is
+    /// injected again.</description></item>
+    /// <item><description><b>Withdraw what no longer stands.</b> Every record the session holds is re-read on
+    /// each invocation, and one that has since been revoked, superseded, erased, or has lost the grant it was
+    /// read through is named in a fixed withdrawal notice in that invocation's block, ahead of any new
+    /// record.</description></item>
+    /// </list>
+    /// <para>
+    /// <b>It assumes the session keeps what was injected.</b> MAF's <see cref="ChatClientAgent"/> does: an
+    /// invocation's request messages, the block included, go into the session's chat history. A host whose
+    /// history provider drops injected blocks should turn tracking off, or the deduplication hides a record
+    /// the model no longer sees. With no session (<see cref="ExperienceInjectionContext.Session"/> is
+    /// <see langword="null"/>) nothing is tracked.
+    /// </para>
+    /// <para>
+    /// When tracking is on, <see cref="Limits"/>' <see cref="ExperienceInjectionLimits.MaxBytes"/> must be at
+    /// least <see cref="HistoricalReferenceWriter.RetractionBlockBytes"/>, so a withdrawal notice always fits
+    /// in a block; the provider's constructor refuses anything smaller.
+    /// </para>
+    /// </remarks>
+    public ExperienceInjectionSessionLimits? SessionLimits { get; init; } = ExperienceInjectionSessionLimits.Default;
 
     /// <summary>
     /// Optional. The host's risk decision for each candidate, asked once per record immediately after
@@ -304,13 +343,22 @@ public sealed class ExperienceInjectionOptions
     /// <param name="paramName">The parameter name to report on a validation failure.</param>
     /// <returns>The validated snapshot of <see cref="ApproachArguments"/>.</returns>
     /// <exception cref="ArgumentNullException"><see cref="ResolveRequest"/>, <see cref="Limits"/>, <see cref="TimeProvider"/>, or <see cref="ApproachArguments"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><see cref="ApproachArguments"/> is malformed.</exception>
+    /// <exception cref="ArgumentException"><see cref="ApproachArguments"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
     internal ApproachArgumentAllowlist Validate(string paramName)
     {
         ArgumentNullException.ThrowIfNull(ResolveRequest, $"{paramName}.{nameof(ResolveRequest)}");
         ArgumentNullException.ThrowIfNull(Limits, $"{paramName}.{nameof(Limits)}");
         ArgumentNullException.ThrowIfNull(TimeProvider, $"{paramName}.{nameof(TimeProvider)}");
         ArgumentNullException.ThrowIfNull(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
+        if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)
+        {
+            // A notice that can never fit would stay owed forever and, since no record is written while
+            // one is owed, silence injection for the rest of the session.
+            throw new ArgumentException(
+                $"With session tracking on, the block byte budget must be at least {HistoricalReferenceWriter.RetractionBlockBytes} bytes, so a withdrawal notice always fits. Raise Limits.MaxBytes or set SessionLimits to null.",
+                $"{paramName}.{nameof(Limits)}");
+        }
+
         return ApproachArgumentAllowlist.From(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
     }
 }

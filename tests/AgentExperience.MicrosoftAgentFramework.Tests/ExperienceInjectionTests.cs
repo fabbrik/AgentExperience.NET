@@ -1138,12 +1138,14 @@ public class ExperienceInjectionTests
         Assert.Contains("eligibility check exceeded", result.Failure!.Reason, StringComparison.Ordinal);
     }
 
-    // ---- A reused session accumulates blocks ----------------------------------------------------
+    // ---- With session tracking off, a reused session accumulates blocks --------------------------
 
     [Fact]
-    public async Task Injected_blocks_accumulate_across_turns_of_one_session_which_neither_limit_bounds()
+    public async Task With_session_tracking_off_injected_blocks_accumulate_across_turns_of_one_session_as_before()
     {
-        var harness = new Harness();
+        // SessionLimits = null is the opt-out, and it restores the pre-6.5 behaviour exactly. The default
+        // (tracking on) is pinned by SessionInjectionTests.
+        var harness = new Harness { SessionLimits = null };
         var record = InjectionRecords.Id(1);
         harness.World.Publish(InjectionRecords.Record(record, TestScope, lesson: "Turn-one lesson."));
 
@@ -1174,6 +1176,11 @@ public class ExperienceInjectionTests
         var third = harness.Results[^1];
         Assert.Equal(InjectionOutcome.NothingToInject, third.Outcome);
         Assert.Equal(InjectionOmissionReason.Ineligible, Assert.Single(third.Omitted).Reason);
+        Assert.Empty(third.RetractedExperienceIds);
+        Assert.Null(third.Session);
+
+        // And nothing was kept in the session: tracking off writes no state.
+        Assert.False(session.StateBag.TryGetValue<System.Text.Json.Nodes.JsonNode>(ExperienceContextProvider.SessionStateKey, out _));
 
         static int Blocks(IEnumerable<ChatMessage> messages) => messages
             .Sum(m => m.Text.Split(HistoricalReferenceWriter.BlockBegin).Length - 1);
@@ -1705,6 +1712,8 @@ public class ExperienceInjectionTests
 
         public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
 
+        public ExperienceInjectionSessionLimits? SessionLimits { get; init; } = ExperienceInjectionSessionLimits.Default;
+
         public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? Resolve { get; init; }
 
         public Func<ExperienceInjectionDecisionContext, InjectionDecision>? Decide { get; init; }
@@ -1745,6 +1754,7 @@ public class ExperienceInjectionTests
                     RequiredEnvironmentAttributes: RequiredEnvironment,
                     CorrelationId: "corr-1")),
                 Limits = Limits,
+                SessionLimits = SessionLimits,
                 DecideInjection = Decide,
                 TimeProvider = Clock,
                 OnContextInjected = result =>
