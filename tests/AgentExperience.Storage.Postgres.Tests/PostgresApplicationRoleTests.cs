@@ -5,7 +5,8 @@ using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 namespace AgentExperience.Storage.Postgres.Tests;
 
 /// <summary>
-/// Story 6.1 (KL-4) against a real PostgreSQL 16 container: the two-role deployment, proved from the
+/// Story 6.1 (KL-4) against a real PostgreSQL container, on every supported major (15 to 18, see
+/// <see cref="AgentExperience.Tests.Shared.PostgresTestImage"/>): the two-role deployment, proved from the
 /// application role's own connection. Every other store test in this project already runs as that role
 /// (see <see cref="PostgresFixture"/>); this class proves what it can <em>not</em> do -- own, alter,
 /// disable, rewrite, remove, truncate, or reach a purge it was not given -- and that
@@ -388,9 +389,9 @@ public sealed class PostgresApplicationRoleTests
         // Each is one step from switching every guard off: a superuser bypasses privileges and triggers,
         // server file or program access reaches the data directory, and session_replication_role = replica
         // stops ordinary triggers firing.
-        var grants = new (string Purpose, string Grant, string Expected)[]
+        var grants = new (string Purpose, string? Grant, string Expected)[]
         {
-            ("dsuper", $"GRANT \"{superuser}\" TO \"{{0}}\" WITH INHERIT FALSE", "a superuser"),
+            ("dsuper", null, "a superuser"),
             ("dfiles", "GRANT pg_write_server_files TO \"{0}\"", "server file or program access"),
             ("dsrr", "GRANT SET ON PARAMETER session_replication_role TO \"{0}\"", "session_replication_role"),
         };
@@ -398,7 +399,14 @@ public sealed class PostgresApplicationRoleTests
         foreach (var (purpose, grant, expected) in grants)
         {
             var role = await _fixture.CreateLoginRoleAsync(purpose);
-            await _fixture.ExecuteAsSuperuserAsync(string.Format(System.Globalization.CultureInfo.InvariantCulture, grant, role));
+            if (grant is null)
+            {
+                await GrantWithoutInheritAsync(superuser, role);
+            }
+            else
+            {
+                await _fixture.ExecuteAsSuperuserAsync(string.Format(System.Globalization.CultureInfo.InvariantCulture, grant, role));
+            }
 
             var refused = await Assert.ThrowsAsync<ExperienceStoreException>(() => ApplyAsync(world.Owner, role));
             Assert.Contains(expected, refused.Message, StringComparison.Ordinal);
@@ -426,7 +434,7 @@ public sealed class PostgresApplicationRoleTests
         // inheriting has_table_privilege alone would not see it.
         var deleter = await _fixture.CreateLoginRoleAsync("reach_del");
         await ExecuteAsync(world.Owner, $"GRANT DELETE ON agent_experience.lifecycle_events TO \"{deleter}\"", markers: []);
-        await _fixture.ExecuteAsSuperuserAsync($"GRANT \"{deleter}\" TO \"{world.App}\" WITH INHERIT FALSE, SET TRUE");
+        await GrantWithoutInheritAsync(deleter, world.App);
         Assert.False(await ScalarAsync<bool>(world.Owner, $"SELECT has_table_privilege('{world.App}', 'agent_experience.lifecycle_events', 'DELETE')"));
 
         var delete = await Assert.ThrowsAsync<ExperienceStoreException>(() => ApplyAsync(world.Owner, world.App));
@@ -440,6 +448,57 @@ public sealed class PostgresApplicationRoleTests
 
         // Take the membership away and the same call succeeds.
         await _fixture.ExecuteAsSuperuserAsync($"REVOKE \"{deleter}\" FROM \"{world.App}\"");
+        await _fixture.ExecuteAsSuperuserAsync($"ALTER ROLE \"{world.App}\" INHERIT");
+        await ApplyAsync(world.Owner, world.App);
+    }
+
+    /// <summary>
+    /// Story 6.3: PostgreSQL 17 added the <c>MAINTAIN</c> table privilege and the <c>pg_maintain</c>
+    /// predefined role. No trigger fires on <c>LOCK TABLE</c>, <c>CLUSTER</c>, <c>REINDEX</c> or
+    /// <c>VACUUM</c>, so the call refuses either one, whether held directly, through PUBLIC, or one
+    /// <c>SET ROLE</c> away. On 15 and 16 neither exists, and the same call succeeds: the check is guarded
+    /// by server version rather than failing on a privilege name those servers do not know.
+    /// </summary>
+    [Fact]
+    public async Task The_privilege_call_refuses_MAINTAIN_and_pg_maintain_on_PostgreSQL_17_and_later()
+    {
+        await using var world = await TwoRoleDatabaseAsync("maintain");
+        var serverMajor = await ScalarAsync<int>(world.Owner, "SELECT current_setting('server_version_num')::int / 10000");
+        Assert.Equal(AgentExperience.Tests.Shared.PostgresTestImage.Major, serverMajor);
+
+        if (serverMajor < 17)
+        {
+            Assert.False(await ScalarAsync<bool>(world.Owner, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pg_maintain')"));
+            await ApplyAsync(world.Owner, world.App);
+            return;
+        }
+
+        // MAINTAIN on one guarded ledger, through PUBLIC: the owner's REVOKE from the role cannot remove it.
+        await ExecuteAsync(world.Owner, "GRANT MAINTAIN ON agent_experience.lifecycle_events TO PUBLIC", markers: []);
+        var viaPublic = await Assert.ThrowsAsync<ExperienceStoreException>(() => ApplyAsync(world.Owner, world.App));
+        Assert.Contains("lifecycle_events: the role holds MAINTAIN", viaPublic.Message, StringComparison.Ordinal);
+        await ExecuteAsync(world.Owner, "REVOKE MAINTAIN ON agent_experience.lifecycle_events FROM PUBLIC", markers: []);
+
+        // MAINTAIN held by a role the application role can SET ROLE to without inheriting it.
+        var maintainer = await _fixture.CreateLoginRoleAsync("maint_one");
+        await ExecuteAsync(world.Owner, $"GRANT MAINTAIN ON agent_experience.experience_records TO \"{maintainer}\"", markers: []);
+        await GrantWithoutInheritAsync(maintainer, world.App);
+        var viaMembership = await Assert.ThrowsAsync<ExperienceStoreException>(() => ApplyAsync(world.Owner, world.App));
+        Assert.Contains("experience_records: the role holds MAINTAIN", viaMembership.Message, StringComparison.Ordinal);
+        await _fixture.ExecuteAsSuperuserAsync($"REVOKE \"{maintainer}\" FROM \"{world.App}\"");
+
+        // pg_maintain: MAINTAIN on every table in the cluster, refused before anything is granted.
+        await _fixture.ExecuteAsSuperuserAsync($"GRANT pg_maintain TO \"{world.App}\"");
+        var predefined = await Assert.ThrowsAsync<ExperienceStoreException>(() => ApplyAsync(world.Owner, world.App));
+        Assert.Contains("pg_maintain", predefined.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was changed", predefined.Message, StringComparison.Ordinal);
+        await _fixture.ExecuteAsSuperuserAsync($"REVOKE pg_maintain FROM \"{world.App}\"");
+
+        // Rolled back every time, and with each path removed the same call succeeds.
+        Assert.Equal(0L, await ScalarAsync<long>(
+            world.Owner,
+            "SELECT count(*) FROM pg_namespace n, aclexplode(n.nspacl) a " +
+            $"WHERE n.nspname = 'agent_experience' AND a.grantee = '{world.App}'::regrole"));
         await ApplyAsync(world.Owner, world.App);
     }
 
@@ -688,6 +747,25 @@ public sealed class PostgresApplicationRoleTests
         var affected = await command.ExecuteNonQueryAsync();
         await transaction.CommitAsync();
         return affected;
+    }
+
+    /// <summary>
+    /// Makes <paramref name="member"/> a member of <paramref name="granted"/> that can <c>SET ROLE</c> to it
+    /// but does not inherit its privileges, on every supported major. PostgreSQL 16 added per-membership
+    /// <c>WITH INHERIT FALSE, SET TRUE</c>; on 15 the same effect is the member's <c>NOINHERIT</c> attribute.
+    /// </summary>
+    private async Task GrantWithoutInheritAsync(string granted, string member)
+    {
+        var serverMajor = await ScalarAsync<int>(_fixture.SuperuserDataSource, "SELECT current_setting('server_version_num')::int / 10000");
+        if (serverMajor >= 16)
+        {
+            await _fixture.ExecuteAsSuperuserAsync($"GRANT \"{granted}\" TO \"{member}\" WITH INHERIT FALSE, SET TRUE");
+        }
+        else
+        {
+            await _fixture.ExecuteAsSuperuserAsync($"ALTER ROLE \"{member}\" NOINHERIT");
+            await _fixture.ExecuteAsSuperuserAsync($"GRANT \"{granted}\" TO \"{member}\"");
+        }
     }
 
     private Task<T> OwnerScalarAsync<T>(string sql) => ScalarAsync<T>(_fixture.OwnerDataSource, sql);

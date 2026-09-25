@@ -175,7 +175,8 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 Do not make the application role a member of the owner role, of `pg_write_all_data`, of a superuser role, of
 `pg_write_server_files`, `pg_read_server_files` or `pg_execute_server_program`, or of any role that owns something in
-the schema, and do not grant it `SET` on `session_replication_role`. The call below refuses each of these or fails
+the schema, and do not grant it `SET` on `session_replication_role`, or (PostgreSQL 17 and later) membership in
+`pg_maintain` or the `MAINTAIN` privilege on any table in the schema. The call below refuses each of these or fails
 its verification. Do not give it `CREATEROLE` either: that is not checked, and a role that can create and grant roles
 is an administrator.
 
@@ -216,14 +217,17 @@ on the schema and on every table, sequence and function in it, then grants exact
 Then it checks the role's **effective** privileges — which also see grants to `PUBLIC`, grants made by another
 grantor, memberships and predefined roles — and throws `ExperienceStoreException`, rolling everything back, on any
 difference: `CREATE` on the schema, a `DELETE` or `TRUNCATE` on a ledger, an `UPDATE` on any other column, a
-`TRIGGER` or `REFERENCES` privilege, any privilege held `WITH GRANT OPTION`, a sequence, a `SECURITY DEFINER`
+`TRIGGER` or `REFERENCES` privilege, on PostgreSQL 17 and later `MAINTAIN` on a table (no trigger fires on
+`LOCK TABLE`, `CLUSTER`, `REINDEX` or `VACUUM`), any privilege held `WITH GRANT OPTION`, a sequence, a `SECURITY DEFINER`
 function in the schema the role could execute without an opt-in, or a missing grant. What must be absent is checked
 on every role the application role is a member of, not only on the ones it inherits from, so a privilege one
-`SET ROLE` away (a `NOINHERIT` role, or a membership granted `WITH INHERIT FALSE`) is caught too.
+`SET ROLE` away (a `NOINHERIT` role, or on PostgreSQL 16 and later a membership granted `WITH INHERIT FALSE`) is
+caught too.
 
 Before any of that it refuses a role that does not exist, an unmigrated schema, a superuser, the role running the
 call, any role that is — or is a member of — the owner of the database, the schema, or anything in it, and any role
-that is or reaches a superuser, one of the server-file roles, or `SET` on `session_replication_role`. The message
+that is or reaches a superuser, one of the server-file roles, `pg_maintain` (PostgreSQL 17 and later), or `SET` on
+`session_replication_role`. The message
 names the violation; nothing is changed.
 
 **Why it is an API and not a migration.** A migration runs once and is journaled, so it could never re-grant on an

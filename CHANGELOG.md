@@ -31,11 +31,12 @@ A host that skips all of this keeps working exactly as before, as a single-role 
   transaction, the call does four things.
   - It refuses a missing role, an unmigrated schema, a superuser, the caller itself, any role that is or is a
     member of an owner of the database, the schema or an object in it, and any role that reaches a superuser, a
-    server-file role or `SET` on `session_replication_role`.
+    server-file role, `pg_maintain` (PostgreSQL 17 and later) or `SET` on `session_replication_role`.
   - It revokes everything the application role holds in the schema.
   - It grants the stores' manifest. Every `UPDATE` is column-level, including on `experience_embeddings`.
   - It verifies the role's effective privileges, including `CREATE` on the schema and grant options, across every
-    role the application role can `SET ROLE` to, and rolls back on any difference.
+    role the application role can `SET ROLE` to, and rolls back on any difference. On PostgreSQL 17 and later
+    that includes `MAINTAIN` on any table in the schema.
 - `0013_role_separation_hardening`: `search_path = pg_catalog, agent_experience, pg_temp` on the three purge
   functions and on every guard trigger function.
 - **`ExperienceInjectionOptions.ApproachArguments`: selected argument values on the `Approach:` line** (story 6.2,

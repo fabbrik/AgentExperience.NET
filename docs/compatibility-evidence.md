@@ -213,10 +213,10 @@ the other rows by a test or two:
 
 | Major | Server (pgvector image) | pgvector | Postgres tests | Vectors tests | Proof | Sample |
 | --- | --- | --- | --- | --- | --- | --- |
-| 15 | 15.19 | 0.8.6 | 431 + 431 passed | 65 + 65 passed | 15 + 15 passed | 34 passed (net10.0) |
-| 16 | 16.15 | 0.8.6 | 431 + 431 passed | 65 + 65 passed | 15 + 15 passed | 34 passed (net10.0) |
-| 17 | 17.11 | 0.8.6 | 431 + 431 passed | 65 + 65 passed | 15 + 15 passed | 34 passed (net10.0) |
-| 18 | 18.6 | 0.8.6 | 431 + 431 passed | 65 + 65 passed | 15 + 15 passed | 34 passed (net10.0) |
+| 15 | 15.19 | 0.8.6 | 454 + 454 passed | 66 + 66 passed | 15 + 15 passed | 34 passed (net10.0) |
+| 16 | 16.15 | 0.8.6 | 454 + 454 passed | 66 + 66 passed | 15 + 15 passed | 34 passed (net10.0) |
+| 17 | 17.11 | 0.8.6 | 454 + 454 passed | 66 + 66 passed | 15 + 15 passed | 34 passed (net10.0) |
+| 18 | 18.6 | 0.8.6 | 454 + 454 passed | 66 + 66 passed | 15 + 15 passed | 34 passed (net10.0) |
 | 14 | 14.24 | 0.8.6 | **355 failed** of 432 (net10.0 only) | **47 failed** of 65 (net10.0 only) | 14 passed (net10.0 only) | **3 failed** |
 
 **Why not 14.** Every PostgreSQL 14 failure is the same one: the schema migrator stops at
