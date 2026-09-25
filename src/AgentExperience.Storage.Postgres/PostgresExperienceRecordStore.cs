@@ -168,7 +168,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// cannot drift apart on any of it.
     /// </summary>
     internal const string GetSelectFrom =
-        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {PermittingDisclosureColumn}, {DeletedAtColumn} FROM {Table} r " +
+        $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {PermittingDisclosureColumn}, " +
+        $"{PermittingApproachArgumentsColumn}, {DeletedAtColumn} FROM {Table} r " +
         $"{PermittingGrantJoin} ";
 
     /// <summary>The readability rule <see cref="GetSql"/> and <see cref="GetManySql"/> share, byte for byte.</summary>
@@ -193,7 +194,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <summary>Everything <see cref="GetExactSql"/> says before its <c>WHERE</c>, shared with <see cref="GetManyExactSql"/>.</summary>
     internal const string GetExactSelectFrom =
         $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, " +
-        $"NULL::text AS {PermittingDisclosureAlias}, {DeletedAtColumn} " +
+        $"NULL::text AS {PermittingDisclosureAlias}, NULL::jsonb AS {PermittingApproachArgumentsAlias}, {DeletedAtColumn} " +
         $"FROM {Table} r ";
 
     /// <summary><see cref="GetExactSql"/> for several records in one statement: the fallback <see cref="GetManySql"/> takes when grants are unavailable.</summary>
@@ -514,9 +515,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// and the level an access row records must be the level of the grant that admitted the read, so it
     /// is never looked up a second time.
     /// </para>
+    /// <para>
+    /// <b>And the owner's argument allowlist</b> (<c>0017</c>), from the same row again, so the keys injection may
+    /// show are the keys of the grant that admitted the read and carries the level they belong to.
+    /// </para>
     /// </summary>
     internal const string PermittingGrantJoin =
-        $"LEFT JOIN LATERAL (SELECT g.grant_id, g.disclosure FROM {GrantsTable} g WHERE {ActiveGrantConditions} " +
+        $"LEFT JOIN LATERAL (SELECT g.grant_id, g.disclosure, g.approach_arguments FROM {GrantsTable} g WHERE {ActiveGrantConditions} " +
         $"ORDER BY g.grant_id LIMIT 1) {PermittingGrantSource} ON true";
 
     /// <summary>The permitting grant's ID, appended <em>after</em> the record columns and the shared flag.</summary>
@@ -531,6 +536,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </summary>
     internal const string PermittingDisclosureColumn =
         PermittingGrantSource + ".disclosure AS " + PermittingDisclosureAlias;
+
+    /// <summary>The alias the permitting grant's argument allowlist is selected under, read back by name.</summary>
+    internal const string PermittingApproachArgumentsAlias = "permitting_grant_approach_arguments";
+
+    /// <summary>
+    /// The permitting grant's argument allowlist, from the same lateral row as <see cref="PermittingGrantColumn"/>.
+    /// Null for a record the requester owns and for every level but <c>LessonApproachAndArguments</c>.
+    /// </summary>
+    internal const string PermittingApproachArgumentsColumn =
+        PermittingGrantSource + ".approach_arguments AS " + PermittingApproachArgumentsAlias;
 
     /// <summary>
     /// <see cref="ReadableRecordScopePredicate"/> expressed against <see cref="PermittingGrantJoin"/>:
@@ -983,7 +998,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             NoErrors,
             sharedByGrant,
             ReadPermittingGrant(reader),
-            ReadPermittingDisclosure(reader));
+            ReadPermittingDisclosure(reader),
+            ReadPermittingApproachArguments(reader));
     }
 
     /// <summary>
@@ -3071,6 +3087,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             var ordinal = reader.GetOrdinal(PermittingDisclosureAlias);
             return reader.IsDBNull(ordinal) ? null : ParseDisclosure(reader.GetString(ordinal));
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the permitting grant's argument allowlist by name. A reader that did not select it, a null, and a
+    /// stored value that does not parse are all "the owner named no key": no borrowed argument value is shown.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<string>>? ReadPermittingApproachArguments(DbDataReader reader)
+    {
+        try
+        {
+            var ordinal = reader.GetOrdinal(PermittingApproachArgumentsAlias);
+            return reader.IsDBNull(ordinal) ? null : GrantApproachArgumentsCodec.Parse(reader.GetString(ordinal));
         }
         catch (IndexOutOfRangeException)
         {

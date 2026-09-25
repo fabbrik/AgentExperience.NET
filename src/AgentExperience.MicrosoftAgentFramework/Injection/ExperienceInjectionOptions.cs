@@ -164,13 +164,23 @@ public sealed record ExperienceInjectionContext(
 /// store that did not report a level is shown here, and rendered, as
 /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>. <see langword="null"/> when the record is the
 /// requester's own. It is informational: a host may deny on it, but nothing it returns can widen it.
+/// Under <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> the line may also show argument
+/// values; see <paramref name="GrantApproachArguments"/>.
+/// </param>
+/// <param name="GrantApproachArguments">
+/// Under <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, the argument keys the owner named on
+/// the permitting grant, from the same re-read; <see langword="null"/> under every other level, for a record the
+/// requester owns, and when the store did not say. The block shows a borrowed value only for a key this names
+/// <em>and</em> <see cref="ExperienceInjectionOptions.ApproachArguments"/> names for the same tool. Informational,
+/// like <paramref name="GrantDisclosure"/>.
 /// </param>
 public sealed record ExperienceInjectionDecisionContext(
     RankedExperience Candidate,
     ExperienceRecord Current,
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
-    ExperienceGrantDisclosure? GrantDisclosure = null);
+    ExperienceGrantDisclosure? GrantDisclosure = null,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null);
 
 /// <summary>
 /// Host configuration for <see cref="ExperienceContextProvider"/>.
@@ -296,6 +306,14 @@ public sealed class ExperienceInjectionOptions
     /// An object, an array or any other shape is written as
     /// <see cref="HistoricalReferenceWriter.ArgumentNotShown"/>, and its content is never
     /// read.</description></item>
+    /// <item><description>A key may be a dotted path into an object- or array-valued argument --
+    /// <c>options.mode</c>, or <c>targets.0</c> for an array's first element -- and then only the scalar the
+    /// path ends on is shown, as <c>options.mode="fast"</c>, under every bound here. A path that ends on an
+    /// object or an array gets <see cref="HistoricalReferenceWriter.ArgumentNotShown"/>; a container is never
+    /// shown whole, and nothing beside the path's own steps is read. A key that exists literally at the top
+    /// level (a key named <c>options.mode</c>) is matched first, exactly as before paths existed. A path that
+    /// cannot be walked -- a missing step, a step through a scalar, an index that is not a plain non-negative
+    /// number (<c>01</c> is not) -- shows nothing.</description></item>
     /// <item><description>A string's whitespace, control and format characters are collapsed to single
     /// spaces and trimmed from the ends (so an all-whitespace value reads as <c>""</c>),
     /// the block's markers are neutralized as in every other field, it is cut to
@@ -311,10 +329,12 @@ public sealed class ExperienceInjectionOptions
     /// <item><description>A value of any key not listed for that exact tool name is never shown: the
     /// writer looks keys up from this list and never enumerates a call's arguments. Tool names and
     /// keys are matched ordinally.</description></item>
-    /// <item><description>A record borrowed through a sharing grant never shows an argument value,
-    /// whatever its grant's disclosure level. The allowlist is the reader's configuration, not the
-    /// owner's, and a <see cref="ExperienceGrantDisclosure.LessonAndApproach"/> grant was issued as
-    /// consent to show tool names only.</description></item>
+    /// <item><description>A record borrowed through a sharing grant shows an argument value only when its grant is
+    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, and then only for a key the owner named
+    /// on that grant (<see cref="ExperienceGrantRequest.ApproachArguments"/>) <em>and</em> this allowlist names
+    /// for the same tool. This allowlist is the reader's configuration and can only narrow the owner's consent,
+    /// never widen it. Under <see cref="ExperienceGrantDisclosure.LessonAndApproach"/> a borrowed line is tool
+    /// names only, and under <see cref="ExperienceGrantDisclosure.LessonOnly"/> it is withheld.</description></item>
     /// </list>
     /// <para>
     /// <b>Allowlisting a key lets a later model read that argument's values.</b> A value is still text

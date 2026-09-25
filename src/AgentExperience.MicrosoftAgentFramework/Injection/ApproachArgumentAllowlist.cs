@@ -99,4 +99,53 @@ internal sealed class ApproachArgumentAllowlist
     /// <summary>The argument keys allowlisted for <paramref name="toolName"/>, in the host's order; empty when none are.</summary>
     internal IReadOnlyList<string> KeysFor(string? toolName) =>
         toolName is not null && _keys.TryGetValue(toolName, out var keys) ? keys : [];
+
+    /// <summary>
+    /// The allowlist a borrowed record is rendered with under
+    /// <see cref="AgentExperience.Abstractions.ExperienceGrantDisclosure.LessonApproachAndArguments"/>: per tool, only
+    /// the keys this (the reader's) allowlist <em>and</em> <paramref name="ownerAllowlist"/> (the grant's) both name,
+    /// in this allowlist's order. Either side can narrow; neither can widen.
+    /// </summary>
+    /// <param name="ownerAllowlist">
+    /// The permitting grant's allowlist, as the store read it back. It is store data, not configuration, so a value
+    /// that fails the same validation the reader's passed -- or is absent -- is treated as naming no key, never
+    /// thrown: one malformed grant must not suppress a whole block, and it must not show anything either.
+    /// </param>
+    internal ApproachArgumentAllowlist IntersectWithGrant(IReadOnlyDictionary<string, IReadOnlyList<string>>? ownerAllowlist)
+    {
+        if (IsEmpty || ownerAllowlist is null)
+        {
+            return Empty;
+        }
+
+        ApproachArgumentAllowlist owner;
+        try
+        {
+            owner = From(ownerAllowlist, nameof(ownerAllowlist));
+        }
+#pragma warning disable CA1031 // A store's allowlist that cannot be read -- malformed, or a custom collection that throws -- names no key.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return Empty;
+        }
+
+        var keys = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var (toolName, readerKeys) in _keys)
+        {
+            var ownerKeys = owner.KeysFor(toolName);
+            if (ownerKeys.Count == 0)
+            {
+                continue;
+            }
+
+            var shared = readerKeys.Where(key => ownerKeys.Contains(key, StringComparer.Ordinal)).ToArray();
+            if (shared.Length > 0)
+            {
+                keys.Add(toolName, shared);
+            }
+        }
+
+        return keys.Count == 0 ? Empty : new ApproachArgumentAllowlist(keys);
+    }
 }

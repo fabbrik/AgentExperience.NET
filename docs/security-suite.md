@@ -40,7 +40,15 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_candidate_no_longer_readable_in_scope_is_omitted_indistinguishably_from_a_missing_one` | A re-scoped record drops out, revealing nothing |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_LessonOnly_grant_withholds_the_approach_says_so_and_the_access_row_records_the_level` | A borrowed record's `Approach:` line — the lending scope's tool names — is withheld unless its grant permits it |
 | MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.A_store_that_says_shared_but_reports_no_level_is_rendered_LessonOnly` | A store that reports no disclosure level fails closed to the least disclosure |
-| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_borrowed_record_never_shows_an_argument_value_whatever_its_grant` | The reader's `ApproachArguments` allowlist never reaches a borrowed record: the lending scope's argument values are shown under no disclosure level |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_borrowed_record_shows_no_argument_value_under_a_level_that_is_not_consent_to_it` | Under `LessonOnly` or `LessonAndApproach` the reader's `ApproachArguments` allowlist never reaches a borrowed record: neither level is the owner's consent to show argument values |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.A_borrowed_record_under_LessonApproachAndArguments_shows_only_the_keys_both_sides_named` | Under the third level a borrowed record shows only the keys the owner's grant **and** the reader both named — planted markers in owner-only, reader-only, sibling, container and other-tool values stay out |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.The_readers_allowlist_cannot_widen_what_the_owner_consented_to` | A reader that names a key, a sibling path, a container or a tool the owner did not is shown none of them |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.An_owner_allowlist_that_is_absent_or_malformed_shows_no_borrowed_value` | A store that reports the level without usable owner keys fails closed to names only |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.A_LessonOnly_grant_still_withholds_the_whole_approach_line_whatever_either_allowlist_says` | `LessonOnly`, an unreported and an undefined level still withhold the whole `Approach:` line, whatever keys the store reports |
+| MicrosoftAgentFramework.Tests | `ExperienceInjectionTests.An_owner_allowlist_a_store_reports_under_another_level_never_reaches_the_host_or_the_block` | Owner keys a store reports under another level reach neither the block nor the host |
+| MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_regrant_that_could_show_fewer_argument_values_withdraws_the_delivery_that_showed_them` | A session shown borrowed values through one grant has them withdrawn when the record is read through another grant or a lower level |
+| Storage.Postgres.Tests | `PostgresGrantTests.The_owners_keys_are_immutable_to_the_application_role_and_to_the_owner` | The owner's argument consent cannot be widened in place: no `UPDATE` privilege, and the monotonicity trigger refuses the owner too **(DB)** |
+| Storage.Postgres.Tests | `PostgresGrantTests.A_writer_that_bypasses_the_store_cannot_store_a_level_and_allowlist_that_disagree` | The schema refuses keys under another level, the new level without keys, a malformed shape and an unknown level **(DB)** |
 
 ### Write
 
@@ -101,6 +109,9 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_of_an_argument_not_on_the_allowlist_never_reaches_the_block` | Only the argument keys a host allowlisted for that exact tool can reach the `Approach:` line — planted markers in every other key, a case variant and another tool stay out |
 | MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_the_capture_sanitizer_redacted_stays_redacted_and_one_it_omitted_stays_absent` | Through real capture and `DefaultSanitizer`: an allowlisted key shows the stored value, so a redacted secret stays redacted and an omitted field stays absent |
 | MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_non_scalar_value_is_omitted_with_a_marker_and_its_content_never_read` | An allowlisted object or array is never rendered, so nothing nested inside it can reach a model |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.A_nested_path_shows_only_the_scalar_it_ends_on_and_no_other_key_or_path_ever_appears` | A dotted path shows only the scalar it names — planted siblings, other array elements and container content stay out, in both the CLR and the JSON shape |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.A_path_that_ends_on_an_object_or_an_array_is_the_marker_and_its_content_is_never_read` | A path never shows a container whole |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.A_nested_dictionary_with_a_looser_comparer_cannot_widen_a_path_by_case` | Every step of a path is matched ordinally |
 | MicrosoftAgentFramework.Tests | `InjectionTelemetryTests.Injection_telemetry_never_contains_the_block_it_injected` | Telemetry carries no injected content |
 | Sample.EndToEnd.Tests | `SampleRunTests.Secret_tool_argument_reaches_neither_the_transcript_the_capture_nor_the_record` | End to end, through the MAF adapter |
 | Storage.Postgres.Tests | `MigratorLogSilenceTests.A_failing_script_reaches_no_console_trace_logger_or_activity_sink` | The migrator leaks no error text to the host's sinks **(DB)** |
@@ -144,7 +155,9 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_injected_approach_line_naming_a_guarded_tool_is_still_denied_by_the_existing_boundary` | The same, for the `Approach:` line |
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_injection_shaped_guarded_tool_name_is_escaped_in_the_block_and_its_call_is_still_denied` | A tool name crafted to break out of the block |
 | MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.An_allowlisted_argument_value_that_orders_a_guarded_call_is_still_denied_by_the_existing_boundary` | The same, for an allowlisted argument value: the first model-chosen text the `Approach:` line can carry |
+| MicrosoftAgentFramework.Tests | `InjectedContentAuthorizationTests.A_nested_value_on_a_borrowed_record_that_orders_a_guarded_call_is_still_denied_by_the_existing_boundary` | The same, for a nested value shown on a borrowed record through a `LessonApproachAndArguments` grant |
 | MicrosoftAgentFramework.Tests | `HistoricalReferenceApproachArgumentsTests.A_value_cannot_add_a_line_forge_a_marker_or_a_label_or_close_its_own_quotes` | An argument value crafted to break out of its quotes, its line or the block forges no structure |
+| MicrosoftAgentFramework.Tests | `HistoricalReferenceBorrowedAndNestedArgumentsTests.A_nested_leaf_keeps_every_bound_a_top_level_value_has` | A nested value gets every 6.2 bound: quotes and look-alikes, `->`, line breaks, markers, invisible characters and the clamp |
 | MicrosoftAgentFramework.Tests | `SessionInjectionTests.Record_content_cannot_forge_a_withdrawal_notice` | A lesson, reuse guidance or tool name that spells a withdrawal notice for another record forges no notice |
 | MicrosoftAgentFramework.Tests | `SessionInjectionTests.Loose_spellings_of_a_withdrawal_notice_in_record_text_are_neutralized` | The same with doubled whitespace, dash look-alikes, zero-width characters, Unicode line separators and indented labels |
 | MicrosoftAgentFramework.Tests | `SessionInjectionTests.A_value_set_in_process_as_another_type_is_neither_trusted_nor_overwritten` | Session state that is present but not readable is never mistaken for absent, so the budget and what is owed cannot be reset that way |
@@ -199,8 +212,10 @@ history, is KL-12 in the root README's Known limits table.
 Nor does it prove that an argument value a host allowlists through `ExperienceInjectionOptions.ApproachArguments` is
 safe to show. Such a value was chosen by the captured run's model and is only as clean as the capture-time sanitizer,
 which classifies by field name, not content, left it. The suite proves the structural bounds — only allowlisted keys,
-only stored scalars, quoted with no double quote or step separator inside, clamped and capped, never for a borrowed record — and that the approval boundary
-still holds when a shown value orders a guarded call; which keys are harmless to show is the host's decision.
+only stored scalars (a dotted path reaching only the scalar it names, never a container), quoted with no double quote or step separator inside, clamped and capped, and for a borrowed record only what both its
+`LessonApproachAndArguments` grant and the reader named — and that the approval boundary still holds when a shown
+value orders a guarded call, nested and borrowed included; which keys are harmless to show is the host's decision
+(the owner's, for a borrowed record, as well as the reader's).
 
 Nor does it prove that a run cited as confidence evidence was *exposed* to the record. The suite proves that a run,
 a round and an assessment cannot be invented — each must be one the library finalized, captured or minted — and that

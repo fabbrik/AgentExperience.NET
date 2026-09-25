@@ -361,8 +361,9 @@ the `Confidence:` line above it.
 serialized into the block, and neither is any tool *argument* the host has not allowlisted, so a captured payload
 cannot reach a model through injection. By default the one thing that crosses from a captured run is the `Approach:`
 line's ordered tool **names**; the only other thing that can is the sanitized value of an argument key the host named
-for that exact tool in `ExperienceInjectionOptions.ApproachArguments`, on a record in the reader's own scope, when the
-value is a string, a number or a boolean. What makes the names acceptable by default is their *provenance*: MAF resolves the name a model emits against the agent's tool inventory and refuses
+for that exact tool in `ExperienceInjectionOptions.ApproachArguments` — on a record in the reader's own scope, or on a
+borrowed one whose `LessonApproachAndArguments` grant names the key too — when the value, or the value a dotted path
+ends on, is a string, a number or a boolean. What makes the names acceptable by default is their *provenance*: MAF resolves the name a model emits against the agent's tool inventory and refuses
 one that does not resolve before any middleware runs, so a recorded name was fixed when the tool was registered and is
 not derived from the captured run's own data flow. That is the whole of the claim. A tool name is not guaranteed
 short, plain, or chosen by the host — an MCP or OpenAPI inventory takes its names from a remote server or a
@@ -404,6 +405,15 @@ names-only line, byte for byte. When it is on, these are the guarantees, and eac
 - **Only scalars.** A string, a number or a boolean is shown, a null as `null` and an enum as its quoted name. A JSON
   number is rendered as the PostgreSQL store normalizes it, so both stores render a record the same way. An object, an array or any other
   shape is written as `(not shown: not a string, number or boolean)` and its content is never read.
+- **A path reaches inside an object or an array, to one scalar.** A key may be a dotted path: `["retry_refund"] =
+  ["options.mode", "targets.0"]` shows `retry_refund(options.mode="fast", targets.0="db-7")`. Each step is looked up
+  — an object member by its exact name, an array element by a plain decimal index (`0`, `12`; never `01`, `-1` or
+  `+1`) — so nothing beside the path's own steps is read, and only the scalar the path ends on is shown, under every
+  bound here. A path that ends on an object or an array gets the not-shown marker: a container is never shown whole.
+  A path that cannot be walked — a missing step, a step into a scalar, an index out of range — shows nothing, like a
+  key the call did not carry. A key that exists literally at the top level (an argument named `options.mode`) is
+  matched first, exactly as before paths existed; but a dotted key that used to match nothing — because the call had
+  no such literal argument — now walks the path and can show a value, so review any dotted key you had allowlisted.
 - **Bounded like a tool name, then quoted.** A string's whitespace and control or format characters become single
   spaces and its ends are trimmed (an all-whitespace value therefore reads as `""`, like a redacted one), the block's markers are neutralized, it is cut to `HistoricalReferenceWriter.MaxArgumentValueLength` (64)
   characters with the cut marked outside the quotes, and quoted. Invisible characters are classified per Unicode
@@ -415,11 +425,19 @@ names-only line, byte for byte. When it is on, these are the guarantees, and eac
 - **The line is capped, and the budget still drops whole records.** All of a line's arguments together are capped at
   `MaxApproachArgumentsLength` (512) characters; an argument that would pass it is left out whole, with every later
   one, and the line says so. The record as a whole still counts against `MaxBytes`, which drops it whole.
-- **Never for a borrowed record.** A record read through a sharing grant shows no argument value under any disclosure
-  level — under `LessonOnly` its `Approach:` line is withheld entirely, as before, and under `LessonAndApproach` it is
-  names only. The allowlist is the *reader's* configuration, and a `LessonAndApproach` grant was issued as the owner's
-  consent to show tool names, not argument values; widening every existing grant silently would be the wrong default.
-  A third disclosure level could lift this later; it is recorded as the residual of KL-8.
+- **A borrowed record only with the owner's consent, and only what both sides named.** A record read through a
+  sharing grant shows an argument value only when the grant is `LessonApproachAndArguments`, the level an owner
+  issues as consent to it, naming on the grant the keys it consents to show
+  (`ExperienceGrantRequest.ApproachArguments`). The block then shows a key only when the grant names it **and** this
+  allowlist names it for the same tool — the intersection, in this allowlist's order — and the line ends with
+  `HistoricalReferenceWriter.ApproachGrantArgumentsSuffix`. The allowlist is the *reader's* configuration, so it can
+  narrow what the owner allowed but never widen it; the owner's keys are store data, so a grant whose keys are absent
+  or malformed shows no value rather than failing the block. Under `LessonOnly` the `Approach:` line is withheld
+  entirely, as before, and under `LessonAndApproach` it is names only: neither was issued as consent to show argument
+  values, and no existing grant is widened. The host's `DecideInjection` sees the owner's keys as
+  `ExperienceInjectionDecisionContext.GrantApproachArguments`. A session that was shown a borrowed record's values
+  through one grant has that delivery withdrawn when the record is later read through any other grant — even one at
+  the same level, whose keys may be fewer — or at a level that shows no values.
 - **Validated and snapshotted at construction.** `ExperienceContextProvider` copies the allowlist when it is built, so
   editing the dictionary afterwards changes nothing, and it refuses a blank tool name, a null key list, or a key that
   is blank, longer than 64 characters, listed twice, or contains whitespace, a control, format or surrogate
@@ -432,10 +450,10 @@ or anything a secret could be written into. The authorization boundary outside t
 agent may call, whatever a shown value says: `InjectedContentAuthorizationTests` includes an allowlisted value that
 orders a guarded call, which the model obeys and the approval boundary denies.
 
-A lesson that turns on something the allowlist cannot carry — an object- or array-valued argument, or a borrowed
-record's arguments — still needs the host's own `IExperienceReflector` to say so in the reflection's lesson text, which
-the block does carry; what that reflector writes there is the host's to keep free of secrets, because the lesson is
-emitted as written.
+A lesson that turns on something the allowlist deliberately does not carry — a whole object or array, every element
+of a list of varying length, or a borrowed record's arguments under a grant that is not `LessonApproachAndArguments` —
+still needs the host's own `IExperienceReflector` to say so in the reflection's lesson text, which the block does carry;
+what that reflector writes there is the host's to keep free of secrets, because the lesson is emitted as written.
 
 A host reflector may write anything at all into a reflection's `SuccessfulApproaches`/`FailedApproaches` — the shipped
 default already embeds an attempt's own result and error text there — so the writer never reads them. Deriving the
@@ -537,19 +555,22 @@ it onto `RankedExperience.GrantDisclosure` and `ExperienceInjectionDecisionConte
 | --- | --- | --- |
 | The reader's own | `null` | `Approach:` rendered, no `Shared:` line |
 | Borrowed | `LessonOnly` (the default) | no `Approach:` line; `Shared:` ends with `HistoricalReferenceWriter.ApproachWithheld` when the record has an approach to withhold |
-| Borrowed | `LessonAndApproach` | `Approach:` rendered exactly as the owner would see it |
+| Borrowed | `LessonAndApproach` | `Approach:` rendered with the owner's tool names, and never an argument value |
+| Borrowed | `LessonApproachAndArguments` | `Approach:` rendered, plus the values of the argument keys the grant names **and** the reader allowlisted for the same tool; the line ends with `ApproachGrantArgumentsSuffix` when it shows one |
 | Borrowed, store reports no level or an undefined one | treated as `LessonOnly` | as `LessonOnly` — fail closed |
 
 The level governs the `Approach:` line **only**. The lesson, reuse guidance, preconditions and warnings are the
 reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model under
-either level (see KL-8 in the root README). The level is informational to the risk policy: a host can deny a record on
+any level. The level is informational to the risk policy: a host can deny a record on
 it, but nothing the decision returns can widen it. Only the block is governed — the `ExperienceRecord` a store returns
 to host code is complete either way, so a host that forwards delivered records somewhere else is responsible for what
 it forwards. **Upgrading changes behaviour:** schema script `0011` makes every existing grant `LessonOnly`, so borrowed
 `Approach:` lines disappear until the owner revokes the grant and issues one with `LessonAndApproach` — revoke first,
 so the recipient has no access in the gap. Run `0011` before deploying this build, and stop older writers first: this
 build fails grant-joined reads with `42703` on a pre-`0011` schema, and an older build cannot write grant events or
-access rows on a `0011` one.
+access rows on a `0011` one. Schema script `0017` adds `LessonApproachAndArguments` and changes nothing that is shown:
+every existing grant keeps its level. Run it before deploying this build, which reads the owner's keys in every
+grant-joined read.
 
 **That re-read is audited.** If the host wired an
 [access log](../AgentExperience.Storage.Postgres/README.md#recording-who-read-a-shared-record), each record the
@@ -578,7 +599,7 @@ ExperienceInjectionSessionLimits.Default`), and with a session supplied it does 
 | --- | --- | --- |
 | **Session budget** | A session is given at most `SessionLimits.MaxRecords` record deliveries (default 32) and `SessionLimits.MaxBytes` of UTF-8 (default 64 KB) across all its invocations. A record costs one delivery each time it is injected; a block costs its full size. Once the budget cannot take another record, retrieval is not run at all | `SessionBudgetExhausted`; a record the byte budget drops mid-block is `OverSessionBudget`; `result.Session` carries the counts |
 | **No repeats** | A record revision the session already holds is not injected again, and takes no slot, so the next-best record gets it. A strictly newer revision of the same record *is* injected again: it may say something new. The unit is the record's `Revision`, the store's own concurrency counter, which every lifecycle change moves | `AlreadyDelivered` |
-| **Withdrawal** | Every record the session holds is re-checked on every invocation, in one `GetManyAsync` call declared `ScopeCheck` (nothing is handed over, so no access row). One that is no longer readable in scope (erased, deleted, its grant revoked or expired), no longer in an eligible status (revoked, superseded, quarantined, contested), below the confidence floor, past `MaxAge`, or read through a grant that now withholds the approach the session was shown, is **withdrawn**: the block opens with a notice for it, once | `Retracted` when the block carries notices only; `result.RetractedExperienceIds`; span attribute `agentexperience.retracted_count` |
+| **Withdrawal** | Every record the session holds is re-checked on every invocation, in one `GetManyAsync` call declared `ScopeCheck` (nothing is handed over, so no access row). One that is no longer readable in scope (erased, deleted, its grant revoked or expired), no longer in an eligible status (revoked, superseded, quarantined, contested), below the confidence floor, past `MaxAge`, or read through a grant that now withholds the approach the session was shown (or, for argument values it was shown, read through any other grant or a level that shows none), is **withdrawn**: the block opens with a notice for it, once | `Retracted` when the block carries notices only; `result.RetractedExperienceIds`; span attribute `agentexperience.retracted_count` |
 
 A notice is fixed text around the record's ID, inside the block's usual framing, and nothing else — no reason, no
 field of the record, no scope:

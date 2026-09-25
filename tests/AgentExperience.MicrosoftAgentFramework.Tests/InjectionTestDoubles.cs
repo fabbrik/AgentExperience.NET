@@ -175,6 +175,8 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
 
     private readonly Dictionary<(Guid ExperienceId, Scope Recipient), ExperienceGrantDisclosure?> _grantDisclosures = [];
 
+    private readonly Dictionary<(Guid ExperienceId, Scope Recipient), IReadOnlyDictionary<string, IReadOnlyList<string>>?> _grantArguments = [];
+
     /// <summary>
     /// The host's auditing policy, when a test wires one. <see langword="null"/> -- the default -- is a
     /// deployment with no access log: nothing is recorded and nothing else changes. The fake models
@@ -204,18 +206,29 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>; <see langword="null"/> models a third-party
     /// store that says a record is shared but reports no level.
     /// </param>
+    /// <param name="approachArguments">
+    /// The owner's argument allowlist a delivered read reports with the level, as the real store reads it from the
+    /// grant row. Reported whatever the level, so a test can model a store that says more than it should.
+    /// </param>
+    /// <param name="grantId">The grant's ID, or <see langword="null"/> for a fresh one.</param>
     /// <returns>The grant's ID, which a delivered read then names.</returns>
     public Guid Grant(
         Guid experienceId,
         Scope recipient,
-        ExperienceGrantDisclosure? disclosure = ExperienceGrantDisclosure.LessonOnly)
+        ExperienceGrantDisclosure? disclosure = ExperienceGrantDisclosure.LessonOnly,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? approachArguments = null,
+        Guid? grantId = null)
     {
         Grants.Add((experienceId, recipient));
-        var grantId = Guid.NewGuid();
-        _grantIds[(experienceId, recipient)] = grantId;
+        var id = grantId ?? Guid.NewGuid();
+        _grantIds[(experienceId, recipient)] = id;
         _grantDisclosures[(experienceId, recipient)] = disclosure;
-        return grantId;
+        _grantArguments[(experienceId, recipient)] = approachArguments;
+        return id;
     }
+
+    /// <summary>Makes reads through this grant report no grant ID, like a third-party store that cannot name one.</summary>
+    public void ForgetGrantId(Guid experienceId, Scope recipient) => _grantIds.Remove((experienceId, recipient));
 
     /// <summary>Withdraws a grant, the way a revocation or an expiry would between two reads.</summary>
     public void Revoke(Guid experienceId, Scope recipient)
@@ -223,6 +236,7 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         Grants.Remove((experienceId, recipient));
         _grantIds.Remove((experienceId, recipient));
         _grantDisclosures.Remove((experienceId, recipient));
+        _grantArguments.Remove((experienceId, recipient));
     }
 
     /// <summary>The grant a read through <paramref name="recipient"/> was permitted by, if this fake knows one.</summary>
@@ -232,6 +246,10 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// <summary>The level a read through <paramref name="recipient"/> reports, if this fake knows one.</summary>
     private ExperienceGrantDisclosure? PermittingDisclosure(Guid experienceId, Scope recipient) =>
         _grantDisclosures.TryGetValue((experienceId, recipient), out var disclosure) ? disclosure : null;
+
+    /// <summary>The owner allowlist a read through <paramref name="recipient"/> reports, if this fake knows one.</summary>
+    private IReadOnlyDictionary<string, IReadOnlyList<string>>? PermittingArguments(Guid experienceId, Scope recipient) =>
+        _grantArguments.TryGetValue((experienceId, recipient), out var arguments) ? arguments : null;
 
     /// <summary>
     /// Records <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> answers <c>Found</c> for with a record from another tenant,
@@ -466,7 +484,8 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
                 [],
                 shared,
                 shared ? PermittingGrant(record.ExperienceId, scope) : null,
-                shared ? PermittingDisclosure(record.ExperienceId, scope) : null);
+                shared ? PermittingDisclosure(record.ExperienceId, scope) : null,
+                shared ? PermittingArguments(record.ExperienceId, scope) : null);
         }
 
         // The adapter audits a DELIVERY, in a separate statement after the read, only when a grant is

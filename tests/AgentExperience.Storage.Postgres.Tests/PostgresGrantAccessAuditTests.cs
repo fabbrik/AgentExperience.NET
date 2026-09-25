@@ -1067,6 +1067,7 @@ public sealed class PostgresGrantAccessAuditTests
     [Theory]
     [InlineData(ExperienceGrantDisclosure.LessonOnly)]
     [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
+    [InlineData(ExperienceGrantDisclosure.LessonApproachAndArguments)]
     public async Task Every_channel_records_the_permitting_grants_disclosure_level_on_the_access_row(ExperienceGrantDisclosure level)
     {
         var tenant = NewTenant();
@@ -1275,6 +1276,141 @@ public sealed class PostgresGrantAccessAuditTests
     }
 
     [Fact]
+    public async Task Upgrading_to_0017_keeps_every_level_adds_no_keys_widens_the_checks_and_is_idempotent()
+    {
+        // A pre-0017 database: every script before 0017, and nothing of it. Run on each supported major through
+        // AGENTEXPERIENCE_POSTGRES_MAJOR, like every test in this assembly.
+        await using var dataSource = await _fixture.CreateDatabaseAsync("upgrade0017");
+        foreach (var scriptName in PostgresExperienceRecordSchema.ScriptNames
+            .TakeWhile(name => !string.Equals(name, PostgresExperienceRecordSchema.GrantArgumentDisclosureScriptName, StringComparison.Ordinal)))
+        {
+            await ExecuteOnAsync(dataSource, PostgresExperienceRecordSchema.GetScript(scriptName));
+        }
+
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var onlyLesson = Scope(tenant, team: "team-b");
+        var withApproach = Scope(tenant, team: "team-c");
+        var record = Minimal(owner, status: ExperienceStatus.Validated) with { ReuseConfidence = 0.75 };
+
+        // Plaintext, whichever mode the suite runs in: sealed rows need a key store this test does not share.
+        var plain = new PostgresExperienceRecordStore(dataSource, encryption: ExperienceEncryption.ForcePlaintext);
+        var grants = new PostgresExperienceGrantStore(dataSource, encryption: ExperienceEncryption.ForcePlaintext);
+        Assert.Equal(
+            ExperienceStoreOutcome.Created,
+            (await plain.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
+
+        // Two live grants written through the pre-0017 statement shape: one per existing level.
+        var lessonOnly = Guid.NewGuid();
+        var lessonAndApproach = Guid.NewGuid();
+        foreach (var (grantId, recipientTeam, level) in new[] { (lessonOnly, "team-b", "LessonOnly"), (lessonAndApproach, "team-c", "LessonAndApproach") })
+        {
+            await using var legacy = dataSource.CreateCommand(
+                "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, " +
+                "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+                "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+                "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+                "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure) " +
+                "VALUES (@grant_id, @experience_id, @tenant_id, 'app-1', 'project-1', 'team-a', NULL, NULL, " +
+                "@tenant_id, 'app-1', 'project-1', @recipient_team, NULL, NULL, " +
+                "'issued before 0017', 'someone', now(), now() + interval '1 day', NULL, NULL, @level)");
+            legacy.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
+            legacy.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", record.ExperienceId));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("tenant_id", tenant));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("recipient_team", recipientTeam));
+            legacy.Parameters.Add(new NpgsqlParameter<string>("level", level));
+            await legacy.ExecuteNonQueryAsync();
+        }
+
+        // Before 0017 the ledgers' check does not know the new level.
+        await using (var early = dataSource.CreateCommand(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'experience_grant_access_disclosure_known'"))
+        {
+            Assert.DoesNotContain("LessonApproachAndArguments", (string)(await early.ExecuteScalarAsync())!, StringComparison.Ordinal);
+        }
+
+        await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
+
+        // Every existing grant keeps its level and gains no keys: nothing that was shown changes.
+        foreach (var (grantId, level) in new[] { (lessonOnly, ExperienceGrantDisclosure.LessonOnly), (lessonAndApproach, ExperienceGrantDisclosure.LessonAndApproach) })
+        {
+            var history = await grants.GetHistoryAsync(Authorize(tenant), owner, grantId, CancellationToken.None);
+            Assert.Equal(level, history.Grant!.Disclosure);
+            Assert.Null(history.Grant.ApproachArguments);
+        }
+
+        var readOnly = await plain.GetAsync(Authorize(tenant), onlyLesson, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, readOnly.GrantDisclosure);
+        Assert.Null(readOnly.GrantApproachArguments);
+        var readApproach = await plain.GetAsync(Authorize(tenant), withApproach, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, readApproach.GrantDisclosure);
+        Assert.Null(readApproach.GrantApproachArguments);
+
+        // The three checks name the new level, and the monotonicity function keeps 0013's search_path pin.
+        await using (var definitions = dataSource.CreateCommand(
+            "SELECT count(*) FROM pg_constraint WHERE conname IN ('experience_grants_disclosure_known', " +
+            "'experience_grant_events_disclosure_known', 'experience_grant_access_disclosure_known') " +
+            "AND pg_get_constraintdef(oid) LIKE '%LessonApproachAndArguments%'"))
+        {
+            Assert.Equal(3L, (long)(await definitions.ExecuteScalarAsync())!);
+        }
+
+        await using (var pin = dataSource.CreateCommand(
+            "SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'agent_experience.enforce_grant_monotonicity()'::regprocedure"))
+        {
+            Assert.Equal("search_path=pg_catalog, agent_experience, pg_temp", (string)(await pin.ExecuteScalarAsync())!);
+        }
+
+        // The two small tables' checks stay validated, as 0011 left them; the access ledger's is NOT VALID until an
+        // operator validates it, as the header's runbook says. Validate it, then re-run the script by hand: every
+        // statement is idempotent by content, so nothing is dropped, re-added or un-validated.
+        const string Validated =
+            "SELECT string_agg(conname || '=' || convalidated, ',' ORDER BY conname) FROM pg_constraint WHERE conname IN (" +
+            "'experience_grants_disclosure_known', 'experience_grant_events_disclosure_known', 'experience_grant_access_disclosure_known')";
+        await using (var before = dataSource.CreateCommand(Validated))
+        {
+            Assert.Equal(
+                "experience_grant_access_disclosure_known=false,experience_grant_events_disclosure_known=true,experience_grants_disclosure_known=true",
+                (string)(await before.ExecuteScalarAsync())!);
+        }
+
+        await ExecuteOnAsync(dataSource, "ALTER TABLE agent_experience.experience_grant_access VALIDATE CONSTRAINT experience_grant_access_disclosure_known");
+        await ExecuteOnAsync(dataSource, PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantArgumentDisclosureScriptName));
+        await using (var after = dataSource.CreateCommand(Validated))
+        {
+            Assert.Equal(
+                "experience_grant_access_disclosure_known=true,experience_grant_events_disclosure_known=true,experience_grants_disclosure_known=true",
+                (string)(await after.ExecuteScalarAsync())!);
+        }
+
+        // And the new level works end to end: revoke, reissue at LessonApproachAndArguments, read the keys back.
+        await grants.RevokeAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            new ExperienceGrantRevocation(lessonAndApproach, owner, "reissue with argument consent"),
+            CancellationToken.None);
+        var reissued = await grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            new ExperienceGrantRequest(
+                Guid.NewGuid(),
+                record.ExperienceId,
+                owner,
+                withApproach,
+                "argument consent",
+                Micro(DateTimeOffset.UtcNow.AddHours(1)),
+                ExperienceGrantDisclosure.LessonApproachAndArguments,
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["run_incident_check"] = ["options.mode"] }),
+            CancellationToken.None);
+        Assert.Equal(ExperienceGrantOutcome.Created, reissued.Outcome);
+
+        var reread = await plain.GetAsync(Authorize(tenant), withApproach, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(reissued.Grant!.GrantId, reread.PermittingGrantId);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, reread.GrantDisclosure);
+        Assert.Equal(["options.mode"], reread.GrantApproachArguments!["run_incident_check"]);
+    }
+
+    [Fact]
     public async Task The_statements_own_maximum_lifetime_catches_a_client_clock_that_runs_behind()
     {
         var tenant = NewTenant();
@@ -1363,7 +1499,10 @@ public sealed class PostgresGrantAccessAuditTests
             Authorize(tenant),
             new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
             new ExperienceGrantRequest(
-                Guid.NewGuid(), experienceId, owner, recipient, reason, Micro(DateTimeOffset.UtcNow.AddHours(1)), disclosure),
+                Guid.NewGuid(), experienceId, owner, recipient, reason, Micro(DateTimeOffset.UtcNow.AddHours(1)), disclosure,
+                disclosure == ExperienceGrantDisclosure.LessonApproachAndArguments
+                    ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["run_incident_check"] = ["options.mode"] }
+                    : null),
             CancellationToken.None);
 
         Assert.Equal(ExperienceGrantOutcome.Created, result.Outcome);

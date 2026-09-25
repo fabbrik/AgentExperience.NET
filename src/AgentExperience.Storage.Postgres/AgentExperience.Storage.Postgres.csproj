@@ -51,6 +51,7 @@
     <EmbeddedResource Include="Migrations\0013_role_separation_hardening.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0013_role_separation_hardening.sql" />
     <EmbeddedResource Include="Migrations\0015_verified_independence.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0015_verified_independence.sql" />
     <EmbeddedResource Include="Migrations\0016_crypto_shredding.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0016_crypto_shredding.sql" />
+    <EmbeddedResource Include="Migrations\0017_grant_argument_disclosure.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0017_grant_argument_disclosure.sql" />
   </ItemGroup>
 
   <ItemGroup>

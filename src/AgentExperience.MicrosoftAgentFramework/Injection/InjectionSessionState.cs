@@ -24,7 +24,16 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// re-checked and withdrawn like any other, but it is not deduplicated against: the model may never have
 /// seen it, so it may be delivered again.
 /// </param>
-internal sealed record DeliveredRecord(Guid ExperienceId, long Revision, bool ApproachByGrant, bool Withdrawn, bool Confirmed = true);
+internal sealed record DeliveredRecord(Guid ExperienceId, long Revision, bool ApproachByGrant, bool Withdrawn, bool Confirmed = true)
+{
+    /// <summary>
+    /// The grant whose owner allowlist the block applied when it showed this borrowed record's argument values
+    /// (<see cref="AgentExperience.Abstractions.ExperienceGrantDisclosure.LessonApproachAndArguments"/>), or
+    /// <see langword="null"/> when it showed none through a grant. <see cref="Guid.Empty"/> when the store named no
+    /// grant. A later read through any other grant, or at a lower level, withdraws the delivery.
+    /// </summary>
+    public Guid? ArgumentsGrantId { get; init; }
+}
 
 /// <summary>
 /// What one invocation handed to MAF and is waiting to be charged for: settled by
@@ -90,6 +99,14 @@ internal sealed record InjectionSessionState(
     }
 
     /// <summary>
+    /// The grant to track for a delivery the session is unsure about: either rendering may be the one the model has.
+    /// When both showed values through different grants, a fresh ID no read will ever name, so the next re-check
+    /// withdraws the delivery rather than trusting either grant's keys.
+    /// </summary>
+    private static Guid? MergeArgumentsGrant(Guid? staged, Guid? earlier) =>
+        staged is { } now && earlier is { } before && now != before ? Guid.NewGuid() : staged ?? earlier;
+
+    /// <summary>
     /// Charges the staged delivery and folds it into what the session holds: a record delivered again
     /// replaces its entry, a withdrawn one is marked, and the counters grow (saturating, never wrapping).
     /// Returns this instance when nothing is staged.
@@ -121,6 +138,7 @@ internal sealed record InjectionSessionState(
                     // Unsure which rendering the model has: keep the wider one, so a narrowed grant still
                     // withdraws it.
                     ApproachByGrant = staged.ApproachByGrant || (at >= 0 && entries[at] is { Withdrawn: false, ApproachByGrant: true }),
+                    ArgumentsGrantId = MergeArgumentsGrant(staged.ArgumentsGrantId, at >= 0 && !entries[at].Withdrawn ? entries[at].ArgumentsGrantId : null),
                 };
             if (at >= 0)
             {
@@ -274,7 +292,10 @@ internal sealed record InjectionSessionState(
                 return false;
             }
 
-            entries.Add(new DeliveredRecord(document.ExperienceId, document.Revision, document.ApproachByGrant, document.Withdrawn, document.Confirmed));
+            entries.Add(new DeliveredRecord(document.ExperienceId, document.Revision, document.ApproachByGrant, document.Withdrawn, document.Confirmed)
+            {
+                ArgumentsGrantId = document.ArgumentsGrantId,
+            });
         }
 
         return true;
@@ -287,6 +308,7 @@ internal sealed record InjectionSessionState(
         ApproachByGrant = entry.ApproachByGrant,
         Withdrawn = entry.Withdrawn,
         Confirmed = entry.Confirmed,
+        ArgumentsGrantId = entry.ArgumentsGrantId,
     };
 
     private static long Saturate(long value) => value < 0 ? long.MaxValue : value;
@@ -337,6 +359,14 @@ internal sealed class DeliveredDocument
     [JsonPropertyName("confirmed")]
     [JsonRequired]
     public bool Confirmed { get; set; }
+
+    /// <summary>
+    /// Optional, and omitted when null, so a state that never showed a borrowed argument value is exactly what
+    /// a build without this member writes and reads.
+    /// </summary>
+    [JsonPropertyName("grantArgs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? ArgumentsGrantId { get; set; }
 }
 
 /// <summary>The stored shape of <see cref="PendingDelivery"/>.</summary>

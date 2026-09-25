@@ -26,6 +26,12 @@ public sealed record HistoricalReferencePayload(
     /// </summary>
     public IReadOnlyList<Guid> RetractedExperienceIds { get; init; } = [];
 
+    /// <summary>
+    /// The borrowed records in <see cref="ExperienceIds"/> whose <c>Approach:</c> line shows at least one argument
+    /// value, so session tracking can withdraw exactly those deliveries when their grant later narrows.
+    /// </summary>
+    internal IReadOnlyList<Guid> BorrowedArgumentsShown { get; init; } = [];
+
     /// <summary>Whether the payload carries neither a record nor a withdrawal notice, in which case nothing should be injected.</summary>
     public bool IsEmpty => ExperienceIds.Count == 0 && RetractedExperienceIds.Count == 0;
 }
@@ -64,7 +70,10 @@ public sealed record HistoricalReferencePayload(
 /// the value is a string, a number or a boolean -- and it is the value the capture-time sanitizer
 /// stored, bounded as <see cref="MaxArgumentValueLength"/> and
 /// <see cref="MaxApproachArgumentsLength"/> describe. With no allowlist the block is byte for byte
-/// what it was before, arguments included: none.
+/// what it was before, arguments included: none. Story 7.1 widens exactly two things: an allowlisted key
+/// may be a dotted path to a scalar inside an object- or array-valued argument (only that scalar is shown,
+/// never the container), and a borrowed record may show a value when its grant is
+/// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> and both sides named the key.
 /// </para>
 /// <para>
 /// <b>Why a name crosses by default: provenance, not shape.</b> A tool name is fixed when the tool
@@ -124,9 +133,12 @@ public sealed record HistoricalReferencePayload(
 /// withhold, the <c>Shared:</c> line ends with <see cref="ApproachWithheld"/>. Only the <c>Approach:</c>
 /// line is governed: the reflection's prose is rendered unfiltered under either level. The record a store returns to host code is unaffected -- this
 /// writer is the boundary, not the store. A record in the reader's own scope is rendered as always.
-/// A borrowed record's <c>Approach:</c> line, when a grant does permit it, never shows an argument
-/// value, whatever the reader allowlisted: the allowlist is the reader's configuration, and no
-/// grant level was issued as the owner's consent to show its argument values.
+/// A borrowed record's <c>Approach:</c> line shows an argument value only under
+/// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, the level an owner issues as consent to
+/// that, and then only for a key both <see cref="RankedExperience.GrantApproachArguments"/> (the owner's, from
+/// the grant) and the reader's allowlist name for the same tool; its line then ends with
+/// <see cref="ApproachGrantArgumentsSuffix"/>. Under <see cref="ExperienceGrantDisclosure.LessonAndApproach"/>
+/// it is tool names only, whatever the reader allowlisted.
 /// </para>
 /// <para>
 /// <b>A withdrawal notice is fixed text.</b> When session tracking finds that a record delivered earlier
@@ -244,6 +256,15 @@ public static class HistoricalReferenceWriter
     /// <see cref="ApproachArgumentsClamped"/>. An argument is never cut to fit this limit.
     /// </summary>
     public const int MaxApproachArgumentsLength = 512;
+
+    /// <summary>
+    /// The standing qualifier closing the <c>Approach:</c> line of a record borrowed through a
+    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> grant when it shows at least one argument
+    /// value, in place of <see cref="ApproachArgumentsSuffix"/>: the values shown are only those both the lending
+    /// scope's grant and the host allowlisted.
+    /// </summary>
+    public const string ApproachGrantArgumentsSuffix =
+        " Tool names, plus only the argument values both the lending scope's grant and the host allowlisted, as stored after capture-time sanitization -- no other arguments, no results, no error text.";
 
     /// <summary>What closes an <c>Approach:</c> line some of whose allowlisted argument values were left out by <see cref="MaxApproachArgumentsLength"/>.</summary>
     public const string ApproachArgumentsClamped = " Some allowlisted argument values are not shown: the line's argument limit was reached.";
@@ -433,6 +454,7 @@ public static class HistoricalReferenceWriter
         }
 
         var omitted = new List<OmittedExperience>();
+        var argumentsShown = new List<Guid>();
 
         var header = Header();
         var footer = Footer();
@@ -489,7 +511,7 @@ public static class HistoricalReferenceWriter
 
             if (!dropping)
             {
-                var rendered = Render(ranked, included.Count + 1, approachArguments);
+                var rendered = Render(ranked, included.Count + 1, approachArguments, out var borrowedArguments);
                 var size = Utf8(rendered);
                 var fitsBlock = used + size <= limits.MaxBytes;
                 var fitsSession = sessionBytesRemaining is not { } remaining || used + size <= remaining;
@@ -498,6 +520,11 @@ public static class HistoricalReferenceWriter
                     body.Append(rendered);
                     used += size;
                     included.Add(ranked.Record.ExperienceId);
+                    if (borrowedArguments)
+                    {
+                        argumentsShown.Add(ranked.Record.ExperienceId);
+                    }
+
                     continue;
                 }
 
@@ -523,6 +550,7 @@ public static class HistoricalReferenceWriter
         return new HistoricalReferencePayload(header + section + body.ToString() + footer, used, included, omitted)
         {
             RetractedExperienceIds = retracted,
+            BorrowedArgumentsShown = argumentsShown,
         };
     }
 
@@ -540,7 +568,11 @@ public static class HistoricalReferenceWriter
         "Withdrawn: experience " + experienceId.ToString("D", CultureInfo.InvariantCulture) + WithdrawnNotice + "\n";
 
     /// <summary>Renders one record, delimiters included, as it appears inside the block.</summary>
-    private static string Render(RankedExperience ranked, int ordinal, ApproachArgumentAllowlist approachArguments)
+    /// <param name="ranked">The record to render.</param>
+    /// <param name="ordinal">Its position in the block, from 1.</param>
+    /// <param name="approachArguments">The reader's validated allowlist.</param>
+    /// <param name="borrowedArguments">Whether the record is borrowed and its <c>Approach:</c> line shows at least one argument value.</param>
+    private static string Render(RankedExperience ranked, int ordinal, ApproachArgumentAllowlist approachArguments, out bool borrowedArguments)
     {
         var record = ranked.Record;
         var reflection = record.Reflection;
@@ -561,12 +593,18 @@ public static class HistoricalReferenceWriter
         // The withheld sentence is written only when there is an approach to withhold, so the block never
         // implies one exists for a record that has none.
         //
-        // A borrowed record never shows an argument value, whatever the grant's level: the allowlist is
-        // the reader's configuration, not the owner's, and no grant level was ever issued as consent to
-        // show the lending scope's argument values. See ExperienceInjectionOptions.ApproachArguments.
-        var approach = Approach(record, ranked.SharedByGrant ? ApproachArgumentAllowlist.Empty : approachArguments);
-        var approachWithheld = ranked.SharedByGrant
-            && ranked.GrantDisclosure != ExperienceGrantDisclosure.LessonAndApproach;
+        // A borrowed record shows an argument value only under LessonApproachAndArguments, and then only for
+        // a key both the owner's grant and the reader's allowlist name: the reader's allowlist is its own
+        // configuration and may narrow the owner's consent, never widen it. Every other level -- a level the
+        // store did not report included -- shows none. See ExperienceInjectionOptions.ApproachArguments.
+        var effective = !ranked.SharedByGrant
+            ? approachArguments
+            : ranked.GrantDisclosure == ExperienceGrantDisclosure.LessonApproachAndArguments
+                ? approachArguments.IntersectWithGrant(ranked.GrantApproachArguments)
+                : ApproachArgumentAllowlist.Empty;
+        var approach = Approach(record, effective, ranked.SharedByGrant, out var argumentsShown);
+        var approachWithheld = ranked.SharedByGrant && !ShowsApproach(ranked.GrantDisclosure);
+        borrowedArguments = ranked.SharedByGrant && !approachWithheld && argumentsShown;
         if (ranked.SharedByGrant)
         {
             text.Append("Shared: ").Append(SharedLine);
@@ -700,7 +738,9 @@ public static class HistoricalReferenceWriter
     /// errored contributes its name like any other and nothing says so: whether a call failed is one
     /// more thing out of the captured run, and the widening does not reach it. When the host allowlisted
     /// argument keys for a call's tool name, the call is written as <c>name(key="value", ...)</c> with
-    /// only those keys, in the allowlist's order, and only for a record in the reader's own scope; a
+    /// only those keys, in the allowlist's order -- <paramref name="approachArguments"/> is already the effective
+    /// allowlist: the reader's own for its own record, the intersection with the grant's for a borrowed one under
+    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, and empty otherwise; a
     /// call that carried none of them is written as its bare name, and a line that shows no argument
     /// at all is byte for byte the names-only line.
     /// </para>
@@ -717,8 +757,9 @@ public static class HistoricalReferenceWriter
     /// budget, which drops it whole rather than cutting it.
     /// </para>
     /// </remarks>
-    private static string? Approach(ExperienceRecord record, ApproachArgumentAllowlist approachArguments)
+    private static string? Approach(ExperienceRecord record, ApproachArgumentAllowlist approachArguments, bool borrowed, out bool argumentsShown)
     {
+        argumentsShown = false;
         // Two different fields, deliberately both checked: Outcome.Status is the verification the run
         // reached, record.Status is where the record's lifecycle has since put it.
         if (record.Outcome.Status != TaskVerificationStatus.Verified || record.Status == ExperienceStatus.Quarantined)
@@ -800,10 +841,11 @@ public static class HistoricalReferenceWriter
             steps.Add(shown is null ? name : name + "(" + shown + ")");
         }
 
+        argumentsShown = budget.Shown;
         return ApproachPrefix
             + string.Join(ApproachSeparator, steps)
             + (clamped ? ApproachClamped : ".")
-            + (budget.Shown ? ApproachArgumentsSuffix : ApproachSuffix)
+            + (!budget.Shown ? ApproachSuffix : borrowed ? ApproachGrantArgumentsSuffix : ApproachArgumentsSuffix)
             + (budget.Exhausted ? ApproachArgumentsClamped : string.Empty);
     }
 
@@ -850,19 +892,19 @@ public static class HistoricalReferenceWriter
         StringBuilder? text = null;
         foreach (var key in keys)
         {
-            // The key is confirmed ordinally against the call's own keys before its value is read: a
-            // store or a custom sanitizer may hand back a dictionary with a looser comparer, whose
-            // lookup of "strategy" would return the value stored under "STRATEGY". Only keys are
-            // compared here; no value but the allowlisted key's is ever read.
-            if (!call.Arguments.Keys.Any(stored => string.Equals(stored, key, StringComparison.Ordinal))
-                || !call.Arguments.TryGetValue(key, out var value))
+            // Every step is confirmed ordinally against the keys actually stored before its value is
+            // read: a store or a custom sanitizer may hand back a dictionary with a looser comparer, whose
+            // lookup of "strategy" would return the value stored under "STRATEGY". Only keys are compared;
+            // no value but the one each allowlisted step names is ever read. See Resolve.
+            var rendered = Resolve(call.Arguments, key);
+            if (rendered is null)
             {
                 continue;
             }
 
             // Keys were validated when the allowlist was built -- no whitespace, no control character
-            // and none of the line's delimiters -- so a key is written as configured.
-            var pair = key + "=" + SafeValue(value);
+            // and none of the line's delimiters -- so a key (or a dotted path) is written as configured.
+            var pair = key + "=" + rendered;
             var cost = pair.Length + (text is null ? 0 : ArgumentSeparator.Length);
             if (budget.Used + cost > MaxApproachArgumentsLength)
             {
@@ -881,15 +923,60 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>
-    /// <see cref="Value"/>, except that a value that cannot be read -- a <see cref="JsonElement"/>
-    /// whose document was disposed, a custom store's value whose formatting throws -- is written as
-    /// <see cref="ArgumentNotShown"/> rather than failing the whole injection.
+    /// The rendered value one allowlisted key (or dotted path) names in <paramref name="arguments"/>, or
+    /// <see langword="null"/> when the call does not carry it.
     /// </summary>
-    private static string SafeValue(object? value)
+    /// <remarks>
+    /// <para>
+    /// <b>A literal key first.</b> A key stored at the top level under exactly the allowlisted text -- dots
+    /// included -- is that argument, as it was before paths existed.
+    /// </para>
+    /// <para>
+    /// <b>Otherwise a path, one looked-up step at a time.</b> A key holding a <c>.</c> is split on it, and every
+    /// segment must be non-empty. The first names a top-level argument; each later one names a member of an
+    /// object (a string-keyed dictionary, or a JSON object) by ordinal lookup, or -- when the value reached is an
+    /// array (a list, or a JSON array) -- an element by a plain non-negative decimal index with no leading zero.
+    /// Nothing is enumerated but keys, to confirm a lookup ordinally, so no member or element the path does not
+    /// name is ever read. A path that cannot be walked -- a missing step, a step into a scalar, an index out of
+    /// range or not canonical, an unrecognized container -- is absent, like a key the call did not carry. The
+    /// value it ends on goes through <see cref="Value"/>, so an object or an array there is the
+    /// <see cref="ArgumentNotShown"/> marker and never its content.
+    /// </para>
+    /// <para>
+    /// A value that cannot be read at all -- a <see cref="JsonElement"/> whose document was disposed, a custom
+    /// store's container or value that throws -- is written as <see cref="ArgumentNotShown"/> rather than failing
+    /// the whole injection.
+    /// </para>
+    /// </remarks>
+    private static string? Resolve(IReadOnlyDictionary<string, object?> arguments, string key)
     {
         try
         {
-            return Value(value);
+            if (TryMember(arguments, key, out var literal))
+            {
+                return Value(literal);
+            }
+
+            if (!key.Contains('.', StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var segments = key.Split('.');
+            if (segments.Any(segment => segment.Length == 0) || !TryMember(arguments, segments[0], out var current))
+            {
+                return null;
+            }
+
+            for (var index = 1; index < segments.Length; index++)
+            {
+                if (!TryStep(current, segments[index], out current))
+                {
+                    return null;
+                }
+            }
+
+            return Value(current);
         }
 #pragma warning disable CA1031 // One unreadable value must not suppress every record in the block.
         catch (Exception)
@@ -897,6 +984,73 @@ public static class HistoricalReferenceWriter
         {
             return ArgumentNotShown;
         }
+    }
+
+    /// <summary>One member of a string-keyed map, confirmed ordinally against the stored keys before it is read.</summary>
+    private static bool TryMember(IReadOnlyDictionary<string, object?> map, string key, out object? value)
+    {
+        value = null;
+        return map.Keys.Any(stored => string.Equals(stored, key, StringComparison.Ordinal))
+            && map.TryGetValue(key, out value);
+    }
+
+    /// <summary>One step of a path into <paramref name="current"/>: an object member, or an array element by index.</summary>
+    private static bool TryStep(object? current, string segment, out object? next)
+    {
+        next = null;
+        switch (current)
+        {
+            case IReadOnlyDictionary<string, object?> map:
+                return TryMember(map, segment, out next);
+
+            case JsonElement { ValueKind: JsonValueKind.Object } json:
+                // JsonElement's property lookup is ordinal already.
+                if (json.TryGetProperty(segment, out var property))
+                {
+                    next = property;
+                    return true;
+                }
+
+                return false;
+
+            case JsonElement { ValueKind: JsonValueKind.Array } json:
+                if (TryIndex(segment, out var at) && at < json.GetArrayLength())
+                {
+                    next = json[at];
+                    return true;
+                }
+
+                return false;
+
+            case IReadOnlyList<object?> list:
+                if (TryIndex(segment, out var position) && position < list.Count)
+                {
+                    next = list[position];
+                    return true;
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// A path segment as an array index: <c>0</c>, or a digit 1-9 followed by at most eight more digits. Anything
+    /// else -- a sign, a leading zero, whitespace, a non-ASCII digit -- is not an index, so one element has exactly
+    /// one spelling.
+    /// </summary>
+    private static bool TryIndex(string segment, out int index)
+    {
+        index = 0;
+        if (segment.Length is 0 or > 9 || (segment.Length > 1 && segment[0] == '0') || !segment.All(char.IsAsciiDigit))
+        {
+            return false;
+        }
+
+        index = int.Parse(segment, NumberStyles.None, CultureInfo.InvariantCulture);
+        return true;
     }
 
     /// <summary>
@@ -1265,4 +1419,12 @@ public static class HistoricalReferenceWriter
     }
 
     private static int Utf8(string value) => Encoding.UTF8.GetByteCount(value);
+
+    /// <summary>
+    /// Whether a grant at <paramref name="level"/> shows a borrowed record's <c>Approach:</c> line. Only the two
+    /// levels that say so do; anything else, <see langword="null"/> and an undefined value included, is the least
+    /// disclosure.
+    /// </summary>
+    internal static bool ShowsApproach(ExperienceGrantDisclosure? level) =>
+        level is ExperienceGrantDisclosure.LessonAndApproach or ExperienceGrantDisclosure.LessonApproachAndArguments;
 }

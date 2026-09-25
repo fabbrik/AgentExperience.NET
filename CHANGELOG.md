@@ -400,6 +400,84 @@ the record of 6.3.
   whether the probed version is inside the range. `eng/verify-packages.cs` checks the `net8.0` dependency group,
   including the `net8.0`-only floors, which appear there and nowhere else.
 
+**Story 7.1** closes KL-8: an allowlisted argument may be a dotted path to a scalar inside an object or an array, and
+a borrowed record shows argument values through a third disclosure level, with the owner's consent recorded on the
+grant (see
+[Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values)).
+
+### Upgrade for borrowed argument values
+
+1. **Run the schema migrator as the owner.** It applies `0017_grant_argument_disclosure`: one nullable column on
+   `experience_grants`, the three `*_disclosure_known` checks widened, two new checks (all `NOT VALID`), and the
+   monotonicity function restated with its `search_path` pin. It touches no row and needs no privilege change.
+   Migrate before deploying this build, which reads the new column in every grant-joined read (`42703` otherwise).
+2. **Nothing that is shown changes.** Every grant keeps its level. To let a recipient's model see selected argument
+   values of a record, the owner revokes its grant and issues a new one at `LessonApproachAndArguments`, naming the
+   keys; the recipient allowlists them too.
+
+### Added
+
+- **`ExperienceGrantDisclosure.LessonApproachAndArguments`** (Abstractions): a third, immutable grant level. Existing
+  member names and values are unchanged. `ExperienceGrantRequest` and `ExperienceGrant` gain a trailing optional
+  `ApproachArguments` — per tool, the argument keys the owner consents to show — required at the new level and
+  `Invalid` at any other, bounded by the new `ExperienceGrant.MaxApproachArgumentTools` (32),
+  `MaxApproachArgumentKeysPerTool` (16), `MaxApproachArgumentToolNameLength` (256) and `MaxApproachArgumentKeyLength`
+  (64), with the same key rules as the injection allowlist.
+- `ExperienceRecordGetResult.GrantApproachArguments`, `RankedExperience.GrantApproachArguments` and
+  `ExperienceInjectionDecisionContext.GrantApproachArguments`: the owner's keys, read from the same grant row as the
+  level, only at the new level and only for a borrowed record.
+- **Borrowed argument values** (MAF): under the new level the `Approach:` line shows a borrowed record's value for a
+  key both the grant and the reader's `ApproachArguments` name for the same tool, and ends with the new
+  `HistoricalReferenceWriter.ApproachGrantArgumentsSuffix`. A malformed or missing owner allowlist shows nothing.
+- **Dotted paths** (MAF): an `ApproachArguments` key such as `options.mode` or `targets.0` walks, by lookup only,
+  into an object- or array-valued argument and shows the scalar it ends on, under every 6.2 bound; a path ending on a
+  container shows the not-shown marker. A key that exists literally at the top level is matched first.
+- `0017_grant_argument_disclosure`: `experience_grants.approach_arguments jsonb NULL`, with checks that it is present
+  exactly at the new level and is a non-empty object of non-empty string arrays, and `approach_arguments` among the
+  monotonicity trigger's pins.
+
+### Behaviour changes
+
+- **An existing allowlist key that contains a `.` can now show more.** Such a key was already valid, and matched only
+  an argument literally named that way; a call without one showed nothing. It is now also read as a path, so
+  `["options.mode"]` shows the nested `options.mode` of a record the reader owns. Review any dotted key you allowlisted.
+- **A session withdraws borrowed argument values more eagerly.** A delivery whose line showed a borrowed record's
+  values is withdrawn when the record is next read through any other grant — even a reissued one at the same level —
+  or at a level that shows no values. Session state records the grant (`grantArgs`) only on a delivery that actually
+  showed a borrowed value, so a state that never did is byte for byte what an older build writes; a state that did is
+  refused by an older build (it rejects unknown members), which then injects nothing and says so rather than
+  forgetting the delivery.
+- **A borrowed value needs a named grant.** A store that reports `LessonApproachAndArguments` without a
+  `PermittingGrantId` shows no borrowed value, because the session could not tell a later switch of grants.
+- A test double or third-party `IExperienceRecordStore` that reports `LessonApproachAndArguments` must also report
+  `GrantApproachArguments`, or no borrowed value is shown.
+
+### Breaking
+
+- **Binary break for code compiled against the previous preview.** `ExperienceGrant`, `ExperienceGrantRequest`,
+  `ExperienceRecordGetResult`, `RankedExperience` and `ExperienceInjectionDecisionContext` each gain a trailing
+  optional positional parameter, which changes their constructor and `Deconstruct` signatures: recompile against this
+  version. Source that names its arguments, or omits the new one, compiles unchanged.
+- **Record equality:** the new member is a dictionary, compared by reference in the generated `Equals`, so two reads
+  of the same `LessonApproachAndArguments` grant are no longer equal as whole records. Compare its fields instead.
+
+### Resolved
+
+- **KL-8: an approach showing argument values only for top-level scalars, and never for a borrowed record.** The row
+  is removed from the Known limits table. The owner's keys are names only and are stored in the clear in encrypted
+  mode as well: do not put anything secret into a tool name or an argument key.
+
+### Tests
+
+- `HistoricalReferenceBorrowedAndNestedArgumentsTests` plants a marker in every place a value must not come from —
+  siblings, other array elements, container content, owner-only, reader-only, case variants and other tools — for
+  owned and borrowed records, in both the CLR and the JSON shapes, and checks the intersection, the fail-closed
+  owner allowlist, `LessonOnly`'s withheld line and every 6.2 bound on a nested leaf.
+  `InjectedContentAuthorizationTests` adds a nested value on a borrowed record that orders a guarded call, which the
+  boundary still denies. The store suite covers validation, the round trip on every read path, immutability, the
+  schema checks, the access row at the new level, and the `0017` upgrade, on each supported PostgreSQL major, and runs
+  in encrypted mode too (the upgrade test itself writes plaintext rows, since a pre-`0016` schema can hold only those).
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

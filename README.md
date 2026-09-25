@@ -26,12 +26,24 @@ preview.
 | # | Limit | Where the detail lives |
 | --- | --- | --- |
 | KL-2 | **Erasure cannot reach a copy of the derived search data, and without crypto-shredding it reaches only live rows.** With `ExperienceEncryption` configured (opt-in), erasing a record destroys its key, so its text is unreadable in every backup, replica, WAL segment and dead tuple — except its full-text vector (the task ID, summary and lesson as lexemes with positions) and its embedding with its content hash, which PostgreSQL has to read in the clear and which survive in every copy exactly as plaintext does. Never sealed, in either mode: IDs, scope, statuses, scores, timestamps and principal identities. Rows written before a deployment switched modes keep their plaintext copies (and append-only ledger rows stay plaintext until erased). In plaintext mode, still the default, every copy keeps everything and the dead tuple keeps the text until `VACUUM`. Exported telemetry, server logs and external artifacts are out of reach, and the property is only as good as a key store kept outside the database's backups | [Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy); [the honesty statement](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
-| KL-8 | **An approach shows argument values only for scalars the host allowlisted, and never for a borrowed record.** An object- or array-valued argument renders as a marker, and a record read through a sharing grant shows none — its approach is tool names only under `LessonAndApproach` and withheld under `LessonOnly`; a host whose lessons turn on either needs its own reflector to say so in the lesson | [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values) |
 | KL-11 | **Verified independence proves a run is real, not that it saw the lesson; and the opt-out trusts the host outright.** By default a confidence submission's run must be finalized into a record in its scope or held by the capture service (never the record's own), a machine round must be the one finalization closed for that run, and a human assessment must present an unexpired, single-use HMAC token the library minted under the host's key. Nothing can check that a real run in the scope was *exposed* to the record, so a caller able to choose among real runs gets one key per real run rather than one per call; nor that the round a host closed at finalization, or a record it wrote by hand through `CreateAsync`, is honest. A host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` is back to trusting every `RunId`, `VerificationRoundId` and `AssessmentId` it passes, and one that lets agent output populate them hands the agent a fresh independence key per call. A direct caller of the aggregator still binds an evaluation to whatever run ID it names | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
 | KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is revoked, superseded, erased or un-granted — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
 
 Resolved since `0.1.0-preview.2` (unreleased):
 
+- KL-8 (an approach showing argument values only for top-level scalars, and never for a borrowed record) is resolved
+  by story 7.1. An allowlisted key may now be a dotted path — `options.mode`, or `targets.0` for an array element —
+  and only the scalar it ends on is shown, under every bound story 6.2 set (sanitized stored values only, the 64-character
+  clamp, quote and `->` neutralization, the invisible-character strip, the 512-character line cap and the byte
+  budget); a path that ends on an object or an array still shows the marker, and a container is never shown whole.
+  A borrowed record shows argument values through a new, immutable third disclosure level,
+  `ExperienceGrantDisclosure.LessonApproachAndArguments`: the owner names on the grant the keys it consents to show
+  (`ExperienceGrantRequest.ApproachArguments`, stored on the grant by `0017`), and the recipient's model is shown a
+  key only when the recipient's own `ApproachArguments` names it for the same tool as well — the intersection, so
+  neither side can widen what the other allowed. `LessonOnly` still withholds the whole `Approach:` line and
+  `LessonAndApproach` is still tool names only. Existing grants keep their level; a borrowed record's arguments
+  appear only after the owner revokes and reissues at the new level. See
+  [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values).
 - KL-2 (erasure reaching only this database's live rows) is **narrowed, not closed**, by crypto-shredding (story
   6.4). With an `ExperienceEncryption` over an `IExperienceKeyStore`, every free-text column erasure removes — the
   record payload and task ID, lifecycle reasons and evidence detail, grant reasons, and reuse-feedback rationale — is
@@ -1213,15 +1225,26 @@ grant carries an immutable disclosure level, `ExperienceGrantRequest.Disclosure`
 ```csharp
 new ExperienceGrantRequest(grantId, recordId, ownerScope, recipientScope, reason, expiresAt,
     Disclosure: ExperienceGrantDisclosure.LessonAndApproach);   // default: LessonOnly
+
+// Or, to let the recipient's model also see selected argument values, name the keys you consent to show:
+new ExperienceGrantRequest(grantId, recordId, ownerScope, recipientScope, reason, expiresAt,
+    Disclosure: ExperienceGrantDisclosure.LessonApproachAndArguments,
+    ApproachArguments: new Dictionary<string, IReadOnlyList<string>> { ["retry_refund"] = ["delay", "options.mode"] });
 ```
 
 Under `LessonOnly` — the default — the block omits the `Approach:` line and, when the record has one, the `Shared:`
 line says the grant withholds it; under `LessonAndApproach` the line is rendered exactly as the owner would see it.
 The level governs the `Approach:` line **only**: the lesson, reuse guidance, preconditions and warnings are the
 reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model under
-either level (see KL-8). Neither level shows a tool argument's value: a borrowed record's `Approach:` line is tool
-names only whatever the reader's `ApproachArguments` allowlist says, because a grant was issued as consent to show
-names, not argument values (story 6.2). The level is read from the same row that names the permitting grant, reaches the host's risk
+any level. Neither of those two levels shows a tool argument's value: a borrowed record's `Approach:` line is tool
+names only whatever the reader's `ApproachArguments` allowlist says, because they were issued as consent to show
+names, not argument values (story 6.2). The third level, `LessonApproachAndArguments` (story 7.1), is that consent:
+the owner names the keys on the grant (`ExperienceGrantRequest.ApproachArguments`, required at that level and refused
+at any other), and the block shows a borrowed value only for a key the owner named **and** the reader's own
+`ApproachArguments` names for the same tool, so the reader's configuration can narrow the owner's consent but never
+widen it. The keys are immutable with the level, reach the host as `ExperienceInjectionDecisionContext.GrantApproachArguments`,
+and are names only — tool names and argument keys, never a value — so they are stored in the clear in encrypted mode
+too. The level is read from the same row that names the permitting grant, reaches the host's risk
 policy as `ExperienceInjectionDecisionContext.GrantDisclosure`, and is recorded on the grant's issue and revoke events
 and on every access row. The access row records the level the library applied at delivery, not whether an `Approach:`
 line actually reached a model: the host may deny the record, the byte budget may drop it, or it may have no approach.
@@ -1238,6 +1261,12 @@ never recorded. **Run `0011`, then deploy this build, and stop older writers fir
 schema fails every grant-joined read with `42703` (undefined column), and an older build on a `0011` schema cannot
 write grant events or access rows, because both now require a level. Both failures are loud by design; there is no
 silent fallback.
+
+Schema script `0017` adds the third level. It changes nothing that is shown: every stored grant keeps its level and
+has no keys, so a borrowed record's argument values appear only once its owner revokes and reissues at
+`LessonApproachAndArguments`. **Run `0017`, then deploy this build**: this build selects the owner's keys in every
+grant-joined read and fails with `42703` against a pre-`0017` schema. An older build keeps working on a `0017` schema,
+but cannot decode a grant stored at the new level and renders a record read through one as `LessonOnly`.
 
 **Two trails, and they answer different questions.** `experience_grant_events` records administration -- who
 allowed what, under authority established when, until when, and when they stopped allowing it -- and

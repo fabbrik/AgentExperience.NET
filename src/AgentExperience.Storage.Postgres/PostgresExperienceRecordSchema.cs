@@ -232,6 +232,25 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string CryptoShreddingScriptName = "0016_crypto_shredding.sql";
 
+    /// <summary>
+    /// The script that adds the third disclosure level, <c>LessonApproachAndArguments</c>: the nullable
+    /// <c>experience_grants.approach_arguments</c> (the owner's argument allowlist), the three widened
+    /// <c>*_disclosure_known</c> checks, and <c>enforce_grant_monotonicity()</c> with the allowlist among its pins.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It changes nothing that is shown on upgrade: every stored grant keeps its level. A borrowed record's
+    /// argument values appear only through a grant issued at the new level, which names the keys its owner
+    /// consents to; the reader's own allowlist must name them too.
+    /// </para>
+    /// <para>
+    /// The widened and the new checks are added <c>NOT VALID</c> (every existing row already satisfies them); the
+    /// script's header carries the optional <c>VALIDATE</c> runbook. The application role's manifest is unchanged:
+    /// the new column is covered by its table-level <c>INSERT</c> and <c>SELECT</c>, and it gets no <c>UPDATE</c>.
+    /// </para>
+    /// </remarks>
+    public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -257,6 +276,7 @@ public static class PostgresExperienceRecordSchema
         RoleSeparationHardeningScriptName,
         VerifiedIndependenceScriptName,
         CryptoShreddingScriptName,
+        GrantArgumentDisclosureScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
