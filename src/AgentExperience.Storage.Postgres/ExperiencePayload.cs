@@ -107,8 +107,12 @@ internal static class ExperiencePayload
             record.Provenance.Source,
             record.Provenance.SourceVersion,
             Utc(record.Provenance.RecordedAt),
-            record.Provenance.CorrelationId),
-        record.ClosedRoundId);
+            record.Provenance.CorrelationId,
+            record.Provenance.ExposedTo is { Count: > 0 } exposedTo
+                ? exposedTo.Select(exposure => new RunExposureV1(exposure.ExperienceId, exposure.Revision)).ToList()
+                : null),
+        record.ClosedRoundId,
+        record.Origin == ExperienceRecordOrigin.HostWritten ? null : record.Origin);
 
     /// <summary>Maps a stored payload plus its column values back to the domain record.</summary>
     public static ExperienceRecord ToRecord(
@@ -187,7 +191,12 @@ internal static class ExperiencePayload
                 payload.Provenance.Source,
                 payload.Provenance.SourceVersion,
                 Utc(payload.Provenance.RecordedAt),
-                payload.Provenance.CorrelationId),
+                payload.Provenance.CorrelationId)
+            {
+                ExposedTo = payload.Provenance.ExposedTo is { Count: > 0 } exposedTo
+                    ? exposedTo.Select(exposure => new RunExposure(exposure.ExperienceId, exposure.Revision)).ToArray()
+                    : [],
+            },
             status,
             reuseConfidence,
             supportingValidations,
@@ -197,6 +206,7 @@ internal static class ExperiencePayload
             Utc(updatedAt))
         {
             ClosedRoundId = payload.ClosedRoundId,
+            Origin = payload.Origin ?? ExperienceRecordOrigin.HostWritten,
         };
 
     private static DateTimeOffset Utc(DateTimeOffset value) => value.ToUniversalTime();
@@ -236,7 +246,12 @@ internal static class ExperiencePayload
     /// <remarks>
     /// <c>ClosedRoundId</c> was added within version 1 (story 6.6): it is optional, omitted when null, and
     /// absent from every payload written before it, which reads back as no closed round. An older reader
-    /// ignores it.
+    /// ignores it. <c>Origin</c> and the provenance's <c>ExposedTo</c> were added the same way (story 7.3):
+    /// <c>Origin</c> is written only for a finalized record and reads back as <c>HostWritten</c> when absent;
+    /// <c>ExposedTo</c> is written only when the run was exposed to something and reads back as empty when
+    /// absent. Both are identifiers only, and in crypto-shredding mode they are sealed with the rest of the
+    /// payload, so the application role -- which cannot <c>UPDATE payload</c> -- cannot rewrite them either way, except
+    /// through <c>0016</c>'s sealing function while the host grants <c>AllowSealing</c>.
     /// </remarks>
     internal sealed record PayloadV1(
         string? TaskSummary,
@@ -246,7 +261,8 @@ internal static class ExperiencePayload
         ReflectionV1? Reflection,
         EnvironmentV1 Environment,
         ProvenanceV1 Provenance,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ClosedRoundId = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ClosedRoundId = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExperienceRecordOrigin? Origin = null);
 
     internal sealed record AttemptV1(
         Guid AttemptId,
@@ -311,5 +327,8 @@ internal static class ExperiencePayload
         string Source,
         string? SourceVersion,
         DateTimeOffset RecordedAt,
-        string? CorrelationId);
+        string? CorrelationId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RunExposureV1>? ExposedTo = null);
+
+    internal sealed record RunExposureV1(Guid ExperienceId, long Revision);
 }

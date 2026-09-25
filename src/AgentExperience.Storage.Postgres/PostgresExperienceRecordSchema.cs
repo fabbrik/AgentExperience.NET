@@ -251,6 +251,19 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";
 
+    /// <summary>
+    /// The script that records which verification mode admitted each piece of confidence evidence:
+    /// <c>confidence_evidence.admission</c> and <c>lifecycle_events.confidence_admission</c>, <c>Verified</c> or
+    /// <c>HostTrusted</c>, <c>NULL</c> on rows written before it (story 7.3).
+    /// </summary>
+    /// <remarks>
+    /// Exposure-bound evidence itself needs no schema: a run's exposures and a record's origin travel in the
+    /// payload, like <c>0015</c>'s closed round. It adds no table, so the application role's manifest is
+    /// unchanged: the new columns are ledger columns, covered by its table-level <c>INSERT</c> and
+    /// <c>SELECT</c>, with no <c>UPDATE</c>.
+    /// </remarks>
+    public const string EvidenceAdmissionScriptName = "0018_evidence_admission.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -277,6 +290,7 @@ public static class PostgresExperienceRecordSchema
         VerifiedIndependenceScriptName,
         CryptoShreddingScriptName,
         GrantArgumentDisclosureScriptName,
+        EvidenceAdmissionScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

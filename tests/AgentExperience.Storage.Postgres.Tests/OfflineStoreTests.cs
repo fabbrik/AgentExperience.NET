@@ -385,6 +385,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.VerifiedIndependenceScriptName,
                 PostgresExperienceRecordSchema.CryptoShreddingScriptName,
                 PostgresExperienceRecordSchema.GrantArgumentDisclosureScriptName,
+                PostgresExperienceRecordSchema.EvidenceAdmissionScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -604,7 +605,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^11]);
+            PostgresExperienceRecordSchema.ScriptNames[4]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -666,7 +667,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^10]);
+            PostgresExperienceRecordSchema.ScriptNames[5]);
     }
 
     [Fact]
@@ -744,7 +745,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^9]);
+            PostgresExperienceRecordSchema.ScriptNames[6]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -966,10 +967,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
         Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
 
-        // 0010 is applied immediately before 0011, 0012, 0013, 0015, 0016 and 0017, which the migrator relies on for ordinal name ordering.
+        // 0010 is applied immediately before 0011, 0012, 0013, 0015, 0016, 0017 and 0018, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^7]);
+            PostgresExperienceRecordSchema.ScriptNames[8]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1007,7 +1008,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantDisclosureScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^6]);
+            PostgresExperienceRecordSchema.ScriptNames[9]);
     }
 
     [Fact]
@@ -1065,7 +1066,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^5]);
+            PostgresExperienceRecordSchema.ScriptNames[10]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1110,7 +1111,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^4]);
+            PostgresExperienceRecordSchema.ScriptNames[11]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1145,14 +1146,14 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.VerifiedIndependenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[12]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
     }
 
     [Fact]
-    public void Crypto_shredding_script_is_applied_last_touches_no_data_and_guards_its_one_sealing_transition()
+    public void Crypto_shredding_script_follows_0015_touches_no_data_and_guards_its_one_sealing_transition()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.CryptoShreddingScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -1177,7 +1178,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.CryptoShreddingScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[13]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1232,6 +1233,35 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantArgumentDisclosureScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[14]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Evidence_admission_script_is_applied_last_adds_two_append_only_columns_and_touches_no_data()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.EvidenceAdmissionScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        Assert.Contains("ADD COLUMN IF NOT EXISTS admission text NULL", statements, StringComparison.Ordinal);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS confidence_admission text NULL", statements, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(statements, "NOT VALID;"));
+        Assert.Equal(2, CountOccurrences(statements, "IN ('Verified', 'HostTrusted')"));
+
+        // Additive only, and nothing for the application role: the ledgers' table-level INSERT/SELECT covers
+        // the columns, and neither ledger grants UPDATE.
+        Assert.DoesNotContain("UPDATE ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATE TABLE", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATE INDEX", statements, StringComparison.Ordinal);
+
+        // Exposure itself needs no schema, and the script says so.
+        Assert.Contains("None of that is in this script.", script, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.EvidenceAdmissionScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
@@ -1532,6 +1562,61 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     public void A_candidate_source_needs_a_data_source()
     {
         Assert.Throws<ArgumentNullException>(() => new PostgresExperienceCandidateSource(null!));
+    }
+
+    [Fact]
+    public async Task A_malformed_exposure_list_or_origin_is_Invalid_with_no_database_call()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var id = Guid.NewGuid();
+        Provenance With(params RunExposure[] exposures) => new("host", null, PayloadTime, null) { ExposedTo = exposures };
+
+        var cases = new (ExperienceRecord Record, string Path)[]
+        {
+            (Minimal(scope) with { Provenance = With(new RunExposure(Guid.Empty, 0)) }, "Provenance.ExposedTo[0].ExperienceId"),
+            (Minimal(scope) with { Provenance = With(new RunExposure(id, -1)) }, "Provenance.ExposedTo[0].Revision"),
+            (Minimal(scope) with { Provenance = With(new RunExposure(id, 0), new RunExposure(id, 1)) }, "Provenance.ExposedTo[1].ExperienceId"),
+            (Minimal(scope) with { Provenance = With([.. Enumerable.Range(0, RunExposure.MaxPerRun + 1).Select(_ => new RunExposure(Guid.NewGuid(), 0))]) }, "Provenance.ExposedTo"),
+            (Minimal(scope) with { Provenance = new Provenance("host", null, PayloadTime, null) { ExposedTo = null! } }, "Provenance.ExposedTo"),
+            (Minimal(scope) with { Origin = (ExperienceRecordOrigin)7 }, "Origin"),
+        };
+
+        foreach (var (record, path) in cases)
+        {
+            var result = await Store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+
+            Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+            Assert.Contains(result.Errors, error => error.Path == path);
+        }
+
+        // At the bound exactly, it is not refused for its size.
+        var atBound = await Store.CreateAsync(
+            Authorize(tenant),
+            Minimal(scope) with { Provenance = With([.. Enumerable.Range(0, RunExposure.MaxPerRun).Select(_ => new RunExposure(Guid.NewGuid(), 0))]), Origin = (ExperienceRecordOrigin)7 },
+            CancellationToken.None);
+        Assert.DoesNotContain(atBound.Errors, error => error.Path.StartsWith("Provenance.ExposedTo", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_undefined_admission_on_a_confidence_update_is_Invalid_with_no_database_call()
+    {
+        var tenant = NewTenant();
+        var update = new ConfidenceUpdate(
+            Guid.NewGuid(), ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine, Guid.NewGuid(), Guid.NewGuid(), null,
+            "1.0.0", 0.5, 2d / 3d, 0, 1, 0, 0)
+        {
+            Admission = (ConfidenceEvidenceAdmission)7,
+        };
+
+        var result = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant),
+            Scope(tenant),
+            Event(Guid.NewGuid(), ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = update },
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Contains(result.Errors, error => error.Path.EndsWith(".Admission", StringComparison.Ordinal));
     }
 
     [Fact]

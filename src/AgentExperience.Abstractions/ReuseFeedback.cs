@@ -89,7 +89,7 @@ public sealed record ReuseMeasure(string Kind, double Value);
 /// one in this library.</b> Nothing here can check that a human made this judgement, or that the human
 /// saw the run. What the library enforces is worth stating exactly: the reviewer is the host's
 /// <see cref="AuthorizationContext.PrincipalId"/>; the run must be one the library knows in the
-/// feedback's scope; the assessment must present an <paramref name="AssessmentToken"/> the library
+/// feedback's scope, and one the library recorded delivering every attributed record into; the assessment must present an <paramref name="AssessmentToken"/> the library
 /// minted under the host's secret for exactly this scope, run, reviewer, direction and records, which
 /// has not expired and lands at most once per record; and one reviewer's opinion about one run counts
 /// once. An agent can therefore not mint an assessment, or a fresh independence key, from its own
@@ -172,8 +172,9 @@ public sealed record HumanReuseAssessment(
 /// <b><see cref="RunId"/> and <see cref="VerificationRoundId"/> are verified</b>, exactly as they are on
 /// the confidence path: together they form the machine independence key <c>machine:{run}:{round}</c>, so
 /// the run must be one finalized into a record in the feedback's scope and the round must be the one that
-/// finalization closed (<see cref="ExperienceRecord.ClosedRoundId"/>). A result naming an invented run or
-/// round has its attribution dropped. A host that opted out of verification is back to trusting both.
+/// finalization closed (<see cref="ExperienceRecord.ClosedRoundId"/>). The run must also have been exposed to
+/// every attributed record (<see cref="Provenance.ExposedTo"/> on its finalized record). A result naming an
+/// invented run or round, or a record the run was never given, has its attribution dropped. A host that opted out of verification is back to trusting both.
 /// </para>
 /// </remarks>
 /// <param name="EvaluatorId">Identity of the evaluator that produced this result, recorded as the evidence's producer. Must be non-blank.</param>
@@ -209,7 +210,9 @@ public sealed record ComparativeEvaluationResult(
 /// <para>
 /// <b><see cref="RunId"/> is half of every independence key</b> the confidence path deduplicates on, so an
 /// attribution is accepted only for a run the library knows in <see cref="Scope"/> (finalized there, or
-/// held by the capture service), and never for an attributed record's own source run. Exposure without
+/// held by the capture service) that was exposed to every attributed record (the library recorded delivering
+/// it into the run, <see cref="Provenance.ExposedTo"/>), and never for an attributed record's own source run.
+/// <see cref="ExposedExperienceIds"/> itself is not checked against that record: exposure without
 /// attribution keys nothing and is recorded against the run as given. Take it from your own run
 /// bookkeeping (the adapter's session state), never from an identifier an agent produced.
 /// </para>

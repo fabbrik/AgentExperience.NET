@@ -134,6 +134,7 @@ namespace AgentExperience.Storage.Postgres
         public const string ConfidenceEvidenceScriptName = "0007_confidence_evidence.sql";
         public const string CryptoShreddingScriptName = "0016_crypto_shredding.sql";
         public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";
+        public const string EvidenceAdmissionScriptName = "0018_evidence_admission.sql";
         public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
         public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
         public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";

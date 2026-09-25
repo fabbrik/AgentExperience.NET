@@ -278,6 +278,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 new InjectionFailure($"Reading the session's injection state threw {ex.GetType().FullName}, so nothing was injected.", ex));
         }
 
+        // What a reused session's history carries from earlier turns is deliberately NOT recorded as this run's
+        // exposure. The session account lives in host session storage, unauthenticated, and exposure is the one
+        // fact confidence verification relies on being the library's own; a later run in the same session is
+        // credited only with what this provider hands it now.
+
         // Why there are no candidates, when there are none: a budget already spent (retrieval is then not
         // run at all), or a retrieval that did not complete. Neither stops the withdrawal check below,
         // which needs only the request's authorization and scope.
@@ -462,7 +467,47 @@ public sealed class ExperienceContextProvider : AIContextProvider
             Session = session?.Usage(),
         });
 
+        // The records this block delivers, at the revision each was rendered from, on the run the invocation
+        // is captured as. This is the exposure confidence evidence about reusing them in that run is later
+        // checked against. Recorded last, once everything that could fail has run, so a block that is not
+        // handed over is never claimed as delivered.
+        var delivered = new List<RunExposure>(payload.ExperienceIds.Count);
+        foreach (var experienceId in payload.ExperienceIds)
+        {
+            if (recheckOutcome.Injectable.Find(candidate => candidate.Record.ExperienceId == experienceId) is { } rendered)
+            {
+                delivered.Add(new RunExposure(experienceId, rendered.Record.Revision));
+            }
+        }
+
+        RecordExposures(context.Agent, delivered);
+
         return injected;
+    }
+
+    /// <summary>
+    /// Records <paramref name="exposures"/> on the run this invocation is captured as, when it is captured by
+    /// <c>UseExperienceCapture</c> on the same flow <em>and</em> the capture scope is this agent's own. Nothing
+    /// otherwise: a provider used without capture has no run to expose, and an uncaptured agent running inside
+    /// another agent's captured invocation (an agent used as a tool, say) must not claim its block was delivered
+    /// to the outer run, whose model never saw it. Never throws into the invocation; the capture scope reports
+    /// its own failures.
+    /// </summary>
+    private static void RecordExposures(AIAgent? agent, List<RunExposure> exposures)
+    {
+        if (CaptureScope.Current is not { } capture || !capture.Captures(agent))
+        {
+            return;
+        }
+
+        try
+        {
+            capture.RecordExposures(exposures);
+        }
+        catch (Exception)
+        {
+            // Exposure is bookkeeping for later evidence; it never costs the invocation its context.
+        }
     }
 
     /// <summary>The content-free failure reason for a session state that does not read.</summary>

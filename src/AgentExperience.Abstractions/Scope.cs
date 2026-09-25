@@ -139,4 +139,70 @@ public sealed record Provenance(
     string Source,
     string? SourceVersion,
     DateTimeOffset RecordedAt,
-    string? CorrelationId);
+    string? CorrelationId)
+{
+    /// <summary>
+    /// The stored records this run was <em>exposed to</em>: each record the library delivered into the run,
+    /// at the earliest revision it was delivered at, ordered by <see cref="RunExposure.ExperienceId"/>.
+    /// Identifiers and revisions only, never content. Empty when the run was exposed to nothing, and on
+    /// every record written before exposure was recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is what binds confidence evidence to exposure: evidence that reusing a record helped or hurt a
+    /// run is admitted only when that run's provenance names the record here, at a revision no later than
+    /// the one the evidence is computed against. A caller who can name real runs therefore gets one
+    /// independence key per run that actually saw the lesson, not one per real run in the scope.
+    /// </para>
+    /// <para>
+    /// <b>Only the capture service writes it on the library's path.</b> The MAF adapter records what its
+    /// context provider delivered, through <c>IExperienceCaptureService.RecordExposure</c>; finalization
+    /// copies it onto the record. <c>StartRun</c> refuses a provenance that already carries exposures, so a
+    /// host cannot pre-seed them. A host that calls <c>RecordExposure</c> itself, or writes a record by hand
+    /// through <see cref="IExperienceRecordStore.CreateAsync"/>, is making its own statement -- which is
+    /// why a hand-written record (<see cref="ExperienceRecordOrigin.HostWritten"/>) vouches for no run.
+    /// </para>
+    /// <para>
+    /// At most <see cref="RunExposure.MaxPerRun"/> entries, with no duplicate or empty record ID and no
+    /// negative revision.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<RunExposure> ExposedTo { get; init; } = [];
+
+    /// <summary>
+    /// Value equality over every member, <see cref="ExposedTo"/> compared element by element rather than
+    /// by reference, so a provenance read back from a store equals the one that was written.
+    /// </summary>
+    /// <param name="other">The provenance to compare with.</param>
+    /// <returns>Whether the two are equal.</returns>
+    public bool Equals(Provenance? other) =>
+        other is not null
+        && string.Equals(Source, other.Source, StringComparison.Ordinal)
+        && string.Equals(SourceVersion, other.SourceVersion, StringComparison.Ordinal)
+        && RecordedAt.Equals(other.RecordedAt)
+        && string.Equals(CorrelationId, other.CorrelationId, StringComparison.Ordinal)
+        && (ReferenceEquals(ExposedTo, other.ExposedTo)
+            || (ExposedTo is not null && other.ExposedTo is not null && ExposedTo.SequenceEqual(other.ExposedTo)));
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(Source, SourceVersion, RecordedAt, CorrelationId, ExposedTo?.Count ?? 0);
+}
+
+/// <summary>
+/// One stored record delivered into a run, as the run's <see cref="Provenance.ExposedTo"/> records it.
+/// </summary>
+/// <param name="ExperienceId">The record that was delivered. Never <see cref="Guid.Empty"/>.</param>
+/// <param name="Revision">
+/// The record's <see cref="ExperienceRecord.Revision"/> as it was delivered: the earliest, when the run was
+/// given the same record more than once. Never negative. A record's content never changes after it is
+/// created, so every later revision of it is the same lesson; evidence is admitted when this is at or before
+/// the revision it is computed against.
+/// </param>
+public sealed record RunExposure(Guid ExperienceId, long Revision)
+{
+    /// <summary>
+    /// The most records one run's provenance may name as exposed. It bounds what one run holds in memory
+    /// and what one record's payload carries; a run that would exceed it records nothing further.
+    /// </summary>
+    public const int MaxPerRun = 256;
+}

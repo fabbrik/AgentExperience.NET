@@ -154,6 +154,46 @@ public sealed record AppendAttemptResult(
     string? Reason);
 
 /// <summary>
+/// The disposition an <see cref="IExperienceCaptureService.RecordExposure"/> call reached.
+/// </summary>
+public enum RecordExposureOutcome
+{
+    /// <summary>At least one exposure was new to the run, or earlier than the one it held, and was recorded.</summary>
+    Recorded,
+
+    /// <summary>The run already held every exposure at the same or an earlier revision; nothing changed.</summary>
+    DuplicateNoOp,
+
+    /// <summary>
+    /// The run is already completed, so its provenance -- which finalization copies onto its record -- is
+    /// closed. Nothing was recorded.
+    /// </summary>
+    Conflict,
+
+    /// <summary>No run with the given <c>RunId</c> exists (or it was never started).</summary>
+    RunNotFound,
+
+    /// <summary>
+    /// Recording these exposures would take the run past <see cref="RunExposure.MaxPerRun"/> distinct
+    /// records. Nothing from this call was recorded.
+    /// </summary>
+    CapacityExceeded,
+
+    /// <summary>
+    /// The capture service does not record exposure: the port's default for an implementation written
+    /// before exposure existed. Evidence about reuse in its runs is refused as not exposed.
+    /// </summary>
+    NotSupported,
+}
+
+/// <summary>
+/// The result of one <see cref="IExperienceCaptureService.RecordExposure"/> call.
+/// </summary>
+/// <param name="Outcome">What happened.</param>
+/// <param name="Reason">Optional, auditable, content-free explanation of a refusal.</param>
+public sealed record RecordExposureResult(RecordExposureOutcome Outcome, string? Reason);
+
+/// <summary>
 /// The result of one <see cref="IExperienceCaptureService.CompleteRunAsync"/> call.
 /// </summary>
 /// <param name="Outcome">What happened.</param>

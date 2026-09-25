@@ -69,7 +69,7 @@ because MAF forwards those to the model provider.
 | `Environment` | machine name + `RuntimeInformation` | Environment fingerprint recorded on every run. |
 | `CaptureToolCalls` | `true` | Registers function middleware. Requires a `ChatClientAgent`. |
 | `FinalizationTimeout` | 5 s | Upper bound on the whole post-invocation step: appending the attempt, completing the run, and — when `FinalizationService` is set — finalizing it into a durable Experience Record. With finalization configured this bounds database round trips, not just in-memory capture, so 5 s may be too tight. Must be positive and at most `uint.MaxValue - 1` milliseconds. It uses its own token, never the caller's. |
-| `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, and `Finalization` (turning the completed run into a durable Experience Record). Exceptions it throws are swallowed. |
+| `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, `Finalization` (turning the completed run into a durable Experience Record), and `RecordExposure` (recording which records the context provider delivered into the run). Exceptions it throws are swallowed. |
 | `FinalizationService` | none | Core's `ExperienceFinalizationService`. When set, each successfully captured run is finalized into a durable Experience Record. Requires `ResolveFinalization`. |
 | `ResolveFinalization` | none | Builds the `FinalizeExperienceRequest` for one completed run. Return `null` to skip finalizing that run. Required when `FinalizationService` is set. |
 | `OnRunFinalized` | none | Receives every `FinalizeExperienceResult`, durable or not — including a host decision such as `StorageDenied`, which is not a capture failure. Not called once finalization has overrun `FinalizationTimeout`. Exceptions it throws are swallowed. |
@@ -717,6 +717,27 @@ counter and no status; only a human assessment naming a host-established review,
 carrying its own evidence, becomes supporting or contradicting evidence — and the run ID you pass is a host trust
 boundary that nothing in the library can check. See
 [Recording what reuse was worth](../../README.md#recording-what-reuse-was-worth).
+
+### Exposure is recorded on the captured run
+
+When the agent is built with both this provider and `UseExperienceCapture`, the provider runs inside the invocation
+capture wraps (it reads the capture scope from the same async flow; nothing extra is wired) and records on that run,
+through `IExperienceCaptureService.RecordExposure`, every record it injects, at the revision it rendered. It records
+only when the capture scope on the flow is its own agent's (compared through the `ChatClientAgent` each resolves to),
+so an uncaptured agent running inside a captured invocation — an agent used as a tool — exposes nothing to the outer
+run. A record a reused session was given on an earlier turn is in the history this invocation's model sees, but it is
+**not** credited to this run: the session account lives in host session storage, unauthenticated, and exposure is
+the one fact confidence verification relies on being the library's own. A later run in the same session is exposed
+only to what it is given itself (fail-closed).
+
+Identifiers and revisions only, as the run's `Provenance.ExposedTo`; finalization copies it onto the run's record.
+Confidence evidence and attributed feedback about reusing a record in a run are admitted only if the run was exposed
+to that record at or before its current revision, so this is what makes an attribution about the run you pass count
+(story 7.3, KL-11). A record injected into an invocation that is not captured, or captured by a registration whose
+capture service records no exposure, leaves no exposure, and evidence about it is refused as `NotExposed`. A failure
+to record — a throw, or a capture service that answers `NotSupported`, `Conflict` or `CapacityExceeded` — is reported
+once per run through `OnCaptureFailure` at the new stage `RecordExposure` and never affects the injection. Exposure means *delivered*, not *used*: the library records what it put in front of the model, and
+nothing about what the model did with it.
 
 ## Supported agent types
 

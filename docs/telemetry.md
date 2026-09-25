@@ -164,6 +164,8 @@ These are the only span attributes the library writes.
 | `agentexperience.reflection_id` | GUID | `reflect` |
 | `agentexperience.feedback_id` | GUID | `reuse_feedback` |
 | `agentexperience.stage` | a `FinalizationStage` member: `Load`, `Evaluate`, `Authorize`, `Reflect`, `CreateRecord`, `CommitInitialEvent` | `finalize`, on every outcome, and on a throw (the stage it had reached) |
+| `agentexperience.confidence.admission` | a `ConfidenceEvidenceAdmission` member: `Verified` or `HostTrusted` — which verification mode admitted the evidence | `confidence.apply`, only on `Applied` (including a duplicate, and a replay, which reports the admission the original was stored with). Absent on every other outcome, and on a replay of evidence stored with no admission |
+| `agentexperience.independence.refusal` | an `IndependenceRefusal` member, such as `UnknownRun`, `NotExposed`, `HostWrittenRun` or `AssessmentTokenInvalid` | `confidence.apply`, only on `Unverified` |
 | `agentexperience.correlation_id` | the host-supplied correlation identifier, verbatim | `retrieve`, `inject`; omitted when the host supplied none |
 | `agentexperience.omitted_count` | integer: how many ranked records the injection left out. The omission reasons stay on the typed result | `inject` |
 | `agentexperience.retracted_count` | integer: how many withdrawal notices the injected block carried, for records delivered earlier in the session. The IDs stay on the typed result | `inject`, only when the count is not zero (session tracking) |
@@ -212,7 +214,7 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `reflect` | `DefaultExperienceReflector.ReflectAsync` | `TaskVerificationStatus`: `Unknown`, `Verified`, `Failed` | `run_id`, `reflection_id` | — |
 | `finalize` | `ExperienceFinalizationService.FinalizeAsync` | `FinalizationOutcome`: `Validated`, `Quarantined`, `AlreadyFinalized`, `StorageDenied`, `NotAuthorized`, `RunNotFound`, `RunNotFinished`, `Failed` | `run_id`, `stage`, `experience_id` (when a record is returned) | `verify`, `reflect`, `lifecycle.commit`, `index` |
 | `lifecycle.commit` | `ExperienceLifecycleService.CommitAsync` | `LifecycleTransitionOutcome`: `Committed`, `TransitionNotAllowed`, `ReplacementNotAllowed`, `StaleRevision`, `StatusMismatch`, `Conflict`, `NotFound`, `Denied`, `Invalid`, `Deleted` | `experience_id`, `event_id` | `deindex` (when the transition leaves eligibility) |
-| `confidence.apply` | `ExperienceLifecycleService.ApplyEvidenceAsync` | `ConfidenceUpdateOutcome`: `Applied`, `Ineligible`, `StaleRevision`, `StatusMismatch`, `Conflict`, `NotFound`, `Denied`, `Invalid`, `Deleted`, `Unverified` | `experience_id`, `event_id` | `deindex` (when a contradiction takes the record out of reuse) |
+| `confidence.apply` | `ExperienceLifecycleService.ApplyEvidenceAsync` | `ConfidenceUpdateOutcome`: `Applied`, `Ineligible`, `StaleRevision`, `StatusMismatch`, `Conflict`, `NotFound`, `Denied`, `Invalid`, `Deleted`, `Unverified` | `experience_id`, `event_id`; `confidence.admission` on `Applied`; `independence.refusal` on `Unverified` | `deindex` (when a contradiction takes the record out of reuse) |
 | `retrieve` | `ExperienceRetrievalService.RetrieveAsync` | `RetrievalOutcome`: `Completed`, `TimedOut`, `Denied`, `Failed` | `correlation_id` | — |
 | `index` | `ExperienceIndexingService.IndexAsync` | `ExperienceIndexingOutcome`: `Indexed`, `Skipped`, `Stale`, `Missing`, `Denied`, `Ineligible`, `ProviderFailed`, `IndexFailed` | `experience_id` | `reindex` (a one-record pass) |
 | `deindex` | `ExperienceIndexingService.RemoveAsync` | `ExperienceDeindexingOutcome`: `Removed`, `NotIndexed`, `Denied`, `Failed` | `experience_id` | — |
@@ -230,6 +232,13 @@ Notes:
 - **Refusals are outcomes, not failures.** Every non-success `outcome` above is a returned value, recorded on
   `count` and `duration` under its own name, on an `Ok` span, and never on `failures`. The failure counter moves only
   when the operation throws.
+- **Finding the verification opt-out in use.** `Applied` `confidence.apply` spans whose `agentexperience.confidence.admission`
+  is `HostTrusted` are evidence a host admitted under `IndependenceVerification.TrustHostSuppliedIdentifiers`: every
+  identifier taken as given, no exposure checked. Both new attributes are closed sets written as enum member names,
+  and they are span attributes only: the four metric dimensions are unchanged, so count them from traces, or from
+  the ledger's `admission` column. `ExperienceLifecycleService.ReadConfidenceAsync` is a read, not an operation, and
+  emits nothing. Recording a run's exposure (`IExperienceCaptureService.RecordExposure`) emits no span either; a
+  failure to record one reaches the host through the MAF adapter's `OnCaptureFailure`, at stage `RecordExposure`.
 - **`Deleted`.** `lifecycle.commit` and `confidence.apply` report `Deleted` when the record was erased: the store
   holds only its tombstone. It is terminal and never retryable. Like `NotFound`, it is a refusal. It is reported only
   within the scope that owned the record, and every other scope sees `NotFound`.

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Feedback;
 using AgentExperience.Core.Finalization;
@@ -85,6 +86,8 @@ public class ExperienceTelemetryTests
         StageAttribute,
         ErrorTypeAttribute,
         "agentexperience.feedback_id",
+        "agentexperience.confidence.admission",
+        "agentexperience.independence.refusal",
     ];
 
     /// <summary>
@@ -108,6 +111,7 @@ public class ExperienceTelemetryTests
         ("agentexperience.lifecycle.commit", "agentexperience.event_id"),
         ("agentexperience.confidence.apply", "agentexperience.experience_id"),
         ("agentexperience.confidence.apply", "agentexperience.event_id"),
+        ("agentexperience.confidence.apply", "agentexperience.confidence.admission"),
         ("agentexperience.retrieve", CorrelationIdAttribute),
         ("agentexperience.index", "agentexperience.experience_id"),
         ("agentexperience.deindex", "agentexperience.experience_id"),
@@ -390,7 +394,41 @@ public class ExperienceTelemetryTests
         using var probe = TelemetryProbe.All();
         var loop = new ExperienceLoop();
 
-        await loop.DriveAsync();
+        var results = await loop.DriveAsync();
+
+        // Plus one refused piece of evidence (a run the library does not know), so the refusal attribute
+        // has been written too.
+        var refused = await loop.Lifecycle.ApplyEvidenceAsync(
+            ExperienceLoop.Authorization,
+            new ApplyConfidenceEvidenceRequest(
+                Guid.NewGuid(), ExperienceFinalizationService.ExperienceIdFor(results.RunId, ExperienceLoop.Scope), ExperienceLoop.Scope,
+                Guid.NewGuid(), ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine, Guid.NewGuid(), Guid.NewGuid(),
+                "a run nobody saw", "tests", ExperienceLoop.Now),
+            CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Unverified, refused.Outcome);
+
+        // Both are closed sets written as member names: how admitted evidence got in, and why refused evidence did not.
+        var applySpans = probe.LibraryActivities.Where(activity => activity.OperationName == "agentexperience.confidence.apply").ToList();
+        Assert.Contains(applySpans, span => span.GetTagItem("agentexperience.confidence.admission") as string == nameof(ConfidenceEvidenceAdmission.Verified));
+        Assert.Contains(applySpans, span => span.GetTagItem("agentexperience.independence.refusal") as string == nameof(IndependenceRefusal.UnknownRun));
+        Assert.DoesNotContain(applySpans, span => span.GetTagItem("agentexperience.independence.refusal") is not null && span.GetTagItem("agentexperience.confidence.admission") is not null);
+
+        // And evidence the opt-out admits is labelled as such on its span.
+        var trusting = new ExperienceLifecycleService(
+            loop.Store, indexingService: null, new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
+        var trustedEvent = Guid.NewGuid();
+        var trusted = await trusting.ApplyEvidenceAsync(
+            ExperienceLoop.Authorization,
+            new ApplyConfidenceEvidenceRequest(
+                trustedEvent, ExperienceFinalizationService.ExperienceIdFor(results.RunId, ExperienceLoop.Scope), ExperienceLoop.Scope,
+                Guid.NewGuid(), ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine, Guid.NewGuid(), Guid.NewGuid(),
+                "the host says so", "tests", ExperienceLoop.Now),
+            CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, trusted.Outcome);
+        Assert.Contains(
+            probe.LibraryActivities,
+            span => span.GetTagItem("agentexperience.event_id") as string == trustedEvent.ToString("D")
+                && span.GetTagItem("agentexperience.confidence.admission") as string == nameof(ConfidenceEvidenceAdmission.HostTrusted));
 
         // Plus one thrown operation, so error.type and error.class have been written by the time the
         // keys are collected and the exact set below is not an accident of the happy path.

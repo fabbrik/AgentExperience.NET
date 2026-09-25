@@ -227,6 +227,9 @@ internal sealed class ExperienceLoop
                 ExperienceId = ExperienceFinalizationService.ExperienceIdFor(ReuseRunId, Scope),
                 SourceRunId = ReuseRunId,
                 ClosedRoundId = ReuseRoundId,
+
+                // The later run was given the lesson, as the context provider records it.
+                Provenance = source.Provenance with { ExposedTo = [new RunExposure(experienceId, source.Revision)] },
             });
         }
 

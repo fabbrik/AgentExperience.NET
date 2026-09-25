@@ -148,6 +148,15 @@ public enum ExperienceCaptureFailureStage
     /// available for the host to retry.
     /// </summary>
     Finalization,
+
+    /// <summary>
+    /// Recording which stored records the <c>ExperienceContextProvider</c> delivered into the run threw or
+    /// returned a non-success outcome (the run was already completed, was past
+    /// <see cref="RunExposure.MaxPerRun"/> records, or the capture service does not record exposure). The
+    /// injection itself is unaffected; confidence evidence about reusing those records in this run will be
+    /// refused as not exposed.
+    /// </summary>
+    RecordExposure,
 }
 
 /// <summary>

@@ -223,16 +223,20 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "replacement_experience_id, actor, confidence_evidence_id, confidence_kind, confidence_source, " +
         "confidence_run_id, confidence_verification_round_id, confidence_reviewer_identity, confidence_rule_version, " +
         "confidence_detail, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
-        "new_supporting_validations, prior_contradictions, new_contradictions, confidence_assessment_id";
+        "new_supporting_validations, prior_contradictions, new_contradictions, confidence_assessment_id, " +
+        "confidence_admission";
 
-    /// <summary>The ordinal <c>confidence_assessment_id</c> sits at, the last of <see cref="EventColumns"/> (added by <c>0015</c>).</summary>
+    /// <summary>The ordinal <c>confidence_assessment_id</c> sits at in <see cref="EventColumns"/> (added by <c>0015</c>).</summary>
     private const int EventAssessmentIdOrdinal = 32;
 
+    /// <summary>The ordinal <c>confidence_admission</c> sits at, the last of <see cref="EventColumns"/> (added by <c>0018</c>).</summary>
+    private const int EventAdmissionOrdinal = 33;
+
     /// <summary>The ordinal <c>r.revision</c> sits at in <see cref="HistorySql"/>, straight after <see cref="EventColumns"/>.</summary>
-    private const int HistoryRevisionOrdinal = 33;
+    private const int HistoryRevisionOrdinal = 34;
 
     /// <summary>The ordinal <c>r.deleted_at</c> sits at in <see cref="HistorySql"/>, straight after the revision.</summary>
-    private const int HistoryDeletedAtOrdinal = 34;
+    private const int HistoryDeletedAtOrdinal = 35;
 
     private const string InsertEventSql =
         $"INSERT INTO {EventsTable} ({EventColumns}) VALUES (@event_id, @experience_id, @tenant_id, @application_id, " +
@@ -241,7 +245,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "@confidence_evidence_id, @confidence_kind, @confidence_source, @confidence_run_id, " +
         "@confidence_verification_round_id, @confidence_reviewer_identity, @confidence_rule_version, " +
         "@confidence_detail, @prior_reuse_confidence, @new_reuse_confidence, @prior_supporting_validations, " +
-        "@new_supporting_validations, @prior_contradictions, @new_contradictions, @confidence_assessment_id)";
+        "@new_supporting_validations, @prior_contradictions, @new_contradictions, @confidence_assessment_id, " +
+        "@confidence_admission)";
 
     /// <summary>The primary key a resubmitted <see cref="LifecycleEvent.EventId"/> violates.</summary>
     private const string EventPrimaryKey = "lifecycle_events_pkey";
@@ -261,7 +266,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "evidence_id, experience_id, event_id, kind, source, run_id, verification_round_id, " +
         "reviewer_identity, counted, actor, rule_version, detail, recorded_at, applied_revision, applied_status, " +
         "prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, new_supporting_validations, " +
-        "prior_contradictions, new_contradictions, assessment_id";
+        "prior_contradictions, new_contradictions, assessment_id, admission";
 
     private const string InsertEvidenceSql =
         $"INSERT INTO {EvidenceTable} ({EvidenceColumns}) VALUES (@evidence_id, @experience_id, @event_id, " +
@@ -269,7 +274,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "@confidence_reviewer_identity, @counted, @actor, @confidence_rule_version, @confidence_detail, " +
         "@recorded_at, @applied_revision, @applied_status, @prior_reuse_confidence, @new_reuse_confidence, " +
         "@prior_supporting_validations, @new_supporting_validations, @prior_contradictions, @new_contradictions, " +
-        "@confidence_assessment_id)";
+        "@confidence_assessment_id, @confidence_admission)";
 
     /// <summary>The primary key a resubmitted <see cref="ConfidenceUpdate.EvidenceId"/> violates.</summary>
     private const string EvidencePrimaryKey = "confidence_evidence_pkey";
@@ -319,7 +324,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "SELECT ev.experience_id, ev.event_id, ev.kind, ev.source, ev.run_id, ev.verification_round_id, " +
         "ev.reviewer_identity, ev.counted, ev.applied_revision, ev.applied_status, ev.rule_version, ev.detail, " +
         "ev.prior_reuse_confidence, ev.new_reuse_confidence, ev.prior_supporting_validations, " +
-        "ev.new_supporting_validations, ev.prior_contradictions, ev.new_contradictions, ev.assessment_id " +
+        "ev.new_supporting_validations, ev.prior_contradictions, ev.new_contradictions, ev.assessment_id, ev.admission " +
         $"FROM {EvidenceTable} ev JOIN {Table} r ON r.experience_id = ev.experience_id " +
         $"WHERE ev.evidence_id = @evidence_id AND {RecordScopePredicate} AND {RecordLivePredicate}";
 
@@ -397,7 +402,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "e.confidence_source, e.confidence_run_id, e.confidence_verification_round_id, e.confidence_reviewer_identity, " +
         "e.confidence_rule_version, e.confidence_detail, e.prior_reuse_confidence, e.new_reuse_confidence, " +
         "e.prior_supporting_validations, e.new_supporting_validations, e.prior_contradictions, e.new_contradictions, " +
-        "e.confidence_assessment_id";
+        "e.confidence_assessment_id, e.confidence_admission";
 
     /// <summary>
     /// The same exact-scope predicate as <see cref="ScopePredicate"/>, qualified with the <c>r</c>
@@ -2506,7 +2511,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         // that names a different replacement is a conflict rather than a silent no-op. The scope is
         // compared alongside it. The revision reported is the one the original commit produced, not the
         // record's current one.
-        var resubmitted = lifecycleEvent with { OccurredAt = occurredAt };
+        // The confidence payload's admission is the one field left out, exactly as on the evidence ledger's
+        // replay: a replay reports the admission the original was stored with, whatever mode resubmits it.
+        var resubmitted = lifecycleEvent with
+        {
+            OccurredAt = occurredAt,
+            Confidence = lifecycleEvent.Confidence is { } submittedConfidence
+                ? submittedConfidence with { Admission = stored.Event.Confidence?.Admission }
+                : null,
+        };
         return stored.Event == resubmitted && storedScope == scope
             ? new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors, stored.Event.Confidence)
             : new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
@@ -2622,6 +2635,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             parameters.Add(new NpgsqlParameter<int>("prior_contradictions", update.PriorContradictions));
             parameters.Add(new NpgsqlParameter<int>("new_contradictions", update.NewContradictions));
             parameters.Add(NullableUuid("confidence_assessment_id", update.AssessmentId));
+            parameters.Add(NullableText("confidence_admission", update.Admission?.ToString()));
             await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -2808,6 +2822,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 NewSupportingValidations = reader.GetInt32(15),
                 PriorContradictions = reader.GetInt32(16),
                 NewContradictions = reader.GetInt32(17),
+
+                // Not compared above, on purpose: a replay reports the admission the original was stored
+                // with, which is what the ledger says admitted it.
+                Admission = reader.IsDBNull(19) ? null : DecodeEnumText<ConfidenceEvidenceAdmission>(reader.GetString(19), "confidence evidence"),
             };
 
             return new(
@@ -2967,6 +2985,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(NullableInt("prior_contradictions", confidence?.PriorContradictions));
         parameters.Add(NullableInt("new_contradictions", confidence?.NewContradictions));
         parameters.Add(NullableUuid("confidence_assessment_id", confidence?.AssessmentId));
+        parameters.Add(NullableText("confidence_admission", confidence?.Admission?.ToString()));
     }
 
     /// <summary>The three texts <see cref="SealedSearchVectorExpression"/> analyses. Sent, never stored.</summary>
@@ -3281,6 +3300,9 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 : SealedText.OpenWith(key, SealedText.EventConfidenceDetailColumn, reader.GetGuid(0), reader.GetString(25)))
         {
             AssessmentId = reader.IsDBNull(EventAssessmentIdOrdinal) ? null : reader.GetGuid(EventAssessmentIdOrdinal),
+            Admission = reader.IsDBNull(EventAdmissionOrdinal)
+                ? null
+                : DecodeEnumText<ConfidenceEvidenceAdmission>(reader.GetString(EventAdmissionOrdinal), "lifecycle event"),
         };
 
     /// <summary>Reads a <c>bigint</c> revision, reporting schema drift the way the row decoders do.</summary>
