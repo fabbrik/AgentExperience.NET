@@ -99,10 +99,15 @@ public class AgentPolicyTests
         Assert.DoesNotContain("exit=0", response.Text, StringComparison.Ordinal);
     }
 
-    /// <summary>A message shaped like an injected Historical Reference block naming the given strategies.</summary>
+    /// <summary>
+    /// A message shaped like an injected Historical Reference block naming the given strategies, one
+    /// record each, on the <c>Approach:</c> line the allowlisted <c>strategy</c> argument produces.
+    /// </summary>
     private static ChatMessage Block(params string[] strategies) => new(
         ChatRole.System,
         HistoricalReferenceWriter.BlockBegin + "\n"
-            + string.Join("\n", strategies.Select(strategy => "Lesson: " + WorkingApproachReflector.Sentence(strategy)))
+            + string.Join("\n", strategies.Select(strategy =>
+                "Approach: " + HistoricalReferenceWriter.ApproachPrefix + IncidentCheckTool.ToolName
+                + "(" + WorkingApproach.StrategyArgument + "=\"" + strategy + "\")." + HistoricalReferenceWriter.ApproachArgumentsSuffix))
             + "\n" + HistoricalReferenceWriter.BlockEnd);
 }

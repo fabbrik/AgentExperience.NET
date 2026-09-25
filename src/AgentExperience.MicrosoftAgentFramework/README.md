@@ -326,7 +326,8 @@ Per record: its **source** (experience ID, source run ID, task ID), its **confid
 rank score and every normalized component with the weight applied to it), **when it was learned and last revalidated**,
 the **environment** it came from, an **evidence summary** — lesson, reuse guidance, preconditions, warnings,
 verification status, and how many evidence IDs back it — and, for a verified record, the **approach**: the ordered
-tool *names* its final attempt called.
+tool *names* its final attempt called, plus the values of any tool arguments the host explicitly allowlisted
+([Showing selected argument values](#showing-selected-argument-values)).
 
 `Approach:` is derived from the record's own `Attempts`, not from the reflection's prose, and it appears only when the
 record's outcome is `Verified` **and** its final attempt carries no error. That is deliberately the same rule
@@ -352,10 +353,12 @@ record as the final eligibility check re-read it moments later; the score and it
 record was ranked. Saying so is what keeps a confidence component that has since moved from silently contradicting
 the `Confidence:` line above it.
 
-**Raw payloads never appear.** Tool *arguments*, tool *results*, attempt *results*, attempt *errors*, and evidence
-*detail* are never serialized into the block, so a captured payload cannot reach a model through injection. The one
-thing that does cross from a captured run is the `Approach:` line's ordered tool **names**. What makes that
-acceptable is their *provenance*: MAF resolves the name a model emits against the agent's tool inventory and refuses
+**Raw payloads never appear.** Tool *results*, attempt *results*, attempt *errors*, and evidence *detail* are never
+serialized into the block, and neither is any tool *argument* the host has not allowlisted, so a captured payload
+cannot reach a model through injection. By default the one thing that crosses from a captured run is the `Approach:`
+line's ordered tool **names**; the only other thing that can is the sanitized value of an argument key the host named
+for that exact tool in `ExperienceInjectionOptions.ApproachArguments`, on a record in the reader's own scope, when the
+value is a string, a number or a boolean. What makes the names acceptable by default is their *provenance*: MAF resolves the name a model emits against the agent's tool inventory and refuses
 one that does not resolve before any middleware runs, so a recorded name was fixed when the tool was registered and is
 not derived from the captured run's own data flow. That is the whole of the claim. A tool name is not guaranteed
 short, plain, or chosen by the host — an MCP or OpenAPI inventory takes its names from a remote server or a
@@ -364,13 +367,70 @@ enters a model's context: whitespace (newlines included) is collapsed, the block
 each name is cut to `HistoricalReferenceWriter.MaxToolNameLength` characters and the sequence to
 `MaxApproachToolNames` names, and both cuts are marked in the text. Until story 4.6 this
 paragraph promised that attempts and tool calls were never serialized at all; it is amended here rather than quietly
-dropped, because a lesson that cannot say *what was done* teaches a later agent nothing.
+dropped, because a lesson that cannot say *what was done* teaches a later agent nothing. Until story 6.2 it promised
+that tool arguments were never serialized; that is amended just as precisely to "never, unless the host allowlisted
+that key for that tool", with every bound below, and with no allowlist the block is byte for byte what it was.
 
-**Known limit: an approach is its tool names, and nothing else.** Two approaches that call the same tools in the same
-order but with different arguments — `retry_refund(delay: 0)` failing and `retry_refund(delay: 30)` succeeding —
-render as the same `Approach:` line, so the block cannot tell a later agent which arguments worked. A host whose
-lessons turn on arguments needs its own `IExperienceReflector` to say so in the reflection's lesson text, which the
-block does carry; what that reflector writes there is the host's to keep free of secrets, because the lesson is
+#### Showing selected argument values
+
+Two approaches that call the same tools in the same order but with different arguments — `retry_refund(delay: 0)`
+failing and `retry_refund(delay: 30)` succeeding — render as the same names-only `Approach:` line. A host that knows
+which of its arguments carry the *choice* can name them, per tool:
+
+```csharp
+new ExperienceInjectionOptions
+{
+    ResolveRequest = ...,
+    ApproachArguments = { ["retry_refund"] = ["delay"], ["run_incident_check"] = ["strategy"] },
+}
+```
+
+```
+Approach: the verified run's final attempt called these tools, in order: read_ledger -> retry_refund(delay=30). Tool names, plus only the argument values the host allowlisted, as stored after capture-time sanitization -- no other arguments, no results, no error text.
+```
+
+It is off by default, and a line that ends up showing no argument — no allowlisted key on any of its calls — is the
+names-only line, byte for byte. When it is on, these are the guarantees, and each is a test:
+
+- **Only the allowlist decides.** The writer looks each allowlisted key up in a call's arguments; it never enumerates
+  them, so a key the host did not name for that exact tool name cannot appear. Tool names and keys match ordinally.
+- **Only the sanitized value.** What is shown is what the record stores, which is what the capture-time `ISanitizer`
+  returned — never the raw value. A value it redacted is shown redacted (`DefaultSanitizer`'s default redactor leaves
+  `""`), and a key it omitted is absent.
+- **Only scalars.** A string, a number or a boolean is shown, a null as `null` and an enum as its quoted name. A JSON
+  number is rendered as the PostgreSQL store normalizes it, so both stores render a record the same way. An object, an array or any other
+  shape is written as `(not shown: not a string, number or boolean)` and its content is never read.
+- **Bounded like a tool name, then quoted.** A string's whitespace and control or format characters become single
+  spaces and its ends are trimmed (an all-whitespace value therefore reads as `""`, like a redacted one), the block's markers are neutralized, it is cut to `HistoricalReferenceWriter.MaxArgumentValueLength` (64)
+  characters with the cut marked outside the quotes, and quoted. Invisible characters are classified per Unicode
+  scalar, so a TAG-character or other supplementary-plane payload becomes spaces too. Inside a value every double
+  quote (and look-alike) becomes `'` and `->` becomes `- >`, so the two double quotes around a value are the only ones
+  and a value cannot spell the step separator: it can neither add a line, nor forge a marker or label, nor end its own
+  quotes. It can still contain words that *read* like a call; it cannot be parsed as one. A value that cannot be read
+  at all is written as the not-shown marker rather than failing the injection.
+- **The line is capped, and the budget still drops whole records.** All of a line's arguments together are capped at
+  `MaxApproachArgumentsLength` (512) characters; an argument that would pass it is left out whole, with every later
+  one, and the line says so. The record as a whole still counts against `MaxBytes`, which drops it whole.
+- **Never for a borrowed record.** A record read through a sharing grant shows no argument value under any disclosure
+  level — under `LessonOnly` its `Approach:` line is withheld entirely, as before, and under `LessonAndApproach` it is
+  names only. The allowlist is the *reader's* configuration, and a `LessonAndApproach` grant was issued as the owner's
+  consent to show tool names, not argument values; widening every existing grant silently would be the wrong default.
+  A third disclosure level could lift this later; it is recorded as the residual of KL-8.
+- **Validated and snapshotted at construction.** `ExperienceContextProvider` copies the allowlist when it is built, so
+  editing the dictionary afterwards changes nothing, and it refuses a blank tool name, a null key list, or a key that
+  is blank, longer than 64 characters, listed twice, or contains whitespace, a control, format or surrogate
+  character, or one of `= ( ) , " \`.
+
+Allowlisting a key lets a later model read that argument's values. A value is text the captured run's model chose,
+from whatever was in its context, and the sanitizer classifies by field *name*, not content. Name only keys whose
+values are a choice from a small, known set — a strategy, a mode, a delay — never free text, a person's identifier,
+or anything a secret could be written into. The authorization boundary outside the block still decides what a later
+agent may call, whatever a shown value says: `InjectedContentAuthorizationTests` includes an allowlisted value that
+orders a guarded call, which the model obeys and the approval boundary denies.
+
+A lesson that turns on something the allowlist cannot carry — an object- or array-valued argument, or a borrowed
+record's arguments — still needs the host's own `IExperienceReflector` to say so in the reflection's lesson text, which
+the block does carry; what that reflector writes there is the host's to keep free of secrets, because the lesson is
 emitted as written.
 
 A host reflector may write anything at all into a reflection's `SuccessfulApproaches`/`FailedApproaches` — the shipped

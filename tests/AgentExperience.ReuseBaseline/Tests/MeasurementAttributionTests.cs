@@ -191,6 +191,26 @@ public class MeasurementAttributionTests
     }
 
     /// <summary>
+    /// Story 6.2: the reference arm's records are written by the shipped default reflector alone, and
+    /// the one host setting that carries the working strategy to a later run is the
+    /// <c>ApproachArguments</c> allowlist. With it off, the block still reaches the agent -- names only,
+    /// every strategy the same tool -- and the agent reads nothing out of it, which the harness refuses
+    /// to report as reuse. That is the proof the allowlist, and nothing planted, is what separates the
+    /// arms.
+    /// </summary>
+    [Fact]
+    public async Task Without_the_approach_argument_allowlist_the_default_reflector_alone_carries_no_strategy_and_the_run_stops()
+    {
+        var refused = await Assert.ThrowsAsync<HarnessIntegrityException>(() => ReuseBaselineExperiment.RunAsync(new ExperimentOptions
+        {
+            Arm = ReuseBaselineArms.Reference,
+            OmitApproachArguments = true,
+        }));
+
+        Assert.Contains("read no strategy out of the injected block", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A reflector that writes a working approach into the lesson that the run it reflects on never
     /// used. Test-only: it is the smallest version of "the answer got in by another route".
     /// </summary>
@@ -199,7 +219,7 @@ public class MeasurementAttributionTests
         public async Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
         {
             var reflection = await inner.ReflectAsync(request, cancellationToken).ConfigureAwait(false);
-            return reflection with { Lesson = reflection.Lesson + WorkingApproachReflector.Sentence(IncidentStrategies.WaitForLock) };
+            return reflection with { Lesson = reflection.Lesson + " Working approach: strategy '" + IncidentStrategies.WaitForLock + "'." };
         }
     }
 }

@@ -106,16 +106,14 @@ public class ReportClaimTests
         Assert.Contains("AGENT POLICY", text, StringComparison.Ordinal);
         Assert.Contains("exploration order", text, StringComparison.Ordinal);
 
-        // And the report says that the shipped library could not have carried the working approach on
-        // its own, so a reader knows which part of the difference the harness itself supplied. Story
-        // 4.6 gave the injected block an ordered tool-name approach line, so the report now has to say
-        // why that still is not enough here -- every strategy is the same tool under a different
-        // argument, and arguments are exactly what the block still never carries.
+        // And the report says which part of the difference the harness itself supplied. Since story
+        // 6.2 that is no longer a host reflector but one host setting -- the ApproachArguments
+        // allowlist -- and the report has to name it, and say what would happen without it.
         var normalized = Normalize(text);
-        Assert.Contains("DefaultExperienceReflector is domain-blind", normalized, StringComparison.Ordinal);
-        Assert.Contains("ordered tool NAMES of a verified run's final attempt, but never a tool's arguments", normalized, StringComparison.Ordinal);
-        Assert.Contains("the block's own approach line cannot tell the conditions apart here", normalized, StringComparison.Ordinal);
-        Assert.Contains("nothing about a working approach would reach a later run", normalized, StringComparison.Ordinal);
+        Assert.Contains("shipped DefaultExperienceReflector alone; this harness registers no reflector of its own", normalized, StringComparison.Ordinal);
+        Assert.Contains("domain-blind", normalized, StringComparison.Ordinal);
+        Assert.Contains("ExperienceInjectionOptions.ApproachArguments allowlists the 'strategy' argument", normalized, StringComparison.Ordinal);
+        Assert.Contains("Without it, nothing about a working approach would reach a later run", normalized, StringComparison.Ordinal);
     }
 
     [Fact]
