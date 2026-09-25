@@ -12,9 +12,11 @@ AgentExperience.NET captures what an AI agent actually tried, verifies whether i
 All four epics are implemented and tested: capture and explain agent experience, reuse it (PostgreSQL persistence,
 atomic audited lifecycle, text and hybrid retrieval, Historical Reference injection into MAF), govern it (sharing
 grants, confidence from evidence, reuse feedback, deletion and expiry), and operate and measure it (telemetry, an
-end-to-end sample, a controlled reuse baseline). Nothing is published to NuGet yet; the packages build, and their
-release checks run, from [`RELEASING.md`](RELEASING.md). Public APIs may change between previews — every change to
-them is a reviewed diff against a checked-in baseline.
+end-to-end sample, a controlled reuse baseline). Since `0.1.0-preview.1`, the work has gone into the known limits:
+this preview resolves thirteen of the sixteen that preview shipped with and narrows the other three (see the
+[changelog](CHANGELOG.md)). A preview is published to NuGet from a pushed version tag, once the
+release checks in [`RELEASING.md`](RELEASING.md) pass and a maintainer approves it. Public APIs may change between previews — every change to them is a reviewed diff
+against a checked-in baseline.
 
 ## Known limits
 
@@ -25,25 +27,24 @@ preview.
 
 | # | Limit | Where the detail lives |
 | --- | --- | --- |
-| KL-2 | **Erasure cannot reach a copy of the derived search data, and without crypto-shredding it reaches only live rows.** With `ExperienceEncryption` configured (opt-in), erasing a record destroys its key, so its text is unreadable in every backup, replica, WAL segment and dead tuple — except its full-text vector (the task ID, summary and lesson as lexemes with positions) and its embedding with its content hash, which PostgreSQL has to read in the clear and which survive in every copy exactly as plaintext does. Never sealed, in either mode: IDs, scope, statuses, scores, timestamps and principal identities. Rows written before a deployment switched modes keep their plaintext copies (and append-only ledger rows stay plaintext until erased). In plaintext mode, still the default, every copy keeps everything and the dead tuple keeps the text until `VACUUM`. Exported telemetry, server logs and external artifacts are out of reach, and the property is only as good as a key store kept outside the database's backups | [Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy); [the honesty statement](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
-| KL-11 | **Verified independence proves a run was *given* the lesson, not that it used it; three host statements are still believed; and the opt-out's evidence is excluded only on read.** By default confidence evidence and attributed feedback must name a run the library knows in the record's scope (finalized there by the library, or held by the capture service), never the record's own, whose provenance shows the library delivered the record into it at or before the revision the evidence is computed against; a machine round must be the one finalization closed, and a human assessment must present a single-use HMAC token. What remains: (1) *delivered* is not *used*, so every run that was given a lesson is one key, whether or not the lesson mattered to it; (2) the library believes the host's own bookkeeping where it cannot see past it — a host that calls `IExperienceCaptureService.RecordExposure` for records it did not deliver, or writes a record through `CreateAsync` marked `ExperienceRecordOrigin.Finalized`, is believed (so is an application role while it holds `AllowSealing`, which can replace a plaintext payload), and the round finalization records is the `ClosedRound` the host passed it (evidence carries no run ID, so no check can tie a round, or a direct `VerificationAggregator.Aggregate` caller's run ID, to the run itself; a direct aggregator result counts only through finalization or such a marked record); (3) a host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` still has every `RunId`, `VerificationRoundId` and `AssessmentId` trusted, and one that lets agent output populate them hands the agent a fresh key per call — that evidence is now stored as `HostTrusted`, tagged in telemetry, and left out on request by `ReadConfidenceAsync`, but the stored score retrieval ranks on still counts it | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
-| KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is revoked, superseded, erased or un-granted — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
+| KL-2 | **Erasure cannot reach a copy of the derived search data, and without crypto-shredding it reaches only live rows.** With `ExperienceEncryption` configured (opt-in), erasing a record destroys its key, so its text is unreadable in every backup, replica, WAL segment and dead tuple — except its full-text vector (the task ID, summary and lesson as lexemes with positions) and its embedding with its content hash, which PostgreSQL has to read in the clear and which survive in every copy exactly as plaintext does. Never sealed, in either mode: IDs, scope, statuses, scores, timestamps, principal identities, and a grant's argument allowlist (tool names and argument keys). Rows written before a deployment switched modes keep their plaintext copies (and append-only ledger rows stay plaintext until erased). In plaintext mode, still the default, every copy keeps everything and the dead tuple keeps the text until `VACUUM`. Exported telemetry, server logs and external artifacts are out of reach, and the property is only as good as a key store kept outside the database's backups | [Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy); [the honesty statement](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
+| KL-11 | **Verified independence proves a run was *given* the lesson, not that it used it; the library still believes the host's own bookkeeping and key custody; and the opt-out's evidence is excluded only on read.** By default confidence evidence and attributed feedback must name a run the library knows in the record's scope (finalized there by the library, or held by the capture service), never the record's own, whose provenance shows the library delivered the record into it at or before the revision the evidence is computed against; a machine round must be the one finalization closed, and a human assessment must present a single-use HMAC token. What remains: (1) *delivered* is not *used*, so every run that was given a lesson is one key, whether or not the lesson mattered to it; (2) the library believes the host's own bookkeeping where it cannot see past it — a host that calls `IExperienceCaptureService.RecordExposure` for records it did not deliver, or writes a record through `CreateAsync` marked `ExperienceRecordOrigin.Finalized`, is believed (so is an application role while it holds `AllowSealing`, which can replace a plaintext payload), and the round finalization records is the `ClosedRound` the host passed it (evidence carries no run ID, so no check can tie a round, or a direct `VerificationAggregator.Aggregate` caller's run ID, to the run itself; a direct aggregator result counts only through finalization or such a marked record), and whoever holds `AssessmentTokenKey`, or can call `AssessmentTokenIssuer`, can mint a valid token; (3) a host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` still has every `RunId`, `VerificationRoundId` and `AssessmentId` trusted, and one that lets agent output populate them hands the agent a fresh key per call — that evidence is now stored as `HostTrusted`, tagged in telemetry, and left out on request by `ReadConfidenceAsync`, but the stored score retrieval ranks on still counts it | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
+| KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is no longer valid (erased, revoked, superseded, quarantined, contested, un-granted, below the confidence floor or past `MaxAge`) — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage: removing the state key resets it, and concurrent invocations on one session race on it. A host that turns tracking off (`SessionLimits = null`) is back to unbounded accumulation with no notices | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
 
-Resolved since `0.1.0-preview.2` (unreleased):
+Resolved or narrowed in `0.1.0-preview.2` (a narrowed limit keeps its row in the table above):
 
-- KL-8 (an approach showing argument values only for top-level scalars, and never for a borrowed record) is resolved
-  by story 7.1. An allowlisted key may now be a dotted path — `options.mode`, or `targets.0` for an array element —
-  and only the scalar it ends on is shown, under every bound story 6.2 set (sanitized stored values only, the 64-character
-  clamp, quote and `->` neutralization, the invisible-character strip, the 512-character line cap and the byte
-  budget); a path that ends on an object or an array still shows the marker, and a container is never shown whole.
-  A borrowed record shows argument values through a new, immutable third disclosure level,
-  `ExperienceGrantDisclosure.LessonApproachAndArguments`: the owner names on the grant the keys it consents to show
-  (`ExperienceGrantRequest.ApproachArguments`, stored on the grant by `0017`), and the recipient's model is shown a
-  key only when the recipient's own `ApproachArguments` names it for the same tool as well — the intersection, so
-  neither side can widen what the other allowed. `LessonOnly` still withholds the whole `Approach:` line and
-  `LessonAndApproach` is still tool names only. Existing grants keep their level; a borrowed record's arguments
-  appear only after the owner revokes and reissues at the new level. See
-  [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values).
+- KL-1 (serial round trips on the re-index path and on the invocation's critical path) is resolved by story 5.6.
+  `IExperienceEmbeddingGenerator` gained `GenerateBatchAsync`, and a re-index pass embeds the records that need a
+  vector `ReindexExperienceRequest.EmbeddingBatchSize` (default 16, at most 128) per provider call, with each record
+  still written on its own, conditionally on its own revision. `IExperienceRecordStore` gained `GetManyAsync`, which
+  the PostgreSQL store answers with one statement applying exactly `GetAsync`'s scope, grant, disclosure and tombstone
+  rules and one audit append; injection's final eligibility check is now that one call. Measured in the tests: eight
+  candidates cost one read and one access-row append where they cost twelve commands, and forty records cost three
+  provider calls where they cost forty. Both methods have a default implementation that does what the library did
+  before, one call per item, so an out-of-tree store or generator keeps compiling and keeps its behaviour; it simply
+  saves no round trips until it overrides them. See
+  [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check)
+  and [Indexing](#indexing-experience-for-semantic-reuse).
 - KL-2 (erasure reaching only this database's live rows) is **narrowed, not closed**, by crypto-shredding (story
   6.4). With an `ExperienceEncryption` over an `IExperienceKeyStore`, every free-text column erasure removes — the
   record payload and task ID, lifecycle reasons and evidence detail, grant reasons, and reuse-feedback rationale — is
@@ -55,6 +56,14 @@ Resolved since `0.1.0-preview.2` (unreleased):
   through two small ports; the library takes no new dependency. Existing records are sealed by a bounded, resumable,
   authorized upgrade job, `SealPlaintextRecordsAsync`. What the table's row still says is exactly what remains. See
   [Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy).
+- KL-3 (a retention sweep matching one scope exactly) is resolved by `ScopeMatch.Subtree` (story 5.4).
+  `SweepExpiredAsync(auth, scope, age, batch, ScopeMatch.Subtree, ct)` sweeps the scope and every scope beneath it,
+  bounded, one record per transaction, with `MoreRemain` true across the whole subtree. "Beneath" means the same
+  tenant, application and project, and each team, agent or user field either left null on the root or equal to it,
+  which is the reading `AuthorizationContext` already gives a null bound, so authorizing the root authorizes the
+  subtree. The five-argument overload is unchanged and still exact. A subtree never spans projects: a host with
+  several sweeps each project root, a list it configures rather than one it has to discover. See
+  [Store: a sweep reaches one scope, or everything beneath it](src/AgentExperience.Storage.Postgres/README.md#a-sweep-reaches-one-scope-or-everything-beneath-it-and-you-choose-which).
 - KL-4 (the purge path being auditability, not a privilege boundary) is resolved by the two-role deployment (story
   6.1), which is now the documented and supported one. An owner role owns the schema and runs the migrators; the
   application role is given exactly what the stores need by `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync`,
@@ -70,6 +79,48 @@ Resolved since `0.1.0-preview.2` (unreleased):
   local development) gets none of this. `0013` also pins `search_path` with `pg_temp` last on every purge and guard
   function. See
   [Store: deploying with two roles](src/AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles).
+- KL-5 (default-deny on evidence kind opt-in per check) is resolved by story 5.5. `RequiredCheck`'s `ExpectedKind` is
+  now required; accepting any kind is spelled `RequiredCheck.AnyKind` (`"*"`), and a null or blank kind is refused by
+  the aggregator rather than read as "any". **Breaking:** `new RequiredCheck("id")` no longer compiles. See
+  [Verifying a run](#verifying-a-run-and-binding-its-evaluation).
+- KL-6 (a reflection pairable with the wrong evaluation by a direct caller) is resolved by story 5.5. An evaluation
+  now records the run, round, revision and checks it was computed from, only `VerificationAggregator.Aggregate` can
+  make one, and a `ReflectionRequest` cannot be constructed from an evaluation computed for another run
+  (`ReflectionBindingException`). Finalization also checks every reflection a reflector returns against its request
+  and quarantines one that does not match. **Breaking:** `Aggregate` takes the run ID first, `VerificationResult` has
+  no public constructor (so it can no longer be deserialized), a request's `Run` and `Evaluation` cannot be replaced
+  with `with`, and a run whose own outcome disagrees with the evaluation now fails at request construction rather
+  than inside the default reflector. The binding is only as strong as the run ID a host supplies, which is now part
+  of KL-11; see [Verifying a run](#verifying-a-run-and-binding-its-evaluation).
+- KL-7 (an invocation that opens a run and never returns holding it with no bound) is resolved by arming the
+  open-run duration bound when the run is opened, for every run, with the timer disposed when the invocation
+  releases the run (story 5.3). An invocation that never returns now holds its run for at most twice
+  `MaxOpenRunDuration`, and the close is reported. See
+  [Adapter: retries as attempts of one run](src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run).
+- KL-8 (an approach being its tool names only) is resolved in two steps. Story 6.2 narrowed it: a host can allowlist,
+  per tool, the argument keys whose sanitized scalar values the `Approach:` line shows
+  (`ExperienceInjectionOptions.ApproachArguments`). Story 7.1 closed what that left — values only for top-level
+  scalars, and never for a borrowed record. An allowlisted key may now be a dotted path — `options.mode`, or `targets.0` for an array element —
+  and only the scalar it ends on is shown, under every bound story 6.2 set (sanitized stored values only, the 64-character
+  clamp, quote and `->` neutralization, the invisible-character strip, the 512-character line cap and the byte
+  budget); a path that ends on an object or an array still shows the marker, and a container is never shown whole.
+  A borrowed record shows argument values through a new, immutable third disclosure level,
+  `ExperienceGrantDisclosure.LessonApproachAndArguments`: the owner names on the grant the keys it consents to show
+  (`ExperienceGrantRequest.ApproachArguments`, stored on the grant by `0017`), and the recipient's model is shown a
+  key only when the recipient's own `ApproachArguments` names it for the same tool as well — the intersection, so
+  neither side can widen what the other allowed. `LessonOnly` still withholds the whole `Approach:` line and
+  `LessonAndApproach` is still tool names only. Existing grants keep their level; a borrowed record's arguments
+  appear only after the owner revokes and reissues at the new level. See
+  [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values).
+- KL-9 (a borrowed lesson disclosing the lending scope's tool names) is resolved by the grant disclosure level
+  (story 3.6); see [Sharing experience across scopes](#sharing-experience-across-scopes).
+- KL-10 (no retention path for the grant access log) is resolved by `0012` and
+  `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` (story 5.4): a bounded, administrator-authorized purge of
+  access rows the database recorded before a host-given cutoff, within an owner scope or its subtree, through a
+  `SECURITY DEFINER` function whose `EXECUTE` is revoked from `PUBLIC`. It never removes a row younger than
+  30 days, by the database's clock: a later cutoff is refused rather than clamped, and the append-only guard
+  re-checks every row. Erasing a record still keeps its access rows. It is the `grant.access.purge` telemetry
+  operation. See [Store: retention for the access log](src/AgentExperience.Storage.Postgres/README.md#retention-for-the-grant-access-log).
 - KL-11 (confidence independence trusting host-supplied identifiers) is **narrowed, not closed**, by story 6.6: the
   row above now states only what remains. By default `ApplyEvidenceAsync`, and every attributed feedback submission,
   refuses an independence key whose inputs the library cannot vouch for, with `ConfidenceUpdateOutcome.Unverified`
@@ -106,6 +157,17 @@ Resolved since `0.1.0-preview.2` (unreleased):
   `IndependenceRefusal`, `ExperienceCaptureFailureStage` gain members; and `IExperienceCaptureService` gains
   `RecordExposure` (with a default implementation that records nothing). See
   [Updating confidence from evidence](#updating-confidence-from-evidence).
+- KL-12 (injected blocks accumulating in a reused session, and a delivered block that cannot be retracted) is
+  **narrowed, not closed**, by session tracking (story 6.5), on by default: the row above states what is left. With a
+  session supplied, `ExperienceContextProvider` keeps an account in the session's `StateBag` (record IDs, revisions
+  and counters, never content), omits a revision the session already holds (`AlreadyDelivered`), bounds a session to
+  32 record deliveries and 64 KB of Historical Reference across its invocations
+  (`ExperienceInjectionOptions.SessionLimits`), and re-checks every record the session holds on every invocation. A
+  record that has been erased, revoked, superseded, quarantined or contested, has lost its grant, fallen below the
+  confidence floor or past `MaxAge`, or is now read through a grant that withholds what the session was shown, gets
+  one fixed withdrawal notice, ahead of any new record, carrying no reason and no content. A host whose chat history
+  drops injected blocks sets `SessionLimits = null`, which restores the previous behaviour exactly. See
+  [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
 - KL-13 (the supported matrix stopping short of a newer MAF, `net8.0` and PostgreSQL 14) is resolved by story 7.2,
   with one boundary left on purpose. **MAF** is no longer pinned exactly: the adapter declares
   `Microsoft.Agents.AI` `[1.22.0, 2.0.0)`, so a host needing a newer 1.x resolves it with no warning. CI tests the
@@ -123,69 +185,20 @@ Resolved since `0.1.0-preview.2` (unreleased):
   out, and a major bound on a dependency that has no next major yet; neither restricts a host on a supported
   PostgreSQL or any MAF release that exists. `net8.0` and `net9.0` also leave support on 10 November 2026, and the
   first preview after that drops them. See [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix).
-
-Resolved in `0.1.0-preview.2`:
-
-- KL-1 (serial round trips on the re-index path and on the invocation's critical path) is resolved by story 5.6.
-  `IExperienceEmbeddingGenerator` gained `GenerateBatchAsync`, and a re-index pass embeds the records that need a
-  vector `ReindexExperienceRequest.EmbeddingBatchSize` (default 16, at most 128) per provider call, with each record
-  still written on its own, conditionally on its own revision. `IExperienceRecordStore` gained `GetManyAsync`, which
-  the PostgreSQL store answers with one statement applying exactly `GetAsync`'s scope, grant, disclosure and tombstone
-  rules and one audit append; injection's final eligibility check is now that one call. Measured in the tests: eight
-  candidates cost one read and one access-row append where they cost twelve commands, and forty records cost three
-  provider calls where they cost forty. Both methods have a default implementation that does what the library did
-  before, one call per item, so an out-of-tree store or generator keeps compiling and keeps its behaviour; it simply
-  saves no round trips until it overrides them. See
-  [Adapter: limits and the final eligibility check](src/AgentExperience.MicrosoftAgentFramework/README.md#limits-and-the-final-eligibility-check)
-  and [Indexing](#indexing-experience-for-semantic-reuse).
-- KL-7 (an invocation that opens a run and never returns holding it with no bound) is resolved by arming the
-  open-run duration bound when the run is opened, for every run, with the timer disposed when the invocation
-  releases the run (story 5.3). An invocation that never returns now holds its run for at most twice
-  `MaxOpenRunDuration`, and the close is reported. See
-  [Adapter: retries as attempts of one run](src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run).
-- KL-9 (a borrowed lesson disclosing the lending scope's tool names) is resolved by the grant disclosure level
-  (story 3.6); see [Sharing experience across scopes](#sharing-experience-across-scopes).
 - KL-14 (exact pins blocking a newer MAF) is resolved by moving the supported pin to `Microsoft.Agents.AI` 1.22.0,
   with `Microsoft.Extensions.DependencyInjection.Abstractions` `[10.0.12]` in Core and both stores and
-  `Microsoft.Extensions.AI.Abstractions` `[10.10.0]` in the vectors package (story 5.1). The general hazard remains
-  was part of KL-13 (a later MAF needing newer shared pins), which story 7.2 resolved. See
+  `Microsoft.Extensions.AI.Abstractions` `[10.10.0]` in the vectors package (story 5.1). The general hazard that
+  remained (a later MAF needing newer shared pins) was part of KL-13, which stories 6.3 and 7.2 resolved: every
+  reference but MAF is now a floor, and MAF a range to its next major. See
   [Compatibility evidence](docs/compatibility-evidence.md#the-maf-compatibility-matrix).
 - KL-15 (Core's redaction dependency a floor) is resolved by exact-pinning `Microsoft.Extensions.Compliance.Redaction`
   at `[10.10.0]` (story 5.1). Every `PackageReference` a shipping project declares is now exact, and a release test
   fails on a new floor; the dependencies those packages declare in turn are still whatever NuGet floors they carry.
-  (Story 6.3, after this preview, replaced that policy: every reference but MAF is now a floor CI tests at both ends
+  (Story 6.3, later in this preview, replaced that policy: every reference but MAF is now a floor CI tests at both ends
   of its major, and story 7.2 made MAF a range to its next major, tested the same way. See KL-13 above.)
 - KL-16 (erasure emitting no library telemetry) is resolved by story 5.2. Deletion, the retention sweep and the grant
   purge are now the `delete`, `retention.sweep` and `grant.purge` operations on the `AgentExperience.Storage.Postgres`
   source and meter, and they carry nothing that was erased; see [`docs/telemetry.md`](docs/telemetry.md#operations).
-- KL-3 (a retention sweep matching one scope exactly) is resolved by `ScopeMatch.Subtree` (story 5.4).
-  `SweepExpiredAsync(auth, scope, age, batch, ScopeMatch.Subtree, ct)` sweeps the scope and every scope beneath it,
-  bounded, one record per transaction, with `MoreRemain` true across the whole subtree. "Beneath" means the same
-  tenant, application and project, and each team, agent or user field either left null on the root or equal to it,
-  which is the reading `AuthorizationContext` already gives a null bound, so authorizing the root authorizes the
-  subtree. The five-argument overload is unchanged and still exact. A subtree never spans projects: a host with
-  several sweeps each project root, a list it configures rather than one it has to discover. See
-  [Store: a sweep reaches one scope, or everything beneath it](src/AgentExperience.Storage.Postgres/README.md#a-sweep-reaches-one-scope-or-everything-beneath-it-and-you-choose-which).
-- KL-10 (no retention path for the grant access log) is resolved by `0012` and
-  `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` (story 5.4): a bounded, administrator-authorized purge of
-  access rows the database recorded before a host-given cutoff, within an owner scope or its subtree, through a
-  `SECURITY DEFINER` function whose `EXECUTE` is revoked from `PUBLIC`. It never removes a row younger than
-  30 days, by the database's clock: a later cutoff is refused rather than clamped, and the append-only guard
-  re-checks every row. Erasing a record still keeps its access rows. It is the `grant.access.purge` telemetry
-  operation. See [Store: retention for the access log](src/AgentExperience.Storage.Postgres/README.md#retention-for-the-grant-access-log).
-- KL-5 (default-deny on evidence kind opt-in per check) is resolved by story 5.5. `RequiredCheck`'s `ExpectedKind` is
-  now required; accepting any kind is spelled `RequiredCheck.AnyKind` (`"*"`), and a null or blank kind is refused by
-  the aggregator rather than read as "any". **Breaking:** `new RequiredCheck("id")` no longer compiles. See
-  [Verifying a run](#verifying-a-run-and-binding-its-evaluation).
-- KL-6 (a reflection pairable with the wrong evaluation by a direct caller) is resolved by story 5.5. An evaluation
-  now records the run, round, revision and checks it was computed from, only `VerificationAggregator.Aggregate` can
-  make one, and a `ReflectionRequest` cannot be constructed from an evaluation computed for another run
-  (`ReflectionBindingException`). Finalization also checks every reflection a reflector returns against its request
-  and quarantines one that does not match. **Breaking:** `Aggregate` takes the run ID first, `VerificationResult` has
-  no public constructor (so it can no longer be deserialized), a request's `Run` and `Evaluation` cannot be replaced
-  with `with`, and a run whose own outcome disagrees with the evaluation now fails at request construction rather
-  than inside the default reflector. The binding is only as strong as the run ID a host supplies, which is now part
-  of KL-11; see [Verifying a run](#verifying-a-run-and-binding-its-evaluation).
 
 `0006`'s header still tells an operator to purge events by disabling a trigger "until the library ships a purge path";
 `0010` is that purge path and says so in its own header, and the runbook in `0006` must not be used. Journaled scripts
@@ -395,7 +408,7 @@ single-item call, so an out-of-tree implementation keeps compiling and behaving 
 save the round trips; a store's override must answer each ID exactly as its own `GetAsync` would, access rows
 included.
 
-**Port changes in this version.** Nothing is published to NuGet yet, but anyone implementing the ports out of tree
+**Port changes made before `0.1.0-preview.1`.** Anyone who implemented the ports out of tree against earlier sources
 has four breaks to absorb: `IExperienceRecordStore` gained `CheckSupersessionAsync`;
 `IExperienceRecordStore.GetHistoryAsync` now takes an `ExperienceRecordHistoryQuery` and returns
 `StoredLifecycleEvent`s rather than bare `LifecycleEvent`s (`GetFirstHistoryPageAsync` is the convenience for the
