@@ -546,7 +546,10 @@ public class ExperienceCaptureTests
 
     // ---- Additional checks -----------------------------------------------------------------------
 
+    // The default run tests the range's floor, which the committed lock files resolve. Tagged DeclaredPins because
+    // the MAF probe's latest leg and the floating-dependency leg run this suite against a newer 1.x on purpose.
     [Fact]
+    [Trait("Category", "DeclaredPins")]
     public void Resolved_Microsoft_Agents_AI_assembly_is_version_1_22_0()
     {
         var assembly = typeof(ChatClientAgent).Assembly;

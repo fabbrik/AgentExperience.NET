@@ -8,7 +8,9 @@ The adapter-independent engine of AgentExperience.NET: it turns what an agent ob
 verified lesson, keeps that lesson's lifecycle and confidence honest, and finds it again when similar work comes up.
 
 **Dependencies:** `AgentExperience.Abstractions`, `Microsoft.Extensions.Compliance.Redaction`, and
-`Microsoft.Extensions.DependencyInjection.Abstractions` (abstractions only — no container, no hosting). No Microsoft
+`Microsoft.Extensions.DependencyInjection.Abstractions` (abstractions only — no container, no hosting); on `net8.0`
+only, also `System.Text.Json` and `Microsoft.Bcl.Memory` 10.0.12 or later, which supply APIs the .NET 8 shared
+framework lacks (`net9.0` and `net10.0` have them built in). No Microsoft
 Agent Framework, EF Core, Npgsql, DbUp, OpenTelemetry SDK, or model-provider package. Telemetry is emitted through the
 BCL's `ActivitySource` and `Meter` named `AgentExperience.Core`; the host subscribes and exports. Every span, instrument,
 dimension and attribute is listed in the

@@ -358,6 +358,48 @@ To turn crypto-shredding on, then:
   tuple, both failure orders of key destruction, tampering, values moved between records, rows, columns and
   scopes, KEK rotation, the ledgers, and the upgrade job. `EnvelopeExperienceKeyStoreTests` covers the key store.
 
+**Story 7.2** closes KL-13: MAF becomes a tested range, `net8.0` is supported, and PostgreSQL 14 stays out for a
+recorded reason (see the [supported matrix](docs/compatibility-evidence.md#supported-matrix)). It supersedes the
+story 6.3 lines above on MAF's exact pin, on `net8.0`, and on the MAF probe never blocking; those lines are kept as
+the record of 6.3.
+
+### Dependency policy
+
+- **`Microsoft.Agents.AI` is `[1.22.0, 2.0.0)`, not `[1.22.0]`.** A host that needs a newer MAF 1.x now restores
+  it with no NU1608 warning or NU1107 conflict. The lock files still resolve 1.22.0, so the default run is unchanged.
+  The bound is at the next major because MAF states no SemVer promise: between 1.15 and 1.22 it kept every signature
+  the adapter uses, but changed caller-visible behaviour five times, once (1.22's per-run clone of
+  `ChatClientAgentRunOptions`) on a hook the adapter uses. A host on a MAF 2.x, once one exists, gets NU1608.
+- **The MAF probe's `latest` leg now gates** pushes and the weekly schedule, and reports without blocking only on
+  pull requests, like the floating-dependency leg. It probes the newest stable version *inside* the range. The
+  floating-dependency leg floats MAF to `1.*` too, so the newest 1.x runs the whole suite.
+- `CompatibilityPinAgreementTests` now refuses an exact pin in a shipping project. It allows a bare floor, or, for
+  MAF alone, `[x.y.z, (x+1).0.0)`. It also checks that a framework-conditioned reference names one target framework
+  and is a direct reference only in that framework's lock-file section.
+
+### Supported matrix
+
+- **Target frameworks: `net8.0`, `net9.0` and `net10.0`.** All five packages ship a `net8.0` build, with the same
+  public API; the test projects run on all three.
+  - **New `net8.0`-only dependencies:** Core takes `System.Text.Json` 10.0.12+ and `Microsoft.Bcl.Memory` 10.0.12+,
+    and the store takes `System.Text.Json` 10.0.12+. They are the .NET 10 train's packages for APIs the .NET 8
+    shared framework lacks: `JsonElement.DeepEquals`, the strict payload decoder's two options, and `Base64Url`.
+    `net9.0` and `net10.0` declare nothing new.
+  - `ExperienceIndex.ComputeContentHash` uses `Convert.ToHexString(...).ToLowerInvariant()` on `net8.0`, which
+    gives the same 64 lowercase hex characters.
+  - `.NET 8` and `.NET 9` both leave support on 10 November 2026. The first preview after that date drops both.
+- **PostgreSQL 14 is still not supported.** Migration `0005` is PostgreSQL 15 syntax. DbUp journals scripts by name,
+  so the only ways to reach 14 are serving different text under the journaled name or keeping a second schema
+  lineage. A PostgreSQL 14 database upgraded in place would keep that lineage for life. PostgreSQL 14 itself reaches
+  end of life on 12 November 2026.
+
+### For contributors
+
+- A full local test run needs the .NET 8 and .NET 9 runtimes beside the pinned SDK. CI installs both in every job.
+- `eng/probe-maf-version.sh` reads the range, skips the `DeclaredPins` tests for any version but the floor, and says
+  whether the probed version is inside the range. `eng/verify-packages.cs` checks the `net8.0` dependency group,
+  including the `net8.0`-only floors, which appear there and nowhere else.
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

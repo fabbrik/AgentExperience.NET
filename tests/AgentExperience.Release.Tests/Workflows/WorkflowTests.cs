@@ -5,9 +5,9 @@ namespace AgentExperience.Release.Tests.Workflows;
 /// <summary>
 /// Story 4.3, frozen rule 3: nothing is published by automation. Pushing a package to NuGet is the
 /// maintainer's manual step in <c>RELEASING.md</c>, so no workflow in this repository may carry a step,
-/// a secret, or a permission that would let one fire on its own -- and the MAF compatibility probe's
-/// floating leg must stay non-blocking (AD-F). Story 6.3 adds the floating-dependency leg, which gates
-/// outside pull requests.
+/// a secret, or a permission that would let one fire on its own. The MAF compatibility probe's latest leg was
+/// non-blocking (AD-F); story 6.3 added the floating-dependency leg, which gates outside pull requests, and
+/// story 7.2 made the MAF latest leg gate the same way, once MAF became a range the newest 1.x belongs to.
 /// </summary>
 public sealed class WorkflowTests
 {
@@ -89,7 +89,7 @@ public sealed class WorkflowTests
     }
 
     [Fact]
-    public void The_CI_workflow_packs_verifies_and_probes_MAF_with_only_the_latest_leg_non_blocking()
+    public void The_CI_workflow_packs_verifies_and_probes_MAF_with_the_latest_leg_non_blocking_only_on_pull_requests()
     {
         var ci = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "ci.yml"));
 
@@ -98,7 +98,11 @@ public sealed class WorkflowTests
         Assert.Contains("dotnet run eng/verify-packages.cs -- artifacts/packages", ci, StringComparison.Ordinal);
         Assert.Contains("tests/AgentExperience.Release.Tests", ci, StringComparison.Ordinal);
         Assert.Contains("leg: [pinned, latest]", ci, StringComparison.Ordinal);
-        Assert.Contains("continue-on-error: ${{ matrix.leg == 'latest' }}", ci, StringComparison.Ordinal);
+        // Story 7.2 (KL-13): MAF is a range now, so the newest 1.x is a support claim and the latest leg gates on
+        // push and on the schedule. Only a pull request may soften it, and only it: the pinned leg always gates.
+        var job = Job(ci.ReplaceLineEndings("\n"), "maf-compatibility");
+        var softeners = job.Split('\n').Where(line => line.Contains("continue-on-error", StringComparison.Ordinal)).Select(line => line.Trim()).ToList();
+        Assert.Equal(["continue-on-error: ${{ matrix.leg == 'latest' && github.event_name == 'pull_request' }}"], softeners);
         Assert.Contains("eng/probe-maf-version.sh", ci, StringComparison.Ordinal);
     }
 
