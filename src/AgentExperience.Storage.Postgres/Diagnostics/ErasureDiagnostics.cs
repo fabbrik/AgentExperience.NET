@@ -61,6 +61,12 @@ internal static class ErasureDiagnostics
     /// <summary>One bounded grant-access-log purge batch (<c>PostgresExperienceGrantAccessLog.PurgeOlderThanAsync</c>).</summary>
     internal const string GrantAccessPurge = "grant.access.purge";
 
+    /// <summary>One bounded crypto-shredding upgrade batch (<c>PostgresExperienceRecordStore.SealPlaintextRecordsAsync</c>).</summary>
+    internal const string RecordSeal = "record.seal";
+
+    /// <summary>How many plaintext records an upgrade batch sealed. A count: which ones stays on the database.</summary>
+    internal const string SealedCountAttribute = "agentexperience.sealed_count";
+
     /// <summary>How many records a sweep, grants a purge, or access rows an access purge removed. A count: which ones stays on the database.</summary>
     internal const string ErasedCountAttribute = "agentexperience.erased_count";
 

@@ -26,7 +26,7 @@
     }
     public sealed class PostgresExperienceEmbeddingIndex : AgentExperience.Abstractions.IExperienceEmbeddingIndex
     {
-        public PostgresExperienceEmbeddingIndex(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, System.TimeProvider? timeProvider = null) { }
+        public PostgresExperienceEmbeddingIndex(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceIndexRemoveResult> RemoveAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceIndexScanResult> ScanAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceIndexScan scan, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceVectorSearchResult> SearchAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceVectorQuery query, System.Threading.CancellationToken cancellationToken) { }

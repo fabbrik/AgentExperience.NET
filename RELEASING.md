@@ -84,6 +84,11 @@ which a release test holds equal to the list the fixtures accept, so this runs e
       AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
         || { echo "FAILED: $project on PostgreSQL $major"; ok=false; }
     done
+    # Story 6.4: the store and vector suites again, unmodified, in crypto-shredding mode.
+    for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests; do
+      AGENTEXPERIENCE_TEST_ENCRYPTION=on AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
+        || { echo "FAILED: $project on PostgreSQL $major, crypto-shredding mode"; ok=false; }
+    done
   done
   $ok && echo "PostgreSQL matrix OK: $majors" )
 ```

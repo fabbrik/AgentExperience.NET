@@ -107,6 +107,14 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         $"SELECT {GrantColumns} FROM {PostgresExperienceRecordStore.GrantsTable} " +
         $"WHERE grant_id = @grant_id AND {PostgresExperienceRecordStore.ScopePredicate}";
 
+    /// <summary>
+    /// Encrypted mode's first read of a revocation: which record the grant is over, so the revocation reason
+    /// can be sealed under that record's key. Owner-scoped like every other grant read.
+    /// </summary>
+    private static readonly string SelectGrantRecordSql =
+        $"SELECT experience_id FROM {PostgresExperienceRecordStore.GrantsTable} " +
+        $"WHERE grant_id = @grant_id AND {PostgresExperienceRecordStore.ScopePredicate}";
+
     /// <summary><see cref="GrantColumns"/> qualified with the <c>g</c> alias, for the joined listing.</summary>
     private const string JoinedGrantColumns =
         "g.grant_id, g.experience_id, g.tenant_id, g.application_id, g.project_id, g.team_id, g.agent_id, g.user_id, " +
@@ -205,6 +213,8 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
     private readonly TimeProvider _timeProvider;
 
+    private readonly ExperienceEncryption? _encryption;
+
     /// <summary>Creates a grant store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="policy">
@@ -217,16 +227,23 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// The clock the maximum lifetime is measured from. Defaults to <see cref="TimeProvider.System"/>.
     /// It decides only the upper bound; whether a grant is still live is always the database's clock.
     /// </param>
+    /// <param name="encryption">
+    /// Turns on crypto-shredding for a grant's reason, its revocation reason and its events' reasons: each is
+    /// sealed under the key of the record the grant is over, so erasing the record makes every copy of them
+    /// unreadable. <see langword="null"/> -- the default -- is plaintext mode. See <see cref="ExperienceEncryption"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceGrantStore(
         NpgsqlDataSource dataSource,
         PostgresExperienceGrantPolicy? policy = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ExperienceEncryption? encryption = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _policy = policy ?? PostgresExperienceGrantPolicy.Default;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _encryption = ExperienceEncryption.Resolve(encryption);
     }
 
     /// <summary>The bounds this store administers grants under.</summary>
@@ -268,6 +285,16 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Encrypted mode: the reason is sealed under the record's key. A destroyed key is an erased record,
+        // and there is nothing left to share -- the same answer a tombstone gets.
+        using var key = _encryption is null
+            ? null
+            : await _encryption.ForWriteAsync(request.ExperienceId, request.RecordScope, cancellationToken).ConfigureAwait(false);
+        if (_encryption is not null && key is null)
+        {
+            return new(ExperienceGrantOutcome.NotFound, null, NoErrors);
+        }
+
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -287,7 +314,10 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", request.ExperienceId));
                 PostgresExperienceRecordStore.AddScopeParameters(parameters, request.RecordScope);
                 AddRecipientParameters(parameters, request.RecipientScope);
-                parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text) { TypedValue = request.Reason });
+                parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text)
+                {
+                    TypedValue = key is null ? request.Reason : key.Seal(SealedText.GrantReasonColumn, request.GrantId, request.Reason),
+                });
                 parameters.Add(new NpgsqlParameter<string>("administrator_principal_id", NpgsqlDbType.Text) { TypedValue = administrator });
                 // Truncated the way every other stored timestamp is, so the grant that comes back
                 // carries exactly the value a caller can compare against what it asked for.
@@ -299,7 +329,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 // not define, and the stored text is what the lateral join reads back.
                 parameters.Add(new NpgsqlParameter<string>("disclosure", NpgsqlDbType.Text) { TypedValue = request.Disclosure.ToString() });
 
-                grant = await ReadOneAsync(insert, cancellationToken).ConfigureAwait(false);
+                grant = Open(await ReadOneAsync(insert, cancellationToken).ConfigureAwait(false), key);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, PostgresErrorCodes.UniqueViolation, GrantPrimaryKey, cancellationToken))
             {
@@ -375,7 +405,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 return new(ExperienceGrantOutcome.NotFound, null, NoErrors);
             }
 
-            await AppendEventAsync(connection, transaction, grant.GrantId, IssuedAction, grant.Reason, administration!, cancellationToken)
+            await AppendEventAsync(connection, transaction, grant.GrantId, IssuedAction, grant.Reason, administration!, key, cancellationToken)
                 .ConfigureAwait(false);
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -427,16 +457,47 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             await using var transaction = await connection
                 .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
 
+            // Encrypted mode: the revocation reason is sealed under the key of the record the grant is over,
+            // so the grant is looked up first, in the owner scope. A grant that is not there falls through to
+            // the UPDATE below, which matches nothing and reports it exactly as before.
+            RecordKey? key = null;
+            if (_encryption is not null)
+            {
+                Guid? experienceId;
+                await using (var select = new NpgsqlCommand(SelectGrantRecordSql, connection, transaction))
+                {
+                    select.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", revocation.GrantId));
+                    PostgresExperienceRecordStore.AddScopeParameters(select.Parameters, revocation.RecordScope);
+                    experienceId = await select.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as Guid?;
+                }
+
+                if (experienceId is { } recordId)
+                {
+                    key = await _encryption.ForWriteAsync(recordId, revocation.RecordScope, cancellationToken).ConfigureAwait(false);
+                    if (key is null)
+                    {
+                        // The record is erased (its key is gone); its grants go with it.
+                        return new(ExperienceGrantOutcome.NotFound, null, NoErrors);
+                    }
+                }
+            }
+
+            using var ownedKey = key;
             ExperienceGrant? revoked;
             try
             {
                 await using var update = new NpgsqlCommand(RevokeGrantSql, connection, transaction);
                 var parameters = update.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("grant_id", revocation.GrantId));
-                parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text) { TypedValue = revocation.Reason });
+                parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text)
+                {
+                    TypedValue = key is null
+                        ? revocation.Reason
+                        : key.Seal(SealedText.GrantRevocationReasonColumn, revocation.GrantId, revocation.Reason),
+                });
                 PostgresExperienceRecordStore.AddScopeParameters(parameters, revocation.RecordScope);
 
-                revoked = await ReadOneAsync(update, cancellationToken).ConfigureAwait(false);
+                revoked = Open(await ReadOneAsync(update, cancellationToken).ConfigureAwait(false), key);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, PostgresErrorCodes.CheckViolation, LifetimeConstraint, cancellationToken))
             {
@@ -461,7 +522,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 // Either the grant is not in this owner scope, or it was already revoked. The re-read
                 // runs inside the transaction that is about to be rolled back, so nothing is written
                 // either way.
-                var existing = await ReadStoredGrantAsync(connection, transaction, revocation, cancellationToken).ConfigureAwait(false);
+                var existing = Open(await ReadStoredGrantAsync(connection, transaction, revocation, cancellationToken).ConfigureAwait(false), key);
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
 
                 return existing is { } stored
@@ -469,7 +530,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                     : new(ExperienceGrantOutcome.NotFound, null, NoErrors);
             }
 
-            await AppendEventAsync(connection, transaction, revoked.GrantId, RevokedAction, revocation.Reason, administration!, cancellationToken)
+            await AppendEventAsync(connection, transaction, revoked.GrantId, RevokedAction, revocation.Reason, administration!, key, cancellationToken)
                 .ConfigureAwait(false);
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -647,12 +708,27 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 return new(ExperienceGrantOutcome.NotFound, NoGrants, NoErrors);
             }
 
+            // Encrypted mode: every grant listed is over this one record, so one key opens them all. A
+            // destroyed key is an erased record: no record here, exactly as for a tombstone.
+            RecordKey? key = null;
+            if (_encryption is not null)
+            {
+                var lookup = await _encryption.LookupAsync(experienceId, recordScope, cancellationToken).ConfigureAwait(false);
+                if (lookup.Destroyed)
+                {
+                    return new(ExperienceGrantOutcome.NotFound, NoGrants, NoErrors);
+                }
+
+                key = lookup.Key;
+            }
+
+            using var ownedKey = key;
             if (!reader.IsDBNull(0))
             {
                 // A null grant_id is the outer join's single "record with no grants" row.
                 do
                 {
-                    grants.Add(ReadGrant(reader));
+                    grants.Add(Open(ReadGrant(reader), key)!);
                 }
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false));
             }
@@ -707,6 +783,21 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 return new(ExperienceGrantOutcome.NotFound, null, NoEvents, NoErrors);
             }
 
+            RecordKey? key = null;
+            if (_encryption is not null)
+            {
+                var lookup = await _encryption.LookupAsync(grant.ExperienceId, recordScope, cancellationToken).ConfigureAwait(false);
+                if (lookup.Destroyed)
+                {
+                    return new(ExperienceGrantOutcome.NotFound, null, NoEvents, NoErrors);
+                }
+
+                key = lookup.Key;
+            }
+
+            using var ownedKey = key;
+            grant = Open(grant, key)!;
+
             var events = new List<ExperienceGrantEvent>();
             await using (var command = new NpgsqlCommand(HistorySql, connection))
             {
@@ -715,7 +806,11 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    events.Add(ReadEvent(reader));
+                    var stored = ReadEvent(reader);
+                    events.Add(stored with
+                    {
+                        Reason = SealedText.OpenWith(key, SealedText.GrantEventReasonColumn, stored.EventId, stored.Reason),
+                    });
                 }
             }
 
@@ -750,14 +845,19 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         string action,
         string reason,
         GrantAdministration administration,
+        RecordKey? key,
         CancellationToken cancellationToken)
     {
+        var eventId = Guid.NewGuid();
         await using var insert = new NpgsqlCommand(InsertEventSql, connection, transaction);
         var parameters = insert.Parameters;
-        parameters.Add(new NpgsqlParameter<Guid>("event_id", Guid.NewGuid()));
+        parameters.Add(new NpgsqlParameter<Guid>("event_id", eventId));
         parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
         parameters.Add(new NpgsqlParameter<string>("action", NpgsqlDbType.Text) { TypedValue = action });
-        parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text) { TypedValue = reason });
+        parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text)
+        {
+            TypedValue = key is null ? reason : key.Seal(SealedText.GrantEventReasonColumn, eventId, reason),
+        });
         parameters.Add(new NpgsqlParameter<string>("administrator_principal_id", NpgsqlDbType.Text) { TypedValue = administration.AdministratorPrincipalId });
         parameters.Add(new NpgsqlParameter<DateTimeOffset>(
             "administrator_authorized_at",
@@ -788,6 +888,20 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? ReadGrant(reader) : null;
     }
+
+    /// <summary>
+    /// A grant as read, with its reason and revocation reason opened when they are sealed. In plaintext mode,
+    /// and for a grant written before the upgrade, the values are returned as stored.
+    /// </summary>
+    private static ExperienceGrant? Open(ExperienceGrant? grant, RecordKey? key) => grant is null
+        ? null
+        : grant with
+        {
+            Reason = SealedText.OpenWith(key, SealedText.GrantReasonColumn, grant.GrantId, grant.Reason),
+            RevocationReason = grant.RevocationReason is { } revocationReason
+                ? SealedText.OpenWith(key, SealedText.GrantRevocationReasonColumn, grant.GrantId, revocationReason)
+                : null,
+        };
 
     private static void AddRecipientParameters(NpgsqlParameterCollection parameters, Scope recipient)
     {

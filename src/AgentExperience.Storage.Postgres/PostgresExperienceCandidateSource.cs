@@ -67,7 +67,23 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// </summary>
     private const string SearchSelect =
         $"SELECT {PostgresExperienceRecordStore.SelectColumns}, " +
-        $"ts_rank_cd(search_vector, websearch_to_tsquery('{SearchConfiguration}', @task_text), 32) AS {RelevanceColumn}, ";
+        $"ts_rank_cd({RankedVector}, websearch_to_tsquery('{SearchConfiguration}', @task_text), 32) AS {RelevanceColumn}, ";
+
+    /// <summary>
+    /// The vector a row is ranked on: a sealed record's derived <c>search_vector_sealed</c> (<c>0016</c>), or a
+    /// plaintext record's generated <c>search_vector</c> (<c>0003</c>). Both come from the same expression over
+    /// the same three fields, so a record ranks identically whichever mode wrote it.
+    /// </summary>
+    internal const string RankedVector = "coalesce(search_vector_sealed, search_vector)";
+
+    /// <summary>
+    /// The match, stated per kind of row so each half can use its own GIN index: a plaintext row through
+    /// <c>search_vector</c>, a sealed row through <c>search_vector_sealed</c> only -- never through the
+    /// generated vector of its placeholder task ID.
+    /// </summary>
+    internal const string MatchPredicate =
+        $"((search_vector_sealed IS NULL AND search_vector @@ websearch_to_tsquery('{SearchConfiguration}', @task_text)) " +
+        $"OR search_vector_sealed @@ websearch_to_tsquery('{SearchConfiguration}', @task_text))";
 
     private const string SearchFrom =
         $" FROM {PostgresExperienceRecordStore.Table} r WHERE ";
@@ -89,11 +105,12 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         // distinguishes the two, and no test can either. It is stated here rather than left to be
         // rediscovered: it is defence in depth against a future status whose name collides, not the
         // thing that makes erased text unfindable. What makes erased text unfindable is that
-        // search_vector is GENERATED ALWAYS and regenerates from the placeholder alone.
+        // search_vector is GENERATED ALWAYS and regenerates from the placeholder alone, and that 0016's
+        // trigger clears a sealed record's search_vector_sealed on the same transition.
         $" AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND status = ANY(@statuses) " +
         "AND reuse_confidence >= @min_confidence " +
-        $"AND search_vector @@ websearch_to_tsquery('{SearchConfiguration}', @task_text) " +
+        $"AND {MatchPredicate} " +
         $"ORDER BY {RelevanceColumn} DESC, experience_id LIMIT @limit";
 
     private const string SearchSql =
@@ -123,6 +140,8 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     private readonly ExperienceGrantAuditing? _auditing;
 
+    private readonly ExperienceEncryption? _encryption;
+
     /// <summary>Creates a candidate source over a host-owned data source. The source never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="onGrantsUnavailable">
@@ -135,16 +154,22 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// is a disclosure; the whole search's rows are written in one statement. <see langword="null"/> --
     /// the default -- switches auditing off entirely.
     /// </param>
+    /// <param name="encryption">
+    /// The deployment's crypto-shredding configuration, needed to open the sealed records a search returns.
+    /// <see langword="null"/> -- the default -- is plaintext mode. See <see cref="ExperienceEncryption"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceCandidateSource(
         NpgsqlDataSource dataSource,
         Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
-        ExperienceGrantAuditing? auditing = null)
+        ExperienceGrantAuditing? auditing = null,
+        ExperienceEncryption? encryption = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
         _auditing = auditing;
+        _encryption = ExperienceEncryption.Resolve(encryption);
     }
 
     /// <inheritdoc />
@@ -279,8 +304,15 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
+            // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
+            if (await PostgresExperienceRecordStore.ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false)
+                is not { } record)
+            {
+                continue;
+            }
+
             candidates.Add(new ExperienceCandidate(
-                PostgresExperienceRecordStore.ReadRecord(reader),
+                record,
                 ReadRelevance(reader),
                 PostgresExperienceRecordStore.ReadSharedByGrant(reader),
                 PostgresExperienceRecordStore.ReadPermittingGrant(reader)));

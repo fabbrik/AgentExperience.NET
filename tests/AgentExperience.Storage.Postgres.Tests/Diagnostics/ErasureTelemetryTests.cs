@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AgentExperience.Core.KeyManagement;
 using Npgsql;
 using NpgsqlTypes;
 using static AgentExperience.Storage.Postgres.Tests.TestRecords;
@@ -489,6 +490,48 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         // whereas an exact key set makes a new attribute a deliberate, reviewed act.
         Assert.All(spans.SelectMany(span => span.TagObjects).Select(tag => tag.Key), key => Assert.Contains(key, AllowedSpanAttributes));
         Assert.All(probe.Measurements.Where(m => m.Meter == Source).SelectMany(m => m.Tags.Keys), key => Assert.Contains(key, AllowedDimensions));
+    }
+
+    /// <summary>
+    /// Story 6.4: the crypto-shredding upgrade job is its own operation, <c>record.seal</c>, one span per batch,
+    /// and it carries a count and how wide it reached -- never which records, and nothing any of them holds,
+    /// even though every record it touches is opened and sealed in process.
+    /// </summary>
+    [Fact]
+    public async Task The_crypto_shredding_upgrade_is_one_span_per_batch_carrying_only_its_count_and_reach()
+    {
+        var tenant = $"tenant-{Marker}-{Guid.NewGuid():N}";
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant, team: $"team-{Marker}");
+        var plaintext = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: ExperienceEncryption.ForcePlaintext);
+        await SeedMarkedAsync(plaintext, auth, scope, ColumnTime);
+        await SeedMarkedAsync(plaintext, auth, scope, ColumnTime.AddDays(-1));
+        var store = new PostgresExperienceRecordStore(
+            _fixture.DataSource,
+            encryption: new ExperienceEncryption(new EnvelopeExperienceKeyStore(
+                LocalExperienceKeyEncryptionKey.Generate("kek-1"), new InMemoryExperienceWrappedKeyRepository())));
+
+        using var probe = TelemetryProbe.All();
+
+        Assert.Equal(2, (await store.SealPlaintextRecordsAsync(auth, scope, 10, ScopeMatch.Exact, CancellationToken.None)).SealedCount);
+        Assert.Equal(
+            ExperienceStoreOutcome.Denied,
+            (await store.SealPlaintextRecordsAsync(Authorize(NewTenant()), scope, 10, ScopeMatch.Subtree, CancellationToken.None)).Outcome);
+
+        var spans = probe.Spans("agentexperience.record.seal");
+        Assert.Equal(2, spans.Count);
+        Assert.Equal(nameof(ExperienceStoreOutcome.Committed), spans[0].GetTagItem(OutcomeAttribute));
+        Assert.Equal(2, Convert.ToInt32(spans[0].GetTagItem("agentexperience.sealed_count"), System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(nameof(ScopeMatch.Exact), spans[0].GetTagItem(ScopeMatchAttribute));
+        Assert.Equal(nameof(ExperienceStoreOutcome.Denied), spans[1].GetTagItem(OutcomeAttribute));
+        Assert.Equal(nameof(ScopeMatch.Subtree), spans[1].GetTagItem(ScopeMatchAttribute));
+        Assert.Equal(2, probe.For(CountInstrument, "record.seal").Count);
+
+        Assert.All(probe.EverySpanValue, value => Assert.DoesNotContain(Marker, value, StringComparison.Ordinal));
+        Assert.All(probe.EveryMeasurementValue, value => Assert.DoesNotContain(Marker, value, StringComparison.Ordinal));
+        Assert.All(
+            spans.SelectMany(span => span.TagObjects).Select(tag => tag.Key),
+            key => Assert.Contains(key, AllowedSpanAttributes.Append("agentexperience.sealed_count")));
     }
 
     /// <summary>

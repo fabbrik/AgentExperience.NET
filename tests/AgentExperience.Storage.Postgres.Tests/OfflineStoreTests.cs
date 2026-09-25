@@ -383,6 +383,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
                 PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
                 PostgresExperienceRecordSchema.VerifiedIndependenceScriptName,
+                PostgresExperienceRecordSchema.CryptoShreddingScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -602,7 +603,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0006 is applied after 0005 and before 0007, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.SupersessionAndAppendOnlyScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^9]);
+            PostgresExperienceRecordSchema.ScriptNames[^10]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -664,7 +665,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0007 is applied after 0006 and before 0008, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ConfidenceEvidenceScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^8]);
+            PostgresExperienceRecordSchema.ScriptNames[^9]);
     }
 
     [Fact]
@@ -742,7 +743,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // 0008 is applied after 0007 and before 0009, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.ReuseFeedbackScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^7]);
+            PostgresExperienceRecordSchema.ScriptNames[^8]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -964,10 +965,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("ADAPTER-ENFORCED", script, StringComparison.Ordinal);
         Assert.Contains("SCHEMA-ENFORCED", script, StringComparison.Ordinal);
 
-        // 0010 is applied immediately before 0011, 0012, 0013 and 0015, which the migrator relies on for ordinal name ordering.
+        // 0010 is applied immediately before 0011, 0012, 0013, 0015 and 0016, which the migrator relies on for ordinal name ordering.
         Assert.Equal(
             PostgresExperienceRecordSchema.DeleteAndExpireScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^5]);
+            PostgresExperienceRecordSchema.ScriptNames[^6]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1005,7 +1006,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantDisclosureScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^4]);
+            PostgresExperienceRecordSchema.ScriptNames[^5]);
     }
 
     [Fact]
@@ -1063,7 +1064,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.GrantAccessRetentionScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
@@ -1108,14 +1109,14 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.RoleSeparationHardeningScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);
     }
 
     [Fact]
-    public void Verified_independence_script_is_applied_last_spends_an_assessment_once_per_record_and_adds_no_table()
+    public void Verified_independence_script_follows_0013_spends_an_assessment_once_per_record_and_adds_no_table()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.VerifiedIndependenceScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -1143,6 +1144,38 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.VerifiedIndependenceScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Crypto_shredding_script_is_applied_last_touches_no_data_and_guards_its_one_sealing_transition()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.CryptoShreddingScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Additive only: new nullable columns, partial indexes, NOT VALID checks. No row is rewritten by the script.
+        Assert.Contains("ADD COLUMN IF NOT EXISTS search_vector_sealed tsvector NULL", statements, StringComparison.Ordinal);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS rationale_sealed text NULL", statements, StringComparison.Ordinal);
+        // The one UPDATE of a record in the script is inside the sealing function, which only the upgrade job calls.
+        Assert.Equal(1, CountOccurrences(statements, "UPDATE agent_experience.experience_records"));
+        Assert.Equal(3, CountOccurrences(statements, "NOT VALID;"));
+        Assert.Contains("WHERE search_vector_sealed IS NOT NULL", statements, StringComparison.Ordinal);
+        Assert.Contains("WHERE deleted_at IS NULL AND payload_version = 1", statements, StringComparison.Ordinal);
+
+        // The sealing function: definer rights, pg_temp last, EXECUTE revoked from PUBLIC and granted to no role.
+        Assert.Contains("SECURITY DEFINER\nSET search_path = pg_catalog, agent_experience, pg_temp", statements, StringComparison.Ordinal);
+        Assert.Contains("REVOKE ALL ON FUNCTION agent_experience.seal_experience_record(\n    uuid, text, text, text, text, text, text, bigint, jsonb) FROM PUBLIC;", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+
+        // The residual is stated in the script, not only in the README.
+        Assert.Contains("SEARCH, AND THE ONE RESIDUAL", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_search_sealed", script, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.CryptoShreddingScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
@@ -1162,6 +1195,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         var options = new ExperienceApplicationRoleOptions("app");
         Assert.False(options.AllowErasure);
         Assert.False(options.AllowAccessLogPurge);
+        Assert.False(options.AllowSealing);
 
         await Assert.ThrowsAsync<ArgumentNullException>(
             () => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(null!, options, CancellationToken.None));

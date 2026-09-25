@@ -10,7 +10,9 @@ parses every table below and fails if a listed test no longer exists in the name
 table falls below its minimum. Every listed test also runs in the ordinary `dotnet test`, so "the security suite
 passed" means "the full suite passed" — there is no separate, weaker security build. `RELEASING.md` step 3 runs it.
 
-Tests marked **(DB)** start a PostgreSQL container and need Docker.
+Tests marked **(DB)** start a PostgreSQL container and need Docker. The store and vector suites run twice in CI: in
+plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENCE_TEST_ENCRYPTION=on`), so every
+**(DB)** row below that belongs to those two projects holds in both modes.
 
 ## 1. Tenant isolation — a caller in scope A cannot retrieve, inject, or write against scope B
 
@@ -64,7 +66,10 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.The_application_role_cannot_alter_disable_or_drop_a_guard_or_replace_its_function` | From the application role's own connection: `ALTER TABLE`, `DISABLE TRIGGER`, `DROP TRIGGER`, replacing or re-pinning a guard function, or altering a purge function are all refused **(DB)** |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.No_ledger_record_or_grant_row_can_be_rewritten_removed_or_truncated_by_the_application_role_whatever_marker_it_sets` | `UPDATE`/`DELETE`/`TRUNCATE` on every ledger, record and grant table is refused by the privilege system, with each purge marker set by hand and with both **(DB)** |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.A_hand_marked_tombstone_is_out_of_reach_because_the_role_cannot_write_those_columns` | Column-level `UPDATE` closes the hand-written tombstone that would erase a payload and skip the ledger sweep **(DB)** |
-| Storage.Postgres.Tests | `PostgresApplicationRoleTests.Without_the_opt_ins_no_purge_is_reachable_and_every_other_store_path_still_works` | `EXECUTE` on each purge function exists only when the host opts in **(DB)** |
+| Storage.Postgres.Tests | `PostgresApplicationRoleTests.Without_the_opt_ins_no_purge_is_reachable_and_every_other_store_path_still_works` | `EXECUTE` on each purge function, and on `0016`'s sealing function, exists only when the host opts in **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.The_upgrade_job_is_authorized_needs_encryption_and_a_role_without_the_opt_in_cannot_run_it` | The crypto-shredding upgrade is refused outside the authorization, without encryption, and to a role without `AllowSealing`; the sealing function admits only a well-formed seal at the read revision **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.Sealed_text_moved_to_another_record_row_or_scope_is_refused_rather_than_read_there` | A sealed value copied onto another record, moved to another scope, or swapped between two events fails its authentication tag instead of being read there **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.The_associated_data_binds_every_value_to_its_column_its_row_its_record_and_each_scope_field` | The associated data covers the column, the row, the record and each of the six scope fields, and every seal uses a fresh nonce |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.The_privilege_call_refuses_a_member_of_the_owner_and_changes_nothing` | A role that could `SET ROLE` to the owner, or that owns the database, is never certified as the application role **(DB)** |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.The_privilege_call_verifies_effective_privileges_and_rolls_back_when_a_predefined_role_grants_DELETE` | Effective privileges are verified, so `DELETE` arriving through `pg_write_all_data` fails the deploy instead of passing silently **(DB)** |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.The_privilege_call_refuses_a_role_reaching_a_superuser_server_files_or_session_replication_role` | A role that reaches a superuser (even without inheriting), a server-file role, or `SET` on `session_replication_role` is refused before anything is granted **(DB)** |
@@ -121,6 +126,15 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Storage.Postgres.Tests | `PostgresDeletionTests.Every_read_path_reports_the_tombstone_as_erased_or_not_at_all` | An erased record, the strongest form of revocation **(DB)** |
 | Storage.Postgres.Tests | `PostgresDeletionTests.The_erased_text_itself_is_no_longer_findable_by_search` | **(DB)** |
 | Storage.Postgres.Tests | `PostgresDeletionTests.Every_write_path_refuses_a_tombstone_rather_than_resurrecting_it` | **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.After_erasure_neither_a_pre_erasure_dump_nor_the_dead_heap_tuple_can_be_opened_with_anything_still_reachable` | Crypto-shredding (KL-2): a real `pg_dump` taken before the erasure and a `pageinspect` read of the dead tuple after it hold only ciphertext, and no key the key store still holds opens it **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.A_destroyed_key_whose_tombstone_never_committed_reads_as_erased_everywhere_until_a_retry_completes_it` | A record whose key is gone never looks live: every read answers as for a tombstone and every write is refused, until a retry writes the tombstone **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.A_key_store_that_cannot_destroy_leaves_the_record_live_readable_and_keyed` | A record never looks erased while its key survives: a failed key destruction rolls the erasure back **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.A_process_without_encryption_cannot_erase_a_sealed_record_and_leave_its_key_behind` | A store left without its encryption cannot report a sealed record erased while its key survives: `0016`'s guard refuses the tombstone **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.The_sealed_shape_checks_refuse_a_malformed_row_even_from_the_owner` | A sealed row cannot carry its task ID or anything but its seal in the clear, and a sealed-rationale column holds only the sealed format **(DB)** |
+| Storage.Postgres.Tests | `PostgresCryptoShreddingTests.Tampered_ciphertext_is_rejected_by_its_authentication_tag_on_every_read` | One flipped bit in a sealed payload or event reason fails every read, and nothing decrypted is returned **(DB)** |
+| Storage.Postgres.Vectors.Tests | `CryptoShreddingVectorsTests.A_sealed_record_is_embedded_from_the_same_summary_as_its_plaintext_twin_and_a_shredded_one_never_again` | A record whose key is destroyed is never scanned, re-embedded or returned by the vector channel **(DB)** |
+| Core.Tests | `EnvelopeExperienceKeyStoreTests.A_destroyed_reference_is_destroyed_for_ever_and_is_never_given_a_fresh_key` | The reference key store never re-creates a destroyed key |
+| Core.Tests | `EnvelopeExperienceKeyStoreTests.A_wrapped_key_moved_to_another_records_entry_cannot_be_unwrapped` | A wrapped data key is bound to its record and scope |
 
 ## 4. Untrusted context — injected content never becomes authority
 
@@ -167,6 +181,13 @@ Tests marked **(DB)** start a PostgreSQL container and need Docker.
 | Storage.Postgres.Tests | `PostgresVerifiedIndependenceTests.A_second_feedback_presenting_a_spent_token_lands_nothing_while_retrying_the_first_converges` | A token cannot be reused through a second feedback submission **(DB)** |
 
 ## What this suite does not prove
+
+It does not prove that erasure reaches a copy of the **derived search data**. In crypto-shredding mode a record's
+full-text vector (its task ID, summary and lesson as lexemes) and its embedding stay readable in every backup,
+replica and dead tuple, because PostgreSQL searches them in the clear; in plaintext mode every copy of everything
+stays readable. Nor does it prove a production key store's custody: the property holds only if the keys live
+outside the database's backup domain and the key store's own backups are kept no longer than the erasure deadline.
+Both are KL-2 in the root README's Known limits table.
 
 The label on an injected block is hygiene, not a control: nothing here claims a model will *treat* retrieved text
 as data. The control is the approval boundary around tools, which lives outside the block, and section 4 is what

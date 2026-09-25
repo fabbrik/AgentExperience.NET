@@ -209,6 +209,22 @@ jobs:
           done
           exit "$failed"
 
+      # Story 6.4 (KL-2): the store and vector suites again, unmodified, in crypto-shredding mode. The variable sets
+      # the internal, test-only ExperienceEncryption.TestSuiteDefault, so every component a test builds without an
+      # encryption of its own seals what it writes -- the whole suite, not a selection, on both frameworks.
+      - name: Test the storage suites in crypto-shredding mode on PostgreSQL ${{ matrix.postgres }}
+        env:
+          AGENTEXPERIENCE_TEST_ENCRYPTION: 'on'
+        run: |
+          set -euo pipefail
+          failed=0
+          for project in \
+            tests/AgentExperience.Storage.Postgres.Tests \
+            tests/AgentExperience.Storage.Postgres.Vectors.Tests; do
+            dotnet test "$project" --no-build --configuration Release || failed=1
+          done
+          exit "$failed"
+
   # The floating-dependency leg (story 6.3, KL-13). Every shipping reference except Microsoft.Agents.AI is a
   # floor, which admits every later release in its major. The build-and-test job proves the floors themselves;
   # this proves the newest release in each major, with the whole suite. It GATES on push and on the weekly

@@ -360,6 +360,43 @@ namespace AgentExperience.Core.Indexing
         public System.Guid? StartAfterId { get; init; }
     }
 }
+namespace AgentExperience.Core.KeyManagement
+{
+    public sealed class EnvelopeExperienceKeyStore : AgentExperience.Abstractions.IExperienceKeyStore
+    {
+        public const int MaxRewrapBatchSize = 500;
+        public EnvelopeExperienceKeyStore(AgentExperience.Abstractions.IExperienceKeyEncryptionKey keyEncryptionKey, AgentExperience.Abstractions.IExperienceWrappedKeyRepository repository) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> CreateKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask DestroyKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> GetKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.KeyManagement.ExperienceKeyRewrapResult> RewrapAsync(int batchSize, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class ExperienceKeyRewrapResult : System.IEquatable<AgentExperience.Core.KeyManagement.ExperienceKeyRewrapResult>
+    {
+        public ExperienceKeyRewrapResult(int RewrappedCount, bool MoreRemain) { }
+        public bool MoreRemain { get; init; }
+        public int RewrappedCount { get; init; }
+    }
+    public sealed class InMemoryExperienceWrappedKeyRepository : AgentExperience.Abstractions.IExperienceWrappedKeyRepository
+    {
+        public InMemoryExperienceWrappedKeyRepository() { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceWrappedKeyEntry> AddIfAbsentAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, AgentExperience.Abstractions.ExperienceWrappedKey wrappedKey, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask DestroyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceWrappedKeyEntry?> GetAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceWrappedKeyEntry>> ListNotWrappedUnderAsync(string currentKeyEncryptionKeyId, int limit, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask<bool> ReplaceAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, AgentExperience.Abstractions.ExperienceWrappedKey expected, AgentExperience.Abstractions.ExperienceWrappedKey replacement, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class LocalExperienceKeyEncryptionKey : AgentExperience.Abstractions.IExperienceKeyEncryptionKey
+    {
+        public LocalExperienceKeyEncryptionKey(string keyId, System.ReadOnlySpan<byte> key) { }
+        public string CurrentKeyId { get; }
+        public void AddKey(string keyId, System.ReadOnlySpan<byte> key, bool makeCurrent) { }
+        public void RetireKey(string keyId) { }
+        public System.Threading.Tasks.ValueTask<byte[]> UnwrapAsync(AgentExperience.Abstractions.ExperienceWrappedKey wrappedKey, AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceWrappedKey> WrapAsync(System.ReadOnlyMemory<byte> dataKey, AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public static AgentExperience.Core.KeyManagement.LocalExperienceKeyEncryptionKey Generate(string keyId) { }
+    }
+}
 namespace AgentExperience.Core.Lifecycle
 {
     public sealed class ApplyConfidenceEvidenceRequest : System.IEquatable<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest>

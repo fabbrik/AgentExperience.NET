@@ -42,6 +42,7 @@
     <EmbeddedResource Include="Migrations\0012_grant_access_retention.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0012_grant_access_retention.sql" />
     <EmbeddedResource Include="Migrations\0013_role_separation_hardening.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0013_role_separation_hardening.sql" />
     <EmbeddedResource Include="Migrations\0015_verified_independence.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0015_verified_independence.sql" />
+    <EmbeddedResource Include="Migrations\0016_crypto_shredding.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0016_crypto_shredding.sql" />
   </ItemGroup>
 
   <ItemGroup>
@@ -51,6 +52,9 @@
          this package's column list, scope predicate, row decoder, and failure translation so the two
          retrieval channels cannot drift apart. -->
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors" />
+    <!-- Only so the vectors suite can set ExperienceEncryption.TestSuiteDefault and run a second time in
+         encrypted mode (AGENTEXPERIENCE_TEST_ENCRYPTION); see that property. -->
+    <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors.Tests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -223,12 +223,39 @@ internal sealed class TestWorld
     }
 
     /// <summary>Rewrites the reflection's lesson in place, which is a content change the re-index has to notice.</summary>
-    public Task RewriteLessonAsync(Guid experienceId, string lesson) =>
-        ExecuteAsync(
-            "UPDATE agent_experience.experience_records " +
-            "SET payload = jsonb_set(payload, '{reflection,lesson}', to_jsonb(@lesson::text)) WHERE experience_id = @id",
-            experienceId,
-            ("lesson", lesson));
+    public async Task RewriteLessonAsync(Guid experienceId, string lesson)
+    {
+        if (!EncryptionMode.IsOn)
+        {
+            await ExecuteAsync(
+                "UPDATE agent_experience.experience_records " +
+                "SET payload = jsonb_set(payload, '{reflection,lesson}', to_jsonb(@lesson::text)) WHERE experience_id = @id",
+                experienceId,
+                ("lesson", lesson));
+            return;
+        }
+
+        // Encrypted mode: the lesson is inside the sealed payload, so it is opened, changed and sealed again
+        // under the record's own key -- the only way a sealed payload can change at all.
+        using var key = await EncryptionMode.Shared.ForReadAsync(experienceId, Scope, CancellationToken.None);
+        string stored;
+        await using (var read = DataSource.CreateCommand(
+            "SELECT payload ->> 'sealed' FROM agent_experience.experience_records WHERE experience_id = @id"))
+        {
+            read.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+            stored = (string)(await read.ExecuteScalarAsync())!;
+        }
+
+        var (taskId, payloadJson) = SealedText.ReadSealedRecordPlaintext(key!.Open(SealedText.PayloadColumn, Guid.Empty, stored));
+        var payload = System.Text.Json.Nodes.JsonNode.Parse(payloadJson)!;
+        payload["reflection"]!["lesson"] = lesson;
+        var resealed = key.Seal(SealedText.PayloadColumn, Guid.Empty, SealedText.SealedRecordPlaintext(taskId, payload.ToJsonString()));
+        await using var write = OwnerDataSource.CreateCommand(
+            "UPDATE agent_experience.experience_records SET payload = @payload WHERE experience_id = @id");
+        write.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+        write.Parameters.Add(new NpgsqlParameter<string>("payload", NpgsqlDbType.Jsonb) { TypedValue = SealedText.PayloadEnvelope(resealed) });
+        await write.ExecuteNonQueryAsync();
+    }
 
     /// <summary>
     /// Replaces a stored embedding's descriptor <em>and</em> its vector in place, to stage a model or

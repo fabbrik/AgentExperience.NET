@@ -31,6 +31,24 @@ public sealed record ExperienceRecordDeleteResult(
     IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>
+/// The result of one call to <see cref="PostgresExperienceRecordStore.SealPlaintextRecordsAsync"/>, the
+/// crypto-shredding upgrade.
+/// </summary>
+/// <param name="Outcome">
+/// <see cref="ExperienceStoreOutcome.Committed"/> when the batch ran -- including when it found nothing to
+/// seal -- or <see cref="ExperienceStoreOutcome.Denied"/> or <see cref="ExperienceStoreOutcome.Invalid"/>
+/// before any storage was touched.
+/// </param>
+/// <param name="SealedCount">How many plaintext records this call sealed.</param>
+/// <param name="MoreRemain">Whether another call with the same arguments would find more plaintext records.</param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceSealingResult(
+    ExperienceStoreOutcome Outcome,
+    int SealedCount,
+    bool MoreRemain,
+    IReadOnlyList<StoreValidationError> Errors);
+
+/// <summary>
 /// The result of one call to <see cref="PostgresExperienceRecordStore.SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/>.
 /// </summary>
 /// <param name="Outcome">

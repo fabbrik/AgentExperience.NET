@@ -126,6 +126,13 @@
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
     }
+    public sealed class ExperienceDataKey : System.IDisposable
+    {
+        public const int SizeInBytes = 32;
+        public ExperienceDataKey(System.ReadOnlySpan<byte> key) { }
+        public System.ReadOnlySpan<byte> Span { get; }
+        public void Dispose() { }
+    }
     public sealed class ExperienceEmbeddingDescriptor : System.IEquatable<AgentExperience.Abstractions.ExperienceEmbeddingDescriptor>
     {
         public const int MaxDimension = 16000;
@@ -377,6 +384,27 @@
         public long CurrentRevision { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public AgentExperience.Abstractions.ExperienceIndexOutcome Outcome { get; init; }
+    }
+    public readonly struct ExperienceKeyLookup : System.IEquatable<AgentExperience.Abstractions.ExperienceKeyLookup>
+    {
+        public ExperienceKeyLookup(AgentExperience.Abstractions.ExperienceKeyStatus Status, AgentExperience.Abstractions.ExperienceDataKey? Key) { }
+        public AgentExperience.Abstractions.ExperienceDataKey? Key { get; init; }
+        public AgentExperience.Abstractions.ExperienceKeyStatus Status { get; init; }
+        public static AgentExperience.Abstractions.ExperienceKeyLookup Destroyed { get; }
+        public static AgentExperience.Abstractions.ExperienceKeyLookup NotFound { get; }
+        public static AgentExperience.Abstractions.ExperienceKeyLookup Active(AgentExperience.Abstractions.ExperienceDataKey key) { }
+    }
+    public sealed class ExperienceKeyReference : System.IEquatable<AgentExperience.Abstractions.ExperienceKeyReference>
+    {
+        public ExperienceKeyReference(System.Guid ExperienceId, AgentExperience.Abstractions.Scope Scope) { }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public enum ExperienceKeyStatus
+    {
+        Active = 0,
+        Destroyed = 1,
+        NotFound = 2,
     }
     public sealed class ExperienceLifecycleCommitResult : System.IEquatable<AgentExperience.Abstractions.ExperienceLifecycleCommitResult>
     {
@@ -667,6 +695,19 @@
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public AgentExperience.Abstractions.ExperienceVectorSearchOutcome Outcome { get; init; }
     }
+    public sealed class ExperienceWrappedKey : System.IEquatable<AgentExperience.Abstractions.ExperienceWrappedKey>
+    {
+        public ExperienceWrappedKey(string KeyEncryptionKeyId, System.ReadOnlyMemory<byte> Ciphertext) { }
+        public System.ReadOnlyMemory<byte> Ciphertext { get; init; }
+        public string KeyEncryptionKeyId { get; init; }
+    }
+    public sealed class ExperienceWrappedKeyEntry : System.IEquatable<AgentExperience.Abstractions.ExperienceWrappedKeyEntry>
+    {
+        public ExperienceWrappedKeyEntry(AgentExperience.Abstractions.ExperienceKeyReference Reference, AgentExperience.Abstractions.ExperienceWrappedKey? WrappedKey) { }
+        public bool IsDestroyed { get; }
+        public AgentExperience.Abstractions.ExperienceKeyReference Reference { get; init; }
+        public AgentExperience.Abstractions.ExperienceWrappedKey? WrappedKey { get; init; }
+    }
     public sealed class GrantAdministration : System.IEquatable<AgentExperience.Abstractions.GrantAdministration>
     {
         public GrantAdministration(string AdministratorPrincipalId, System.DateTimeOffset AuthorizedAt) { }
@@ -714,6 +755,18 @@
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceGrantListResult> ListAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope recordScope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken, int limit = 100);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceGrantResult> RevokeAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.GrantAdministration? administration, AgentExperience.Abstractions.ExperienceGrantRevocation revocation, System.Threading.CancellationToken cancellationToken);
     }
+    public interface IExperienceKeyEncryptionKey
+    {
+        string CurrentKeyId { get; }
+        System.Threading.Tasks.ValueTask<byte[]> UnwrapAsync(AgentExperience.Abstractions.ExperienceWrappedKey wrappedKey, AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceWrappedKey> WrapAsync(System.ReadOnlyMemory<byte> dataKey, AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface IExperienceKeyStore
+    {
+        System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> CreateKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask DestroyKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> GetKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+    }
     public interface IExperienceRecordStore
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken);
@@ -728,6 +781,14 @@
     public interface IExperienceReuseFeedbackStore
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface IExperienceWrappedKeyRepository
+    {
+        System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceWrappedKeyEntry> AddIfAbsentAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, AgentExperience.Abstractions.ExperienceWrappedKey wrappedKey, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask DestroyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceWrappedKeyEntry?> GetAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceWrappedKeyEntry>> ListNotWrappedUnderAsync(string currentKeyEncryptionKeyId, int limit, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<bool> ReplaceAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, AgentExperience.Abstractions.ExperienceWrappedKey expected, AgentExperience.Abstractions.ExperienceWrappedKey replacement, System.Threading.CancellationToken cancellationToken);
     }
     public interface ISanitizer
     {

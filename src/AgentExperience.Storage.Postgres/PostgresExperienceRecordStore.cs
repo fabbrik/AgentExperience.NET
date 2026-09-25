@@ -131,6 +131,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "@contradictions, @revision, @created_at, @updated_at, @payload_version, @payload)";
 
     /// <summary>
+    /// The derived full-text vector of a sealed record, computed from exactly the expression <c>0003</c>'s
+    /// generated <c>search_vector</c> uses -- task ID, task summary, lesson, bounded to 100000 characters -- so a
+    /// sealed record ranks exactly as its plaintext twin would. The text is sent as parameters and never stored;
+    /// what is stored is the tsvector (stemmed words and positions), which is the residual the README names.
+    /// </summary>
+    internal const string SealedSearchVectorExpression =
+        "to_tsvector('english', left(coalesce(@search_task_id, '') || ' ' || coalesce(@search_summary, '') || ' ' || " +
+        "coalesce(@search_lesson, ''), 100000))";
+
+    /// <summary>The insert for a sealed record: the sealed payload, the placeholder task ID, and the derived vector.</summary>
+    private const string InsertSealedSql =
+        $"INSERT INTO {Table} ({SelectColumns}, search_vector_sealed) VALUES (@experience_id, @source_run_id, @tenant_id, " +
+        "@application_id, @project_id, @team_id, @agent_id, @user_id, @task_id, @status, @reuse_confidence, " +
+        "@supporting_validations, @contradictions, @revision, @created_at, @updated_at, @payload_version, @payload, " +
+        SealedSearchVectorExpression + ")";
+
+    /// <summary>
     /// The one read that a grant may widen: exactly this scope, or an active grant naming this record
     /// and permitting this scope. The table is aliased so the grant subquery's correlation is
     /// unambiguous -- an unqualified <c>experience_id</c> inside it would silently resolve to the
@@ -549,7 +566,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </para>
     /// </summary>
     private const string HistorySql =
-        $"SELECT {JoinedEventColumns}, r.revision, r.{DeletedAtAlias} FROM {Table} r " +
+        $"SELECT {JoinedEventColumns}, r.revision, r.{DeletedAtAlias}, r.payload_version FROM {Table} r " +
         $"LEFT JOIN {EventsTable} e ON e.experience_id = r.experience_id " +
         "AND (@start_after_revision IS NULL OR e.applied_revision > @start_after_revision) " +
         $"WHERE r.experience_id = @experience_id AND {RecordScopePredicate} " +
@@ -614,10 +631,39 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// adapter composes no DELETE of its own: there is nothing here to get out of step with the order the
     /// script pins.
     /// </summary>
+    /// <summary>
+    /// The transaction-local marker 0016's guard reads: this transaction destroys the key of any sealed record it
+    /// tombstones. Like 0010's marker it is not a privilege boundary -- any session can set it -- only a guard
+    /// against a process that forgot its encryption.
+    /// </summary>
+    private const string DestroysKeyMarkerSql = "SET LOCAL agent_experience.erasure_destroys_key = 'on'";
+
     private const string PurgeSql =
         "SELECT purge_outcome, purge_revision FROM agent_experience.purge_experience_record(" +
         "@experience_id, @tenant_id, @application_id, @project_id, @team_id, @agent_id, @user_id, " +
         "@expected_revision, @deleted_at)";
+
+    /// <summary>The upgrade job's page: live plaintext records, oldest first, served by <c>0016</c>'s partial index.</summary>
+    private const string SealCandidatesSql =
+        $"SELECT {SweepCandidateColumns} FROM {Table} " +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND payload_version = 1 " +
+        "ORDER BY created_at, experience_id LIMIT @limit";
+
+    /// <summary><see cref="SealCandidatesSql"/> over a scope and everything beneath it.</summary>
+    private const string SealSubtreeCandidatesSql =
+        $"SELECT {SweepCandidateColumns} FROM {Table} " +
+        $"WHERE {SubtreeScopePredicate} AND {LivePredicate} AND payload_version = 1 " +
+        "ORDER BY created_at, experience_id LIMIT @limit";
+
+    /// <summary>One plaintext record, whole, locked for the transaction that seals it.</summary>
+    private const string LockPlaintextRecordSql =
+        $"SELECT {SelectColumns} FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate} " +
+        $"AND {LivePredicate} AND payload_version = 1 FOR UPDATE";
+
+    /// <summary><c>0016</c>'s one sealing transition.</summary>
+    private const string SealRecordSql =
+        "SELECT agent_experience.seal_experience_record(@experience_id, @tenant_id, @application_id, @project_id, " +
+        "@team_id, @agent_id, @user_id, @expected_revision, @sealed_payload)";
 
     /// <summary>
     /// "at or beneath this scope": the three required fields exactly, and each optional field either
@@ -681,6 +727,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     private readonly TimeProvider _timeProvider;
 
+    private readonly ExperienceEncryption? _encryption;
+
     /// <summary>Creates a store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="onGrantsUnavailable">
@@ -700,18 +748,26 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// this store's own clock and never a caller's: whether a sharing grant is still live is always the
     /// database's <c>clock_timestamp()</c>, which no host can wind.
     /// </param>
+    /// <param name="encryption">
+    /// Turns on crypto-shredding: payloads, task IDs, event reasons and evidence detail are written sealed
+    /// under a per-record key, and <see cref="DeleteAsync(AuthorizationContext, Scope, Guid, long?, CancellationToken)"/>
+    /// destroys that key. <see langword="null"/> -- the default -- is plaintext mode, exactly as before. Every
+    /// component of one deployment must be given the same instance; see <see cref="ExperienceEncryption"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceRecordStore(
         NpgsqlDataSource dataSource,
         Action<ExperienceGrantSupportNotice>? onGrantsUnavailable = null,
         ExperienceGrantAuditing? auditing = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ExperienceEncryption? encryption = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _grants = new PostgresGrantSupport(onGrantsUnavailable);
         _auditing = auditing;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _encryption = ExperienceEncryption.Resolve(encryption);
     }
 
     /// <inheritdoc />
@@ -757,14 +813,35 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Encrypted mode: the task ID and the whole payload are sealed together under the record's key, and
+        // what the row stores is the sealed envelope, the placeholder task ID, and the derived search vector.
+        // A reference whose key was destroyed is a record that was erased (or is mid-erasure): its ID is
+        // spent, exactly as a tombstone's is, so it is reported the way a taken ID is.
+        var storedTaskId = record.TaskId;
+        var storedPayload = payload;
+        var payloadVersion = ExperiencePayload.CurrentVersion;
+        if (_encryption is not null)
+        {
+            using var key = await _encryption.ForWriteAsync(record.ExperienceId, record.Scope, cancellationToken).ConfigureAwait(false);
+            if (key is null)
+            {
+                return new(ExperienceStoreOutcome.Conflict, NoErrors);
+            }
+
+            storedPayload = SealedText.PayloadEnvelope(
+                key.Seal(SealedText.PayloadColumn, Guid.Empty, SealedText.SealedRecordPlaintext(record.TaskId, payload)));
+            storedTaskId = SealedText.SealedTaskId;
+            payloadVersion = SealedText.SealedPayloadVersion;
+        }
+
         try
         {
-            await using var command = _dataSource.CreateCommand(InsertSql);
+            await using var command = _dataSource.CreateCommand(_encryption is null ? InsertSql : InsertSealedSql);
             var parameters = command.Parameters;
             parameters.Add(new NpgsqlParameter<Guid>("experience_id", record.ExperienceId));
             parameters.Add(new NpgsqlParameter<Guid>("source_run_id", record.SourceRunId));
             AddScopeParameters(parameters, record.Scope);
-            parameters.Add(new NpgsqlParameter<string>("task_id", record.TaskId));
+            parameters.Add(new NpgsqlParameter<string>("task_id", storedTaskId));
             parameters.Add(new NpgsqlParameter<string>("status", record.Status.ToString()));
             parameters.Add(new NpgsqlParameter<double>("reuse_confidence", record.ReuseConfidence));
             parameters.Add(new NpgsqlParameter<int>("supporting_validations", record.SupportingValidations));
@@ -772,8 +849,12 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             parameters.Add(new NpgsqlParameter<long>("revision", record.Revision));
             parameters.Add(new NpgsqlParameter<DateTimeOffset>("created_at", ToStoredTimestamp(record.CreatedAt)));
             parameters.Add(new NpgsqlParameter<DateTimeOffset>("updated_at", ToStoredTimestamp(record.UpdatedAt)));
-            parameters.Add(new NpgsqlParameter<int>("payload_version", ExperiencePayload.CurrentVersion));
-            parameters.Add(new NpgsqlParameter<string>("payload", NpgsqlDbType.Jsonb) { TypedValue = payload });
+            parameters.Add(new NpgsqlParameter<int>("payload_version", payloadVersion));
+            parameters.Add(new NpgsqlParameter<string>("payload", NpgsqlDbType.Jsonb) { TypedValue = storedPayload });
+            if (_encryption is not null)
+            {
+                AddSealedSearchParameters(parameters, record.TaskId, record.TaskSummary, record.Reflection?.Lesson);
+            }
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceStoreOutcome.Created, NoErrors);
@@ -865,19 +946,25 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
         }
 
-        return ResultFromRow(reader);
+        return await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// What one row of <see cref="GetSql"/>, <see cref="GetExactSql"/>, <see cref="GetManySql"/> or
     /// <see cref="GetManyExactSql"/> means. The single and the batched read both decide through here, so
     /// the tombstone rule and the grant columns are read the same way for both.
+    /// <para>
+    /// In encrypted mode a sealed row whose key was destroyed is answered exactly as a tombstone is: the
+    /// erasure's key destruction has happened even if its database side has not (see
+    /// <see cref="PurgeAsync"/>), and a record is erased once its key is gone.
+    /// </para>
     /// </summary>
-    private static ExperienceRecordGetResult ResultFromRow(DbDataReader reader)
+    private async ValueTask<ExperienceRecordGetResult> ResultFromRowAsync(DbDataReader reader, CancellationToken cancellationToken)
     {
         var sharedByGrant = ReadSharedByGrant(reader);
 
-        if (ReadDeleted(reader))
+        var record = ReadDeleted(reader) ? null : await ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false);
+        if (record is null)
         {
             // An erased record. The owner is told so -- the ID is spent and no retry will make it
             // resolve -- but a reader that only reached the row through a grant is told nothing it did
@@ -892,7 +979,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         return new(
             ExperienceStoreOutcome.Found,
-            ReadRecord(reader),
+            record,
             NoErrors,
             sharedByGrant,
             ReadPermittingGrant(reader),
@@ -1058,7 +1145,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             // experience_id is the primary key, so a row per ID at most; the lateral join is LIMIT 1.
-            found[reader.GetGuid(0)] = ResultFromRow(reader);
+            found[reader.GetGuid(0)] = await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false);
         }
 
         return found;
@@ -1144,7 +1231,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                records.Add(ReadRecord(reader));
+                // A sealed record whose key was destroyed is erased, and absent here like a tombstone.
+                if (await ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false) is { } record)
+                {
+                    records.Add(record);
+                }
             }
 
             return new(ExperienceStoreOutcome.Found, records, NoErrors);
@@ -1185,9 +1276,22 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         var recordedAt = ToStoredTimestamp(_timeProvider.GetUtcNow());
         var appliedRevision = lifecycleEvent.ExpectedRevision + 1;
 
+        // Encrypted mode: the event's reason and any confidence detail are sealed under the record's key. A
+        // destroyed key means the record is erased, or mid-erasure (its key is gone and its tombstone not yet
+        // written): a tombstone is terminal, so nothing is appended.
+        using var key = _encryption is null
+            ? null
+            : await _encryption.ForWriteAsync(lifecycleEvent.ExperienceRecordId, scope, cancellationToken).ConfigureAwait(false);
+
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            if (_encryption is not null && key is null)
+            {
+                return await ShreddedCommitOutcomeAsync(connection, scope, lifecycleEvent.ExperienceRecordId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             // Pinned, not inherited: under REPEATABLE READ or SERIALIZABLE the same-revision race would
             // abort with a serialization failure instead of matching no row, turning an expected stale
@@ -1203,7 +1307,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             {
                 var applied = await InsertEvidenceAsync(
                     connection, transaction, scope, Actor(authorization), lifecycleEvent, submitted, recordedAt,
-                    appliedRevision, cancellationToken)
+                    appliedRevision, key, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (applied.Settled is { } settled)
@@ -1235,7 +1339,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             try
             {
                 await using var insert = new NpgsqlCommand(InsertEventSql, connection, transaction);
-                AddEventParameters(insert.Parameters, authorization, scope, eventToStore, occurredAt, recordedAt, appliedRevision);
+                AddEventParameters(insert.Parameters, authorization, scope, eventToStore, occurredAt, recordedAt, appliedRevision, key);
                 await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, EventPrimaryKey, cancellationToken))
@@ -1243,7 +1347,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 // A resubmitted event ID. PostgreSQL has aborted the transaction, so nothing this call
                 // attempted survives; the stored row then decides replay from conflict.
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                return await CompareStoredEventAsync(connection, scope, lifecycleEvent, occurredAt, cancellationToken).ConfigureAwait(false);
+                return await CompareStoredEventAsync(connection, scope, lifecycleEvent, occurredAt, key, cancellationToken).ConfigureAwait(false);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, EventRevisionIndex, cancellationToken))
             {
@@ -1392,6 +1496,25 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
             var revision = ReadRevision(reader, HistoryRevisionOrdinal);
 
+            // Encrypted mode: the events' reasons and details are sealed under the record's key. A destroyed
+            // key is an erased record, reported exactly as a tombstone is. A key the store never held is fine
+            // for a record written before the upgrade -- its events are plaintext -- and a sealed value met
+            // without one fails loudly in the decoder rather than being reported as erased.
+            RecordKey? key = null;
+            if (_encryption is not null)
+            {
+                var lookup = await _encryption.LookupAsync(query.ExperienceId, query.Scope, cancellationToken).ConfigureAwait(false);
+                if (lookup.Destroyed && reader.GetInt32(HistoryDeletedAtOrdinal + 1) == SealedText.SealedPayloadVersion)
+                {
+                    // A sealed record whose key is gone reads as erased everywhere; a plaintext one (written before
+                    // the upgrade) is answered by its row, exactly as GetAsync answers it.
+                    return new(ExperienceStoreOutcome.Deleted, 0, [], NoErrors);
+                }
+
+                key = lookup.Key;
+            }
+
+            using var ownedKey = key;
             var events = new List<StoredLifecycleEvent>();
             if (!reader.IsDBNull(0))
             {
@@ -1400,7 +1523,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 // Found with nothing left to show rather than making it look missing.
                 do
                 {
-                    events.Add(ReadEvent(reader));
+                    events.Add(ReadEvent(reader, key));
                 }
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false));
             }
@@ -1848,6 +1971,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                     new(ExperienceStoreOutcome.Deleted, deleted, true, NoErrors, Interrupted: true),
                     Translate(ex, "retention sweep", cancellationToken));
             }
+            catch (ExperienceStoreException ex) when (ex is not ExperienceRetentionSweepInterruptedException)
+            {
+                // Encrypted mode's key store failed to destroy a key (or a sealed value failed to open).
+                // That record's erasure rolled back whole; the count of what this call erased before it is
+                // kept, exactly as for a database failure.
+                throw new ExperienceRetentionSweepInterruptedException(
+                    new(ExperienceStoreOutcome.Deleted, deleted, true, NoErrors, Interrupted: true),
+                    ex);
+            }
 
             return new(ExperienceStoreOutcome.Deleted, deleted, moreRemain, NoErrors);
         }
@@ -1859,9 +1991,34 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <summary>
-    /// Runs the purge function and maps its outcome. One statement, so the whole erasure is one
-    /// transaction whether or not the caller opened one.
+    /// Erases one record. In plaintext mode that is the purge function alone -- one statement, so the whole
+    /// erasure is one transaction whether or not the caller opened one.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>In encrypted mode the key is destroyed inside the erasure's transaction, after every database-side
+    /// check and before the commit.</b> The purge function runs first -- it locks the row, applies the scope and
+    /// revision guards, needs <c>EXECUTE</c> on itself, and writes the tombstone -- all uncommitted, so nothing
+    /// is visible to anyone yet. Only when it answers that it erased the record (or that the record already was a
+    /// tombstone) is the record's key destroyed, and only then does the transaction commit. A refusal of any
+    /// kind -- another scope, a stale revision, no <c>EXECUTE</c>, a failing statement -- destroys nothing. The
+    /// one rule both remaining failure orders follow is "a record is erased once its key is destroyed":
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>The key store fails.</b> The transaction rolls back: the record is untouched, live and
+    /// readable, and its key is alive. The caller gets an <see cref="ExperienceStoreException"/>. The record
+    /// never looks erased while its key survives.</item>
+    /// <item><b>The key is destroyed and the commit then fails</b> (a lost connection, a crash). The row is
+    /// still there, but every read treats a sealed row whose key is destroyed exactly as a tombstone, and every
+    /// write is refused, because the key store will not create a key for a destroyed reference. The record
+    /// never looks live while its key is gone. A retried delete, or the next sweep, finds the row still live,
+    /// destroys the (already destroyed) key again and commits the tombstone.</item>
+    /// </list>
+    /// <para>
+    /// A record that is already a tombstone has its key destroyed again (idempotently), so a tombstone written
+    /// by a process that was not configured for encryption still loses its key.
+    /// </para>
+    /// </remarks>
     private async Task<(ExperienceRecordDeleteResult Result, bool ErasedNow)> PurgeAsync(
         NpgsqlConnection connection,
         Scope scope,
@@ -1869,7 +2026,48 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         long? expectedRevision,
         CancellationToken cancellationToken)
     {
-        await using var command = new NpgsqlCommand(PurgeSql, connection);
+        if (_encryption is null)
+        {
+            return await RunPurgeAsync(connection, null, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var transaction = await connection
+            .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+
+        // 0016's guard refuses to tombstone a sealed row unless the erasing transaction says it destroys the key:
+        // a process that was not configured for encryption fails loudly instead of leaving the key behind.
+        await using (var marker = new NpgsqlCommand(DestroysKeyMarkerSql, connection, transaction))
+        {
+            await marker.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var result = await RunPurgeAsync(connection, transaction, scope, experienceId, expectedRevision, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.Result.Outcome != ExperienceStoreOutcome.Deleted)
+        {
+            // NotFound or StaleRevision: nothing was written, and no key is touched.
+            return result;
+        }
+
+        // From here the caller's token no longer applies: a destruction that completed must be followed by its
+        // commit, or a cancelled request would leave exactly the half-erased record this ordering exists to
+        // avoid. Throws on failure, and the transaction is then rolled back by its disposal: nothing erased.
+        await _encryption.DestroyAsync(experienceId, scope, CancellationToken.None).ConfigureAwait(false);
+
+        await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <summary>Runs the purge function and maps its outcome.</summary>
+    private async Task<(ExperienceRecordDeleteResult Result, bool ErasedNow)> RunPurgeAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        Scope scope,
+        Guid experienceId,
+        long? expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(PurgeSql, connection, transaction);
         var parameters = command.Parameters;
         parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
         AddScopeParameters(parameters, scope);
@@ -1900,6 +2098,227 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             PurgeNotFoundOutcome => (new(ExperienceStoreOutcome.NotFound, 0, NoErrors), false),
             _ => throw new ExperienceStoreException("The erasure function reported an unrecognized outcome."),
         };
+    }
+
+    /// <summary>
+    /// The crypto-shredding upgrade: seals up to <paramref name="batchSize"/> records that were written in
+    /// plaintext, oldest first, in <paramref name="scope"/> -- or, with <see cref="ScopeMatch.Subtree"/>, in that
+    /// scope and every scope beneath it. Bounded, resumable, and authorized.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What it does to one record</b>, in one transaction: locks the live plaintext row, creates the
+    /// record's key, seals its task ID and payload together, opens the seal again and checks it gives back
+    /// exactly the stored text, and only then calls <c>0016</c>'s <c>seal_experience_record</c>, which admits
+    /// one transition (a live plaintext row at the revision read, into its sealed shape) and copies the row's
+    /// own full-text vector into <c>search_vector_sealed</c>. The revision does not move and nothing else about
+    /// the record changes: it reads, ranks and indexes exactly as before.
+    /// </para>
+    /// <para>
+    /// <b>Bounded and resumable.</b> One page of at most <paramref name="batchSize"/> candidates, served by
+    /// <c>0016</c>'s partial index over live plaintext rows, so a sealed record drops out of the worklist and a
+    /// re-run starts where the last one stopped. <see cref="ExperienceSealingResult.MoreRemain"/> says whether
+    /// another call would find more. Each record is its own transaction: an interrupted call leaves every
+    /// record wholly sealed or wholly untouched, and sealing is idempotent, so a failed call is simply
+    /// re-run.
+    /// </para>
+    /// <para>
+    /// <b>Authorized twice.</b> <paramref name="authorization"/> must permit <paramref name="scope"/>, which
+    /// covers its subtree exactly as it does for <see cref="SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/>;
+    /// and in the two-role deployment the application role can call the sealing function only when the host
+    /// set <see cref="ExperienceApplicationRoleOptions.AllowSealing"/>.
+    /// </para>
+    /// <para>
+    /// <b>What it cannot seal.</b> Rows the append-only ledgers already hold -- lifecycle reasons, evidence
+    /// detail, feedback rationale, grant events -- and grant reasons written before the switch stay
+    /// plaintext: this library does not open an <c>UPDATE</c> path on its audit trail. Copies made before
+    /// sealing (backups, WAL archives, the dead tuple each seal leaves until <c>VACUUM</c>) are plaintext too.
+    /// The store README's upgrade runbook says what to do about each.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The scope to seal, or the root of the subtree to seal. Never treated as authority.</param>
+    /// <param name="batchSize">The most records this call may seal, from <see cref="MinSweepBatchSize"/> to <see cref="MaxSweepBatchSize"/>.</param>
+    /// <param name="match">Whether to seal <paramref name="scope"/> alone or everything beneath it too.</param>
+    /// <param name="cancellationToken">Cancels the operation between records.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Committed"/> when the batch ran (possibly sealing nothing),
+    /// <see cref="ExperienceStoreOutcome.Invalid"/> -- including when this store has no
+    /// <see cref="ExperienceEncryption"/> -- or <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    public async Task<ExperienceSealingResult> SealPlaintextRecordsAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        int batchSize,
+        ScopeMatch match,
+        CancellationToken cancellationToken)
+    {
+        // Counted like the other bounded batches this store runs: a count, whether it stopped early, and how
+        // wide it reached -- never which records, and never anything they hold.
+        using var operation = ErasureDiagnostics.Start(ErasureDiagnostics.RecordSeal);
+        ErasureDiagnostics.TagScopeMatch(operation, match);
+
+        ExperienceSealingResult result;
+        try
+        {
+            result = await SealPlaintextRecordsCoreAsync(authorization, scope, batchSize, match, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ErasureDiagnostics.Faulted(operation, ex, cancellationToken);
+            throw;
+        }
+
+        ErasureDiagnostics.Tag(operation, ErasureDiagnostics.SealedCountAttribute, result.SealedCount);
+        ErasureDiagnostics.Succeeded(operation, result.Outcome);
+        return result;
+    }
+
+    private async Task<ExperienceSealingResult> SealPlaintextRecordsCoreAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        int batchSize,
+        ScopeMatch match,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateSealing(scope, batchSize, match, _encryption is not null);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, 0, false, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, 0, false, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            var candidates = new List<(Guid ExperienceId, Scope Scope)>(batchSize + 1);
+            await using (var command = new NpgsqlCommand(match == ScopeMatch.Subtree ? SealSubtreeCandidatesSql : SealCandidatesSql, connection))
+            {
+                AddScopeParameters(command.Parameters, scope);
+                command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    candidates.Add((
+                        reader.GetGuid(0),
+                        new Scope(
+                            reader.GetString(1),
+                            reader.GetString(2),
+                            reader.GetString(3),
+                            reader.IsDBNull(4) ? null : reader.GetString(4),
+                            reader.IsDBNull(5) ? null : reader.GetString(5),
+                            reader.IsDBNull(6) ? null : reader.GetString(6))));
+                }
+            }
+
+            var sealedCount = 0;
+            foreach (var (experienceId, candidateScope) in candidates.Take(batchSize))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Defence in depth over the page, exactly as the sweep does it.
+                if (!IsAtOrBeneath(candidateScope, scope, match) || !authorization.Permits(candidateScope))
+                {
+                    throw new ExperienceStoreException(
+                        "A sealing candidate lay outside the requested scope or authorization; the job stopped without sealing it.");
+                }
+
+                if (await SealOneAsync(connection, experienceId, candidateScope, cancellationToken).ConfigureAwait(false))
+                {
+                    sealedCount++;
+                }
+            }
+
+            return new(ExperienceStoreOutcome.Committed, sealedCount, candidates.Count > batchSize, NoErrors);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "record sealing", cancellationToken);
+        }
+    }
+
+    /// <summary>Seals one plaintext record, in its own transaction. <see langword="false"/> when there was nothing to seal.</summary>
+    private async Task<bool> SealOneAsync(NpgsqlConnection connection, Guid experienceId, Scope scope, CancellationToken cancellationToken)
+    {
+        await using var transaction = await connection
+            .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+
+        long revision;
+        string plaintext;
+        await using (var lockRow = new NpgsqlCommand(LockPlaintextRecordSql, connection, transaction))
+        {
+            lockRow.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+            AddScopeParameters(lockRow.Parameters, scope);
+            await using var reader = await lockRow.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                // Sealed, erased or moved since the page was read: nothing to do.
+                return false;
+            }
+
+            // Decoded first so a row this adapter could not read is never sealed into something it cannot read
+            // either; then the stored text itself -- not a re-serialization -- is what gets sealed.
+            revision = ReadRecord(reader).Revision;
+            plaintext = SealedText.SealedRecordPlaintext(reader.GetString(8), reader.GetString(17));
+        }
+
+        using var key = await _encryption!.ForWriteAsync(experienceId, scope, cancellationToken).ConfigureAwait(false);
+        if (key is null)
+        {
+            // Its key was destroyed by a delete that did not commit. Leaving it would keep it at the head of every
+            // later page for ever, so the job finishes that delete instead (which needs AllowErasure, and throws
+            // loudly without it). It is not counted as sealed.
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            await PurgeAsync(connection, scope, experienceId, expectedRevision: null, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        var sealedValue = key.Seal(SealedText.PayloadColumn, Guid.Empty, plaintext);
+
+        // The check the database cannot make, because it holds no key: what is about to be stored opens, under
+        // this record's own associated data, to the stored text, and that text still decodes as a record payload.
+        var (openedTaskId, openedPayload) = SealedText.ReadSealedRecordPlaintext(
+            key.Open(SealedText.PayloadColumn, Guid.Empty, SealedText.ReadPayloadEnvelope(SealedText.PayloadEnvelope(sealedValue))));
+        if (!string.Equals(SealedText.SealedRecordPlaintext(openedTaskId, openedPayload), plaintext, StringComparison.Ordinal))
+        {
+            throw new ExperienceStoreException("A sealed payload did not open to the text it was sealed from; nothing was written.");
+        }
+
+        _ = ExperiencePayload.Deserialize(ExperiencePayload.CurrentVersion, openedPayload);
+
+        string outcome;
+        await using (var seal = new NpgsqlCommand(SealRecordSql, connection, transaction))
+        {
+            seal.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+            AddScopeParameters(seal.Parameters, scope);
+            seal.Parameters.Add(new NpgsqlParameter<long>("expected_revision", revision));
+            seal.Parameters.Add(new NpgsqlParameter<string>("sealed_payload", NpgsqlDbType.Jsonb)
+            {
+                TypedValue = SealedText.PayloadEnvelope(sealedValue),
+            });
+            outcome = (string?)await seal.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) ?? string.Empty;
+        }
+
+        if (!string.Equals(outcome, "Sealed", StringComparison.Ordinal))
+        {
+            // Under the row lock none of the others can happen except by a writer outside this library.
+            throw new ExperienceStoreException("The sealing function refused a record the job had locked.");
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -2041,6 +2460,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         Scope scope,
         LifecycleEvent lifecycleEvent,
         DateTimeOffset occurredAt,
+        RecordKey? key,
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(SelectEventSql, connection);
@@ -2054,8 +2474,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             return new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
         }
 
-        var stored = ReadEvent(reader);
+        // An event ID taken by another record, or in another scope, is a conflict -- decided before anything
+        // is opened, because that row's sealed text is bound to a different key and would (correctly) fail
+        // this record's authentication.
         var storedScope = ReadEventScope(reader);
+        if (reader.GetGuid(1) != lifecycleEvent.ExperienceRecordId || storedScope != scope)
+        {
+            return new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
+        }
+
+        var stored = ReadEvent(reader, key);
         var appliedRevision = stored.AppliedRevision;
 
         // Record equality compares every field of the event -- the replacement ID included, so a replay
@@ -2117,6 +2545,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         ConfidenceUpdate submitted,
         DateTimeOffset recordedAt,
         long appliedRevision,
+        RecordKey? key,
         CancellationToken cancellationToken)
     {
         await ExecuteAsync($"SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);
@@ -2164,7 +2593,9 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             parameters.Add(new NpgsqlParameter<bool>("counted", update.Counted));
             parameters.Add(NullableText("actor", actor));
             parameters.Add(new NpgsqlParameter<string>("confidence_rule_version", update.RuleVersion));
-            parameters.Add(NullableText("confidence_detail", update.Detail));
+            parameters.Add(NullableText(
+                "confidence_detail",
+                update.Detail is { } detail && key is not null ? key.Seal(SealedText.EvidenceDetailColumn, update.EvidenceId, detail) : update.Detail));
             parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
             parameters.Add(new NpgsqlParameter<long>("applied_revision", revision));
             parameters.Add(new NpgsqlParameter<string>("applied_status", status.ToString()));
@@ -2250,7 +2681,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
             if (taken)
             {
-                return await CompareStoredEvidenceAsync(connection, transaction, scope, lifecycleEvent, submitted, cancellationToken)
+                return await CompareStoredEvidenceAsync(connection, transaction, scope, lifecycleEvent, submitted, key, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -2269,7 +2700,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             // the connection readable again so the stored row can be compared. The caller rolls the
             // whole transaction back afterwards, so nothing this call attempted survives either way.
             await ExecuteAsync($"ROLLBACK TO SAVEPOINT {EvidenceSavepoint}", CancellationToken.None).ConfigureAwait(false);
-            return await CompareStoredEvidenceAsync(connection, transaction, scope, lifecycleEvent, submitted, cancellationToken)
+            return await CompareStoredEvidenceAsync(connection, transaction, scope, lifecycleEvent, submitted, key, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -2305,6 +2736,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         Scope scope,
         LifecycleEvent lifecycleEvent,
         ConfidenceUpdate submitted,
+        RecordKey? key,
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(SelectEvidenceSql, connection, transaction);
@@ -2324,6 +2756,17 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             var storedEventId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
 
+            // Another record's evidence under this ID is a conflict, decided before its (differently keyed)
+            // detail is opened.
+            if (reader.GetGuid(0) != lifecycleEvent.ExperienceRecordId)
+            {
+                return new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
+            }
+
+            var storedDetail = reader.IsDBNull(11)
+                ? null
+                : SealedText.OpenWith(key, SealedText.EvidenceDetailColumn, submitted.EvidenceId, reader.GetString(11));
+
             var sameContent =
                 reader.GetGuid(0) == lifecycleEvent.ExperienceRecordId
                 && (storedEventId is null || storedEventId == lifecycleEvent.EventId)
@@ -2333,7 +2776,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 && (reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5)) == submitted.VerificationRoundId
                 && string.Equals(reader.IsDBNull(6) ? null : reader.GetString(6), submitted.ReviewerIdentity, StringComparison.Ordinal)
                 && string.Equals(reader.GetString(10), submitted.RuleVersion, StringComparison.Ordinal)
-                && string.Equals(reader.IsDBNull(11) ? null : reader.GetString(11), submitted.Detail, StringComparison.Ordinal)
+                && string.Equals(storedDetail, submitted.Detail, StringComparison.Ordinal)
                 && (reader.IsDBNull(18) ? (Guid?)null : reader.GetGuid(18)) == submitted.AssessmentId;
 
             if (!sameContent)
@@ -2363,6 +2806,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             // A retyped or hand-written row, reported the way every other decode failure is.
             throw new ExperienceStoreException("Stored confidence evidence could not be decoded.", ex);
         }
+    }
+
+    /// <summary>
+    /// What a lifecycle commit reports for a record whose key was destroyed: <see cref="ExperienceStoreOutcome.Deleted"/>
+    /// with the row's revision, exactly as for a tombstone -- or <see cref="ExperienceStoreOutcome.NotFound"/> when
+    /// nothing with that ID is in this scope, so a destroyed key reveals nothing a tombstone would not.
+    /// </summary>
+    private static async Task<ExperienceLifecycleCommitResult> ShreddedCommitOutcomeAsync(
+        NpgsqlConnection connection,
+        Scope scope,
+        Guid experienceId,
+        CancellationToken cancellationToken)
+    {
+        var current = await ReadRevisionAndStatusAsync(connection, null, scope, experienceId, cancellationToken).ConfigureAwait(false);
+        return current is { } record
+            ? new(ExperienceStoreOutcome.Deleted, record.Revision, null, NoErrors)
+            : new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors);
     }
 
     /// <summary>
@@ -2452,14 +2912,17 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         LifecycleEvent lifecycleEvent,
         DateTimeOffset occurredAt,
         DateTimeOffset recordedAt,
-        long appliedRevision)
+        long appliedRevision,
+        RecordKey? key)
     {
         parameters.Add(new NpgsqlParameter<Guid>("event_id", lifecycleEvent.EventId));
         parameters.Add(new NpgsqlParameter<Guid>("experience_id", lifecycleEvent.ExperienceRecordId));
         AddScopeParameters(parameters, scope);
         parameters.Add(NullableText("prior_status", lifecycleEvent.PriorStatus?.ToString()));
         parameters.Add(new NpgsqlParameter<string>("current_status", lifecycleEvent.CurrentStatus.ToString()));
-        parameters.Add(new NpgsqlParameter<string>("reason", lifecycleEvent.Reason));
+        parameters.Add(new NpgsqlParameter<string>(
+            "reason",
+            key is null ? lifecycleEvent.Reason : key.Seal(SealedText.EventReasonColumn, lifecycleEvent.EventId, lifecycleEvent.Reason)));
         parameters.Add(new NpgsqlParameter<string>("producer", lifecycleEvent.Producer));
         parameters.Add(new NpgsqlParameter<DateTimeOffset>("occurred_at", occurredAt));
         parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
@@ -2476,7 +2939,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(NullableUuid("confidence_verification_round_id", confidence?.VerificationRoundId));
         parameters.Add(NullableText("confidence_reviewer_identity", confidence?.ReviewerIdentity));
         parameters.Add(NullableText("confidence_rule_version", confidence?.RuleVersion));
-        parameters.Add(NullableText("confidence_detail", confidence?.Detail));
+        parameters.Add(NullableText(
+            "confidence_detail",
+            confidence?.Detail is { } detail && key is not null
+                ? key.Seal(SealedText.EventConfidenceDetailColumn, lifecycleEvent.EventId, detail)
+                : confidence?.Detail));
         parameters.Add(NullableDouble("prior_reuse_confidence", confidence?.PriorReuseConfidence));
         parameters.Add(NullableDouble("new_reuse_confidence", confidence?.NewReuseConfidence));
         parameters.Add(NullableInt("prior_supporting_validations", confidence?.PriorSupportingValidations));
@@ -2484,6 +2951,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         parameters.Add(NullableInt("prior_contradictions", confidence?.PriorContradictions));
         parameters.Add(NullableInt("new_contradictions", confidence?.NewContradictions));
         parameters.Add(NullableUuid("confidence_assessment_id", confidence?.AssessmentId));
+    }
+
+    /// <summary>The three texts <see cref="SealedSearchVectorExpression"/> analyses. Sent, never stored.</summary>
+    internal static void AddSealedSearchParameters(NpgsqlParameterCollection parameters, string taskId, string? taskSummary, string? lesson)
+    {
+        parameters.Add(new NpgsqlParameter<string>("search_task_id", NpgsqlDbType.Text) { TypedValue = taskId });
+        parameters.Add(NullableText("search_summary", taskSummary));
+        parameters.Add(NullableText("search_lesson", lesson));
     }
 
     internal static void AddScopeParameters(NpgsqlParameterCollection parameters, Scope scope)
@@ -2632,11 +3107,83 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
     }
 
+    /// <summary>
+    /// Reads the record at ordinals 0-17, opening it when it is sealed. <see langword="null"/> means the row is
+    /// sealed and its key was destroyed: the record is erased, and every caller treats it as a tombstone.
+    /// </summary>
+    /// <param name="reader">A reader positioned on a row that selected <see cref="SelectColumns"/> first.</param>
+    /// <param name="encryption">The component's encryption, or <see langword="null"/> in plaintext mode.</param>
+    /// <param name="cancellationToken">Cancels the key lookup.</param>
+    /// <returns>The record, or <see langword="null"/> when it is crypto-shredded.</returns>
+    /// <exception cref="ExperienceStoreException">
+    /// The row is sealed and <paramref name="encryption"/> is <see langword="null"/>; the key store has no key
+    /// for it (a misconfigured key store, never "erased"); or the sealed value fails authentication.
+    /// </exception>
+    internal static async ValueTask<ExperienceRecord?> ReadRecordAsync(
+        DbDataReader reader,
+        ExperienceEncryption? encryption,
+        CancellationToken cancellationToken)
+    {
+        Guid experienceId;
+        Scope scope;
+        string storedPayload;
+        try
+        {
+            if (reader.GetInt32(16) != SealedText.SealedPayloadVersion)
+            {
+                return ReadRecord(reader);
+            }
+
+            experienceId = reader.GetGuid(0);
+            scope = ReadRecordScope(reader);
+            storedPayload = reader.GetString(17);
+        }
+        catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
+        {
+            throw new ExperienceStoreException("Stored Experience Record could not be decoded.", ex);
+        }
+
+        if (encryption is null)
+        {
+            throw new ExperienceStoreException(
+                "Stored Experience Record is sealed (payload_version 2), and this component was constructed without an "
+                + "ExperienceEncryption. Give every component of an encrypted deployment the same ExperienceEncryption.");
+        }
+
+        using var key = await encryption.ForReadAsync(experienceId, scope, cancellationToken).ConfigureAwait(false);
+        if (key is null)
+        {
+            return null;
+        }
+
+        var (taskId, payloadJson) = SealedText.ReadSealedRecordPlaintext(
+            key.Open(SealedText.PayloadColumn, Guid.Empty, SealedText.ReadPayloadEnvelope(storedPayload)));
+
+        try
+        {
+            return DecodeRecord(reader, taskId, payloadJson);
+        }
+        catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
+        {
+            throw new ExperienceStoreException("Stored Experience Record could not be decoded.", ex);
+        }
+    }
+
+    /// <summary>The owner scope at ordinals 2-7 of <see cref="SelectColumns"/>.</summary>
+    internal static Scope ReadRecordScope(DbDataReader reader) => new(
+        reader.GetString(2),
+        reader.GetString(3),
+        reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.IsDBNull(7) ? null : reader.GetString(7));
+
+    /// <summary>Reads a plaintext record at ordinals 0-17. A sealed one goes through <see cref="ReadRecordAsync"/>.</summary>
     internal static ExperienceRecord ReadRecord(DbDataReader reader)
     {
         try
         {
-            return DecodeRecord(reader);
+            return DecodeRecord(reader, null, null);
         }
         catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
         {
@@ -2645,11 +3192,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
     }
 
-    private static StoredLifecycleEvent ReadEvent(DbDataReader reader)
+    private static StoredLifecycleEvent ReadEvent(DbDataReader reader, RecordKey? key)
     {
         try
         {
-            return DecodeEvent(reader);
+            return DecodeEvent(reader, key);
         }
         catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
         {
@@ -2658,18 +3205,18 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         }
     }
 
-    private static StoredLifecycleEvent DecodeEvent(DbDataReader reader) => new(
+    private static StoredLifecycleEvent DecodeEvent(DbDataReader reader, RecordKey? key) => new(
         new LifecycleEvent(
             EventId: reader.GetGuid(0),
             ExperienceRecordId: reader.GetGuid(1),
             PriorStatus: reader.IsDBNull(8) ? null : DecodeStatus(reader.GetString(8), "lifecycle event"),
             CurrentStatus: DecodeStatus(reader.GetString(9), "lifecycle event"),
-            Reason: reader.GetString(10),
+            Reason: SealedText.OpenWith(key, SealedText.EventReasonColumn, reader.GetGuid(0), reader.GetString(10)),
             Producer: reader.GetString(11),
             OccurredAt: reader.GetFieldValue<DateTimeOffset>(12),
             ExpectedRevision: reader.GetInt64(14),
             ReplacementExperienceId: reader.IsDBNull(16) ? null : reader.GetGuid(16),
-            Confidence: DecodeConfidence(reader)),
+            Confidence: DecodeConfidence(reader, key)),
         RecordedAt: reader.GetFieldValue<DateTimeOffset>(13),
         AppliedRevision: reader.GetInt64(15),
         Actor: reader.IsDBNull(17) ? null : reader.GetString(17));
@@ -2680,7 +3227,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// always-present columns all null or all set together, so a row can never be half an update, and
     /// reading any one of them as the flag is enough.
     /// </summary>
-    private static ConfidenceUpdate? DecodeConfidence(DbDataReader reader) => reader.IsDBNull(18)
+    private static ConfidenceUpdate? DecodeConfidence(DbDataReader reader, RecordKey? key) => reader.IsDBNull(18)
         ? null
         : new ConfidenceUpdate(
             EvidenceId: reader.GetGuid(18),
@@ -2696,7 +3243,9 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             NewSupportingValidations: reader.GetInt32(29),
             PriorContradictions: reader.GetInt32(30),
             NewContradictions: reader.GetInt32(31),
-            Detail: reader.IsDBNull(25) ? null : reader.GetString(25))
+            Detail: reader.IsDBNull(25)
+                ? null
+                : SealedText.OpenWith(key, SealedText.EventConfidenceDetailColumn, reader.GetGuid(0), reader.GetString(25)))
         {
             AssessmentId = reader.IsDBNull(EventAssessmentIdOrdinal) ? null : reader.GetGuid(EventAssessmentIdOrdinal),
         };
@@ -2767,26 +3316,23 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         return value;
     }
 
-    private static ExperienceRecord DecodeRecord(DbDataReader reader)
+    /// <param name="reader">The row.</param>
+    /// <param name="openedTaskId">For a sealed row, the task ID it opened to; <see langword="null"/> reads the column.</param>
+    /// <param name="openedPayloadJson">For a sealed row, the v1 payload it opened to; <see langword="null"/> reads the column.</param>
+    private static ExperienceRecord DecodeRecord(DbDataReader reader, string? openedTaskId, string? openedPayloadJson)
     {
         var status = DecodeStatus(reader.GetString(9), "Experience Record");
 
-        var payload = ExperiencePayload.Deserialize(reader.GetInt32(16), reader.GetString(17));
-
-        var scope = new Scope(
-            reader.GetString(2),
-            reader.GetString(3),
-            reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetString(6),
-            reader.IsDBNull(7) ? null : reader.GetString(7));
+        var payload = openedPayloadJson is null
+            ? ExperiencePayload.Deserialize(reader.GetInt32(16), reader.GetString(17))
+            : ExperiencePayload.Deserialize(ExperiencePayload.CurrentVersion, openedPayloadJson);
 
         return ExperiencePayload.ToRecord(
             payload,
             reader.GetGuid(0),
             reader.GetGuid(1),
-            scope,
-            reader.GetString(8),
+            ReadRecordScope(reader),
+            openedTaskId ?? reader.GetString(8),
             status,
             reader.GetDouble(10),
             reader.GetInt32(11),

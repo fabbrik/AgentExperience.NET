@@ -91,8 +91,8 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         "ON CONFLICT (feedback_id) DO NOTHING RETURNING feedback_id";
 
     private static readonly string InsertExposureSql =
-        $"INSERT INTO {ExposuresTable} (feedback_id, experience_id, ordinal, attributed, evidence_id) " +
-        "VALUES (@feedback_id, @experience_id, @ordinal, @attributed, @evidence_id)";
+        $"INSERT INTO {ExposuresTable} (feedback_id, experience_id, ordinal, attributed, evidence_id, rationale_sealed) " +
+        "VALUES (@feedback_id, @experience_id, @ordinal, @attributed, @evidence_id, @rationale_sealed)";
 
     /// <summary>
     /// The stored submission, read by ID alone. There is deliberately no scope predicate: the primary
@@ -105,7 +105,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         $"SELECT {SubmissionColumns} FROM {Table} WHERE feedback_id = @feedback_id";
 
     private static readonly string SelectExposuresSql =
-        $"SELECT experience_id, attributed, evidence_id FROM {ExposuresTable} " +
+        $"SELECT experience_id, attributed, evidence_id, rationale_sealed FROM {ExposuresTable} " +
         "WHERE feedback_id = @feedback_id ORDER BY ordinal";
 
     /// <summary>
@@ -143,6 +143,8 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
 
     private readonly TimeProvider _timeProvider;
 
+    private readonly ExperienceEncryption? _encryption;
+
     /// <summary>Creates a feedback store over a host-owned data source. The store never disposes it.</summary>
     /// <param name="dataSource">The Npgsql data source to open connections from.</param>
     /// <param name="timeProvider">
@@ -150,15 +152,38 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
     /// deliberately separate from the caller's <see cref="RecordedExperienceReuseFeedback.ObservedAt"/>.
     /// Defaults to <see cref="TimeProvider.System"/>.
     /// </param>
+    /// <param name="encryption">
+    /// Turns on crypto-shredding for the free-text rationale. <see langword="null"/> -- the default -- is
+    /// plaintext mode. See <see cref="ExperienceEncryption"/> and the remarks on
+    /// <see cref="RecordAsync"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
-    public PostgresExperienceReuseFeedbackStore(NpgsqlDataSource dataSource, TimeProvider? timeProvider = null)
+    public PostgresExperienceReuseFeedbackStore(
+        NpgsqlDataSource dataSource,
+        TimeProvider? timeProvider = null,
+        ExperienceEncryption? encryption = null)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         _dataSource = dataSource;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _encryption = ExperienceEncryption.Resolve(encryption);
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// <b>In encrypted mode the rationale is sealed once per exposed record</b>, under that record's own key,
+    /// in <c>reuse_feedback_exposures.rationale_sealed</c>, for every exposed record that is live in the
+    /// submission's own scope; <c>reuse_feedback.rationale</c> holds the placeholder <c>(sealed)</c>. That
+    /// reproduces plaintext mode's erasure semantics exactly: the rationale stays readable while any record it
+    /// was about survives, and is unreadable everywhere once all of them are erased. A rationale that names no
+    /// live record in the submission's scope has no key to be sealed under and is not retained at all.
+    /// </para>
+    /// <para>
+    /// A replay is compared against the rationale opened from any surviving copy. When no copy can be opened,
+    /// the rationale is the one field a replay cannot be compared on, and only its presence is compared.
+    /// </para>
+    /// </remarks>
     public async Task<ExperienceReuseFeedbackStoreResult> RecordAsync(
         AuthorizationContext authorization,
         RecordedExperienceReuseFeedback feedback,
@@ -195,11 +220,11 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
             {
                 // The ID is taken. Read inside this transaction, which is then rolled back, so the
                 // comparison can never be the thing that writes something.
-                var stored = await ReadStoredAsync(connection, transaction, feedback.FeedbackId, cancellationToken)
+                var (stored, rationaleUnrecoverable) = await ReadStoredAsync(connection, transaction, feedback.FeedbackId, cancellationToken)
                     .ConfigureAwait(false);
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
 
-                if (stored is not null && SameContent(stored, feedback))
+                if (stored is not null && SameContent(stored, feedback, rationaleUnrecoverable))
                 {
                     return new(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, stored, NoErrors);
                 }
@@ -214,20 +239,34 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
                     NoErrors);
             }
 
-            var erased = await ReadErasedExposuresAsync(connection, transaction, feedback, cancellationToken).ConfigureAwait(false);
-            if (erased.Count > 0)
+            var (erased, keys) = await ReadErasedExposuresAsync(connection, transaction, feedback, cancellationToken).ConfigureAwait(false);
+            try
             {
-                // Read and refused inside the transaction that is about to be rolled back, so a
-                // submission naming an erased record writes nothing at all -- not the submission row the
-                // insert above provisionally took, and not one exposure.
-                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                return new(ExperienceReuseFeedbackStoreOutcome.Invalid, null, erased);
-            }
+                if (erased.Count > 0)
+                {
+                    // Read and refused inside the transaction that is about to be rolled back, so a
+                    // submission naming an erased record writes nothing at all -- not the submission row the
+                    // insert above provisionally took, and not one exposure.
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    return new(ExperienceReuseFeedbackStoreOutcome.Invalid, null, erased);
+                }
 
-            for (var ordinal = 0; ordinal < feedback.Exposures.Count; ordinal++)
+                for (var ordinal = 0; ordinal < feedback.Exposures.Count; ordinal++)
+                {
+                    var exposure = feedback.Exposures[ordinal];
+                    var sealedRationale = feedback.Rationale is { } rationale && keys.TryGetValue(exposure.ExperienceId, out var key)
+                        ? key.Seal(SealedText.ExposureRationaleColumn, feedback.FeedbackId, rationale)
+                        : null;
+                    await InsertExposureAsync(connection, transaction, feedback.FeedbackId, exposure, ordinal, sealedRationale, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            finally
             {
-                await InsertExposureAsync(connection, transaction, feedback.FeedbackId, feedback.Exposures[ordinal], ordinal, cancellationToken)
-                    .ConfigureAwait(false);
+                foreach (var key in keys.Values)
+                {
+                    key.Dispose();
+                }
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -259,7 +298,10 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         parameters.Add(NullableText("evaluator_id", feedback.EvaluatorId));
         parameters.Add(NullableUuid("verification_round_id", feedback.VerificationRoundId));
         parameters.Add(NullableUuid("assessment_id", feedback.AssessmentId));
-        parameters.Add(NullableText("rationale", feedback.Rationale));
+        // Encrypted mode keeps only the placeholder here; the text is sealed per exposure (see RecordAsync).
+        parameters.Add(NullableText(
+            "rationale",
+            _encryption is not null && feedback.Rationale is not null ? SealedText.SealedPlaceholder : feedback.Rationale));
         parameters.Add(new NpgsqlParameter("evidence_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid)
         {
             Value = feedback.EvidenceIds is { Count: > 0 } ids ? ids.ToArray() : (object)DBNull.Value,
@@ -291,6 +333,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         Guid feedbackId,
         ExperienceReuseExposure exposure,
         int ordinal,
+        string? sealedRationale,
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(InsertExposureSql, connection, transaction);
@@ -301,6 +344,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         parameters.Add(new NpgsqlParameter<int>("ordinal", ordinal));
         parameters.Add(new NpgsqlParameter<bool>("attributed", exposure.Attributed));
         parameters.Add(NullableUuid("evidence_id", exposure.EvidenceId));
+        parameters.Add(NullableText("rationale_sealed", sealedRationale));
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -309,20 +353,27 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
     /// Names every exposure whose record has been erased, as a validation error per exposure. The
     /// message is content-free and the path is an index, so a refusal says which position of the
     /// caller's own submission is unrecordable without echoing anything back.
+    /// <para>
+    /// In encrypted mode a live record whose key was destroyed is erased too (its tombstone is merely not
+    /// written yet), and the keys of the live records in scope come back for sealing the rationale. The caller
+    /// disposes them.
+    /// </para>
     /// </summary>
-    private static async Task<IReadOnlyList<StoreValidationError>> ReadErasedExposuresAsync(
+    private async Task<(IReadOnlyList<StoreValidationError> Errors, Dictionary<Guid, RecordKey> Keys)> ReadErasedExposuresAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         RecordedExperienceReuseFeedback feedback,
         CancellationToken cancellationToken)
     {
+        var keys = new Dictionary<Guid, RecordKey>();
         var exposedIds = feedback.Exposures.Select(exposure => exposure.ExperienceId).Distinct().ToArray();
         if (exposedIds.Length == 0)
         {
-            return NoErrors;
+            return (NoErrors, keys);
         }
 
         var erased = new HashSet<Guid>();
+        var live = new List<Guid>();
         await using (var command = new NpgsqlCommand(SelectExposedRecordStateSql, connection, transaction))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid)
@@ -340,12 +391,58 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
                 {
                     erased.Add(reader.GetGuid(0));
                 }
+                else
+                {
+                    live.Add(reader.GetGuid(0));
+                }
+            }
+        }
+
+        if (_encryption is not null)
+        {
+            // Asked while the rows are locked, so an erasure cannot destroy a key between this answer and the
+            // exposure insert. A key is created only when there is a rationale to seal with it.
+            try
+            {
+                foreach (var experienceId in live)
+                {
+                    if (feedback.Rationale is not null)
+                    {
+                        var key = await _encryption.ForWriteAsync(experienceId, feedback.Scope, cancellationToken).ConfigureAwait(false);
+                        if (key is null)
+                        {
+                            erased.Add(experienceId);
+                        }
+                        else
+                        {
+                            keys[experienceId] = key;
+                        }
+                    }
+                    else
+                    {
+                        var lookup = await _encryption.LookupAsync(experienceId, feedback.Scope, cancellationToken).ConfigureAwait(false);
+                        lookup.Key?.Dispose();
+                        if (lookup.Destroyed)
+                        {
+                            erased.Add(experienceId);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                foreach (var key in keys.Values)
+                {
+                    key.Dispose();
+                }
+
+                throw;
             }
         }
 
         if (erased.Count == 0)
         {
-            return NoErrors;
+            return (NoErrors, keys);
         }
 
         var errors = new List<StoreValidationError>();
@@ -359,15 +456,25 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
             }
         }
 
-        return errors;
+        foreach (var key in keys.Values)
+        {
+            key.Dispose();
+        }
+
+        return (errors, []);
     }
 
     /// <summary>
     /// Reads the submission stored under this feedback ID, with its exposures in stored order. Read
     /// inside the caller's transaction, which is then rolled back, so a comparison can never be the
     /// thing that writes something.
+    /// <para>
+    /// A sealed rationale is opened from the first exposure copy whose record's key is still alive.
+    /// <c>RationaleUnrecoverable</c> is <see langword="true"/> when the stored rationale is the placeholder and
+    /// no copy can be opened -- every record it was sealed to is erased, or it named none in its scope.
+    /// </para>
     /// </summary>
-    private static async Task<RecordedExperienceReuseFeedback?> ReadStoredAsync(
+    private async Task<(RecordedExperienceReuseFeedback? Stored, bool RationaleUnrecoverable)> ReadStoredAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid feedbackId,
@@ -384,13 +491,14 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
                 // The insert said the key was taken and the read says it is not. Nothing deletes from
                 // this ledger, so this cannot happen; reporting it as no stored submission writes
                 // nothing, which is the safe answer to a database that just contradicted itself.
-                return null;
+                return (null, false);
             }
 
             stored = DecodeSubmission(reader, feedbackId);
         }
 
         var exposures = new List<ExperienceReuseExposure>();
+        var sealedCopies = new List<(Guid ExperienceId, string Sealed)>();
         await using (var command = new NpgsqlCommand(SelectExposuresSql, connection, transaction))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("feedback_id", feedbackId));
@@ -402,10 +510,31 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
                     reader.GetGuid(0),
                     reader.GetBoolean(1),
                     reader.IsDBNull(2) ? null : reader.GetGuid(2)));
+                if (!reader.IsDBNull(3))
+                {
+                    sealedCopies.Add((reader.GetGuid(0), reader.GetString(3)));
+                }
             }
         }
 
-        return stored with { Exposures = exposures };
+        stored = stored with { Exposures = exposures };
+        if (_encryption is null
+            || !string.Equals(stored.Rationale, SealedText.SealedPlaceholder, StringComparison.Ordinal))
+        {
+            return (stored, false);
+        }
+
+        foreach (var (experienceId, sealedValue) in sealedCopies)
+        {
+            var lookup = await _encryption.LookupAsync(experienceId, stored.Scope, cancellationToken).ConfigureAwait(false);
+            using var key = lookup.Key;
+            if (key is not null)
+            {
+                return (stored with { Rationale = key.Open(SealedText.ExposureRationaleColumn, feedbackId, sealedValue) }, false);
+            }
+        }
+
+        return (stored, true);
     }
 
     private static RecordedExperienceReuseFeedback DecodeSubmission(NpgsqlDataReader reader, Guid feedbackId) => new(
@@ -444,7 +573,10 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
     /// columns say. Core normalizes the exposure order before deriving ordinals, so comparing them
     /// positionally here compares record <em>sets</em>, not the order a caller happened to list them in.
     /// </summary>
-    private static bool SameContent(RecordedExperienceReuseFeedback stored, RecordedExperienceReuseFeedback submitted) =>
+    private static bool SameContent(
+        RecordedExperienceReuseFeedback stored,
+        RecordedExperienceReuseFeedback submitted,
+        bool rationaleUnrecoverable) =>
         stored.RunId == submitted.RunId
         && stored.Scope == submitted.Scope
         && stored.RunOutcome == submitted.RunOutcome
@@ -455,7 +587,9 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         && string.Equals(stored.EvaluatorId, submitted.EvaluatorId, StringComparison.Ordinal)
         && stored.VerificationRoundId == submitted.VerificationRoundId
         && stored.AssessmentId == submitted.AssessmentId
-        && string.Equals(stored.Rationale, submitted.Rationale, StringComparison.Ordinal)
+        && (rationaleUnrecoverable
+            ? submitted.Rationale is not null
+            : string.Equals(stored.Rationale, submitted.Rationale, StringComparison.Ordinal))
         && stored.EvidenceIds.SequenceEqual(submitted.EvidenceIds)
         && stored.AttributedAt == Stored(submitted.AttributedAt)
         && string.Equals(stored.Measure.Kind, submitted.Measure.Kind, StringComparison.Ordinal)

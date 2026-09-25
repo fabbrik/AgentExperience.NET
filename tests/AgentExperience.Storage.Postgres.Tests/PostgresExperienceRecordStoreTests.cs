@@ -276,9 +276,12 @@ public sealed class PostgresExperienceRecordStoreTests
     [Fact]
     public async Task Unsupported_payload_version_throws_ExperienceStoreException_on_get_and_query()
     {
+        // The subject is the plaintext payload decoder, so the row is a plaintext one in both suite modes; in
+        // encrypted mode 0016's checks refuse this corruption of a sealed row outright.
+        var store = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: ExperienceEncryption.ForcePlaintext);
         var tenant = NewTenant();
         var record = Minimal(Scope(tenant));
-        await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+        await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
         await using (var command = _fixture.OwnerDataSource.CreateCommand(
             "UPDATE agent_experience.experience_records SET payload_version = 99 WHERE experience_id = @id"))
@@ -288,9 +291,9 @@ public sealed class PostgresExperienceRecordStoreTests
         }
 
         await Assert.ThrowsAsync<ExperienceStoreException>(
-            () => _store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None));
+            () => store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None));
         await Assert.ThrowsAsync<ExperienceStoreException>(
-            () => _store.QueryAsync(Authorize(tenant), new ExperienceRecordQuery(record.Scope), CancellationToken.None));
+            () => store.QueryAsync(Authorize(tenant), new ExperienceRecordQuery(record.Scope), CancellationToken.None));
     }
 
     [Theory]
@@ -302,9 +305,12 @@ public sealed class PostgresExperienceRecordStoreTests
     [InlineData("status = 'validated', revision = revision + 1")]
     public async Task Corrupt_stored_row_throws_ExperienceStoreException_on_get_and_query(string corruption)
     {
+        // Plaintext rows in both suite modes: the subject is the plaintext decoder. Tampering with a sealed row
+        // is PostgresCryptoShreddingTests' subject.
+        var store = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: ExperienceEncryption.ForcePlaintext);
         var tenant = NewTenant();
         var record = Minimal(Scope(tenant), status: ExperienceStatus.Validated);
-        await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+        await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
         await using (var command = _fixture.OwnerDataSource.CreateCommand(
             $"UPDATE agent_experience.experience_records SET {corruption} WHERE experience_id = @id"))
@@ -314,9 +320,9 @@ public sealed class PostgresExperienceRecordStoreTests
         }
 
         var get = await Assert.ThrowsAsync<ExperienceStoreException>(
-            () => _store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None));
+            () => store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None));
         var query = await Assert.ThrowsAsync<ExperienceStoreException>(
-            () => _store.QueryAsync(Authorize(tenant), new ExperienceRecordQuery(record.Scope), CancellationToken.None));
+            () => store.QueryAsync(Authorize(tenant), new ExperienceRecordQuery(record.Scope), CancellationToken.None));
         Assert.Equal(get.GetType(), query.GetType());
     }
 
@@ -527,8 +533,10 @@ public sealed class PostgresExperienceRecordStoreTests
         // The confidence Full()'s own counters explain: (1 + 4) / (2 + 4 + 1).
         Assert.Equal(5d / 7d, reader.GetDouble(4));
         Assert.Equal(3L, reader.GetInt64(5));
-        Assert.Equal(1, reader.GetInt32(6));
-        Assert.True(reader.GetBoolean(7));
+
+        // Encrypted mode stores the sealed envelope (payload_version 2), and the attempts are not in the clear.
+        Assert.Equal(EncryptionMode.IsOn ? 2 : 1, reader.GetInt32(6));
+        Assert.Equal(!EncryptionMode.IsOn, reader.GetBoolean(7));
     }
 
     [Fact]

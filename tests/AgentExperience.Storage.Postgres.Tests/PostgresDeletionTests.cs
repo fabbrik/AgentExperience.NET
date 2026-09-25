@@ -528,6 +528,7 @@ public sealed class PostgresDeletionTests
         // nothing is committed yet.
         await using var purging = await _fixture.DataSource.OpenConnectionAsync();
         await using var transaction = await purging.BeginTransactionAsync();
+        await EncryptionMode.DeclareKeyDestructionAsync(purging, transaction);
 
         await using (var purge = new NpgsqlCommand(
             "SELECT purge_outcome FROM agent_experience.purge_experience_record(" +
@@ -582,6 +583,7 @@ public sealed class PostgresDeletionTests
         // statement below before the marker was ever consulted, and this test is about the marker.
         await using var connection = await _fixture.OwnerDataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
+        await EncryptionMode.DeclareKeyDestructionAsync(connection, transaction);
 
         await using (var purge = new NpgsqlCommand(
             "SELECT purge_outcome FROM agent_experience.purge_experience_record(" +
@@ -1397,9 +1399,15 @@ public sealed class PostgresDeletionTests
         // tombstone, so the replay comparison never sees it and nothing about it leaks back.
         var replay = await _store.CommitLifecycleEventAsync(auth, scope, lifecycleEvent, CancellationToken.None);
 
-        Assert.Equal(ExperienceStoreOutcome.Conflict, replay.Outcome);
+        // Encrypted mode never reaches the ledger at all: the erased record's key is destroyed, so the commit
+        // is refused as Deleted before any statement runs -- the owner's own answer for its own tombstone.
+        // Either way it is never Committed, and nothing about the erased record comes back.
+        Assert.Equal(EncryptionMode.IsOn ? ExperienceStoreOutcome.Deleted : ExperienceStoreOutcome.Conflict, replay.Outcome);
         Assert.Null(replay.AppliedConfidence);
-        Assert.Equal(0, replay.Revision);
+        if (!EncryptionMode.IsOn)
+        {
+            Assert.Equal(0, replay.Revision);
+        }
     }
 
     [Fact]
@@ -1769,6 +1777,7 @@ public sealed class PostgresDeletionTests
         string tenant,
         string? team)
     {
+        await EncryptionMode.DeclareKeyDestructionAsync(connection, transaction);
         await using var purge = new NpgsqlCommand(
             "SELECT purge_outcome FROM agent_experience.purge_experience_record(" +
             "@id, @tenant, 'app-1', 'project-1', @team, NULL, NULL, NULL, now())",

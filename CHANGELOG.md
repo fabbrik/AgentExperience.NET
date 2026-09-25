@@ -266,6 +266,98 @@ A host that skips all of this keeps working exactly as before, as a single-role 
   finalized, with a token, rather than citing the record's own run, which the own-run rule refuses; its call table
   is unchanged.
 
+**Story 6.4** adds crypto-shredding, an opt-in mode in which erasure reaches every copy of a record's text, and
+narrows KL-2 to the derived search data it cannot reach (see
+[Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy)).
+
+### Upgrade for crypto-shredding
+
+Plaintext mode stays the default, and a deployment that does not opt in only has to migrate:
+
+1. **Run the schema migrator as the owner.** It applies `0016_crypto_shredding`: two nullable columns, two partial
+   indexes, three `NOT VALID` checks, one trigger and the sealing function. It touches no row, and its header has
+   the `CONCURRENTLY` statements for building the indexes out of band on a large table. Migrate before deploying
+   this build: its text search reads `search_vector_sealed` in both modes, so against a schema without `0016` every
+   search fails with `42703`.
+
+To turn crypto-shredding on, then:
+
+2. **Stand up a key store outside the database's backup domain**: `EnvelopeExperienceKeyStore` over your KMS
+   (`IExperienceKeyEncryptionKey`) and a durable repository for wrapped keys (`IExperienceWrappedKeyRepository`) that
+   does not share the database's backups.
+3. **Give every PostgreSQL component the same `ExperienceEncryption`** (`services.AddAgentExperiencePostgresEncryption(keyStore)`,
+   or the new constructor parameter) and deploy. New records and ledger rows are sealed from here on.
+4. **Re-apply the application role's privileges with the same options plus `AllowSealing = true`** (the call is
+   declarative: leaving out `AllowErasure` takes erasure away), and seal the existing records with
+   `SealPlaintextRecordsAsync`, batch by batch, until `MoreRemain` is `false` for every project root. `AllowSealing`
+   is a content-rewrite power over plaintext records; take it away again afterwards.
+5. **Run `VACUUM` on `agent_experience.experience_records` and age out pre-upgrade backups.** Copies made before
+   step 4 are plaintext; ledger rows and grant reasons written before step 3 stay plaintext until their record is
+   erased.
+
+### Added
+
+- **`ExperienceEncryption`** (Storage.Postgres): with it, every free-text column erasure removes is stored as
+  AES-256-GCM ciphertext under a per-record data key. That covers the record payload together with the task ID,
+  lifecycle reasons and confidence detail, evidence detail, grant reasons, revocation reasons and grant event reasons,
+  and the reuse-feedback rationale, sealed once per exposed record. The associated data binds every value to its
+  column, row, record and all six scope fields; a value that fails its tag throws and nothing decrypted is returned.
+  `DeleteAsync` and the sweep destroy the key inside the erasure's transaction, after every database-side check and
+  before the commit: a record never looks erased while its key survives, and never looks live once its key is gone.
+  A sealed row read without a key it ever had is a configuration error, never "erased".
+- The record store, candidate source, grant store, reuse-feedback store and embedding index each gain a trailing
+  optional `ExperienceEncryption? encryption` constructor parameter (`null` is plaintext mode), and the DI
+  extensions pick up a registered `ExperienceEncryption`; `AddAgentExperiencePostgresEncryption(keyStore)` registers
+  one. The grant-store and feedback-store overloads taking a data source now register a factory rather than an
+  instance, so the encryption is picked up however the registrations are ordered.
+- **The key-custody port** (Abstractions): `IExperienceKeyStore` (`CreateKeyAsync` get-or-create, `GetKeyAsync`,
+  `DestroyKeyAsync`, scoped to one record's `ExperienceKeyReference`; a destroyed reference is destroyed for ever),
+  `ExperienceKeyLookup`, `ExperienceKeyStatus`, `ExperienceDataKey`, and for envelope encryption
+  `IExperienceKeyEncryptionKey`, `IExperienceWrappedKeyRepository`, `ExperienceWrappedKey` and
+  `ExperienceWrappedKeyEntry`.
+- **`EnvelopeExperienceKeyStore`** (Core), with `RewrapAsync` for KEK rotation (bounded, resumable, and never writing
+  back a key destroyed meanwhile), and the development-only reference implementations
+  `LocalExperienceKeyEncryptionKey` and `InMemoryExperienceWrappedKeyRepository`. No new package reference anywhere:
+  BCL `AesGcm` only.
+- **`PostgresExperienceRecordStore.SealPlaintextRecordsAsync`** and `ExperienceSealingResult`: the upgrade job. It
+  seals existing plaintext records oldest first, in bounded batches, `Exact` or `Subtree`, authorized like a sweep.
+  Each record is sealed in its own transaction, and the seal is opened and compared before it is written. Nothing
+  the record answers changes: its revision, ranking, embedding and history stay as they were.
+  `ExperienceApplicationRoleOptions.AllowSealing` grants `EXECUTE` on `0016`'s `seal_experience_record`, and the
+  privilege manifest and its verification cover it. It is the `record.seal` telemetry operation, carrying
+  `agentexperience.sealed_count` and `scope_match` only.
+- `0016_crypto_shredding`: `search_vector_sealed` (the full-text vector of a sealed record, from exactly `0003`'s
+  expression, so a sealed record ranks as its plaintext twin), `reuse_feedback_exposures.rationale_sealed`, the
+  sealed-shape checks, a trigger clearing the sealed vector on erasure, and the sealing function.
+
+### Behaviour changes
+
+- **Text in the sealed format is refused on write, in both modes.** A lifecycle reason, confidence detail, grant or
+  revocation reason, or feedback rationale beginning with `aexp-sealed:v1:` is `Invalid`, and so is a rationale that
+  is exactly `(sealed)`: the store opens a value with that prefix as ciphertext.
+- **A sealed record cannot be erased without its key.** `0016`'s guard refuses to tombstone a `payload_version = 2`
+  row unless the erasing transaction declares that it destroys the key, so a process left without an
+  `ExperienceEncryption` fails its delete (`42501`) instead of reporting `Deleted` while the key survives.
+
+### Known limits
+
+- **KL-2 is narrowed, not closed.** In encrypted mode a `pg_dump`, a base backup, a replica, the WAL and the dead
+  heap tuple hold only ciphertext that nothing opens once the record is erased. What remains in every copy is the
+  derived search data PostgreSQL reads in the clear: the full-text vector (task ID, summary and lesson as lexemes
+  with positions) and the embedding with its content hash. So do the identifiers and metadata that are never
+  sealed, and anything written before the switch. Plaintext mode is unchanged, and the property is only as good as
+  a key store kept outside the database's backups, whose own backup retention bounds the erasure.
+
+### Tests
+
+- The store and vector suites now also run unmodified in encrypted mode (`AGENTEXPERIENCE_TEST_ENCRYPTION=on`), as a
+  new CI leg. Existing tests whose subject is the stored representation were made mode-aware, or pinned to plaintext
+  where their subject is a plaintext row (a database from before `0016`, the plaintext decoder), and the tests that
+  purge by hand now declare the key destruction `0016`'s guard asks for; none is skipped.
+- `PostgresCryptoShreddingTests` proves the property with a real `pg_dump` and a `pageinspect` read of the dead
+  tuple, both failure orders of key destruction, tampering, values moved between records, rows, columns and
+  scopes, KEK rotation, the ledgers, and the upgrade job. `EnvelopeExperienceKeyStoreTests` covers the key store.
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six

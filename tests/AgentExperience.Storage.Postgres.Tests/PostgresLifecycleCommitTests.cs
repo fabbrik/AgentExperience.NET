@@ -368,11 +368,12 @@ public sealed class PostgresLifecycleCommitTests
     {
         var tenant = NewTenant();
         var auth = Authorize(tenant);
-        // The trigger below fires only for this task id, so no other test in the collection is affected.
+        // The trigger below fires only for this record, so no other test in the collection is affected. It is
+        // keyed on the ID rather than the task ID, which encrypted mode stores sealed.
         var record = Minimal(Scope(tenant)) with { TaskId = "fail-mid-commit" };
         await _store.CreateAsync(auth, record, CancellationToken.None);
 
-        await ExecuteAsync("""
+        await ExecuteAsync($$"""
             CREATE OR REPLACE FUNCTION agent_experience.fail_mid_commit() RETURNS trigger AS $body$
             BEGIN
                 RAISE EXCEPTION 'deliberate failure between the event insert and the projection update';
@@ -381,7 +382,7 @@ public sealed class PostgresLifecycleCommitTests
 
             CREATE TRIGGER fail_mid_commit
                 BEFORE UPDATE ON agent_experience.experience_records
-                FOR EACH ROW WHEN (NEW.task_id = 'fail-mid-commit')
+                FOR EACH ROW WHEN (NEW.experience_id = '{{record.ExperienceId}}'::uuid)
                 EXECUTE FUNCTION agent_experience.fail_mid_commit();
             """);
 

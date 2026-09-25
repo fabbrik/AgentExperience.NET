@@ -73,7 +73,7 @@ public sealed class VectorsFixture : IAsyncLifetime
         await ExperienceVectorSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
         await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
             _owner,
-            new ExperienceApplicationRoleOptions(ApplicationRoleName) { AllowErasure = true, AllowAccessLogPurge = true },
+            new ExperienceApplicationRoleOptions(ApplicationRoleName) { AllowErasure = true, AllowAccessLogPurge = true, AllowSealing = true },
             CancellationToken.None);
     }
 

@@ -277,6 +277,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
 
         await using var purging = await DataSource.OpenConnectionAsync();
         await using var transaction = await purging.BeginTransactionAsync();
+        await EncryptionMode.DeclareKeyDestructionAsync(purging, transaction);
 
         await using (var purge = new NpgsqlCommand(
             "SELECT purge_outcome FROM agent_experience.purge_experience_record(" +
