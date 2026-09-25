@@ -77,7 +77,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     public sealed class ExperienceContextProvider : Microsoft.Agents.AI.AIContextProvider
     {
         public const string HistoricalReferenceKey = "AgentExperience.HistoricalReference";
+        public const string SessionStateKey = "AgentExperience.InjectionSession";
         public ExperienceContextProvider(AgentExperience.Core.Retrieval.ExperienceRetrievalService retrieval, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions options) { }
+        public override System.Collections.Generic.IReadOnlyList<string> StateKeys { get; }
+        protected override System.Threading.Tasks.ValueTask InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public sealed class ExperienceInjectionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext>
@@ -116,6 +119,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; init; }
         public System.TimeProvider TimeProvider { get; init; }
     }
     public sealed class ExperienceInjectionResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>
@@ -131,9 +135,31 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.InjectionOutcome Outcome { get; init; }
         public int PayloadBytes { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> RetractedExperienceIds { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionUsage? Session { get; init; }
         public bool TextOnly { get; }
         public bool Truncated { get; init; }
         public AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback { get; init; }
+    }
+    public sealed class ExperienceInjectionSessionLimits : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits>
+    {
+        public const int DefaultMaxBytes = 65536;
+        public const int DefaultMaxRecords = 32;
+        public const int MaxTrackedRecords = 200;
+        public ExperienceInjectionSessionLimits(int MaxRecords, int MaxBytes) { }
+        public int MaxBytes { get; init; }
+        public int MaxRecords { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits Default { get; }
+    }
+    public sealed class ExperienceInjectionSessionUsage : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionUsage>
+    {
+        public ExperienceInjectionSessionUsage(int RecordsUsed, long BytesUsed, int MaxRecords, int MaxBytes, int TrackedRecords) { }
+        public long BytesUsed { get; init; }
+        public int MaxBytes { get; init; }
+        public int MaxRecords { get; init; }
+        public bool RecordsExhausted { get; }
+        public int RecordsUsed { get; init; }
+        public int TrackedRecords { get; init; }
     }
     public sealed class HistoricalReferencePayload : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload>
     {
@@ -142,6 +168,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds { get; init; }
         public bool IsEmpty { get; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> RetractedExperienceIds { get; init; }
         public string Text { get; init; }
     }
     public static class HistoricalReferenceWriter
@@ -167,7 +194,12 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string NoToolsUsed = "the verified run\'s final attempt completed without calling any tool.";
         public const string NoValue = "(none recorded)";
         public const string NotANumber = "(unavailable)";
+        public const string RetractionBegin = "--- WITHDRAWN ---";
+        public const string RetractionEnd = "--- END WITHDRAWN ---";
+        public const string WithdrawnNotice = ", delivered earlier in this conversation, is withdrawn and is no longer valid ref" +
+            "erence material.";
         public static int BlockOverheadBytes { get; }
+        public static int RetractionBlockBytes { get; }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments) { }
     }
@@ -192,6 +224,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         HostDenied = 2,
         OverRecordLimit = 3,
         OverByteBudget = 4,
+        AlreadyDelivered = 5,
+        OverSessionBudget = 6,
     }
     public enum InjectionOutcome
     {
@@ -202,6 +236,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         RetrievalDenied = 4,
         RetrievalFailed = 5,
         Failed = 6,
+        Retracted = 7,
+        SessionBudgetExhausted = 8,
     }
     public sealed class OmittedExperience : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience>
     {

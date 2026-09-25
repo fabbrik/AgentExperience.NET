@@ -28,7 +28,7 @@ preview.
 | KL-2 | **Erasure reaches only this database's live rows.** Backups, replicas, WAL, exported telemetry and external artifacts are out of reach, and the erased text survives in dead heap tuples until `VACUUM` reclaims them | [Store: the honesty statement, and the limits](src/AgentExperience.Storage.Postgres/README.md#the-honesty-statement-and-the-limits) |
 | KL-8 | **An approach shows argument values only for scalars the host allowlisted, and never for a borrowed record.** An object- or array-valued argument renders as a marker, and a record read through a sharing grant shows none — its approach is tool names only under `LessonAndApproach` and withheld under `LessonOnly`; a host whose lessons turn on either needs its own reflector to say so in the lesson | [Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values) |
 | KL-11 | **Confidence independence trusts host-supplied identifiers.** Nothing can check that a `RunId`, `VerificationRoundId` or `AssessmentId` is real, so a host that lets agent output populate them hands the agent a fresh independence key per call. The same trust binds an evaluation to its run: the aggregator records the run ID it is given, and evidence carries none | [Updating confidence from evidence](#updating-confidence-from-evidence); [Recording what reuse was worth](#recording-what-reuse-was-worth); [Verifying a run](#verifying-a-run-and-binding-its-evaluation) |
-| KL-12 | **Injected blocks accumulate in a reused session, and a delivered block cannot be retracted.** `MaxBytes` bounds one block, not a conversation; revocation affects only injections that have not happened yet | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf) |
+| KL-12 | **A withdrawn record's text stays in a reused session, and the withdrawal is advisory.** Session tracking (on by default) bounds what a session is given, never repeats a revision, and tells the model when a record it was given is revoked, superseded, erased or un-granted — but the earlier block stays in the history, verbatim, and a model that read it cannot be made to forget it. The provider cannot strip its own earlier blocks, and the tracking is only as trustworthy as the host's session storage | [Injecting Historical Reference into MAF](#injecting-historical-reference-into-maf); [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices) |
 | KL-13 | **The supported matrix stops short of three things.** `Microsoft.Agents.AI` is still pinned exactly, at 1.22.0, so a host whose graph needs a newer MAF gets NuGet's NU1608 warning about the adapter (an error under warnings-as-errors), or NU1107 if the newer MAF arrives through another package; CI's MAF probe reports when the newest MAF stops passing. `net8.0` is not targeted, because its `System.Text.Json` lacks APIs Core and the store compile against. PostgreSQL 14 is not supported, because migration `0005` needs 15. Everything else is covered: `net9.0` and `net10.0`, PostgreSQL 15 to 18, and every other dependency a floor that CI tests at the floor and at the newest release in its major (the same minor for `Pgvector`), so a newer `Microsoft.Extensions.*`, `Npgsql`, DbUp or `Pgvector` no longer conflicts | [Compatibility evidence](docs/compatibility-evidence.md#supported-matrix) |
 
 Resolved since `0.1.0-preview.2` (unreleased):
@@ -993,18 +993,24 @@ a guarded tool, and the approval boundary denies the call anyway.
 | A record revoked, re-scoped, re-scored below the confidence floor, aged past `MaxAge`, environment-mismatched, or unreadable since retrieval | It is absent from the block; the omission is recorded with the rule that dropped it and the stored record is untouched |
 | The host's `DecideInjection` denies a record | Absent whatever its stored confidence or status; the denial is recorded and nothing is written |
 | More records, or more bytes, than the limits allow | Whole records are dropped — never cut — and each omission is recorded as `OverRecordLimit` or `OverByteBudget` |
+| A reused session: a revision it already holds, a spent session budget, or a record it was given that has since been withdrawn | Not injected again (`AlreadyDelivered`); nothing more once the budget is spent (`OverSessionBudget`, `SessionBudgetExhausted`); a fixed withdrawal notice ahead of any new record (`Retracted`) |
 
 The final eligibility check runs immediately before the payload is built and re-applies **every rule retrieval
 applies** — status, the reuse-confidence floor, `MaxAge`, and the request's required environment attributes — to the
 record as it stands now, so it catches what changed since retrieval. What it cannot do is reach backwards: once a
-block has been handed to a model, a later revocation cannot retract it, and the provider says so rather than
+block has been handed to a model, a later revocation cannot take it back, and the provider says so rather than
 implying otherwise.
 
-**Injected blocks accumulate in a reused session.** A block injected on one turn can stay in the `AgentSession`'s
-conversation, so a later turn shows the model the fresh block *and* the earlier ones. MAF filters the provider's
-input to external messages, so it cannot reliably see or strip its own earlier blocks, and it does not pretend to.
-That means `MaxBytes` bounds one injected block rather than a conversation, and revocation only affects injections
-that have not happened yet. Use a fresh session per task where either matters.
+**A reused session is tracked** (story 6.5, on by default). A block injected on one turn stays in the
+`AgentSession`'s history, so a later turn shows the model the fresh block *and* the earlier ones. The provider keeps
+a small account in the session's state — record IDs, revisions and counters, never content — and uses it to bound
+what one session is given across invocations (`ExperienceInjectionOptions.SessionLimits`, default 32 records and
+64 KB; `SessionBudgetExhausted`), to never inject a record revision the session already holds (`AlreadyDelivered`),
+and to re-check every record it holds on every invocation: one that has since been revoked, superseded, erased, or
+has lost its grant is named in a fixed withdrawal notice ahead of any new record (`Retracted`). The notice carries
+the ID and nothing else, and record text cannot forge one. It is advisory: the earlier block stays in the history,
+and a model that read it cannot be made to forget it (KL-12). Use a fresh session per task where that matters, and
+set `SessionLimits = null` if your chat history drops injected blocks.
 
 See the [adapter README](src/AgentExperience.MicrosoftAgentFramework/README.md#injecting-historical-reference) for
 the payload shape, the options, and the failure behaviour.

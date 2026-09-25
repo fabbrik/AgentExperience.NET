@@ -502,7 +502,8 @@ a budget too small for the block's own header and footer could never fit a recor
 
 **The check cannot reach backwards.** It runs immediately before the payload is built, so a record revoked,
 re-scoped, re-scored, or aged out between retrieval and injection is dropped. Once the block has been handed to a
-model, a later revocation cannot retract it — it only affects injections that have not happened yet.
+model, a later revocation cannot take it back; with session tracking on, the session's next invocation tells the
+model it is withdrawn (see [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices)).
 
 **Records shared by a grant are injected like any other.** A record another scope owns can be retrieved and injected
 when an active [sharing grant](../AgentExperience.Storage.Postgres/README.md#sharing-grants) permits the request's
@@ -564,33 +565,111 @@ Retrieval's own search is audited as well, by the channels themselves rather tha
 record read back in full, so a search that returns a borrowed record has already disclosed it, whether or not it
 survives to injection.
 
-### Injected blocks accumulate across a reused session
+### Reused sessions: a budget, no repeats, and withdrawal notices
 
-A block injected on one turn can stay in an `AgentSession`'s conversation, so a later turn of the same session shows
-the model the fresh block **and** the earlier ones, verbatim. MAF filters this provider's input to *external*
-messages, so the provider cannot reliably see — let alone strip — its own earlier blocks, and it does not pretend
-to. Two consequences to plan for:
+MAF's `ChatClientAgent` keeps an invocation's request messages — this provider's block included — in the session's
+chat history, so every later turn of that session shows the model every earlier block too. Since story 6.5 the
+provider tracks what it gave each session (KL-12). **It is on by default** (`SessionLimits =
+ExperienceInjectionSessionLimits.Default`), and with a session supplied it does three things:
 
-- **`MaxBytes` bounds one injected block, not a conversation.** Ten turns can put ten blocks in front of the model.
-- **Revocation only affects injections that have not happened yet.** A record revoked between turns is correctly
-  omitted from the new block and still present, verbatim, in the earlier one.
+| | What happens | Reported as |
+| --- | --- | --- |
+| **Session budget** | A session is given at most `SessionLimits.MaxRecords` record deliveries (default 32) and `SessionLimits.MaxBytes` of UTF-8 (default 64 KB) across all its invocations. A record costs one delivery each time it is injected; a block costs its full size. Once the budget cannot take another record, retrieval is not run at all | `SessionBudgetExhausted`; a record the byte budget drops mid-block is `OverSessionBudget`; `result.Session` carries the counts |
+| **No repeats** | A record revision the session already holds is not injected again, and takes no slot, so the next-best record gets it. A strictly newer revision of the same record *is* injected again: it may say something new. The unit is the record's `Revision`, the store's own concurrency counter, which every lifecycle change moves | `AlreadyDelivered` |
+| **Withdrawal** | Every record the session holds is re-checked on every invocation, in one `GetManyAsync` call declared `ScopeCheck` (nothing is handed over, so no access row). One that is no longer readable in scope (erased, deleted, its grant revoked or expired), no longer in an eligible status (revoked, superseded, quarantined, contested), below the confidence floor, past `MaxAge`, or read through a grant that now withholds the approach the session was shown, is **withdrawn**: the block opens with a notice for it, once | `Retracted` when the block carries notices only; `result.RetractedExperienceIds`; span attribute `agentexperience.retracted_count` |
 
-Where either matters, **use a fresh session per task**, or a `ChatHistoryProvider` that drops earlier injected blocks
-(they are findable by `AdditionalProperties["AgentExperience.HistoricalReference"]`). `ExperienceInjectionTests`
-pins the behaviour rather than describing it.
+A notice is fixed text around the record's ID, inside the block's usual framing, and nothing else — no reason, no
+field of the record, no scope:
+
+```text
+--- WITHDRAWN ---
+Withdrawn: experience 00000000-0000-0000-0000-000000000001, delivered earlier in this conversation, is withdrawn and is no longer valid reference material.
+--- END WITHDRAWN ---
+```
+
+Record text cannot forge one structurally: `--- WITHDRAWN`, `--- END WITHDRAWN` and the notice's wording are block
+markers, replaced wherever they appear — across any run of whitespace or line break, with any dash look-alike, and
+after invisible format characters (zero-width spaces, bidirectional controls) are removed — and `Withdrawn:` is a
+field label, replaced at the start of a line even after leading whitespace, with every Unicode line separator
+treated as a line break. The same guard now covers every other marker and label. It is still hygiene: a lesson
+spelled with look-alike letters from another script can *read* like a notice to a model. Notices come **before any
+record** and take the block's `MaxBytes` first; a notice that does not fit stays owed for the next invocation, and
+**no new record is written while one is owed**. The session budget charges notices but never refuses one, because
+withdrawal is the safety property. So a session can be charged more than `SessionLimits.MaxBytes`, by notices alone:
+each delivery is withdrawn at most once, a record withdrawn and delivered again costs another delivery, and
+deliveries are capped by `SessionLimits.MaxRecords`, so the notices' total is bounded by that many notice lines plus
+one block's framing per invocation that carried one. With tracking on, `Limits.MaxBytes` must be at least
+`HistoricalReferenceWriter.RetractionBlockBytes`, so a notice always fits; the constructor refuses less.
+
+**What withdraws, and what does not.** A record is re-checked in the *current* request's authorization and scope,
+because that is who the conversation is reading as now. So a session whose resolver moves it to a scope that cannot
+read an earlier record withdraws that record, as it would for a revoked one — the account keeps no scope, and a
+notice the record did not need costs a line where a missing one costs the withdrawal. The same goes for a re-read the
+store answers with a refusal or with no row. A re-read that *throws* withdraws nothing (it says nothing about the
+record); see below. The request's required environment attributes and the host's `DecideInjection` do not withdraw:
+they are about this invocation, not the record. A strictly newer revision of a delivered record is injected as a new
+block and the older one is not withdrawn: both are in the history, the newer later, and a revision that *changes
+the record's standing* (revoked, superseded, quarantined) is withdrawn instead.
+
+**What it cannot do.** The earlier block is still in the history, verbatim, and a model that read it cannot be made
+to forget it: a notice is advisory, like every other word in the block (KL-12 in the root README). The provider
+cannot see or strip its own earlier blocks — MAF filters its input to external messages — and does not pretend to.
+Where that matters, use a fresh session per task, or a `ChatHistoryProvider` that drops earlier injected blocks
+(findable by `AdditionalProperties["AgentExperience.HistoricalReference"]`) — and then set `SessionLimits = null`,
+because deduplication assumes the session keeps what was injected. The same applies to a chat reducer on MAF's
+in-memory history that trims old messages: a trimmed block is one the model no longer has, and deduplication would
+hide it.
+
+**Where the account lives, and when it is charged.** In the session's `StateBag`, under
+`ExperienceContextProvider.SessionStateKey` (`"AgentExperience.InjectionSession"`): counters, and record IDs with
+their revisions — never content, never a scope. It is written on the first invocation that resolves a request, and
+travels with MAF's `SerializeSessionAsync`/`DeserializeSessionAsync` like any other session state. A block's delivery
+is staged when it is handed to MAF and charged when MAF reports the invocation succeeded; a failed invocation —
+streaming or not — is not charged, its records are delivered again, and its notices stay owed. A stage nothing
+settled (a stream abandoned before MAF reported, or another invocation's that is still running) is charged at the
+session's next invocation — when unsure, the session is charged — but not trusted as delivered: its records are
+tracked, so they are still withdrawn if they stop standing, but are not deduplicated against and may be delivered
+again, and its notices stay owed. MAF keeps no history for an abandoned stream, so either shortcut would lose
+something.
+
+**Failure is closed.** The account is host-held data, parsed strictly: a value that does not validate (an unknown
+version, a negative counter, more than 200 entries, a duplicate or empty ID), and a value some in-process code set
+under the key as another type, is neither trusted nor overwritten — the invocation injects nothing and reports
+`Failed` until the host removes the key. A withdrawal re-check that throws, or does not finish inside
+`EligibilityCheckTimeout`, also injects nothing: a new record is not shown while the provider cannot tell whether an
+earlier one still stands, so a store that keeps failing for one held record keeps the session's injection off until
+it recovers or the key is removed. A re-read that throws never withdraws anything by itself. Removing the key resets
+the session's budget and forgets what it owes, so the account is only as trustworthy as your session storage. Two
+invocations running concurrently on one session race on it, as they do on MAF's own history; the race is resolved
+toward charging and toward sending a notice again, never toward losing one.
+
+**Access rows.** The withdrawal re-check is a `ScopeCheck` and writes none. The candidate re-read is still a
+delivery, as before, so — like a record the byte budget or `DecideInjection` then drops — a borrowed record that
+turns out to be a revision the session already holds, or that is withdrawn in the same invocation, or whose
+invocation then fails, has an access row: the row records that the store handed it over, which it did.
+
+With no session, nothing is tracked. `SessionLimits = null` turns tracking off: no state is written and the block,
+the omissions and the outcomes are what they were before (the provider still declares
+`SessionStateKey` as its `StateKeys` entry, and `InvokedCoreAsync` does nothing). `ExperienceInjectionTests` pins
+that; `SessionInjectionTests` pins everything above.
 
 ### Failure behaviour
 
 The provider **never throws into an invocation**. A throwing resolver, a retrieval timeout, a retrieval or store
-failure, an eligibility check that overran its bound, and a throwing host callback all yield no injected context and
+failure, an eligibility check that overran its bound, a session state that does not validate or cannot be written, a
+withdrawal re-check that failed, and a throwing host callback all yield no injected context and
 a reported `ExperienceInjectionResult`; the agent runs normally with nothing injected and nothing fabricated. The
 one exception is cancellation of the caller's own token, which propagates unwrapped against that same token — that
 is the invocation ending, not a failure inside the provider, and a half-checked set is never injected in its place.
+One addition with session tracking: a retrieval that fails, times out or is denied does not stop the withdrawal
+re-check, so withdrawal notices the session is owed are still delivered (outcome `Retracted`, with the retrieval's
+`Failure` still on the result).
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.Messages` may be empty — read it with `LastOrDefault`, never `Last()`. |
 | `Limits` | 8 records, 16 KB, 2 s | The record and byte bounds (both drop whole records) and the bound on the final eligibility re-check. |
+| `SessionLimits` | 32 records, 64 KB (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed. |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
@@ -600,7 +679,9 @@ reasons, and a byte count, so it is safe to log. It also carries the retrieval's
 (candidates an eligibility check removed before ranking), `Truncated` (the search hit its candidate ceiling, so a
 better record may never have been considered), `EnvironmentUnrestricted`, and `VectorFallback`/`TextOnly` (the
 vector channel contributed nothing, and why) — so a host auditing injection can tell a clean match from a capped
-search or a degraded channel.
+search or a degraded channel. With session tracking, `RetractedExperienceIds` names the records this block
+withdrew and `Session` carries the session's counts (`RecordsUsed`, `BytesUsed`, `TrackedRecords` and the limits),
+counting this invocation's block as though it succeeds.
 
 ### Feeding the result back
 

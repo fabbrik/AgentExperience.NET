@@ -124,6 +124,69 @@ A host that skips all of this keeps working exactly as before, as a single-role 
 - `RELEASING.md` step 3 runs the container suites on every supported major, and step 6 runs the floating-dependency
   probe as a release blocker.
 
+**Story 6.5** tracks what injection gives a reused MAF session, and narrows KL-12 to what tracking cannot do (see
+[Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices)).
+
+### Behaviour change: session tracking is on by default
+
+- **A reused `AgentSession` no longer gets the same record twice, and its injection is bounded.** With a session
+  supplied, `ExperienceContextProvider` keeps an account in the session's `StateBag` under
+  `ExperienceContextProvider.SessionStateKey` (`"AgentExperience.InjectionSession"`): record IDs, revisions and
+  counters, never content. On by default, because KL-12 is a safety limit and MAF's `ChatClientAgent` keeps every
+  injected block in the session's history: a host that reuses sessions gets fewer duplicate bytes, a bound, and
+  withdrawal notices. A host that uses a fresh session per task sees no difference in what is injected; it still
+  gets the state key written, and the `Limits.MaxBytes` floor below.
+  - A record revision the session already holds is omitted as `AlreadyDelivered` and takes no slot; a strictly newer
+    revision is injected again.
+  - A session is given at most 32 record deliveries and 64 KB of Historical Reference across its invocations
+    (`ExperienceInjectionOptions.SessionLimits`). When that cannot take another record, retrieval is not run and the
+    outcome is `SessionBudgetExhausted`; a record the byte budget drops is `OverSessionBudget`.
+  - A delivery is charged only when MAF reports the invocation succeeded. A failed invocation's records are
+    delivered again. A stage nothing settled (an abandoned stream) is charged at the next invocation, but its
+    records may be delivered again and its notices stay owed, because MAF kept no history for it.
+- **Who should turn it off:** a host whose chat history drops injected blocks (for example a `ChatHistoryProvider`
+  written to follow the old advice for KL-12, or a chat reducer that trims old messages) should set
+  `SessionLimits = null`, or deduplication hides a record the model no longer sees. `null` writes no state and
+  restores the previous blocks, omissions and outcomes exactly.
+- **A session whose resolver changes scope withdraws what the new scope cannot read.** Held records are re-checked in
+  the current request's authorization and scope, and the account keeps no scope.
+- **A smaller `Limits.MaxBytes` is refused while tracking is on.** It must be at least
+  `HistoricalReferenceWriter.RetractionBlockBytes`, so a withdrawal notice always fits; the provider's constructor
+  throws `ArgumentException` otherwise.
+- **A session state that does not validate injects nothing.** The invocation reports `Failed` and leaves the value
+  as it is, until the host removes the key. So does a withdrawal re-check that throws or times out, until it
+  succeeds.
+
+### Added
+
+- **Withdrawal notices.** Every record a session holds is re-checked on every invocation, in one `GetManyAsync` call
+  declared `ScopeCheck`, so no access row is written for it. One that is no longer readable in scope (erased, deleted,
+  grant revoked or expired), no longer in an eligible status (revoked, superseded, quarantined, contested), below the
+  confidence floor, past `MaxAge`, or read through a grant that now withholds the approach the session was shown gets
+  a fixed notice, once, ahead of any new record: `Withdrawn: experience <id>, delivered earlier in this conversation,
+  is withdrawn and is no longer valid reference material.` inside a `--- WITHDRAWN ---` section. It carries no reason
+  and no content. Record text cannot forge one structurally: the section markers and the wording are block markers
+  and `Withdrawn:` is a field label. Notices take the block budget first, no record is written while one is still
+  owed, and the session budget never refuses one. A re-check that throws injects nothing and withdraws nothing; one
+  the store answers with a refusal or no row withdraws.
+- **Marker and label matching is looser for every field** (all record text, not only notices). A marker now matches
+  across any run of whitespace or line break and with dash look-alikes, invisible format characters (zero-width
+  spaces, bidirectional controls) are removed from stored text, every Unicode line separator is a line break, and a
+  label matches after leading whitespace. Record text without such characters renders byte for byte as before.
+- `ExperienceInjectionSessionLimits`, `ExperienceInjectionOptions.SessionLimits`, `ExperienceInjectionSessionUsage`,
+  `ExperienceInjectionResult.RetractedExperienceIds` and `.Session`, `HistoricalReferencePayload.RetractedExperienceIds`,
+  `InjectionOutcome.Retracted` and `.SessionBudgetExhausted`, `InjectionOmissionReason.AlreadyDelivered` and
+  `.OverSessionBudget`, `ExperienceContextProvider.SessionStateKey` and its `StateKeys` and `InvokedCoreAsync`
+  overrides, `HistoricalReferenceWriter.RetractionBegin`, `.RetractionEnd`, `.WithdrawnNotice` and
+  `.RetractionBlockBytes`, and the span attribute `agentexperience.retracted_count` (written only when not zero).
+
+### Known limits
+
+- **KL-12 is narrowed, not closed.** What remains: the earlier block stays in the session's history, verbatim, and a
+  model that already read it cannot be made to forget it, so a notice is advisory. The provider cannot strip its own
+  earlier blocks, and the tracking is only as trustworthy as the host's session storage (removing the key resets it;
+  concurrent invocations on one session race on it).
+
 ## 0.1.0-preview.2
 
 This preview resolves ten known limits: KL-1, KL-3, KL-5, KL-6, KL-7, KL-9, KL-10, KL-14, KL-15 and KL-16. The six
