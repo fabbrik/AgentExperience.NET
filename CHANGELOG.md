@@ -56,6 +56,13 @@ A host that skips all of this keeps working exactly as before, as a single-role 
     migration is needed.
   - A malformed allowlist is refused when `ExperienceContextProvider` is constructed, and the provider keeps a copy.
 
+### Release process
+
+- **Releases are published by `.github/workflows/release.yml`, with NuGet Trusted Publishing.** Pushing a `v*` tag
+  re-runs the release checks on the tagged commit, which must be on `main` and match `Directory.Build.props`. After
+  a reviewer approves the `nuget-release` environment, the workflow pushes the verified packages with a short-lived
+  OIDC-issued key and creates the GitHub release. No API key is stored. See `RELEASING.md` step 10.
+
 ### Fixed
 
 - **The store README said the migrator never needs a superuser.** A non-superuser migrating role has always failed

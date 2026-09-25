@@ -4,9 +4,12 @@ This is the release procedure and the release verification checks, **in the orde
 command you can paste into an interactive shell; each prints an explicit OK or FAILED line rather than leaving a
 judgement to whoever is running it, and each multi-line check runs in a `( ... )` subshell so a failure never closes
 your terminal. Automation
-builds, tests, packs, and verifies on every push (`.github/workflows/ci.yml`), but **nothing publishes a package
-automatically**: step 10 is a maintainer's manual action, and a release test fails if any workflow gains a publish
-step, a NuGet key, or a write permission.
+builds, tests, packs, and verifies on every push (`.github/workflows/ci.yml`). **Publishing takes two maintainer
+actions**: pushing a version tag, and approving the deployment it starts (step 10). Only
+`.github/workflows/release.yml` can publish. It re-runs these checks on the tagged commit, and pushes to nuget.org
+with a short-lived key from NuGet Trusted Publishing, so no NuGet API key is stored in the repository or its secrets.
+A release test holds that workflow to its constraints, and fails if any other workflow gains a publish step, a NuGet
+key, or a write permission.
 
 ## What a release is today
 
@@ -111,7 +114,7 @@ dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configurat
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~MigratorLogSilenceTests"
 
 # Release gates: the public API baseline of all five assemblies, the compatibility proof's agreement with the
-# shipping pins, the security-suite map, and the no-publish workflow guard.
+# shipping pins, the security-suite map, and the workflow guard (only release.yml publishes, as step 10 describes).
 dotnet test tests/AgentExperience.Release.Tests --no-build --configuration Release
 
 # A failing baseline leaves *.received.txt behind (gitignored, so look for it directly); there must be none,
@@ -230,17 +233,77 @@ then, the version must say preview:
   fi )
 ```
 
-Before moving on, record the commit steps 1–9 verified; step 10 refuses to publish anything else:
+Before moving on, record the commit steps 1–9 verified; step 10 refuses to tag anything else:
 
 ```bash
 verified="$(git rev-parse HEAD)"; echo "Verified commit: $verified"
 ```
 
-### 10. Publishing (manual, maintainer only)
+### 10. Tag and approve (maintainer only)
 
-Only after steps 1–9 have passed on the exact commit being released, in the same shell that recorded `$verified`.
-Packages go first and the tag second, so a failed push never leaves a tag pointing at a release that does not exist;
-`--skip-duplicate` makes a retried push safe after a partial failure.
+Only after steps 1–9 have passed on the exact commit being released, in the same shell that recorded `$verified`,
+and only once that commit is on `main`. Tag it and push the tag:
+
+```bash
+( version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+  git fetch origin main
+  if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
+    echo "FAILED: HEAD is not the commit steps 1-9 verified ($verified); re-run the checks"; false
+  elif ! git merge-base --is-ancestor "$verified" origin/main; then
+    echo "FAILED: $verified is not on origin/main; merge it first"; false
+  else
+    git tag -a "v$version" -m "AgentExperience.NET $version (preview)" "$verified" \
+      && git push origin "v$version" \
+      && echo "Tagged v$version: now approve the nuget-release deployment" || { echo "FAILED: see above"; false; }
+  fi )
+```
+
+The tag starts `.github/workflows/release.yml`. Its `verify` job first refuses a tag that is not `v` plus the version
+in `Directory.Build.props`, and a commit that is not reachable from `main`. It then re-runs, on the tagged commit,
+the pinned SDK (step 1), the locked restore and release build (step 2), the full test suite (step 3), pack and
+package verification (step 7), and the production-readiness gate (step 9). It builds the release notes from this
+version's `CHANGELOG.md` section, and fails if there is none. Last, it uploads the packages it verified.
+
+Then **approve the deployment**. Open the run under the repository's **Actions** tab, choose **Review deployments**,
+select `nuget-release`, and approve. The `publish` job then:
+
+1. downloads exactly the files `verify` uploaded (it does not check out or build anything);
+2. exchanges the job's GitHub OIDC token for a short-lived nuget.org key through `NuGet/login`;
+3. runs `dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate`,
+   which uploads each `.snupkg` alongside its `.nupkg`;
+4. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
+   version's `CHANGELOG.md` section and the Known limits table as its notes. A preview's release notes say what it
+   does not promise.
+
+If `publish` fails part-way, re-run the failed job from the Actions tab (it needs approving again): `--skip-duplicate`
+skips the packages nuget.org already has, and an existing GitHub release is left as it is. If `verify` fails,
+nothing was published: fix the cause on `main`, delete the tag (`git push origin :refs/tags/vX` and `git tag -d vX`),
+and tag again. A version pushed by mistake cannot be deleted from nuget.org — **unlist** it (and, if it is harmful,
+mark it deprecated) on its nuget.org page, then publish the next preview.
+
+#### One-time setup
+
+Both halves must exist before the first tagged release. Without the policy, `publish` cannot log in; without the
+environment's reviewers, it would run without an approval.
+
+- **The nuget.org Trusted Publishing policy.** Signed in to nuget.org as `fabbrik76`, open **Trusted Publishing**
+  from the account menu and add a GitHub Actions policy: owner `fabbrik`, repository `AgentExperience.NET`, workflow
+  file `release.yml`, environment `nuget-release`. The policy lets the workflow's OIDC token be exchanged for a key
+  only from that file, in that environment, in this repository, for packages `fabbrik76` owns.
+- **The GitHub environment `nuget-release`.** In the repository's **Settings → Environments**, create
+  `nuget-release` and add the maintainers as **required reviewers**. Under **Deployment branches and tags**, choose
+  **Selected branches and tags** and add the tag rule `v*`, so no other ref can reach the environment. Add no
+  environment secrets: the workflow needs none.
+
+#### Fallback: publishing by hand
+
+If the workflow cannot publish (GitHub Actions or the Trusted Publishing exchange unavailable), a maintainer with a
+nuget.org API key scoped to these five packages can publish from the verified working copy instead, in the same
+shell that recorded `$verified`. Packages go first and the tag second, so a failed push never leaves a tag pointing
+at a release that does not exist; `--skip-duplicate` makes a retried push safe after a partial failure. The tag
+push still starts `release.yml`: approving its `publish` job then skips every package already pushed and creates
+the GitHub release; rejecting it leaves the release to be created by hand, with the Known limits table pasted into
+its notes.
 
 ```bash
 ( if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
@@ -254,8 +317,5 @@ Packages go first and the tag second, so a failed push never leaves a tag pointi
   fi )
 ```
 
-`dotnet nuget push` uploads each `.snupkg` alongside its `.nupkg`. The key lives with the maintainer, never in this
-repository or its workflows. Create the GitHub release from the tag by hand, and paste the Known limits table into
-its notes: a preview's release notes say what it does not promise. A version pushed by mistake cannot be deleted from
-nuget.org — **unlist** it (and, if it is harmful, mark it deprecated) on its nuget.org page, then publish the next
-preview.
+That key lives with the maintainer, never in this repository or its secrets. Revoke it on nuget.org once it has
+been used.
