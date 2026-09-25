@@ -508,7 +508,7 @@ public class HistoricalReferenceApproachArgumentsTests
     [Theory]
     [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
     [InlineData(ExperienceGrantDisclosure.LessonOnly)]
-    public void A_borrowed_record_never_shows_an_argument_value_whatever_its_grant(ExperienceGrantDisclosure level)
+    public void A_borrowed_record_shows_no_argument_value_under_a_level_that_is_not_consent_to_it(ExperienceGrantDisclosure level)
     {
         var record = RecordWith(Call(0, Tool, Args(("strategy", PlantedOutsideAllowlist))));
         var ranked = new RankedExperience(record, 0.5d, [], SharedByGrant: true, GrantDisclosure: level);

@@ -168,10 +168,15 @@
     public sealed class ExperienceGrant : System.IEquatable<AgentExperience.Abstractions.ExperienceGrant>
     {
         public const int DefaultListLimit = 100;
+        public const int MaxApproachArgumentKeyLength = 64;
+        public const int MaxApproachArgumentKeysPerTool = 16;
+        public const int MaxApproachArgumentToolNameLength = 256;
+        public const int MaxApproachArgumentTools = 32;
         public const int MaxListLimit = 500;
         public const int MinListLimit = 1;
-        public ExperienceGrant(System.Guid GrantId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope RecordScope, AgentExperience.Abstractions.Scope RecipientScope, string Reason, string AdministratorPrincipalId, System.DateTimeOffset IssuedAt, System.DateTimeOffset ExpiresAt, System.DateTimeOffset? RevokedAt, string? RevocationReason, AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure = 0) { }
+        public ExperienceGrant(System.Guid GrantId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope RecordScope, AgentExperience.Abstractions.Scope RecipientScope, string Reason, string AdministratorPrincipalId, System.DateTimeOffset IssuedAt, System.DateTimeOffset ExpiresAt, System.DateTimeOffset? RevokedAt, string? RevocationReason, AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure = 0, System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ApproachArguments = null) { }
         public string AdministratorPrincipalId { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure { get; init; }
         public System.Guid ExperienceId { get; init; }
         public System.DateTimeOffset ExpiresAt { get; init; }
@@ -251,6 +256,7 @@
     {
         LessonOnly = 0,
         LessonAndApproach = 1,
+        LessonApproachAndArguments = 2,
     }
     public sealed class ExperienceGrantEvent : System.IEquatable<AgentExperience.Abstractions.ExperienceGrantEvent>
     {
@@ -296,7 +302,8 @@
     }
     public sealed class ExperienceGrantRequest : System.IEquatable<AgentExperience.Abstractions.ExperienceGrantRequest>
     {
-        public ExperienceGrantRequest(System.Guid GrantId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope RecordScope, AgentExperience.Abstractions.Scope RecipientScope, string Reason, System.DateTimeOffset ExpiresAt, AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure = 0) { }
+        public ExperienceGrantRequest(System.Guid GrantId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope RecordScope, AgentExperience.Abstractions.Scope RecipientScope, string Reason, System.DateTimeOffset ExpiresAt, AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure = 0, System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ApproachArguments = null) { }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure { get; init; }
         public System.Guid ExperienceId { get; init; }
         public System.DateTimeOffset ExpiresAt { get; init; }
@@ -483,8 +490,9 @@
     }
     public sealed class ExperienceRecordGetResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRecordGetResult>
     {
-        public ExperienceRecordGetResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, AgentExperience.Abstractions.ExperienceRecord? Record, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, bool SharedByGrant = false, System.Guid? PermittingGrantId = default, AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure = default) { }
+        public ExperienceRecordGetResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, AgentExperience.Abstractions.ExperienceRecord? Record, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, bool SharedByGrant = false, System.Guid? PermittingGrantId = default, AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure = default, System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments = null) { }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
         public System.Guid? PermittingGrantId { get; init; }

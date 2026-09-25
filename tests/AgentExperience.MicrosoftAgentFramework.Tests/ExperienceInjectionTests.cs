@@ -583,6 +583,203 @@ public class ExperienceInjectionTests
         Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, Assert.Single(log.Rows).Disclosure);
     }
 
+    [Fact]
+    public async Task A_LessonApproachAndArguments_grant_shows_the_intersection_and_the_host_and_the_access_row_see_the_consent()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var log = new InMemoryGrantAccessLog();
+        var seen = new List<ExperienceInjectionDecisionContext>();
+        var consent = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["lender_tool"] = ["options.mode", "ownerOnly"] };
+
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                seen.Add(context);
+                return InjectionDecision.Permit;
+            },
+            ApproachArguments = { ["lender_tool"] = ["options.mode", "readerOnly"] },
+        };
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(
+            InjectionRecords.Record(shared, owner, attempts:
+            [
+                new Attempt(
+                    AttemptId: Guid.Parse("22222222-0000-0000-0000-000000000001"),
+                    SequenceNumber: 0,
+                    StartedAt: InjectionRecords.Now,
+                    Duration: TimeSpan.FromSeconds(1),
+                    ToolCalls:
+                    [
+                        new ToolCallRecord(
+                            ToolCallId: Guid.Parse("33333333-0000-0000-0000-000000000001"),
+                            SequenceNumber: 0,
+                            ToolName: "lender_tool",
+                            Arguments: new Dictionary<string, object?>(StringComparer.Ordinal)
+                            {
+                                ["options"] = new Dictionary<string, object?>(StringComparer.Ordinal) { ["mode"] = "fast", ["secret"] = "planted-sibling-6e1d" },
+                                ["ownerOnly"] = "planted-owner-only-6e1d",
+                                ["readerOnly"] = "planted-reader-only-6e1d",
+                            },
+                            StartedAt: InjectionRecords.Now,
+                            Duration: TimeSpan.FromMilliseconds(5),
+                            Result: null,
+                            Error: null),
+                    ],
+                    Result: null,
+                    Error: null),
+            ]),
+            relevance: 1d);
+        var grantId = harness.World.Grant(shared, reader, ExperienceGrantDisclosure.LessonApproachAndArguments, consent);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.Contains(
+            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + "lender_tool(options.mode=\"fast\")." + HistoricalReferenceWriter.ApproachGrantArgumentsSuffix,
+            text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("planted-", text, StringComparison.Ordinal);
+
+        // The host sees the level and the owner's consent as the block applies them; the trail records the level.
+        var context = Assert.Single(seen);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, context.GrantDisclosure);
+        Assert.Equal(["options.mode", "ownerOnly"], context.GrantApproachArguments!["lender_tool"]);
+        Assert.NotSame(consent, context.GrantApproachArguments);
+        Assert.Equal(grantId, context.PermittingGrantId);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, Assert.Single(log.Rows).Disclosure);
+    }
+
+    [Fact]
+    public async Task A_decision_callback_that_mutates_the_owners_keys_cannot_widen_what_the_block_shows()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var consent = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["refund_ticket"] = new List<string> { "reason" } };
+        var attempts = new List<string>();
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                // A careless or hostile host callback, trying every mutable shape it could downcast to.
+                if (context.GrantApproachArguments is IDictionary<string, IReadOnlyList<string>> map)
+                {
+                    try
+                    {
+                        map["refund_ticket"] = ["apiKey"];
+                    }
+                    catch (NotSupportedException)
+                    {
+                        attempts.Add("map refused");
+                    }
+                }
+
+                if (context.GrantApproachArguments!["refund_ticket"] is IList<string> keys)
+                {
+                    try
+                    {
+                        keys.Add("apiKey");
+                    }
+                    catch (NotSupportedException)
+                    {
+                        attempts.Add("list refused");
+                    }
+                }
+
+                consent["refund_ticket"] = ["apiKey"];
+                return InjectionDecision.Permit;
+            },
+            ApproachArguments = { ["refund_ticket"] = ["apiKey", "reason"] },
+        };
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(shared, owner), relevance: 1d);
+        harness.World.Grant(shared, reader, ExperienceGrantDisclosure.LessonApproachAndArguments, consent);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.DoesNotContain(InjectionRecords.SecretArgument, text, StringComparison.Ordinal);
+        Assert.Equal(["map refused", "list refused"], attempts);
+    }
+
+    [Fact]
+    public async Task A_store_that_names_no_permitting_grant_shows_no_borrowed_value()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var seen = new List<ExperienceInjectionDecisionContext>();
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                seen.Add(context);
+                return InjectionDecision.Permit;
+            },
+            ApproachArguments = { ["refund_ticket"] = ["apiKey"] },
+        };
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(shared, owner), relevance: 1d);
+        harness.World.Grant(
+            shared,
+            reader,
+            ExperienceGrantDisclosure.LessonApproachAndArguments,
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["refund_ticket"] = ["apiKey"] });
+        harness.World.ForgetGrantId(shared, reader);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.Contains("Approach: " + HistoricalReferenceWriter.ApproachPrefix + "refund_ticket.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(InjectionRecords.SecretArgument, text, StringComparison.Ordinal);
+        Assert.Null(Assert.Single(seen).GrantApproachArguments);
+    }
+
+    [Theory]
+    [InlineData(ExperienceGrantDisclosure.LessonOnly)]
+    [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
+    public async Task An_owner_allowlist_a_store_reports_under_another_level_never_reaches_the_host_or_the_block(ExperienceGrantDisclosure level)
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var seen = new List<ExperienceInjectionDecisionContext>();
+        var harness = new Harness
+        {
+            Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+            Decide = context =>
+            {
+                seen.Add(context);
+                return InjectionDecision.Permit;
+            },
+            ApproachArguments = { ["refund_ticket"] = ["apiKey"] },
+        };
+
+        var shared = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(shared, owner), relevance: 1d);
+        harness.World.Grant(
+            shared,
+            reader,
+            level,
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["refund_ticket"] = ["apiKey"] });
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText();
+        Assert.NotNull(text);
+        Assert.DoesNotContain(InjectionRecords.SecretArgument, text, StringComparison.Ordinal);
+        Assert.Null(Assert.Single(seen).GrantApproachArguments);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(7)]
@@ -1716,6 +1913,9 @@ public class ExperienceInjectionTests
 
         public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? Resolve { get; init; }
 
+        public IDictionary<string, IReadOnlyList<string>> ApproachArguments { get; init; } =
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
         public Func<ExperienceInjectionDecisionContext, InjectionDecision>? Decide { get; init; }
 
         public IReadOnlyDictionary<string, string>? RequiredEnvironment { get; init; }
@@ -1757,6 +1957,7 @@ public class ExperienceInjectionTests
                 SessionLimits = SessionLimits,
                 DecideInjection = Decide,
                 TimeProvider = Clock,
+                ApproachArguments = ApproachArguments,
                 OnContextInjected = result =>
                 {
                     lock (_results)

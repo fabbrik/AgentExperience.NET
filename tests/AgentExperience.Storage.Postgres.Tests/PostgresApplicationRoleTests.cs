@@ -117,6 +117,14 @@ public sealed class PostgresApplicationRoleTests
             ],
             updatable.Order(StringComparer.Ordinal));
 
+        // 0017's owner allowlist is written by the grant's INSERT and read by every grant-joined read, and the
+        // manifest gives it nothing else: the table-level grants cover it, and it is not among the UPDATE columns.
+        Assert.True(await OwnerScalarAsync<bool>(
+            $"SELECT has_column_privilege('{App}', 'agent_experience.experience_grants', 'approach_arguments', 'SELECT') " +
+            $"AND has_column_privilege('{App}', 'agent_experience.experience_grants', 'approach_arguments', 'INSERT')"));
+        Assert.False(await OwnerScalarAsync<bool>(
+            $"SELECT has_column_privilege('{App}', 'agent_experience.experience_grants', 'approach_arguments', 'UPDATE')"));
+
         // No CREATE on the schema, nothing on the migration journal, and EXECUTE on the purges and the
         // sealing function only because this fixture opted into all three.
         Assert.False(await OwnerScalarAsync<bool>($"SELECT has_schema_privilege('{App}', 'agent_experience', 'CREATE')"));

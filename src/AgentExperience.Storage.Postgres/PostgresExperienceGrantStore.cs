@@ -50,13 +50,13 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     internal const string EventsTable = "agent_experience.experience_grant_events";
 
     /// <summary>
-    /// The grant columns every read selects, in the order <see cref="DecodeGrant"/> expects (ordinals 0-20).
+    /// The grant columns every read selects, in the order <see cref="DecodeGrant"/> expects (ordinals 0-21).
     /// </summary>
     private const string GrantColumns =
         "grant_id, experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
         "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
         "recipient_team_id, recipient_agent_id, recipient_user_id, " +
-        "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure";
+        "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure, approach_arguments";
 
     /// <summary>
     /// The conditional insert. The source row is the canonical record, matched on the exact owner
@@ -80,7 +80,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "@recipient_tenant_id, @recipient_application_id, @recipient_project_id, " +
         "@recipient_team_id, @recipient_agent_id, @recipient_user_id, " +
         "@reason, @administrator_principal_id, now(), " +
-        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL, @disclosure " +
+        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL, @disclosure, @approach_arguments " +
         $"FROM {PostgresExperienceRecordStore.Table} r " +
         $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
         // An erased record is not a record a grant can name: there is nothing left to share, and a grant
@@ -120,7 +120,8 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "g.grant_id, g.experience_id, g.tenant_id, g.application_id, g.project_id, g.team_id, g.agent_id, g.user_id, " +
         "g.recipient_tenant_id, g.recipient_application_id, g.recipient_project_id, " +
         "g.recipient_team_id, g.recipient_agent_id, g.recipient_user_id, " +
-        "g.reason, g.administrator_principal_id, g.issued_at, g.expires_at, g.revoked_at, g.revocation_reason, g.disclosure";
+        "g.reason, g.administrator_principal_id, g.issued_at, g.expires_at, g.revoked_at, g.revocation_reason, g.disclosure, " +
+        "g.approach_arguments";
 
     /// <summary>
     /// The grants over one record, driven from the record itself so that "no such record here" and
@@ -259,6 +260,10 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(request);
 
+        // The owner's allowlist is copied once, so what is validated is exactly what is serialized: a caller's
+        // collection that changes, or enumerates differently, between the two passes cannot store unvalidated keys.
+        request = request with { ApproachArguments = GrantApproachArgumentsCodec.Snapshot(request.ApproachArguments) };
+
         var errors = ExperienceRecordValidator.ValidateGrantRequest(request, _policy, _timeProvider.GetUtcNow());
         if (errors.Count > 0)
         {
@@ -328,6 +333,14 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 // By name, never by ordinal: the validator has already refused a value the enum does
                 // not define, and the stored text is what the lateral join reads back.
                 parameters.Add(new NpgsqlParameter<string>("disclosure", NpgsqlDbType.Text) { TypedValue = request.Disclosure.ToString() });
+                // The owner's argument allowlist, present exactly under LessonApproachAndArguments (validated above,
+                // and 0017's CHECKs say the same). Names only -- tool names and argument keys -- so it is not sealed.
+                parameters.Add(new NpgsqlParameter("approach_arguments", NpgsqlDbType.Jsonb)
+                {
+                    Value = request.ApproachArguments is { } allowlist
+                        ? GrantApproachArgumentsCodec.Serialize(allowlist)
+                        : DBNull.Value,
+                });
 
                 grant = Open(await ReadOneAsync(insert, cancellationToken).ConfigureAwait(false), key);
             }
@@ -1007,5 +1020,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         ExpiresAt: reader.GetFieldValue<DateTimeOffset>(17),
         RevokedAt: reader.IsDBNull(18) ? null : reader.GetFieldValue<DateTimeOffset>(18),
         RevocationReason: reader.IsDBNull(19) ? null : reader.GetString(19),
-        Disclosure: DecodeDisclosure(reader.GetString(20)));
+        Disclosure: DecodeDisclosure(reader.GetString(20)),
+        ApproachArguments: reader.IsDBNull(21)
+            ? null
+            : GrantApproachArgumentsCodec.Parse(reader.GetString(21))
+                ?? throw new ExperienceStoreException("Stored sharing grant has a malformed argument allowlist."));
 }

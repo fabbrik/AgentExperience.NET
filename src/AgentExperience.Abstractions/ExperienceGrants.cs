@@ -58,6 +58,12 @@ public sealed record GrantAdministration(
 /// the grant: to change it, revoke the grant and issue a new one. A grant stored before the level
 /// existed reads as <see cref="ExperienceGrantDisclosure.LessonOnly"/>.
 /// </param>
+/// <param name="ApproachArguments">
+/// Under <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, the tool argument keys (or dotted paths)
+/// the owner consented to show, per tool name, each tool's keys in the order the request named them (the order of
+/// the tools themselves is not kept); <see langword="null"/> under
+/// every other level. Fixed for the life of the grant, like <paramref name="Disclosure"/>.
+/// </param>
 public sealed record ExperienceGrant(
     Guid GrantId,
     Guid ExperienceId,
@@ -69,8 +75,21 @@ public sealed record ExperienceGrant(
     DateTimeOffset ExpiresAt,
     DateTimeOffset? RevokedAt,
     string? RevocationReason,
-    ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly)
+    ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ApproachArguments = null)
 {
+    /// <summary>The most tool names one grant's <see cref="ApproachArguments"/> may name.</summary>
+    public const int MaxApproachArgumentTools = 32;
+
+    /// <summary>The most argument keys one grant's <see cref="ApproachArguments"/> may name for one tool.</summary>
+    public const int MaxApproachArgumentKeysPerTool = 16;
+
+    /// <summary>The most characters a tool name in a grant's <see cref="ApproachArguments"/> may have.</summary>
+    public const int MaxApproachArgumentToolNameLength = 256;
+
+    /// <summary>The most characters one argument key (or dotted path) in a grant's <see cref="ApproachArguments"/> may have.</summary>
+    public const int MaxApproachArgumentKeyLength = 64;
+
     /// <summary>The smallest permitted <see cref="IExperienceGrantStore.ListAsync"/> limit.</summary>
     public const int MinListLimit = 1;
 
@@ -124,6 +143,22 @@ public sealed record ExperienceGrant(
 /// <see cref="ExperienceGrantOutcome.Invalid"/> on this field, and nothing is written. The level is
 /// immutable once issued.
 /// </param>
+/// <param name="ApproachArguments">
+/// Required under <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, and must be
+/// <see langword="null"/> under every other level: per tool name, the argument keys whose stored, sanitized values
+/// the owner consents to show the recipient's model. A key may be a dotted path (<c>options.mode</c>) into an
+/// object- or array-valued argument, ending on a scalar. It is the owner's <em>ceiling</em>, not a request: the
+/// recipient's model is shown a key only when the recipient's own
+/// <c>ExperienceInjectionOptions.ApproachArguments</c> names it for the same tool too, so neither side can widen what
+/// the other allowed. It must name at least one tool; at most <see cref="ExperienceGrant.MaxApproachArgumentTools"/>
+/// tools and <see cref="ExperienceGrant.MaxApproachArgumentKeysPerTool"/> keys per tool; a tool name must be
+/// non-blank, at most <see cref="ExperienceGrant.MaxApproachArgumentToolNameLength"/> characters and free of
+/// control characters; a key follows the same rules as the injection allowlist's: at most
+/// <see cref="ExperienceGrant.MaxApproachArgumentKeyLength"/> characters, no whitespace, control, format or
+/// surrogate character, none of <c>= ( ) , " \</c>, and not listed twice for one tool. Anything else is
+/// <see cref="ExperienceGrantOutcome.Invalid"/> on this field, and nothing is written. Immutable once issued. It
+/// holds names only -- tool names and argument keys, never a value -- and is stored in the clear in every mode.
+/// </param>
 public sealed record ExperienceGrantRequest(
     Guid GrantId,
     Guid ExperienceId,
@@ -131,7 +166,8 @@ public sealed record ExperienceGrantRequest(
     Scope RecipientScope,
     string Reason,
     DateTimeOffset ExpiresAt,
-    ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly);
+    ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ApproachArguments = null);
 
 /// <summary>
 /// How much of a shared record a grant lets injection show the recipient's model. It governs only
@@ -163,8 +199,19 @@ public enum ExperienceGrantDisclosure
     /// </summary>
     LessonOnly = 0,
 
-    /// <summary>The lesson and the <c>Approach:</c> line, exactly as the owner scope would see it.</summary>
+    /// <summary>
+    /// The lesson and the <c>Approach:</c> line with its tool names, exactly as the owner scope would see them, but
+    /// never an argument value, whatever either side allowlisted.
+    /// </summary>
     LessonAndApproach = 1,
+
+    /// <summary>
+    /// Everything <see cref="LessonAndApproach"/> shows, plus the stored, sanitized values of the argument keys the
+    /// owner named on the grant (<see cref="ExperienceGrantRequest.ApproachArguments"/>) <em>and</em> the recipient
+    /// allowlisted for the same tool. A key only one side named is not shown. A store that reports this level
+    /// without the owner's keys is treated as naming none.
+    /// </summary>
+    LessonApproachAndArguments = 2,
 }
 
 /// <summary>

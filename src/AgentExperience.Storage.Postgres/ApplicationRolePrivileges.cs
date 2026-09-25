@@ -28,7 +28,8 @@ internal static class ApplicationRolePrivileges
         new("experience_records", Delete: false,
             ["contradictions", "reuse_confidence", "revision", "status", "supporting_validations", "updated_at"]),
 
-        // A grant's revocation is its only UPDATE.
+        // A grant's revocation is its only UPDATE. Not its level, and not 0017's approach_arguments: the owner's
+        // argument allowlist is written once, by the INSERT, and the monotonicity trigger pins it besides.
         new("experience_grants", Delete: false, ["revocation_reason", "revoked_at"]),
 
         // The ledgers: append and read, nothing else.

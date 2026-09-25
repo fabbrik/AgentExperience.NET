@@ -511,6 +511,39 @@ public sealed class ExperienceContextProvider : AIContextProvider
         return new SessionTracker(agentSession, state.Commit(settled: false), limits, dirty: state.Pending is not null);
     }
 
+    /// <summary>
+    /// A read-only copy of a store's owner allowlist, or <see langword="null"/> when there is none or it cannot be
+    /// read -- which shows no borrowed value.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>>? FrozenGrantArguments(
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? stored)
+    {
+        if (stored is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var copy = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (var (toolName, keys) in stored)
+            {
+                if (toolName is null || keys is null || !copy.TryAdd(toolName, Array.AsReadOnly(keys.ToArray())))
+                {
+                    return null;
+                }
+            }
+
+            return new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<string>>(copy);
+        }
+#pragma warning disable CA1031 // A custom store's collection that throws names no key; it must not fail the block.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return null;
+        }
+    }
+
     /// <summary>What this invocation's block gives the session, as it will be tracked.</summary>
     private static PendingDelivery Delivery(HistoricalReferencePayload payload, List<RankedExperience> injectable)
     {
@@ -521,8 +554,17 @@ public sealed class ExperienceContextProvider : AIContextProvider
             delivered.Add(new DeliveredRecord(
                 experienceId,
                 ranked.Record.Revision,
-                ApproachByGrant: ranked.SharedByGrant && ranked.GrantDisclosure == ExperienceGrantDisclosure.LessonAndApproach,
-                Withdrawn: false));
+                ApproachByGrant: ranked.SharedByGrant && HistoricalReferenceWriter.ShowsApproach(ranked.GrantDisclosure),
+                Withdrawn: false)
+            {
+                // The grant whose owner allowlist the block applied, so a later read through any other grant --
+                // even one at the same level, whose allowlist may be narrower -- withdraws what was shown.
+                // Guid.Empty stands for a store that named no grant, and matches only a later read that names none.
+                // Only a delivery whose line actually showed a borrowed value is tracked this way.
+                ArgumentsGrantId = payload.BorrowedArgumentsShown.Contains(experienceId)
+                    ? ranked.PermittingGrantId ?? Guid.Empty
+                    : null,
+            });
         }
 
         return new PendingDelivery(Guid.NewGuid(), payload.ByteCount, delivered, payload.RetractedExperienceIds);
@@ -874,10 +916,23 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 SharedByGrant = result.SharedByGrant,
                 PermittingGrantId = result.SharedByGrant ? result.PermittingGrantId : null,
                 GrantDisclosure = result.SharedByGrant
-                    ? result.GrantDisclosure == ExperienceGrantDisclosure.LessonAndApproach
-                        ? ExperienceGrantDisclosure.LessonAndApproach
+                    ? result.GrantDisclosure is ExperienceGrantDisclosure.LessonAndApproach or ExperienceGrantDisclosure.LessonApproachAndArguments
+                        ? result.GrantDisclosure
                         : ExperienceGrantDisclosure.LessonOnly
                     : null,
+
+                // The owner's argument allowlist travels only with the level that is consent to it, and only
+                // for a borrowed record: an owned record, or any other level, carries none whatever the store
+                // said.
+                // It needs a named grant too: session tracking withdraws shown values by the grant that showed them,
+                // and a store that names none could switch grants unseen. And it is copied into read-only
+                // collections here, so neither the host's decision callback nor anything else can widen it between
+                // the decision and the rendering.
+                GrantApproachArguments = result.SharedByGrant
+                    && result.GrantDisclosure == ExperienceGrantDisclosure.LessonApproachAndArguments
+                    && result.PermittingGrantId is not null
+                        ? FrozenGrantArguments(result.GrantApproachArguments)
+                        : null,
             };
 
             if (_options.DecideInjection is { } decide)
@@ -886,7 +941,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 try
                 {
                     decision = decide(new ExperienceInjectionDecisionContext(
-                        refreshed, current, result.SharedByGrant, refreshed.PermittingGrantId, refreshed.GrantDisclosure));
+                        refreshed,
+                        current,
+                        result.SharedByGrant,
+                        refreshed.PermittingGrantId,
+                        refreshed.GrantDisclosure,
+                        refreshed.GrantApproachArguments));
                 }
                 catch (Exception ex)
                 {
@@ -1029,10 +1089,17 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// Whether the session was shown this record's approach through a grant, and the grant it is read
     /// through now withholds it -- or reports no level, which is the least disclosure.
     /// </summary>
+    /// <remarks>
+    /// A delivery that showed argument values through a grant is narrowed, too, when the record is now read
+    /// through a level that shows none, or through any grant but the one whose owner allowlist was applied: a
+    /// grant is immutable, so the same grant means the same allowlist, and a different one may name fewer keys.
+    /// </remarks>
     private static bool Narrowed(DeliveredRecord delivered, ExperienceRecordGetResult result) =>
-        delivered.ApproachByGrant
-        && result.SharedByGrant
-        && result.GrantDisclosure != ExperienceGrantDisclosure.LessonAndApproach;
+        result.SharedByGrant
+        && ((delivered.ApproachByGrant && !HistoricalReferenceWriter.ShowsApproach(result.GrantDisclosure))
+            || (delivered.ArgumentsGrantId is { } shownThrough
+                && (result.GrantDisclosure != ExperienceGrantDisclosure.LessonApproachAndArguments
+                    || (result.PermittingGrantId ?? Guid.Empty) != shownThrough)));
 
     /// <summary>
     /// Re-applies retrieval's own eligibility rules that are about the record itself: eligible status,

@@ -91,13 +91,21 @@ public sealed record RankingComponent(RankingComponentKind Kind, double Value, d
 /// retrieval itself returns. Anything that renders a shared record treats <see langword="null"/> as
 /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>.
 /// </param>
+/// <param name="GrantApproachArguments">
+/// The permitting grant's <see cref="ExperienceGrant.ApproachArguments"/>, the argument keys its owner consented to
+/// show, filled in by the same pre-injection re-read under
+/// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> and <see langword="null"/> otherwise,
+/// including on everything retrieval itself returns. Anything that renders a shared record treats
+/// <see langword="null"/> as naming no key.
+/// </param>
 public sealed record RankedExperience(
     ExperienceRecord Record,
     double Score,
     IReadOnlyList<RankingComponent> Components,
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
-    ExperienceGrantDisclosure? GrantDisclosure = null);
+    ExperienceGrantDisclosure? GrantDisclosure = null,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null);
 
 /// <summary>Why a candidate the search returned was not ranked.</summary>
 public enum RetrievalExclusionReason

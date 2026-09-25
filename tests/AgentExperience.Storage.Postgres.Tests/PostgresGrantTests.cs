@@ -146,6 +146,288 @@ public sealed class PostgresGrantTests
         Assert.Equal(0L, await CountEventsAsync(grantId));
     }
 
+    // ---------------------------------------------------------------- story 7.1: LessonApproachAndArguments
+
+    private static Dictionary<string, IReadOnlyList<string>> Consent() =>
+        new(StringComparer.Ordinal) { ["run_incident_check"] = ["options.mode", "strategy"], ["read_ledger"] = ["targets.0"] };
+
+    private static void AssertSameConsent(IReadOnlyDictionary<string, IReadOnlyList<string>>? actual)
+    {
+        Assert.NotNull(actual);
+        var expected = Consent();
+        Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), actual.Keys.Order(StringComparer.Ordinal));
+        foreach (var (tool, keys) in expected)
+        {
+            // The owner's order is kept: the stored form is an array per tool.
+            Assert.Equal(keys, actual[tool]);
+        }
+    }
+
+    [Fact]
+    public async Task A_LessonApproachAndArguments_grant_stores_the_owners_keys_and_every_read_path_carries_them_with_the_level()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+
+        var created = await _grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            Request(Guid.NewGuid(), id, owner, recipient) with
+            {
+                Disclosure = ExperienceGrantDisclosure.LessonApproachAndArguments,
+                ApproachArguments = Consent(),
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceGrantOutcome.Created, created.Outcome);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, created.Grant!.Disclosure);
+        AssertSameConsent(created.Grant.ApproachArguments);
+        AssertSameConsent(Assert.Single((await _grants.ListAsync(Authorize(tenant), owner, id, CancellationToken.None)).Grants).ApproachArguments);
+
+        // The recipient's read carries the level and the keys, from the lateral row that named the grant.
+        var read = await ReadAsync(tenant, recipient, id);
+        Assert.Equal(created.Grant.GrantId, read.PermittingGrantId);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, read.GrantDisclosure);
+        AssertSameConsent(read.GrantApproachArguments);
+
+        // The batched read says the same, and the owner's own read carries neither.
+        var batched = Assert.Single((await _store.GetManyAsync(
+            Authorize(tenant), recipient, [id], new ExperienceReadOptions(), CancellationToken.None)).Results);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, batched.GrantDisclosure);
+        AssertSameConsent(batched.GrantApproachArguments);
+        var own = await ReadAsync(tenant, owner, id);
+        Assert.Null(own.GrantDisclosure);
+        Assert.Null(own.GrantApproachArguments);
+
+        // The trail records the new level on both events.
+        await _grants.RevokeAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            new ExperienceGrantRevocation(created.Grant.GrantId, owner, "ended"),
+            CancellationToken.None);
+        var history = await _grants.GetHistoryAsync(Authorize(tenant), owner, created.Grant.GrantId, CancellationToken.None);
+        AssertSameConsent(history.Grant!.ApproachArguments);
+        Assert.Equal(2, history.Events.Count);
+        Assert.All(history.Events, e => Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, e.Disclosure));
+    }
+
+    [Fact]
+    public async Task A_grant_at_another_level_carries_no_keys_on_any_read()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+
+        var created = await _grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            Request(Guid.NewGuid(), id, owner, recipient) with { Disclosure = ExperienceGrantDisclosure.LessonAndApproach },
+            CancellationToken.None);
+
+        Assert.Null(created.Grant!.ApproachArguments);
+        Assert.Null((await ReadAsync(tenant, recipient, id)).GrantApproachArguments);
+    }
+
+    public static TheoryData<string, ExperienceGrantDisclosure, Dictionary<string, IReadOnlyList<string>>?> MalformedConsent()
+    {
+        var tooManyTools = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        for (var index = 0; index <= ExperienceGrant.MaxApproachArgumentTools; index++)
+        {
+            tooManyTools["tool_" + index] = ["mode"];
+        }
+
+        return new()
+        {
+            { "the new level without keys", ExperienceGrantDisclosure.LessonApproachAndArguments, null },
+            { "the new level with an empty allowlist", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) },
+            { "keys under LessonAndApproach", ExperienceGrantDisclosure.LessonAndApproach, Consent() },
+            { "keys under LessonOnly", ExperienceGrantDisclosure.LessonOnly, Consent() },
+            { "a tool with no keys", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = [] } },
+            { "a blank tool", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { [" "] = ["mode"] } },
+            { "a tool with a control character", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["to\nol"] = ["mode"] } },
+            { "a key with a delimiter", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo=de"] } },
+            { "a key with whitespace", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo de"] } },
+            { "a key too long", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = [new string('k', ExperienceGrant.MaxApproachArgumentKeyLength + 1)] } },
+            { "a key listed twice", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mode", "mode"] } },
+            { "too many keys", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = [.. Enumerable.Range(0, ExperienceGrant.MaxApproachArgumentKeysPerTool + 1).Select(i => "k" + i)] } },
+            { "too many tools", ExperienceGrantDisclosure.LessonApproachAndArguments, tooManyTools },
+            { "a tool name too long", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { [new string('t', ExperienceGrant.MaxApproachArgumentToolNameLength + 1)] = ["mode"] } },
+            { "a key with a format character", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo\u200Bde"] } },
+            { "a key with a lone surrogate", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo\uD800de"] } },
+            { "a key with a parenthesis", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo(de"] } },
+            { "a key with a comma", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo,de"] } },
+            { "a key with a double quote", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo\"de"] } },
+            { "a key with a backslash", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = ["mo\\de"] } },
+            { "a null key list", ExperienceGrantDisclosure.LessonApproachAndArguments, new(StringComparer.Ordinal) { ["tool"] = null! } },
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(MalformedConsent))]
+    public async Task An_owner_allowlist_that_does_not_fit_its_level_or_its_rules_is_Invalid_and_writes_nothing(
+        string label,
+        ExperienceGrantDisclosure level,
+        Dictionary<string, IReadOnlyList<string>>? consent)
+    {
+        _ = label;
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+        var grantId = Guid.NewGuid();
+
+        var result = await _grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            Request(grantId, id, owner, recipient) with { Disclosure = level, ApproachArguments = consent },
+            CancellationToken.None);
+
+        Assert.Equal(ExperienceGrantOutcome.Invalid, result.Outcome);
+        Assert.Equal("ApproachArguments", Assert.Single(result.Errors).Path);
+        Assert.Equal(0L, await CountGrantsAsync(grantId));
+        Assert.Equal(0L, await CountEventsAsync(grantId));
+    }
+
+    [Fact]
+    public async Task The_owners_keys_are_immutable_to_the_application_role_and_to_the_owner()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+        var created = await _grants.CreateAsync(
+            Authorize(tenant),
+            new GrantAdministration(Administrator, DateTimeOffset.UtcNow),
+            Request(Guid.NewGuid(), id, owner, recipient) with
+            {
+                Disclosure = ExperienceGrantDisclosure.LessonApproachAndArguments,
+                ApproachArguments = Consent(),
+            },
+            CancellationToken.None);
+        var grantId = created.Grant!.GrantId;
+        const string Widen =
+            "UPDATE agent_experience.experience_grants SET approach_arguments = '{\"run_incident_check\":[\"secret\"]}'::jsonb WHERE grant_id = @grant_id";
+
+        // The application role holds no UPDATE on the column (6.1's manifest names only the revocation columns).
+        await using (var command = _fixture.DataSource.CreateCommand(Widen))
+        {
+            command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
+            var refused = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, refused.SqlState);
+        }
+
+        // The owner has it, and the monotonicity trigger refuses it anyway -- and a level change with it.
+        var pinned = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(Widen, ("grant_id", grantId)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, pinned.SqlState);
+        Assert.Contains("argument allowlist", pinned.MessageText, StringComparison.Ordinal);
+
+        var downgraded = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            "UPDATE agent_experience.experience_grants SET disclosure = 'LessonAndApproach', approach_arguments = NULL WHERE grant_id = @grant_id",
+            ("grant_id", grantId)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, downgraded.SqlState);
+
+        AssertSameConsent((await ReadAsync(tenant, recipient, id)).GrantApproachArguments);
+    }
+
+    public static TheoryData<string, string, string?> RefusedByTheSchema() => new()
+    {
+        { "the new level without keys", "LessonApproachAndArguments", null },
+        { "keys under another level", "LessonAndApproach", "{\"tool\":[\"mode\"]}" },
+        { "an empty object", "LessonApproachAndArguments", "{}" },
+        { "not an object", "LessonApproachAndArguments", "[\"mode\"]" },
+        { "a tool whose keys are not an array", "LessonApproachAndArguments", "{\"tool\":\"mode\"}" },
+        { "an empty key list", "LessonApproachAndArguments", "{\"tool\":[]}" },
+        { "a key that is not a string", "LessonApproachAndArguments", "{\"tool\":[1]}" },
+        { "an unknown level", "LessonAndArguments", null },
+    };
+
+    [Theory]
+    [MemberData(nameof(RefusedByTheSchema))]
+    public async Task A_writer_that_bypasses_the_store_cannot_store_a_level_and_allowlist_that_disagree(string label, string level, string? stored)
+    {
+        _ = label;
+        var tenant = NewTenant();
+        var id = await SeedAsync(Scope(tenant, team: "team-a"));
+
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure, approach_arguments) " +
+            "VALUES (@grant_id, @experience_id, @tenant_id, 'app-1', 'project-1', 'team-a', NULL, NULL, " +
+            "@tenant_id, 'app-1', 'project-1', 'team-b', NULL, NULL, " +
+            "'bypassing the store', 'someone', now(), now() + interval '1 day', NULL, NULL, @level, @stored::jsonb)",
+            ("grant_id", Guid.NewGuid()),
+            ("experience_id", id),
+            ("tenant_id", tenant),
+            ("level", level),
+            ("stored", (object?)stored ?? DBNull.Value)));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, refused.SqlState);
+    }
+
+    [Fact]
+    public async Task A_stored_allowlist_the_schema_accepts_but_the_adapter_would_not_shows_nothing_on_a_read_and_fails_the_grant_store_loudly()
+    {
+        var tenant = NewTenant();
+        var owner = Scope(tenant, team: "team-a");
+        var recipient = Scope(tenant, team: "team-b");
+        var id = await SeedAsync(owner);
+        var grantId = Guid.NewGuid();
+
+        // Seventeen keys for one tool: a shape the 0017 check accepts, written by a hand that bypasses the store.
+        var keys = string.Join(",", Enumerable.Range(0, ExperienceGrant.MaxApproachArgumentKeysPerTool + 1).Select(i => $"\"k{i}\""));
+        await ExecuteAsync(
+            "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure, approach_arguments) " +
+            "VALUES (@grant_id, @experience_id, @tenant_id, 'app-1', 'project-1', 'team-a', NULL, NULL, " +
+            "@tenant_id, 'app-1', 'project-1', 'team-b', NULL, NULL, " +
+            "'bypassing the store', 'someone', now(), now() + interval '1 day', NULL, NULL, 'LessonApproachAndArguments', @stored::jsonb)",
+            ("grant_id", grantId),
+            ("experience_id", id),
+            ("tenant_id", tenant),
+            ("stored", "{\"tool\":[" + keys + "]}"));
+
+        // The recipient's read still succeeds, at the level, with no keys: nothing is shown, nothing is truncated.
+        var read = await ReadAsync(tenant, recipient, id);
+        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
+        Assert.Equal(grantId, read.PermittingGrantId);
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, read.GrantDisclosure);
+        Assert.Null(read.GrantApproachArguments);
+
+        // Administration, which must report the consent exactly, refuses to decode it instead.
+        await Assert.ThrowsAsync<ExperienceStoreException>(() =>
+            _grants.GetHistoryAsync(Authorize(tenant), owner, grantId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task The_widened_ledger_checks_accept_the_new_level_and_still_refuse_an_unknown_one()
+    {
+        var tenant = NewTenant();
+        var id = await SeedAsync(Scope(tenant, team: "team-a"));
+        const string Access =
+            "INSERT INTO agent_experience.experience_grant_access (access_id, grant_id, experience_id, record_revision, " +
+            "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
+            "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
+            "recipient_team_id, recipient_agent_id, recipient_user_id, " +
+            "principal_id, correlation_id, occurred_at, recorded_at, disclosure) " +
+            "VALUES (gen_random_uuid(), gen_random_uuid(), @experience_id, 0, @tenant_id, 'app-1', 'project-1', 'team-a', NULL, NULL, " +
+            "@tenant_id, 'app-1', 'project-1', 'team-b', NULL, NULL, 'host-principal', NULL, now(), now(), @level)";
+
+        await ExecuteAsync(Access, ("experience_id", id), ("tenant_id", tenant), ("level", "LessonApproachAndArguments"));
+        var refused = await Assert.ThrowsAsync<PostgresException>(() =>
+            ExecuteAsync(Access, ("experience_id", id), ("tenant_id", tenant), ("level", "LessonAndArguments")));
+        Assert.Equal(PostgresErrorCodes.CheckViolation, refused.SqlState);
+        Assert.Equal("experience_grant_access_disclosure_known", refused.ConstraintName);
+    }
+
     // ---------------------------------------------------------------- matrix: missing authority
 
     [Theory]

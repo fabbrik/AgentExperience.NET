@@ -407,6 +407,185 @@ public class SessionInjectionTests
         Assert.Contains(HistoricalReferenceWriter.ApproachWithheld, redelivered, StringComparison.Ordinal);
     }
 
+    /// <summary>A record whose one call carries a nested and a top-level argument, for the argument-level withdrawals.</summary>
+    private static ExperienceRecord ArgumentRecord(Guid id, Scope owner) =>
+        InjectionRecords.Record(id, owner, attempts:
+        [
+            new Attempt(
+                AttemptId: Guid.Parse("22222222-0000-0000-0000-000000000001"),
+                SequenceNumber: 0,
+                StartedAt: InjectionRecords.Now,
+                Duration: TimeSpan.FromSeconds(1),
+                ToolCalls:
+                [
+                    new ToolCallRecord(
+                        ToolCallId: Guid.Parse("33333333-0000-0000-0000-000000000001"),
+                        SequenceNumber: 0,
+                        ToolName: "lender_tool",
+                        Arguments: new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["options"] = new Dictionary<string, object?>(StringComparer.Ordinal) { ["mode"] = "fast-mode-shown" },
+                            ["strategy"] = "strategy-shown",
+                        },
+                        StartedAt: InjectionRecords.Now,
+                        Duration: TimeSpan.FromMilliseconds(5),
+                        Result: null,
+                        Error: null),
+                ],
+                Result: null,
+                Error: null),
+        ]);
+
+    public static TheoryData<string> ArgumentNarrowings() => ["same level, narrower owner allowlist", "names only", "withheld"];
+
+    [Theory]
+    [MemberData(nameof(ArgumentNarrowings))]
+    public async Task A_regrant_that_could_show_fewer_argument_values_withdraws_the_delivery_that_showed_them(string how)
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = new Harness
+        {
+            Reader = reader,
+            ApproachArguments = { ["lender_tool"] = ["options.mode", "strategy"] },
+        };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(ArgumentRecord(id, owner));
+        harness.World.Grant(
+            id,
+            reader,
+            ExperienceGrantDisclosure.LessonApproachAndArguments,
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["lender_tool"] = ["options.mode", "strategy"] });
+
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        var first = FreshBlock(harness.Client.LastMessages!);
+        Assert.Contains("options.mode=\"fast-mode-shown\"", first, StringComparison.Ordinal);
+        Assert.Contains("strategy=\"strategy-shown\"", first, StringComparison.Ordinal);
+
+        // The same grant, read again: nothing narrowed, nothing withdrawn, nothing repeated.
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Empty(harness.Last.RetractedExperienceIds);
+        Assert.Empty(harness.Last.InjectedExperienceIds);
+
+        // The owner revokes and reissues. The record stays readable.
+        harness.World.Revoke(id, reader);
+        switch (how)
+        {
+            case "same level, narrower owner allowlist":
+                harness.World.Grant(
+                    id,
+                    reader,
+                    ExperienceGrantDisclosure.LessonApproachAndArguments,
+                    new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["lender_tool"] = ["options.mode"] });
+                break;
+            case "names only":
+                harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonAndApproach);
+                break;
+            default:
+                harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonOnly);
+                break;
+        }
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal(InjectionOutcome.Retracted, harness.Last.Outcome);
+        Assert.Equal([id], harness.Last.RetractedExperienceIds);
+
+        // Redelivered on the next invocation, at what the new grant permits: the withdrawn value is not in it.
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+        Assert.DoesNotContain("strategy-shown", FreshBlock(harness.Client.LastMessages!), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_LessonApproachAndArguments_delivery_that_showed_no_value_is_not_tracked_and_a_reissue_withdraws_nothing()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+
+        // The reader allowlists nothing the owner named: the intersection is empty, so no value is shown.
+        var harness = new Harness { Reader = reader, ApproachArguments = { ["lender_tool"] = ["strategy"] } };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(ArgumentRecord(id, owner));
+        var consent = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["lender_tool"] = ["options.mode"] };
+        harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonApproachAndArguments, consent);
+
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+        Assert.DoesNotContain("strategy-shown", FreshBlock(harness.Client.LastMessages!), StringComparison.Ordinal);
+        Assert.DoesNotContain("fast-mode-shown", FreshBlock(harness.Client.LastMessages!), StringComparison.Ordinal);
+        Assert.DoesNotContain("grantArgs", session.StateBag.Serialize().GetRawText(), StringComparison.Ordinal);
+
+        // A same-level reissue: the delivery showed no value, so there is nothing to withdraw.
+        harness.World.Revoke(id, reader);
+        harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonApproachAndArguments, consent);
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Empty(harness.Last.RetractedExperienceIds);
+    }
+
+    [Fact]
+    public void An_unsettled_delivery_shown_through_two_different_grants_is_tracked_under_neither()
+    {
+        var id = InjectionRecords.Id(1);
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var earlier = new InjectionSessionState(10, 1, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = first }], null);
+        var staged = earlier with
+        {
+            Pending = new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = second }], []),
+        };
+
+        var merged = Assert.Single(staged.Commit(settled: false).Delivered).ArgumentsGrantId;
+
+        // Unsure which rendering the model has, so neither grant's keys are trusted: any later read withdraws it.
+        Assert.NotNull(merged);
+        Assert.NotEqual(first, merged);
+        Assert.NotEqual(second, merged);
+
+        var same = earlier with
+        {
+            Pending = new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = first }], []),
+        };
+        Assert.Equal(first, Assert.Single(same.Commit(settled: false).Delivered).ArgumentsGrantId);
+    }
+
+    [Fact]
+    public async Task A_delivery_that_showed_no_argument_through_a_grant_writes_no_new_state_member()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = new Harness { Reader = reader };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(ArgumentRecord(id, owner));
+        harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonAndApproach);
+
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        // Exactly the shape a build without argument tracking writes and reads, so a rollback can still read it.
+        var state = session.StateBag.Serialize().GetRawText();
+        Assert.DoesNotContain("grantArgs", state, StringComparison.Ordinal);
+
+        // And a delivery that did show one records the grant it was shown through.
+        var grantId = Guid.NewGuid();
+        harness.World.Revoke(id, reader);
+        harness.World.Grant(
+            id,
+            reader,
+            ExperienceGrantDisclosure.LessonApproachAndArguments,
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["lender_tool"] = ["strategy"] },
+            grantId);
+        var arguments = new Harness { Reader = reader, World = harness.World, ApproachArguments = { ["lender_tool"] = ["strategy"] } };
+        var argumentsAgent = arguments.Agent();
+        var fresh = await argumentsAgent.CreateSessionAsync();
+        await argumentsAgent.RunAsync("refund ticket stuck on a lock", fresh);
+        Assert.Contains($"\"grantArgs\":\"{grantId:D}\"", fresh.StateBag.Serialize().GetRawText(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task The_withdrawal_check_is_a_scope_check_that_writes_no_access_row()
     {
@@ -1080,6 +1259,9 @@ public class SessionInjectionTests
 
         public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? Resolve { get; init; }
 
+        public IDictionary<string, IReadOnlyList<string>> ApproachArguments { get; init; } =
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
         public IReadOnlyList<ExperienceInjectionResult> Results
         {
             get
@@ -1108,6 +1290,7 @@ public class SessionInjectionTests
                 Limits = Limits,
                 SessionLimits = SessionLimits,
                 TimeProvider = Clock,
+                ApproachArguments = ApproachArguments,
                 OnContextInjected = result =>
                 {
                     lock (_results)

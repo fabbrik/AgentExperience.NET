@@ -737,6 +737,24 @@ the one-active-grant index allows that once the old one is revoked, so the recip
 the enum does not define is `Invalid` on `Disclosure`, and nothing is written. Upgrading to `0011` makes every existing
 grant `LessonOnly`.
 
+**The third level carries the owner's consent to argument values.** Under
+`ExperienceGrantDisclosure.LessonApproachAndArguments` the request must name, per tool, the argument keys (or dotted
+paths such as `options.mode`) the owner consents to show: `ExperienceGrantRequest.ApproachArguments`. The MAF adapter
+shows a borrowed value only for a key this names **and** the reader's own `ApproachArguments` names for the same tool,
+so the reader cannot widen it. The keys are required at that level and refused at any other; a blank or
+control-character tool name, a key a reader could not configure (blank, over 64 characters, whitespace, a control,
+format or surrogate character, or one of `= ( ) , " \`), a key listed twice, a tool with no keys, more than
+`ExperienceGrant.MaxApproachArgumentKeysPerTool` (16) keys for a tool or `MaxApproachArgumentTools` (32) tools is
+`Invalid` on `ApproachArguments`, and nothing is written. They are stored on the grant as one JSON object
+(`experience_grants.approach_arguments`, `0017`), come back on `ExperienceGrant.ApproachArguments`, and are read from
+the same lateral row as the level onto `ExperienceRecordGetResult.GrantApproachArguments` (single and batched reads
+alike; `null` for the reader's own record and at every other level; a stored value that does not parse reads as `null`,
+which shows nothing). They are **as immutable as the level** — the monotonicity trigger pins them, and the application
+role has no `UPDATE` on the column — and the schema itself refuses keys under another level, the level without keys,
+and any shape but a non-empty object of non-empty string arrays. They are names only, never a value, so they are
+stored **in the clear in encrypted mode too**: do not put anything secret into a tool name or an argument key. Events
+and access rows record the level, not the keys; the keys go with the grant when it is purged or its record erased.
+
 ### Bounding a grant's lifetime
 
 `PostgresExperienceGrantPolicy` is the policy this store administers grants under. Its one rule today is
@@ -1246,6 +1264,7 @@ plaintext mode both still hold the text after the erasure.
 | `lifecycle_events.reason`, `lifecycle_events.confidence_detail` | the record's key | — |
 | `confidence_evidence.detail` | the record's key | — |
 | `experience_grants.reason`, `experience_grants.revocation_reason`, `experience_grant_events.reason` | the key of the record the grant is over | — |
+| `experience_grants.approach_arguments` (`0017`) | not sealed: it holds the owner's tool names and argument keys, never a value, and is host configuration rather than captured content | the whole value |
 | a reuse-feedback rationale | the key of **each** exposed record live in the submission's own scope, once per exposure, in `reuse_feedback_exposures.rationale_sealed` | `reuse_feedback.rationale = '(sealed)'` |
 
 The feedback rule reproduces plaintext mode's erasure exactly: a submission survives while it names any record that
@@ -1756,6 +1775,28 @@ side, and changes nothing for a deployment that stays in plaintext mode:
 - `agent_experience.seal_experience_record`, `SECURITY DEFINER` with `search_path` pinned and `pg_temp` last, and
   `EXECUTE` revoked from `PUBLIC`: the upgrade job's one write, admitting only a live plaintext row at the expected
   revision into its sealed shape. `ApplyApplicationRolePrivilegesAsync` grants it only with `AllowSealing`.
+
+`0017_grant_argument_disclosure.sql` adds the third disclosure level (see [Sharing grants](#sharing-grants)), and
+changes nothing that is shown on upgrade:
+
+- `experience_grants.approach_arguments jsonb NULL`: the owner's argument allowlist. No default, so nothing is
+  rewritten; every existing grant keeps its level and has none.
+- The three `*_disclosure_known` checks — on grants, grant events and access rows — dropped and re-added under the same
+  names with `'LessonApproachAndArguments'` in the list, in one transaction, and idempotent by content.
+- `experience_grants_approach_arguments_level` (keys present exactly at the new level) and
+  `experience_grants_approach_arguments_shape` (a non-empty object of non-empty string arrays).
+- The widened checks on grants and grant events are re-validated in the script (both tables are small), so they stay
+  validated as `0011` left them. The one on `experience_grant_access` and the two new ones are `NOT VALID`: every
+  existing row already satisfies them, and scanning a large access ledger inside the migration would hold its lock
+  for the whole scan. Until you run `VALIDATE CONSTRAINT` (only `SHARE UPDATE EXCLUSIVE`; the header lists the
+  statement), `pg_constraint.convalidated` reads `false` for those three.
+- `enforce_grant_monotonicity()` restated with `0011`'s whole body plus `approach_arguments` among the identity pins,
+  and `0013`'s `search_path` pin restated after it, because `CREATE OR REPLACE` resets it.
+- No privilege change: the application role's table-level `INSERT` and `SELECT` cover the column, and it gets no
+  `UPDATE`.
+- **Deployment order:** run `0017`, then deploy this build, which selects the column in every grant-joined read and
+  fails with `42703` on a pre-`0017` schema. An older build keeps working on a `0017` schema, but cannot decode a grant
+  stored at the new level and renders a record read through one as `LessonOnly`.
 
 **This package's schema stops there, and that is deliberate.** The derived embedding schema — the `vector`
 extension and the `experience_embeddings` table — belongs to the companion package

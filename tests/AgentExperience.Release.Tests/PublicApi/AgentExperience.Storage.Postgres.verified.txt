@@ -136,6 +136,7 @@ namespace AgentExperience.Storage.Postgres
         public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";
         public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
         public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
+        public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";
         public const string GrantDisclosureScriptName = "0011_grant_disclosure.sql";
         public const string GrantsScriptName = "0005_create_experience_grants.sql";
         public const string InitialScriptName = "0001_create_experience_records.sql";

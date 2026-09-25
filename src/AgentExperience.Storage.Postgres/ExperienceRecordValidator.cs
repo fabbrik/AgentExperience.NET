@@ -573,7 +573,11 @@ internal static class ExperienceRecordValidator
         {
             // An undefined level is never guessed into a defined one: stored, it could only be read
             // back as "not told", and issuing a grant whose disclosure nobody chose is not a grant.
-            errors.Add(new("Disclosure", "must be LessonOnly or LessonAndApproach."));
+            errors.Add(new("Disclosure", "must be LessonOnly, LessonAndApproach or LessonApproachAndArguments."));
+        }
+        else
+        {
+            ValidateGrantApproachArguments(request.Disclosure, request.ApproachArguments, errors);
         }
 
         if (request.RecordScope is { } record && request.RecipientScope is { } recipient)
@@ -592,6 +596,92 @@ internal static class ExperienceRecordValidator
 
         return errors;
     }
+
+    /// <summary>
+    /// The characters an argument key may not contain, because the <c>Approach:</c> line uses them to delimit an
+    /// argument. The same set the MAF adapter refuses in <c>ExperienceInjectionOptions.ApproachArguments</c>: a key
+    /// the owner could store but no reader could configure would be consent to nothing.
+    /// </summary>
+    internal const string ForbiddenApproachArgumentKeyCharacters = "=(),\"\\";
+
+    /// <summary>
+    /// The owner's argument allowlist on a grant request: present exactly under
+    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, non-empty, bounded, and made only of keys
+    /// a reader could also allowlist. Every error is reported on <c>ApproachArguments</c> and names the rule, never
+    /// the offending text.
+    /// </summary>
+    private static void ValidateGrantApproachArguments(
+        ExperienceGrantDisclosure disclosure,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? allowlist,
+        List<StoreValidationError> errors)
+    {
+        const string Path = "ApproachArguments";
+
+        if (disclosure != ExperienceGrantDisclosure.LessonApproachAndArguments)
+        {
+            if (allowlist is not null)
+            {
+                // Keys under a level that shows no argument value would be stored consent to nothing, and would
+                // read back as though the owner had agreed to show them.
+                errors.Add(new(Path, "must be null unless Disclosure is LessonApproachAndArguments."));
+            }
+
+            return;
+        }
+
+        if (allowlist is null || allowlist.Count == 0)
+        {
+            errors.Add(new(Path, "must name at least one tool and argument key when Disclosure is LessonApproachAndArguments."));
+            return;
+        }
+
+        if (allowlist.Count > ExperienceGrant.MaxApproachArgumentTools)
+        {
+            errors.Add(new(Path, $"must name at most {ExperienceGrant.MaxApproachArgumentTools} tools."));
+            return;
+        }
+
+        // Tool names are compared ordinally whatever comparer the caller's dictionary used: stored as JSON object
+        // keys, two names that differ only by case are two tools.
+        var tools = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (toolName, keys) in allowlist)
+        {
+            if (string.IsNullOrWhiteSpace(toolName)
+                || toolName.Length > ExperienceGrant.MaxApproachArgumentToolNameLength
+                || toolName.Any(char.IsControl)
+                || !tools.Add(toolName))
+            {
+                errors.Add(new(Path, $"names a tool that is blank, longer than {ExperienceGrant.MaxApproachArgumentToolNameLength} characters, contains a control character, or is named twice."));
+                return;
+            }
+
+            if (keys is null || keys.Count == 0 || keys.Count > ExperienceGrant.MaxApproachArgumentKeysPerTool)
+            {
+                errors.Add(new(Path, $"must list between 1 and {ExperienceGrant.MaxApproachArgumentKeysPerTool} argument keys for every tool it names."));
+                return;
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var key in keys)
+            {
+                if (string.IsNullOrEmpty(key)
+                    || key.Length > ExperienceGrant.MaxApproachArgumentKeyLength
+                    || key.Any(IsForbiddenApproachArgumentKeyCharacter)
+                    || !seen.Add(key))
+                {
+                    errors.Add(new(Path, $"holds an argument key that is blank, longer than {ExperienceGrant.MaxApproachArgumentKeyLength} characters, contains whitespace, a control, format or surrogate character or one of {ForbiddenApproachArgumentKeyCharacters}, or is listed twice for one tool."));
+                    return;
+                }
+            }
+        }
+    }
+
+    private static bool IsForbiddenApproachArgumentKeyCharacter(char character) =>
+        char.IsWhiteSpace(character)
+        || char.IsControl(character)
+        || char.IsSurrogate(character)
+        || System.Globalization.CharUnicodeInfo.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.Format
+        || ForbiddenApproachArgumentKeyCharacters.Contains(character, StringComparison.Ordinal);
 
     public static IReadOnlyList<StoreValidationError> ValidateGrantRevocation(ExperienceGrantRevocation revocation)
     {

@@ -575,13 +575,20 @@ public sealed record ExperienceReadOptions(
 /// a consumer must treat as <see cref="ExperienceGrantDisclosure.LessonOnly"/>, the least disclosure.
 /// It governs only what injection renders; <paramref name="Record"/> is returned complete either way.
 /// </param>
+/// <param name="GrantApproachArguments">
+/// The permitting grant's <see cref="ExperienceGrant.ApproachArguments"/> -- the argument keys its owner consented
+/// to show -- read from the same grant row as <paramref name="GrantDisclosure"/>, when that level is
+/// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>. <see langword="null"/> otherwise, and
+/// <see langword="null"/> from an implementation that cannot say -- which a consumer must treat as naming no key.
+/// </param>
 public sealed record ExperienceRecordGetResult(
     ExperienceStoreOutcome Outcome,
     ExperienceRecord? Record,
     IReadOnlyList<StoreValidationError> Errors,
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
-    ExperienceGrantDisclosure? GrantDisclosure = null);
+    ExperienceGrantDisclosure? GrantDisclosure = null,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null);
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.GetManyAsync"/>.
@@ -596,8 +603,9 @@ public sealed record ExperienceRecordGetResult(
 /// <see cref="ExperienceStoreOutcome.Found"/>; otherwise empty. Each is exactly what
 /// <see cref="IExperienceRecordStore.GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/>
 /// would have returned for that ID -- <see cref="ExperienceRecordGetResult.SharedByGrant"/>,
-/// <see cref="ExperienceRecordGetResult.PermittingGrantId"/> and
-/// <see cref="ExperienceRecordGetResult.GrantDisclosure"/> included.
+/// <see cref="ExperienceRecordGetResult.PermittingGrantId"/>,
+/// <see cref="ExperienceRecordGetResult.GrantDisclosure"/> and
+/// <see cref="ExperienceRecordGetResult.GrantApproachArguments"/> included.
 /// </param>
 /// <param name="Errors">Every request-wide validation error when <paramref name="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
 public sealed record ExperienceRecordGetManyResult(

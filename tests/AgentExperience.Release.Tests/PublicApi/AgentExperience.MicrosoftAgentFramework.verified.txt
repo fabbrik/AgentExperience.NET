@@ -92,9 +92,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     }
     public sealed class ExperienceInjectionDecisionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext>
     {
-        public ExperienceInjectionDecisionContext(AgentExperience.Core.Retrieval.RankedExperience Candidate, AgentExperience.Abstractions.ExperienceRecord Current, bool SharedByGrant = false, System.Guid? PermittingGrantId = default, AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure = default) { }
+        public ExperienceInjectionDecisionContext(AgentExperience.Core.Retrieval.RankedExperience Candidate, AgentExperience.Abstractions.ExperienceRecord Current, bool SharedByGrant = false, System.Guid? PermittingGrantId = default, AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure = default, System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments = null) { }
         public AgentExperience.Core.Retrieval.RankedExperience Candidate { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord Current { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public bool SharedByGrant { get; init; }
@@ -178,6 +179,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string ApproachArgumentsSuffix = " Tool names, plus only the argument values the host allowlisted, as stored after " +
             "capture-time sanitization -- no other arguments, no results, no error text.";
         public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
+        public const string ApproachGrantArgumentsSuffix = " Tool names, plus only the argument values both the lending scope\'s grant and the" +
+            " host allowlisted, as stored after capture-time sanitization -- no other argumen" +
+            "ts, no results, no error text.";
         public const string ApproachPrefix = "the verified run\'s final attempt called these tools, in order: ";
         public const string ApproachSeparator = " -> ";
         public const string ApproachSuffix = " Tool names only -- no arguments, no results, no error text.";
