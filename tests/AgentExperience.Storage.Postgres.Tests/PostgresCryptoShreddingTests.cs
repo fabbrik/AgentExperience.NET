@@ -20,6 +20,13 @@ public sealed class PostgresCryptoShreddingTests
     /// <summary>A word in the lesson -- indexed, so its stem is the residual the README names.</summary>
     private const string IndexedWord = "quokka";
 
+    /// <summary>
+    /// A fixed, identifier-like task ID the text parser keeps whole as one lexeme. Not random: a random hex
+    /// suffix that happens to be all digits (<c>task-04414345</c>) parses as the word <c>task</c> and the signed
+    /// integer <c>-04414345</c>, so no <c>'task-…'</c> lexeme exists and a lexeme assertion fails about one run in 40.
+    /// </summary>
+    private const string SealedTaskId = "task-a7f3c9e2";
+
     private readonly PostgresFixture _fixture;
 
     public PostgresCryptoShreddingTests(PostgresFixture fixture)
@@ -59,10 +66,14 @@ public sealed class PostgresCryptoShreddingTests
         }
 
         // The exact residual: the sealed search vector holds the task ID, summary and lesson as lexemes with
-        // positions -- an identifier-like task ID survives whole as one lexeme, words as their stems.
-        Assert.Contains($"'{IndexedWord}':", row, StringComparison.Ordinal);
-        Assert.Contains($"'{sealedRecord.TaskId}':", row, StringComparison.Ordinal);
-        Assert.Contains("'resolv':", row, StringComparison.Ordinal);
+        // positions -- an identifier-like task ID survives whole as one lexeme, words as their stems. Asserted on
+        // search_vector_sealed itself, the one column meant to carry them.
+        var sealedVector = await ScalarAsync<string>(
+            "SELECT search_vector_sealed::text FROM agent_experience.experience_records WHERE experience_id = @id", sealedRecord.ExperienceId);
+        Assert.Contains($"'{IndexedWord}':", sealedVector, StringComparison.Ordinal);
+        Assert.Contains($"'{sealedRecord.TaskId}':", sealedVector, StringComparison.Ordinal);
+        Assert.Contains("'resolv':", sealedVector, StringComparison.Ordinal);
+        Assert.Contains(sealedVector, row, StringComparison.Ordinal);
 
         // ...and the plaintext twin, for contrast, holds all of it.
         var plainRow = await RowTextAsync(plainRecord.ExperienceId);
@@ -898,7 +909,7 @@ public sealed class PostgresCryptoShreddingTests
 
     private static ExperienceRecord Marked(ExperienceRecord record) => record with
     {
-        TaskId = "task-" + Guid.NewGuid().ToString("N")[..8],
+        TaskId = SealedTaskId,
         TaskSummary = "Resolve the refund ticket",
         Attempts = [new Attempt(Guid.NewGuid(), 0, PayloadTime, TimeSpan.FromSeconds(1), [], UnindexedMarker, null)],
         Reflection = new Reflection(
