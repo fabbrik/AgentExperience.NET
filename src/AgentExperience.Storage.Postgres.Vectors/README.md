@@ -2,7 +2,9 @@
 
 > **Preview — not production ready.** This is a `0.1.0-preview` package. Public APIs may change between previews,
 > and the [Known limits](https://github.com/fabbrik/AgentExperience.NET#known-limits) table in the repository README
-> lists every unresolved item. Any unresolved item blocks a production-readiness claim.
+> lists every unresolved item; any one blocks a production-readiness claim, and this version makes none. The
+> [Documented boundaries](https://github.com/fabbrik/AgentExperience.NET#documented-boundaries) beside it state
+> exactly what no code change can remove; they do not block that claim.
 
 The pgvector half of AgentExperience.NET's PostgreSQL adapter: one derived embedding per Experience Record, a
 conditional write that can never overwrite newer state or resurrect a deleted record, an explicit scoped re-index,

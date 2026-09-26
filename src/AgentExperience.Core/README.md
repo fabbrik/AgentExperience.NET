@@ -2,7 +2,9 @@
 
 > **Preview — not production ready.** This is a `0.1.0-preview` package. Public APIs may change between previews,
 > and the [Known limits](https://github.com/fabbrik/AgentExperience.NET#known-limits) table in the repository README
-> lists every unresolved item. Any unresolved item blocks a production-readiness claim.
+> lists every unresolved item; any one blocks a production-readiness claim, and this version makes none. The
+> [Documented boundaries](https://github.com/fabbrik/AgentExperience.NET#documented-boundaries) beside it state
+> exactly what no code change can remove; they do not block that claim.
 
 The adapter-independent engine of AgentExperience.NET: it turns what an agent observably did into an auditable,
 verified lesson, keeps that lesson's lifecycle and confidence honest, and finds it again when similar work comes up.
@@ -63,11 +65,12 @@ lifetime, the clock, and the opt-out (see KL-11 below).
 - **It never makes a completion score into reuse confidence.** Confidence is a versioned `(1 + S) / (2 + S + F)`
   heuristic over independent evidence — useful for ranking, not a calibrated probability.
 
-## Known limits that live here
+## Known limits and documented boundaries that live here
 
 The two that were Core's, KL-5 and KL-6, are resolved by story 5.5, with breaking changes. What KL-6's fix cannot
 check is stated at the end and belongs to KL-11 (host-supplied identifiers), which story 6.6 narrows to an opt-out
-and story 7.3 narrows again, to what exposure cannot prove.
+and story 7.3 narrows again, to what exposure cannot prove; what remains is now a
+[documented boundary](https://github.com/fabbrik/AgentExperience.NET#documented-boundaries), not a known limit.
 
 - **KL-11, an independence key's inputs are verified (story 6.6).** `ExperienceLifecycleService.ApplyEvidenceAsync`,
   and so every attributed feedback submission, checks the identifiers before anything is computed or written, and
