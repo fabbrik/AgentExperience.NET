@@ -11,8 +11,6 @@ and a scoped nearest-neighbour search that applies exactly the same eligibility 
 It implements `IExperienceEmbeddingIndex` from `AgentExperience.Abstractions` and is consumed by
 `AgentExperience.Core`'s `ExperienceIndexingService` and `ExperienceRetrievalService`.
 
-> **Status: early development.** Nothing is published to NuGet yet, and APIs may change.
-
 ## Why this is a separate package
 
 `AgentExperience.Storage.Postgres` deliberately takes **no** vector or model-provider dependency — its dependency

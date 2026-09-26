@@ -1,7 +1,7 @@
 # Releasing AgentExperience.NET
 
 This is the release procedure and the release verification checks, **in the order they run**. Every check is a
-command you can paste into an interactive shell; each prints an explicit OK or FAILED line rather than leaving a
+command you can paste into an interactive bash or zsh shell; each prints an explicit OK or FAILED line rather than leaving a
 judgement to whoever is running it, and each multi-line check runs in a `( ... )` subshell so a failure never closes
 your terminal. Automation
 builds, tests, packs, and verifies on every push (`.github/workflows/ci.yml`). **Publishing takes two maintainer
@@ -81,7 +81,7 @@ which a release test holds equal to the list the fixtures accept, so this runs e
 ( ok=true
   majors="$(sed -nE 's/^ *postgres: \[([0-9, ]+)\].*/\1/p' .github/workflows/ci.yml | tr -d ' ' | tr ',' ' ')"
   [ -n "$majors" ] || { echo "FAILED: no postgres matrix in .github/workflows/ci.yml"; ok=false; }
-  for major in $majors; do
+  for major in $(echo "$majors"); do   # $(...) splits the list in zsh as well as bash
     for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests \
                    tests/AgentExperience.CompatibilityProof tests/AgentExperience.Sample.EndToEnd.Tests; do
       AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
@@ -260,8 +260,11 @@ and only once that commit is on `main`. Tag it and push the tag:
 
 The tag starts `.github/workflows/release.yml`. Its `verify` job first refuses a tag that is not `v` plus the version
 in `Directory.Build.props`, and a commit that is not reachable from `main`. It then re-runs, on the tagged commit,
-the pinned SDK (step 1), the locked restore and release build (step 2), the full test suite (step 3), pack and
-package verification (step 7), and the production-readiness gate (step 9). It builds the release notes from this
+the pinned SDK (step 1), the locked restore and release build (step 2), the full test suite against the default
+PostgreSQL major (the first command of step 3; the per-major and crypto-shredding runs, and steps 4–6 and 8, are
+not repeated there: they are what you ran locally, and CI's `postgres`, `maf-compatibility` and
+`floating-dependencies` jobs on `main`), pack and package verification (step 7), and the production-readiness gate
+(step 9). It builds the release notes from this
 version's `CHANGELOG.md` section, and fails if there is none. Last, it uploads the packages it verified.
 
 Then **approve the deployment**. Open the run under the repository's **Actions** tab, choose **Review deployments**,
