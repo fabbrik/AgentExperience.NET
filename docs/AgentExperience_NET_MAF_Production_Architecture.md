@@ -1,3 +1,9 @@
+> **Historical research — not current documentation.** This is the design research written on 2026-09-05, before
+> any code existed. It is kept unchanged as a record of where the project started. Its names, interfaces,
+> algorithms, package layout and "production-grade" framing do not describe the library as built, which is a
+> preview and not production ready. For the current behaviour read the [README](../README.md), the
+> [guide](guide/README.md), and [Known limits and documented boundaries](known-limits.md).
+
 # AgentExperience.NET
 ## Production-Grade Experience Memory and Learning Layer for Microsoft Agent Framework
 

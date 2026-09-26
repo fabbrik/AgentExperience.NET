@@ -132,7 +132,7 @@ public static class PostgresExperienceRecordSchema
     /// Its three indexes are built with plain <c>CREATE INDEX</c> inside the migrator's per-script
     /// transaction; the script's header carries the <c>CONCURRENTLY</c> runbook for building them out of
     /// band first, the confirm-then-<c>VALIDATE</c> step, and the note that the erased text survives in
-    /// dead heap tuples until <c>VACUUM</c>. See the script's own header and the package README.
+    /// dead heap tuples until <c>VACUUM</c>. See the script's own header and docs/guide/deletion-and-retention.md.
     /// </para>
     /// </remarks>
     public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";

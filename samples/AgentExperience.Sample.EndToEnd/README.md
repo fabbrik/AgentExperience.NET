@@ -52,11 +52,10 @@ Fixtures, each named as one in its own first documentation line:
 ## Why run A does not use `UseExperienceCapture`
 
 By default, `UseExperienceCapture(...)` records one MAF invocation as one Experience Run with **one**
-attempt. Since story 4.6 the adapter can also record a retry as a further attempt of the same run.
+attempt. The adapter can also record a retry as a further attempt of the same run.
 This is opt-in: an invocation whose `ExperienceRunDescriptor` carries `ContinuesRunId` appends its
-attempt to that run, and `ShouldCompleteRun` decides which invocation closes it. See the adapter
-README's
-[retries as attempts of one run](../../src/AgentExperience.MicrosoftAgentFramework/README.md#retries-as-attempts-of-one-run).
+attempt to that run, and `ShouldCompleteRun` decides which invocation closes it. See
+[Retries as attempts of one run](../../docs/guide/capture.md#retries-as-attempts-of-one-run).
 Nothing changes for a host that does not opt in.
 
 Run A is one run with **two** attempts, and the sample still drives it directly rather than through
@@ -116,7 +115,9 @@ nothing is written. The sample does not exercise either; it records once.
 
 - **Anything about model quality.** The model is a scripted fixture, the clock is a fixture, and
   the identifiers are a counter. Nothing here measures what injected experience does to a real
-  model's behaviour. That measurement is **story 4.4's** job.
+  model's behaviour. That measurement was planned as **story 4.4**, the controlled reuse baseline in
+  `tests/AgentExperience.ReuseBaseline`; it also uses scripted models, so it measures the mechanism, not a real
+  model. A live-model experiment is in progress and has no results yet.
 - **Quarantine.** A run whose verification does not resolve to `Verified` is finalized as
   `FinalizationOutcome.Quarantined`: the record is durable, it carries no Reflection, and it is
   never eligible for reuse. Staging one here would add a dead end to the narrative, so the sample
@@ -127,11 +128,11 @@ nothing is written. The sample does not exercise either; it records once.
   thing.
 - **Sharing grants, supersession, and contradiction.** All covered by the library's own test
   projects.
-- **Telemetry.** Story 4.1 instruments the loop with an `ActivitySource` and a `Meter`. The sample
+- **Telemetry.** The library instruments the loop with an `ActivitySource` and a `Meter`. The sample
   registers no listener and no exporter — it is a library consumer, not a telemetry host — and it
   behaves identically whether or not something is listening. That last part is a test
   (`Sample_renders_the_same_transcript_with_a_telemetry_listener_attached`), not an assurance: it
-  holds only because 4.1 measures duration with `Stopwatch.GetTimestamp()` rather than through the
+  holds only because the library measures duration with `Stopwatch.GetTimestamp()` rather than through the
   injected `TimeProvider`, and a one-line change there would break it.
 
 ## How the sample is held to all of this
@@ -176,7 +177,7 @@ doubles, because a mode that quietly becomes another mode is a mode that lies.
 every execution asks to finalize the same run ID, and an Experience Record's ID is derived from its
 run's. Against a store that actually kept the first execution's record, the second one is an
 `AlreadyFinalized` replay — the store behaving exactly as it should. The sample says so and exits 1
-rather than narrating a stage 4 that did not happen. Drop the `agentexperience` schema, or use a
+rather than narrating a stage 4 that did not happen. Drop the `agent_experience` schema, or use a
 throwaway database, between executions. The default in-memory mode has no such constraint: it
 starts empty every time, which is why that is the mode the determinism guarantee is about.
 

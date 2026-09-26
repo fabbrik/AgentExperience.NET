@@ -262,7 +262,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// The deployment's crypto-shredding configuration: needed to open a sealed record's summary for the
     /// re-index scan, and the sealed records a search returns. <see langword="null"/> -- the default -- is
     /// plaintext mode. The vectors themselves are never sealed (PostgreSQL has to read them to search), so a
-    /// stored embedding is the residual the base package's README names.
+    /// stored embedding is the residual docs/guide/crypto-shredding.md names.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
     public PostgresExperienceEmbeddingIndex(

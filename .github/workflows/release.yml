@@ -67,12 +67,13 @@ jobs:
           echo "$GITHUB_SHA is on main"
 
       # RELEASING.md step 9: while the Known limits table is non-empty, the version must say preview. Only the rows of
-      # the README's `## Known limits` section count: a Documented boundaries row keeps its KL number and never blocks.
+      # the `## Known limits` section of docs/known-limits.md count: a Documented boundaries row keeps its KL number and
+      # never blocks.
       - name: Check the Known limits table still justifies the version
         run: |
           set -euo pipefail
-          grep -qx '## Known limits' README.md || { echo "::error::README.md has no '## Known limits' section to count"; exit 1; }
-          limits="$(awk '/^## / { section = ($0 == "## Known limits") } section' README.md | grep -cE '^\| KL-[0-9]+ \|' || true)"
+          grep -qx '## Known limits' docs/known-limits.md || { echo "::error::docs/known-limits.md has no '## Known limits' section to count"; exit 1; }
+          limits="$(awk '/^## / { section = ($0 == "## Known limits") } section' docs/known-limits.md | grep -cE '^\| KL-[0-9]+ \|' || true)"
           if [ "$limits" -gt 0 ]; then
             if grep -qE '<VersionSuffix>preview\.[1-9][0-9]*</VersionSuffix>' Directory.Build.props; then
               echo "$limits known limit(s): this is a preview release, and it is versioned as one."
@@ -100,23 +101,23 @@ jobs:
             exit 1
           fi
           for section in "Known limits" "Documented boundaries"; do
-            grep -qx "## $section" README.md || { echo "::error::README.md has no '## $section' section"; exit 1; }
+            grep -qx "## $section" docs/known-limits.md || { echo "::error::docs/known-limits.md has no '## $section' section"; exit 1; }
           done
-          table() { awk -v heading="## $1" '$0 == heading { section = 1; next } section && /^## / { exit } section && /^\|/ { print; table = 1; next } table { exit }' README.md; }
+          table() { awk -v heading="## $1" '$0 == heading { section = 1; next } section && /^## / { exit } section && /^\|/ { print; table = 1; next } table { exit }' docs/known-limits.md; }
           limits="$(table "Known limits")"
           boundaries="$(table "Documented boundaries")"
-          [ -n "$boundaries" ] || { echo "::error::The Documented boundaries table was not found in README.md"; exit 1; }
+          [ -n "$boundaries" ] || { echo "::error::The Documented boundaries table was not found in docs/known-limits.md"; exit 1; }
           {
             echo
             echo "## Known limits"
             echo
-            echo "This release does not claim production readiness. Every unresolved limit, as the README lists it:"
+            echo "This release does not claim production readiness. Every unresolved limit, as docs/known-limits.md lists it:"
             echo
             if [ -n "$limits" ]; then echo "$limits"; else echo "None currently."; fi
             echo
             echo "## Documented boundaries"
             echo
-            echo "What no code change can remove, stated exactly, as the README lists it. These do not block a release:"
+            echo "What no code change can remove, stated exactly, as docs/known-limits.md lists it. These do not block a release:"
             echo
             echo "$boundaries"
           } >> "$notes"

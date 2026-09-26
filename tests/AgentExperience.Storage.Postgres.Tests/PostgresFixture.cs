@@ -78,7 +78,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// The one statement a superuser must run before a non-superuser owner can migrate: <c>0010</c> and
     /// <c>0012</c> create functions with a <c>SET</c> clause for the two purge markers, and PostgreSQL 15+
     /// lets a non-superuser name a custom placeholder parameter there only when granted <c>SET</c> on it.
-    /// Exactly the statement the store README's two-role deployment section prints.
+    /// Exactly the statement docs/guide/deployment.md's two-role deployment section prints.
     /// </summary>
     public static string OwnerParameterGrant(string ownerRole) =>
         "GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized " +

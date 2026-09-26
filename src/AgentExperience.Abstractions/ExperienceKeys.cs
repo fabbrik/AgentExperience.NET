@@ -119,7 +119,7 @@ public readonly record struct ExperienceKeyLookup(ExperienceKeyStatus Status, Ex
 /// on a replica of it. A key that is restored alongside the ciphertext it protects protects nothing. And
 /// the key store's <em>own</em> backups bound the erasure: a destroyed key survives in every key-store
 /// backup taken before the destruction, so the retention of those backups is how long an erased record can
-/// still be recovered by someone holding both. See the store README's key custody section.
+/// still be recovered by someone holding both. See docs/guide/crypto-shredding.md, "Key custody".
 /// </para>
 /// <para>
 /// <b>Obligations the type system cannot express.</b>

@@ -209,11 +209,14 @@ public sealed class WorkflowTests
     }
 
     /// <summary>
-    /// The production-readiness gate counts the rows of the README's <c>## Known limits</c> section and nothing else:
-    /// a Documented boundaries row keeps its KL number and must not count. RELEASING.md step 9 and release.yml run
-    /// the same count, so the gate a maintainer runs by hand is the gate the tag runs.
+    /// The production-readiness gate counts the rows of the <c>## Known limits</c> section of <c>docs/known-limits.md</c>
+    /// and nothing else: a Documented boundaries row keeps its KL number and must not count. RELEASING.md step 9 and
+    /// release.yml run the same count, so the gate a maintainer runs by hand is the gate the tag runs.
     /// </summary>
-    private const string KnownLimitsCount = "awk '/^## / { section = ($0 == \"## Known limits\") } section' README.md | grep -cE '^\\| KL-[0-9]+ \\|'";
+    private const string KnownLimitsCount = "awk '/^## / { section = ($0 == \"## Known limits\") } section' docs/known-limits.md | grep -cE '^\\| KL-[0-9]+ \\|'";
+
+    /// <summary>The file the gate reads and the release notes quote, relative to the repository root.</summary>
+    private const string KnownLimitsFile = "docs/known-limits.md";
 
     [Fact]
     public void The_gate_counts_only_the_Known_limits_table_in_RELEASING_and_in_release_yml()
@@ -225,18 +228,18 @@ public sealed class WorkflowTests
     }
 
     /// <summary>
-    /// The README's two tables keep their shape: a known limit is a three-cell row (number, limit, detail) under
-    /// <c>## Known limits</c>, and a documented boundary is a five-cell row under <c>## Documented boundaries</c> whose
-    /// boundary, reason no code change can remove it, response and detail are all filled in. A boundary without a
-    /// written reason is a known limit, and fails here.
+    /// The two tables in <c>docs/known-limits.md</c> keep their shape: a known limit is a three-cell row (number, limit,
+    /// detail) under <c>## Known limits</c>, and a documented boundary is a five-cell row under
+    /// <c>## Documented boundaries</c> whose boundary, reason no code change can remove it, response and detail are all
+    /// filled in. A boundary without a written reason is a known limit, and fails here.
     /// </summary>
     [Fact]
-    public void The_README_separates_known_limits_from_documented_boundaries_and_each_boundary_has_its_reason()
+    public void The_limits_file_separates_known_limits_from_documented_boundaries_and_each_boundary_has_its_reason()
     {
-        var readme = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "README.md")).ReplaceLineEndings("\n");
+        var limitsFile = File.ReadAllText(Path.Combine(RepositoryRoot.Path, KnownLimitsFile)).ReplaceLineEndings("\n");
 
-        var limits = SectionRows(readme, "## Known limits");
-        var boundaries = SectionRows(readme, "## Documented boundaries");
+        var limits = SectionRows(limitsFile, "## Known limits");
+        var boundaries = SectionRows(limitsFile, "## Documented boundaries");
 
         Assert.All(limits, row => Assert.Equal(3, row.Length));
         Assert.NotEmpty(boundaries);
@@ -253,7 +256,7 @@ public sealed class WorkflowTests
     {
         var lines = markdown.Split('\n');
         var start = Array.IndexOf(lines, heading);
-        Assert.True(start >= 0, $"README.md has no '{heading}' section.");
+        Assert.True(start >= 0, $"{KnownLimitsFile} has no '{heading}' section.");
 
         return lines.Skip(start + 1)
             .TakeWhile(line => !line.StartsWith("## ", StringComparison.Ordinal))
@@ -317,7 +320,8 @@ public sealed class WorkflowTests
     [InlineData("--api-key \"$NUGET_API_KEY\"", "--api-key \"${{ steps.login.outputs.NUGET_API_KEY }}\"")]
     [InlineData("if gh release view", "if false && gh release view")]
     [InlineData("dotnet restore --locked-mode", "dotnet restore")]
-    [InlineData("awk '/^## / { section = ($0 == \"## Known limits\") } section' README.md | grep -cE", "grep -cE")]
+    [InlineData("awk '/^## / { section = ($0 == \"## Known limits\") } section' docs/known-limits.md | grep -cE", "grep -cE")]
+    [InlineData("table { exit }' docs/known-limits.md; }", "table { exit }' README.md; }")]
     [InlineData("dotnet run eng/verify-packages.cs -- artifacts/packages", "echo skipped")]
     [InlineData("    steps:\n      - name: Download the verified packages", "    steps:\n      - uses: actions/checkout@v5\n      - name: Download the verified packages")]
     public void The_release_rules_catch_each_way_the_workflow_could_weaken(string original, string replacement)
@@ -447,7 +451,8 @@ public sealed class WorkflowTests
             ("if [ \"$GITHUB_REF_NAME\" != \"v$version\" ]; then", "refuse a tag that is not v + the version"),
             ("if ! git merge-base --is-ancestor \"$GITHUB_SHA\" origin/main; then", "refuse a commit not on main"),
             ("'<VersionSuffix>preview\\.[1-9][0-9]*</VersionSuffix>'", "hold the version to preview while known limits remain"),
-            (KnownLimitsCount, "count only the rows of the README's Known limits section, never a Documented boundaries row"),
+            (KnownLimitsCount, "count only the rows of the Known limits section of docs/known-limits.md, never a Documented boundaries row"),
+            ("table { exit }' docs/known-limits.md; }", "quote both tables of docs/known-limits.md in the release notes"),
             ("\"rollForward\": \"disable\"", "pin the SDK exactly"),
             ("test \"$actual\" = \"$pinned\"", "assert the pinned SDK"),
             ("8.0.x", "install the 8.0 runtime"),

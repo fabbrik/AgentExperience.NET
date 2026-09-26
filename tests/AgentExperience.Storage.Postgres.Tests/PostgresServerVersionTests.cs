@@ -23,7 +23,7 @@ public sealed class PostgresServerVersionTests(PostgresFixture fixture)
 
 /// <summary>
 /// Story 6.3 (KL-13): how <c>AGENTEXPERIENCE_POSTGRES_MAJOR</c> is parsed. Pure, so it lives apart from the
-/// container-backed class above and still runs under the README's no-Docker filter.
+/// container-backed class above and still runs under the no-Docker filter in CONTRIBUTING.md.
 /// </summary>
 public sealed class PostgresTestImageTests
 {

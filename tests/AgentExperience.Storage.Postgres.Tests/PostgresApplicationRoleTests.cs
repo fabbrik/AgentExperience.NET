@@ -630,7 +630,7 @@ public sealed class PostgresApplicationRoleTests
     // ------------------------------------------------------------------ upgrading a single-role database
 
     /// <summary>
-    /// The store README's upgrade runbook, verbatim apart from the two role names: moves the database, the
+    /// The upgrade runbook in docs/guide/deployment.md, verbatim apart from the two role names: moves the database, the
     /// schema and everything in it from the role the application used to migrate as, to a new owner.
     /// </summary>
     internal static string OwnershipTransferSql(string newOwner) => $$"""
