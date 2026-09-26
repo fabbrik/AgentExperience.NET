@@ -837,6 +837,112 @@ public sealed class PostgresCryptoShreddingTests
         }
     }
 
+    [Fact]
+    public async Task The_seal_function_answers_Deleted_for_a_tombstone_and_AlreadySealed_for_a_sealed_row_and_changes_neither()
+    {
+        var keys = new Keys();
+        var encrypted = keys.Store(_fixture.DataSource);
+        var plaintext = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: ExperienceEncryption.ForcePlaintext);
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+
+        // A plaintext record erased to a tombstone, a record sealed when it was written, a sealed record erased,
+        // and a live plaintext record for the one transition the function admits.
+        var tombstone = Minimal(scope);
+        await plaintext.CreateAsync(auth, tombstone, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await plaintext.DeleteAsync(auth, scope, tombstone.ExperienceId, CancellationToken.None)).Outcome);
+        var alreadySealed = Minimal(scope);
+        await encrypted.CreateAsync(auth, alreadySealed, CancellationToken.None);
+        var sealedTombstone = Minimal(scope);
+        await encrypted.CreateAsync(auth, sealedTombstone, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await encrypted.DeleteAsync(auth, scope, sealedTombstone.ExperienceId, CancellationToken.None)).Outcome);
+        var live = Minimal(scope);
+        await plaintext.CreateAsync(auth, live, CancellationToken.None);
+
+        const string Seal = """{"sealed": "aexp-sealed:v1:AAAA"}""";
+        foreach (var (record, expected) in new[]
+        {
+            (tombstone, "Deleted"),
+            (sealedTombstone, "Deleted"),
+            (alreadySealed, "AlreadySealed"),
+            (live, "Sealed"),
+        })
+        {
+            // Called at the row's own current revision, so only the outcome under test can refuse it.
+            var revision = await ScalarAsync<long>("SELECT revision FROM agent_experience.experience_records WHERE experience_id = @id", record.ExperienceId);
+            var before = await RowTextAsync(record.ExperienceId);
+
+            Assert.Equal(expected, await SealAsync(record.ExperienceId, tenant, revision, Seal));
+
+            if (expected == "Sealed")
+            {
+                Assert.Equal(2, await ScalarAsync<int>("SELECT payload_version FROM agent_experience.experience_records WHERE experience_id = @id", record.ExperienceId));
+            }
+            else
+            {
+                Assert.Equal(before, await RowTextAsync(record.ExperienceId));
+            }
+        }
+
+        // A row that is sealed now answers AlreadySealed too, and a seal addressed to another scope finds nothing.
+        var sealedRevision = await ScalarAsync<long>("SELECT revision FROM agent_experience.experience_records WHERE experience_id = @id", live.ExperienceId);
+        Assert.Equal("AlreadySealed", await SealAsync(live.ExperienceId, tenant, sealedRevision, Seal));
+        Assert.Equal("NotFound", await SealAsync(alreadySealed.ExperienceId, NewTenant(), 0, Seal));
+    }
+
+    [Fact]
+    public async Task A_feedback_replay_with_no_sealed_copy_left_to_open_compares_everything_but_the_rationale()
+    {
+        var keys = new Keys();
+        var faulty = new FaultyKeyStore(keys.KeyStore);
+        var encryption = new ExperienceEncryption(faulty);
+        var store = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: encryption);
+        var ledger = new PostgresExperienceReuseFeedbackStore(_fixture.DataSource, encryption: encryption);
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var first = Minimal(scope);
+        var second = Minimal(scope);
+        await store.CreateAsync(auth, first, CancellationToken.None);
+        await store.CreateAsync(auth, second, CancellationToken.None);
+
+        var submission = HumanFeedback(scope, [first.ExperienceId, second.ExperienceId], $"the {UnindexedMarker} fix applied");
+        Assert.Equal(ExperienceReuseFeedbackStoreOutcome.Recorded, (await ledger.RecordAsync(auth, submission, CancellationToken.None)).Outcome);
+        Assert.Equal(2L, await ScalarAsync<long>(
+            "SELECT count(*) FROM agent_experience.reuse_feedback_exposures WHERE feedback_id = @id AND rationale_sealed IS NOT NULL",
+            submission.FeedbackId));
+
+        // Both records' keys are destroyed and neither tombstone commits -- the erasure's crash window -- so the
+        // submission and both sealed copies are still stored, and neither copy can be opened.
+        faulty.FailAfterDestroy = true;
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => store.DeleteAsync(auth, scope, first.ExperienceId, CancellationToken.None));
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => store.DeleteAsync(auth, scope, second.ExperienceId, CancellationToken.None));
+        faulty.FailAfterDestroy = false;
+        Assert.Equal(1L, await ScalarAsync<long>("SELECT count(*) FROM agent_experience.reuse_feedback WHERE feedback_id = @id", submission.FeedbackId));
+        Assert.Equal(2L, await ScalarAsync<long>(
+            "SELECT count(*) FROM agent_experience.reuse_feedback_exposures WHERE feedback_id = @id AND rationale_sealed IS NOT NULL",
+            submission.FeedbackId));
+
+        // The replay is still recognized: every other field is compared, and the rationale -- the one field no
+        // longer readable -- only for its presence. What comes back carries the placeholder, never a guess.
+        var replay = await ledger.RecordAsync(auth, submission, CancellationToken.None);
+        Assert.Equal(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, replay.Outcome);
+        Assert.Equal(SealedText.SealedPlaceholder, replay.Feedback!.Rationale);
+        Assert.Equal(submission.Exposures, replay.Feedback.Exposures);
+        Assert.Equal(
+            ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded,
+            (await ledger.RecordAsync(auth, submission with { Rationale = "a rationale the store can no longer compare" }, CancellationToken.None)).Outcome);
+
+        // A difference in any field that is still readable is a conflict, as always.
+        Assert.Equal(
+            ExperienceReuseFeedbackStoreOutcome.Conflict,
+            (await ledger.RecordAsync(auth, submission with { ReviewerIdentity = "reviewer-2" }, CancellationToken.None)).Outcome);
+        Assert.Equal(
+            ExperienceReuseFeedbackStoreOutcome.Conflict,
+            (await ledger.RecordAsync(auth, submission with { Exposures = [submission.Exposures[0]] }, CancellationToken.None)).Outcome);
+    }
+
     // ------------------------------------------------------------------ wiring
 
     [Fact]
@@ -961,6 +1067,18 @@ public sealed class PostgresCryptoShreddingTests
         ScalarAsync<string>("SELECT r::text FROM agent_experience.experience_records r WHERE r.experience_id = @id", experienceId);
 
     private Task<T> ScalarAsync<T>(string sql, Guid experienceId) => ScalarAsync<T>(_fixture.OwnerDataSource, sql, experienceId);
+
+    /// <summary>Calls <c>0016</c>'s seal function directly, as the owner, for a record in <c>Scope(tenant)</c>.</summary>
+    private async Task<string?> SealAsync(Guid experienceId, string tenant, long revision, string payload)
+    {
+        await using var call = _fixture.OwnerDataSource.CreateCommand(
+            "SELECT agent_experience.seal_experience_record(@id, @tenant, 'app-1', 'project-1', NULL, NULL, NULL, @revision, @payload::jsonb)");
+        call.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+        call.Parameters.Add(new NpgsqlParameter<string>("tenant", NpgsqlDbType.Text) { TypedValue = tenant });
+        call.Parameters.Add(new NpgsqlParameter<long>("revision", revision));
+        call.Parameters.Add(new NpgsqlParameter<string>("payload", NpgsqlDbType.Text) { TypedValue = payload });
+        return (string?)await call.ExecuteScalarAsync();
+    }
 
     private async Task<T> ScalarAsync<T>(string sql, Guid experienceId, (string Name, Guid Value) extra)
     {

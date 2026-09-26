@@ -224,7 +224,7 @@ public sealed class ExperienceInjectionOptions
     /// <remarks>
     /// <para>
     /// With a session supplied, the provider keeps a small state in the session's
-    /// <see cref="AgentSession.StateBag"/>, under <see cref="ExperienceContextProvider.SessionStateKey"/>,
+    /// <see cref="AgentSession.StateBag"/>, under <see cref="SessionStateKey"/>,
     /// and uses it to do three things across the session's invocations:
     /// </para>
     /// <list type="bullet">
@@ -253,6 +253,43 @@ public sealed class ExperienceInjectionOptions
     /// </para>
     /// </remarks>
     public ExperienceInjectionSessionLimits? SessionLimits { get; init; } = ExperienceInjectionSessionLimits.Default;
+
+    /// <summary>
+    /// The <see cref="AgentSession.StateBag"/> key session tracking keeps its account under. Defaults to
+    /// <see cref="ExperienceContextProvider.SessionStateKey"/> (<c>AgentExperience.InjectionSession</c>), so a
+    /// host that does not set it reads and writes exactly the key earlier previews did.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why it is configurable.</b> Each provider's account is its own: its budget, the record revisions it
+    /// has delivered, and the withdrawal notices it owes. Two providers on one agent -- over two stores, or two
+    /// scopes -- need two keys, or they would read and overwrite one account. Give each a different key and
+    /// they keep independent budgets, deduplication and withdrawals within one session. The provider declares
+    /// the key as its one <see cref="AIContextProvider.StateKeys"/> entry, and <see cref="ChatClientAgent"/>
+    /// refuses two of its own providers that declare the same one, so a collision among them fails when the
+    /// agent is built rather than silently sharing an account. That check covers only that agent's own
+    /// providers: a component elsewhere that writes the same key to the session's state bag is not checked,
+    /// so choose a key no one else writes.
+    /// </para>
+    /// <para>
+    /// <b>Changing it on a live deployment starts every session afresh.</b> A session's existing account stays
+    /// under the old key and is no longer read: its budget is new, and a withdrawal notice owed under the old
+    /// key is never delivered. Change it only for new sessions, or remove the old key yourself.
+    /// </para>
+    /// <para>
+    /// <b>Validated at construction.</b> <see cref="ExperienceContextProvider"/> refuses a
+    /// <see langword="null"/> key with an <see cref="ArgumentNullException"/>, and with an
+    /// <see cref="ArgumentException"/> a key that is blank, longer than <see cref="MaxSessionStateKeyLength"/>
+    /// characters, contains whitespace or a control, format, private-use, unassigned or surrogate code point,
+    /// or equals <see cref="ExperienceCaptureAgentBuilderExtensions.RunIdStateKey"/>, the key capture writes to.
+    /// It is validated, and <see cref="ExperienceContextProvider.StateKeys"/> declares it, even with
+    /// <see cref="SessionLimits"/> set to <see langword="null"/>.
+    /// </para>
+    /// </remarks>
+    public string SessionStateKey { get; init; } = ExperienceContextProvider.SessionStateKey;
+
+    /// <summary>The most characters <see cref="SessionStateKey"/> may have.</summary>
+    public const int MaxSessionStateKeyLength = 128;
 
     /// <summary>
     /// Optional. The host's risk decision for each candidate, asked once per record immediately after
@@ -362,14 +399,15 @@ public sealed class ExperienceInjectionOptions
     /// </summary>
     /// <param name="paramName">The parameter name to report on a validation failure.</param>
     /// <returns>The validated snapshot of <see cref="ApproachArguments"/>.</returns>
-    /// <exception cref="ArgumentNullException"><see cref="ResolveRequest"/>, <see cref="Limits"/>, <see cref="TimeProvider"/>, or <see cref="ApproachArguments"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><see cref="ApproachArguments"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
+    /// <exception cref="ArgumentNullException"><see cref="ResolveRequest"/>, <see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, or <see cref="SessionStateKey"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><see cref="ApproachArguments"/> or <see cref="SessionStateKey"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
     internal ApproachArgumentAllowlist Validate(string paramName)
     {
         ArgumentNullException.ThrowIfNull(ResolveRequest, $"{paramName}.{nameof(ResolveRequest)}");
         ArgumentNullException.ThrowIfNull(Limits, $"{paramName}.{nameof(Limits)}");
         ArgumentNullException.ThrowIfNull(TimeProvider, $"{paramName}.{nameof(TimeProvider)}");
         ArgumentNullException.ThrowIfNull(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
+        ValidateSessionStateKey(SessionStateKey, $"{paramName}.{nameof(SessionStateKey)}");
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)
         {
             // A notice that can never fit would stay owed forever and, since no record is written while
@@ -380,5 +418,43 @@ public sealed class ExperienceInjectionOptions
         }
 
         return ApproachArgumentAllowlist.From(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
+    }
+
+    /// <summary>Refuses a <see cref="SessionStateKey"/> that could not name one account, unambiguously, in a state bag.</summary>
+    private static void ValidateSessionStateKey(string? key, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(key, paramName);
+        if (key.Length == 0 || key.Length > MaxSessionStateKeyLength)
+        {
+            throw new ArgumentException(
+                $"The session state key must be 1 to {MaxSessionStateKeyLength} characters long.",
+                paramName);
+        }
+
+        var index = 0;
+        while (index < key.Length)
+        {
+            if (System.Text.Rune.DecodeFromUtf16(key.AsSpan(index), out var rune, out var consumed) != System.Buffers.OperationStatus.Done
+                || System.Text.Rune.IsWhiteSpace(rune)
+                || System.Text.Rune.GetUnicodeCategory(rune) is System.Globalization.UnicodeCategory.Control
+                    or System.Globalization.UnicodeCategory.Format
+                    or System.Globalization.UnicodeCategory.PrivateUse
+                    or System.Globalization.UnicodeCategory.OtherNotAssigned
+                    or System.Globalization.UnicodeCategory.Surrogate)
+            {
+                throw new ArgumentException(
+                    "The session state key may not contain whitespace, or a control, format, private-use, unassigned or surrogate code point.",
+                    paramName);
+            }
+
+            index += consumed;
+        }
+
+        if (string.Equals(key, ExperienceCaptureAgentBuilderExtensions.RunIdStateKey, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"The session state key may not be '{ExperienceCaptureAgentBuilderExtensions.RunIdStateKey}', the key capture writes the run ID to.",
+                paramName);
+        }
     }
 }

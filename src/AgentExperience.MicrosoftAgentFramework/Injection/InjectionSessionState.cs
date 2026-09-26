@@ -51,7 +51,7 @@ internal sealed record PendingDelivery(Guid Stage, int Bytes, IReadOnlyList<Deli
 
 /// <summary>
 /// The injection state one <see cref="AgentSession"/> carries in its <see cref="AgentSession.StateBag"/>
-/// under <see cref="ExperienceContextProvider.SessionStateKey"/>: what the session has been charged, what
+/// under the provider's <see cref="ExperienceInjectionOptions.SessionStateKey"/>: what the session has been charged, what
 /// it has been given, and what one invocation staged. Immutable: every change is a new instance, saved
 /// whole.
 /// </summary>
@@ -170,14 +170,15 @@ internal sealed record InjectionSessionState(
     public InjectionSessionState Discard() => Pending is null ? this : this with { Pending = null };
 
     /// <summary>
-    /// Reads the state from <paramref name="bag"/>. <see langword="true"/> with <see cref="Empty"/> when
-    /// the key is absent; <see langword="false"/> when a value is present and does not parse or validate.
+    /// Reads the state from <paramref name="bag"/> under <paramref name="key"/>. <see langword="true"/> with
+    /// <see cref="Empty"/> when the key is absent; <see langword="false"/> when a value is present and does not
+    /// parse or validate.
     /// </summary>
-    public static bool TryLoad(AgentSessionStateBag bag, out InjectionSessionState state) =>
-        TryLoad(bag, out state, out _);
+    public static bool TryLoad(AgentSessionStateBag bag, string key, out InjectionSessionState state) =>
+        TryLoad(bag, key, out state, out _);
 
-    /// <summary>As <see cref="TryLoad(AgentSessionStateBag, out InjectionSessionState)"/>, also saying whether the key was absent.</summary>
-    public static bool TryLoad(AgentSessionStateBag bag, out InjectionSessionState state, out bool absent)
+    /// <summary>As <see cref="TryLoad(AgentSessionStateBag, string, out InjectionSessionState)"/>, also saying whether the key was absent.</summary>
+    public static bool TryLoad(AgentSessionStateBag bag, string key, out InjectionSessionState state, out bool absent)
     {
         state = Empty;
         absent = false;
@@ -188,14 +189,14 @@ internal sealed record InjectionSessionState(
         // value always reads as a node (a JSON null as a null node), but a value some in-process code set
         // as another type does not, so a false here is confirmed against the bag's own serialized form
         // before it is believed. The provider writes the key on first use, so that is paid once per session.
-        if (bag.TryGetValue<JsonNode>(ExperienceContextProvider.SessionStateKey, out var node, InjectionSessionJsonContext.Default.Options))
+        if (bag.TryGetValue<JsonNode>(key, out var node, InjectionSessionJsonContext.Default.Options))
         {
             return TryParse(node, out state);
         }
 
         var serialized = bag.Serialize();
         if (serialized.ValueKind == JsonValueKind.Object
-            && serialized.TryGetProperty(ExperienceContextProvider.SessionStateKey, out _))
+            && serialized.TryGetProperty(key, out _))
         {
             return false;
         }
@@ -204,9 +205,9 @@ internal sealed record InjectionSessionState(
         return true;
     }
 
-    /// <summary>Writes this state to <paramref name="bag"/>, replacing whatever was there.</summary>
-    public void Save(AgentSessionStateBag bag) =>
-        bag.SetValue(ExperienceContextProvider.SessionStateKey, ToNode(), InjectionSessionJsonContext.Default.Options);
+    /// <summary>Writes this state to <paramref name="bag"/> under <paramref name="key"/>, replacing whatever was there.</summary>
+    public void Save(AgentSessionStateBag bag, string key) =>
+        bag.SetValue(key, ToNode(), InjectionSessionJsonContext.Default.Options);
 
     /// <summary>This state as the JSON the bag stores.</summary>
     internal JsonNode ToNode() => JsonSerializer.SerializeToNode(

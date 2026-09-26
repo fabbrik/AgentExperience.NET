@@ -781,7 +781,7 @@ public class SessionInjectionTests
         await agent.RunAsync("refund ticket stuck on a lock", session);
 
         Assert.Equal(InjectionOutcome.Failed, harness.Last.Outcome);
-        Assert.Equal(ExperienceContextProvider.UnreadableSessionState, harness.Last.Failure!.Reason);
+        Assert.Equal(ExperienceContextProvider.UnreadableSessionState(ExperienceContextProvider.SessionStateKey), harness.Last.Failure!.Reason);
         Assert.Equal(0, Blocks(harness.Client.LastMessages!));
         Assert.Null(harness.Last.Session);
 
@@ -1052,7 +1052,7 @@ public class SessionInjectionTests
         await agent.RunAsync("refund ticket stuck on a lock", session);
 
         Assert.Equal(InjectionOutcome.Failed, harness.Last.Outcome);
-        Assert.Equal(ExperienceContextProvider.UnreadableSessionState, harness.Last.Failure!.Reason);
+        Assert.Equal(ExperienceContextProvider.UnreadableSessionState(ExperienceContextProvider.SessionStateKey), harness.Last.Failure!.Reason);
         Assert.Equal("junk", session.StateBag.GetValue<string>(ExperienceContextProvider.SessionStateKey));
     }
 
@@ -1167,6 +1167,238 @@ public class SessionInjectionTests
 
     // ---- Helpers -----------------------------------------------------------------------------------
 
+    // ---- Story 8.2: a configurable session state key ----------------------------------------------------
+
+    [Fact]
+    public void The_session_state_key_defaults_to_the_documented_one()
+    {
+        var options = new ExperienceInjectionOptions { ResolveRequest = _ => null };
+
+        Assert.Equal(ExperienceContextProvider.SessionStateKey, options.SessionStateKey);
+        Assert.Equal("AgentExperience.InjectionSession", options.SessionStateKey);
+    }
+
+    public static TheoryData<string> MalformedStateKeys() =>
+    [
+        "",
+        " ",
+        "has space",
+        "tab\there",
+        "nl\nx",
+        " leading",
+        "trailing ",
+        "no\u00A0break",
+        "bidi\u202Ekey",
+        "zero\u200Bwidth",
+        "tag" + char.ConvertFromUtf32(0xE0041),
+        "private\uE000use",
+        "bell\u0007",
+        new string('k', ExperienceInjectionOptions.MaxSessionStateKeyLength + 1),
+        ExperienceCaptureAgentBuilderExtensions.RunIdStateKey,
+    ];
+
+    [Theory]
+    [MemberData(nameof(MalformedStateKeys))]
+    public void A_malformed_session_state_key_is_refused_where_it_is_configured(string key)
+    {
+        var error = Assert.Throws<ArgumentException>(() => new Harness { SessionStateKey = key }.Provider());
+        Assert.Equal($"options.{nameof(ExperienceInjectionOptions.SessionStateKey)}", error.ParamName);
+
+        // Refused with tracking off too: the provider declares the key in StateKeys either way.
+        Assert.Throws<ArgumentException>(() => new Harness { SessionStateKey = key, SessionLimits = null }.Provider());
+    }
+
+    [Fact]
+    public void A_null_session_state_key_is_refused_and_the_longest_allowed_one_is_accepted()
+    {
+        var error = Assert.Throws<ArgumentNullException>(() => new Harness { SessionStateKey = null! }.Provider());
+        Assert.Equal($"options.{nameof(ExperienceInjectionOptions.SessionStateKey)}", error.ParamName);
+
+        Assert.Throws<ArgumentException>(() => new Harness { SessionStateKey = "lone\uD800surrogate" }.Provider());
+
+        var longest = new string('k', ExperienceInjectionOptions.MaxSessionStateKeyLength);
+        Assert.Equal([longest], new Harness { SessionStateKey = longest }.Provider().StateKeys);
+        Assert.Equal(["Tenant-B.Injection:session/2"], new Harness { SessionStateKey = "Tenant-B.Injection:session/2", SessionLimits = null }.Provider().StateKeys);
+    }
+
+    [Fact]
+    public void Key_validation_counts_code_points_and_accepts_a_visible_non_basic_plane_key()
+    {
+        // An unassigned code point is refused like the other invisible ones.
+        Assert.Throws<ArgumentException>(() => new Harness { SessionStateKey = "unassigned\u0378" }.Provider());
+
+        // A visible supplementary-plane character is a legitimate key character.
+        Assert.Equal(["tenant-\uD83D\uDE80"], new Harness { SessionStateKey = "tenant-\uD83D\uDE80" }.Provider().StateKeys);
+
+        // The limit counts UTF-16 code units, as string.Length does: a pair that would end past it is refused.
+        var limit = ExperienceInjectionOptions.MaxSessionStateKeyLength;
+        _ = new Harness { SessionStateKey = new string('k', limit - 2) + "\uD83D\uDE80" }.Provider();
+        Assert.Throws<ArgumentException>(() => new Harness { SessionStateKey = new string('k', limit - 1) + "\uD83D\uDE80" }.Provider());
+    }
+
+    [Fact]
+    public async Task With_tracking_off_a_custom_key_is_declared_but_nothing_is_written_under_any_key()
+    {
+        const string Key = "Tenant-B.InjectionSession";
+        var harness = new Harness { SessionStateKey = Key, SessionLimits = null };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        Assert.Equal(InjectionOutcome.Injected, harness.Last.Outcome);
+        Assert.Null(harness.Last.Session);
+        var bag = session.StateBag.Serialize().GetRawText();
+        Assert.DoesNotContain(Key, bag, StringComparison.Ordinal);
+        Assert.DoesNotContain(ExperienceContextProvider.SessionStateKey, bag, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_custom_key_account_survives_MAF_session_serialization()
+    {
+        const string Key = "Tenant-B.InjectionSession";
+        var harness = new Harness { SessionStateKey = Key };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        var serialized = await agent.SerializeSessionAsync(session);
+        Assert.Contains(Key, serialized.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain(ExperienceContextProvider.SessionStateKey, serialized.GetRawText(), StringComparison.Ordinal);
+        var restored = await agent.DeserializeSessionAsync(JsonDocument.Parse(serialized.GetRawText()).RootElement);
+
+        await agent.RunAsync("refund ticket stuck on a lock", restored);
+        Assert.Equal(InjectionOmissionReason.AlreadyDelivered, Assert.Single(harness.Last.Omitted).Reason);
+    }
+
+    [Fact]
+    public async Task A_custom_session_state_key_is_the_only_key_the_provider_reads_and_writes()
+    {
+        const string Key = "Tenant-B.InjectionSession";
+        var harness = new Harness { SessionStateKey = Key };
+        var id = InjectionRecords.Id(1);
+        var record = InjectionRecords.Record(id, TestScope);
+        harness.World.Publish(record);
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        // A value under the default key is someone else's: it is neither read nor overwritten.
+        session.StateBag.SetValue(ExperienceContextProvider.SessionStateKey, "someone else's");
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+        Assert.Equal([Key], harness.Provider().StateKeys);
+        Assert.Equal("someone else's", session.StateBag.GetValue<string>(ExperienceContextProvider.SessionStateKey));
+        var state = JsonNode.Parse(session.StateBag.Serialize().GetRawText())![Key]!.ToJsonString();
+        Assert.Contains(id.ToString("D"), state, StringComparison.OrdinalIgnoreCase);
+
+        // And the account under the custom key is the one that deduplicates and withdraws.
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Contains(harness.Last.Omitted, o => o.ExperienceId == id && o.Reason == InjectionOmissionReason.AlreadyDelivered);
+        harness.World.Replace(record with { Status = ExperienceStatus.Revoked, Revision = 2 });
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([id], harness.Last.RetractedExperienceIds);
+
+        // A value under the custom key that does not read fails closed, and the failure names that key.
+        var other = await agent.CreateSessionAsync();
+        other.StateBag.SetValue(Key, "junk");
+        await agent.RunAsync("refund ticket stuck on a lock", other);
+        Assert.Equal(InjectionOutcome.Failed, harness.Last.Outcome);
+        Assert.Equal(ExperienceContextProvider.UnreadableSessionState(Key), harness.Last.Failure!.Reason);
+        Assert.Contains($"'{Key}'", harness.Last.Failure.Reason, StringComparison.Ordinal);
+        Assert.Equal("junk", other.StateBag.GetValue<string>(Key));
+    }
+
+    [Fact]
+    public async Task Two_providers_with_different_keys_on_one_agent_keep_independent_budgets_dedupe_and_withdrawals()
+    {
+        // Provider A, on the default key, may deliver one record per session; provider B, on its own key, the
+        // default 32. Each reads its own store, so each record belongs to exactly one of them.
+        var a = new Harness
+        {
+            Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+            SessionLimits = new ExperienceInjectionSessionLimits(MaxRecords: 1, MaxBytes: 1 << 20),
+        };
+        var b = new Harness { SessionStateKey = "Tenant-B.InjectionSession", Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 } };
+        var (a1, a2, b1, b2) = (InjectionRecords.Id(1), InjectionRecords.Id(2), InjectionRecords.Id(11), InjectionRecords.Id(12));
+        var recordA1 = InjectionRecords.Record(a1, TestScope, lesson: "Lesson A1.");
+        a.World.Publish(recordA1, relevance: 1d);
+        a.World.Publish(InjectionRecords.Record(a2, TestScope, lesson: "Lesson A2."), relevance: 0.9d);
+        b.World.Publish(InjectionRecords.Record(b1, TestScope, lesson: "Lesson B1."), relevance: 1d);
+        b.World.Publish(InjectionRecords.Record(b2, TestScope, lesson: "Lesson B2."), relevance: 0.9d);
+
+        var agent = new ChatClientAgent(a.Client, new ChatClientAgentOptions { AIContextProviders = [a.Provider(), b.Provider()] });
+        var session = await agent.CreateSessionAsync();
+
+        // Turn one: each provider delivers its best record, and charges only its own account.
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([a1], a.Last.InjectedExperienceIds);
+        Assert.Equal([b1], b.Last.InjectedExperienceIds);
+        Assert.Equal(1, a.Last.Session!.RecordsUsed);
+        Assert.Equal(1, b.Last.Session!.RecordsUsed);
+        Assert.Equal(2, Blocks(a.Client.LastMessages!));
+
+        // Turn two: A's budget is spent and it does not retrieve; B's is not, so B skips what it already
+        // delivered and delivers its next record. Neither account saw the other's delivery.
+        var searches = a.World.Searches;
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal(InjectionOutcome.SessionBudgetExhausted, a.Last.Outcome);
+        Assert.Equal(searches, a.World.Searches);
+        Assert.Equal(InjectionOutcome.Injected, b.Last.Outcome);
+        Assert.Equal([b2], b.Last.InjectedExperienceIds);
+        Assert.Contains(b.Last.Omitted, o => o.ExperienceId == b1 && o.Reason == InjectionOmissionReason.AlreadyDelivered);
+        Assert.Equal(2, b.Last.Session!.RecordsUsed);
+        Assert.Equal(1, a.Last.Session!.RecordsUsed);
+
+        // Turn three: A's record is revoked. Only A owes a notice -- B never delivered it -- and A's spent
+        // budget does not refuse it.
+        a.World.Replace(recordA1 with { Status = ExperienceStatus.Revoked, Revision = 2 });
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal(InjectionOutcome.Retracted, a.Last.Outcome);
+        Assert.Equal([a1], a.Last.RetractedExperienceIds);
+        Assert.Empty(b.Last.RetractedExperienceIds);
+        Assert.Equal(InjectionOutcome.NothingToInject, b.Last.Outcome);
+
+        // Each account holds its own records, under its own key, and nothing of the other's.
+        var bag = JsonNode.Parse(session.StateBag.Serialize().GetRawText())!;
+        var stateA = bag[ExperienceContextProvider.SessionStateKey]!.ToJsonString();
+        var stateB = bag["Tenant-B.InjectionSession"]!.ToJsonString();
+        Assert.Contains(a1.ToString("D"), stateA, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(b1.ToString("D"), stateA, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(b2.ToString("D"), stateA, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(b1.ToString("D"), stateB, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(b2.ToString("D"), stateB, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(a1.ToString("D"), stateB, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Two_providers_with_the_same_key_on_one_agent_are_refused_before_either_shares_an_account()
+    {
+        var a = new Harness();
+        var b = new Harness();
+        a.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        b.World.Publish(InjectionRecords.Record(InjectionRecords.Id(11), TestScope));
+
+        // ChatClientAgent checks its providers' StateKeys when it is built, so the collision is refused before
+        // any session exists and before either provider runs.
+        var error = Assert.Throws<InvalidOperationException>(
+            () => new ChatClientAgent(a.Client, new ChatClientAgentOptions { AIContextProviders = [a.Provider(), b.Provider()] }));
+        Assert.Contains($"'{ExperienceContextProvider.SessionStateKey}'", error.Message, StringComparison.Ordinal);
+        Assert.Empty(a.Results);
+        Assert.Empty(b.Results);
+
+        // Giving one of them its own key is the whole fix: the same two stores then run side by side.
+        var separate = new Harness { World = b.World, SessionStateKey = "Tenant-B.InjectionSession" };
+        var agent = new ChatClientAgent(a.Client, new ChatClientAgentOptions { AIContextProviders = [a.Provider(), separate.Provider()] });
+        await agent.RunAsync("refund ticket stuck on a lock", await agent.CreateSessionAsync());
+        Assert.Equal([InjectionRecords.Id(1)], a.Last.InjectedExperienceIds);
+        Assert.Equal([InjectionRecords.Id(11)], separate.Last.InjectedExperienceIds);
+    }
+
     private static string TooManyEntries()
     {
         var entries = Enumerable.Range(1, ExperienceInjectionSessionLimits.MaxTrackedRecords + 1)
@@ -1255,6 +1487,8 @@ public class SessionInjectionTests
 
         public Scope Reader { get; init; } = TestScope;
 
+        public string SessionStateKey { get; init; } = ExperienceContextProvider.SessionStateKey;
+
         public string CorrelationId { get; init; } = "corr-1";
 
         public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? Resolve { get; init; }
@@ -1289,6 +1523,7 @@ public class SessionInjectionTests
                     CorrelationId: CorrelationId)),
                 Limits = Limits,
                 SessionLimits = SessionLimits,
+                SessionStateKey = SessionStateKey,
                 TimeProvider = Clock,
                 ApproachArguments = ApproachArguments,
                 OnContextInjected = result =>

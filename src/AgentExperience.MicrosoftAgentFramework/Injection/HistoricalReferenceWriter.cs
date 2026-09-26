@@ -745,8 +745,10 @@ public static class HistoricalReferenceWriter
     /// at all is byte for byte the names-only line.
     /// </para>
     /// <para>
-    /// <b>Each name is bounded here, because nothing else bounds it.</b> A name's whitespace is
-    /// collapsed to single spaces first -- so a name cannot add lines to the block or forge a bullet,
+    /// <b>Each name is bounded here, because nothing else bounds it.</b> A name's invisible
+    /// characters -- control, format (bidirectional controls, zero-width characters, TAG characters),
+    /// private-use and unassigned code points, classified per Unicode scalar -- become spaces, exactly as
+    /// in an argument value; its whitespace is then collapsed to single spaces -- so a name cannot add lines to the block or forge a bullet,
     /// which <c>"  - "</c> is not a field label and would otherwise allow -- then it goes through
     /// <see cref="Clean"/> like every other stored string, so a tool named after one of this block's
     /// own markers cannot forge structure with it, and then it is cut to
@@ -1137,36 +1139,7 @@ public static class HistoricalReferenceWriter
     /// </remarks>
     private static string Quoted(string value)
     {
-        var mapped = new StringBuilder(value.Length);
-        var index = 0;
-        while (index < value.Length)
-        {
-            if (Rune.DecodeFromUtf16(value.AsSpan(index), out var rune, out var consumed) != System.Buffers.OperationStatus.Done)
-            {
-                // A lone surrogate: not a character.
-                mapped.Append(' ');
-                index += Math.Max(consumed, 1);
-                continue;
-            }
-
-            index += consumed;
-            var category = Rune.GetUnicodeCategory(rune);
-            if (category is UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.PrivateUse
-                or UnicodeCategory.OtherNotAssigned or UnicodeCategory.Surrogate)
-            {
-                mapped.Append(' ');
-            }
-            else if (QuoteLookAlikes.Contains(rune.Value))
-            {
-                mapped.Append('\'');
-            }
-            else
-            {
-                mapped.Append(rune.ToString());
-            }
-        }
-
-        var collapsed = CollapseWhitespace(mapped.ToString()).Replace("->", "- >", StringComparison.Ordinal);
+        var collapsed = CollapseWhitespace(Visible(value, quoteLookAlikes: true)).Replace("->", "- >", StringComparison.Ordinal);
 
         // Clean maps a blank string to NoValue, which is right for a lesson and wrong here: an empty
         // value -- which is what the default redactor leaves in place of a secret -- is written as the
@@ -1175,6 +1148,64 @@ public static class HistoricalReferenceWriter
         var (text, cut) = Clamp(cleaned, MaxArgumentValueLength);
         return "\"" + text + "\"" + (cut ? ClampedName : string.Empty);
     }
+
+    /// <summary>
+    /// <paramref name="value"/> with every invisible character -- a control, format, private-use or
+    /// unassigned code point, classified per Unicode scalar so a TAG character or any other
+    /// supplementary-plane one is seen for what it is, and a lone surrogate -- turned into a space, and,
+    /// when <paramref name="quoteLookAlikes"/> is set, every double-quote look-alike into a single quote.
+    /// A string that holds none of them is returned as it is, the same instance, so the text it renders
+    /// to cannot change. With <paramref name="remove"/> set, an invisible character that is not whitespace
+    /// is removed instead (whitespace still becomes a space): the spelling a reader sees once the invisible
+    /// characters are gone, which <see cref="Name"/> checks for markers.
+    /// </summary>
+    /// <remarks>
+    /// The one routine both an argument value (<see cref="Quoted"/>) and a tool name (<see cref="Name"/>)
+    /// go through, so the two are classified identically. A space rather than nothing by default, because a
+    /// removed character would join the text on either side of it into a word neither side spelled.
+    /// </remarks>
+    private static string Visible(string value, bool quoteLookAlikes, bool remove = false)
+    {
+        StringBuilder? mapped = null;
+        var index = 0;
+        while (index < value.Length)
+        {
+            var start = index;
+            char? replacement;
+            if (Rune.DecodeFromUtf16(value.AsSpan(index), out var rune, out var consumed) != System.Buffers.OperationStatus.Done)
+            {
+                // A lone surrogate: not a character.
+                replacement = remove ? Removed : ' ';
+                index += Math.Max(consumed, 1);
+            }
+            else
+            {
+                index += consumed;
+                replacement = Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
+                        or UnicodeCategory.PrivateUse or UnicodeCategory.OtherNotAssigned or UnicodeCategory.Surrogate
+                    ? remove && !Rune.IsWhiteSpace(rune) ? Removed : ' '
+                    : quoteLookAlikes && QuoteLookAlikes.Contains(rune.Value) ? '\'' : null;
+            }
+
+            if (replacement is { } character)
+            {
+                mapped ??= new StringBuilder(value.Length).Append(value, 0, start);
+                if (character != Removed)
+                {
+                    mapped.Append(character);
+                }
+            }
+            else
+            {
+                mapped?.Append(value, start, index - start);
+            }
+        }
+
+        return mapped?.ToString() ?? value;
+    }
+
+    /// <summary>What <see cref="Visible"/> uses internally to mean "append nothing".</summary>
+    private const char Removed = '\0';
 
     /// <summary>
     /// Code points a reader could take for the double quote that delimits an argument value: the
@@ -1207,16 +1238,34 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>
-    /// One tool name as the <c>Approach:</c> line carries it: whitespace collapsed to single spaces,
-    /// the block's markers and labels neutralized, and the result cut to
-    /// <see cref="MaxToolNameLength"/> characters with <see cref="ClampedName"/> marking the cut.
+    /// One tool name as the <c>Approach:</c> line carries it: invisible characters turned into spaces,
+    /// whitespace collapsed to single spaces, the block's markers and labels neutralized, and the result
+    /// cut to <see cref="MaxToolNameLength"/> characters with <see cref="ClampedName"/> marking the cut.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Invisible characters go first, through <see cref="Visible"/> -- the routine an argument value
+    /// goes through -- so a bidirectional override or isolate, a zero-width character, a TAG character
+    /// or any other control, format, private-use or unassigned code point, and a lone surrogate, becomes a
+    /// space: a name can then neither use a bidirectional control to reorder the rest of the line when it
+    /// is displayed nor carry text in a code point of those categories. (Other default-ignorable code points
+    /// -- variation selectors, the combining grapheme joiner, Hangul fillers -- are letters or marks and are
+    /// left alone, exactly as in an argument value.) A name that holds none of them renders exactly as it did
+    /// before story 8.2.
+    /// </para>
+    /// <para>
+    /// <b>A marker split by an invisible character is still a marker.</b> Turning an invisible character into
+    /// a space would let <c>END HISTOR&lt;ZWSP&gt;ICAL</c> survive as two words a reader sees as one. So the
+    /// name is also spelled with those characters removed, as a reader sees it; when that spelling holds one
+    /// of the block's markers, it is the one written, and <see cref="Clean"/> neutralizes the marker in it.
+    /// </para>
+    /// <para>
     /// Collapsing runs <em>before</em> <see cref="Clean"/>, not after: a name written as
     /// <c>"===  END  HISTORICAL REFERENCE"</c> becomes a real marker when its whitespace is collapsed,
     /// so collapsing after neutralizing would hand the block back the forgery it had just removed.
     /// Cutting afterwards is safe in the other direction -- a cut only removes characters from the
     /// end, and a prefix of a string containing no marker contains none either.
+    /// </para>
     /// </remarks>
     private static string Name(string? value)
     {
@@ -1225,7 +1274,12 @@ public static class HistoricalReferenceWriter
             return NoValue;
         }
 
-        var (text, cut) = Clamp(Clean(CollapseWhitespace(value)), MaxToolNameLength);
+        var spaced = CollapseWhitespace(Visible(value, quoteLookAlikes: false));
+        var joined = CollapseWhitespace(Visible(value, quoteLookAlikes: false, remove: true));
+        var chosen = !string.Equals(spaced, joined, StringComparison.Ordinal) && MarkerPatterns.Any(marker => marker.IsMatch(joined))
+            ? joined
+            : spaced;
+        var (text, cut) = Clamp(Clean(chosen), MaxToolNameLength);
         return cut ? text + ClampedName : text;
     }
 
@@ -1320,7 +1374,8 @@ public static class HistoricalReferenceWriter
     /// included); invisible format characters -- zero-width spaces and joiners, bidirectional controls --
     /// are removed, so they cannot split a marker; a marker matches across any run of whitespace, line
     /// breaks included, and with any dash or equals look-alike; and a label matches after leading
-    /// whitespace. What it does not catch is a marker spelled with letters from another script: that stays
+    /// whitespace. (A tool name and an argument value reach this with their invisible characters already
+    /// turned into spaces by <see cref="Visible"/>; <see cref="Name"/> checks the removed spelling itself.) What it does not catch is a marker spelled with letters from another script: that stays
     /// hygiene, as the whole label does.
     /// </remarks>
     private static string Clean(string? value)

@@ -23,6 +23,45 @@ is recorded in [`RELEASING.md`](RELEASING.md#decision-known-limits-and-documente
   limits table. Dropping the preview suffix requires that table to be empty and the maintainers' deferred-work ledger
   to be closed; a non-empty table still requires a preview version. The GitHub release notes carry both tables.
 
+### Hygiene: tool names, the session state key, deferred tests (story 8.2)
+
+- **Invisible characters in a tool name no longer reach the `Approach:` line.** Story 6.2 turned every control,
+  format, private-use and unassigned code point in an argument *value* into a space, classified per Unicode scalar so
+  TAG characters are caught, but left tool *names* alone. Names now go through the same routine, before whitespace is
+  collapsed and markers are neutralized: a bidirectional override or isolate, a zero-width character or joiner, any
+  other format character (a soft hyphen, a byte-order mark), a TAG-character payload, a C0 or C1 control, a
+  private-use or unassigned code point, or a lone surrogate in a name becomes a space, so a name can neither use a
+  bidirectional control to reorder the rest of the line when it is displayed nor carry text in those code points, and
+  a name made only of them reads `(none recorded)`. A marker split by one of them, even inside a word, is still
+  neutralized. Variation selectors, the combining grapheme joiner and Hangul fillers are letters or marks and pass
+  through, as they do in argument values; which code points are unassigned follows the running .NET's Unicode data. **Behaviour change, for such names only:** until now TAG characters, controls and private-use
+  code points reached the block as they were, and format characters in the Basic Multilingual Plane were removed
+  rather than turned into spaces (`read`, a zero-width space and `ledger` rendered `readledger` and now renders
+  `read ledger`; an emoji ZWJ sequence now renders with spaces). A name
+  that holds none of these characters renders byte for byte as before; the sample's and the reuse baseline's golden
+  reports are unchanged.
+- **`ExperienceInjectionOptions.SessionStateKey`** (new, additive) sets the `StateBag` key session tracking keeps its
+  account under. It defaults to `ExperienceContextProvider.SessionStateKey` (`"AgentExperience.InjectionSession"`),
+  so nothing changes unless it is set. Two providers on one agent can now each have their own account (budget,
+  deduplication and withdrawals); with the same key, `ChatClientAgent` refuses two of its own providers when it is
+  built. The key is
+  validated when the provider is constructed: not null or blank, at most `MaxSessionStateKeyLength` (128)
+  characters, no whitespace or invisible code point, and not capture's `"AgentExperience.RunId"`. Changing the key of
+  a deployed provider starts existing sessions afresh. `ExperienceContextProvider.StateKeys` now returns the
+  configured key.
+- **Tests for paths that had none:** the sealing function's `Deleted` (plaintext and sealed tombstones) and
+  `AlreadySealed` outcomes, and a feedback replay after every sealed rationale copy has become unopenable (story
+  6.4); `ReadConfidenceAsync`'s revision cut-off under a race with a later commit, and its refusal of a history cursor
+  that stays put or goes back (story 7.3). Each was checked by breaking the code it covers.
+
+### Planned: `net8.0` and `net9.0` leave the matrix
+
+.NET 8 and .NET 9 leave support on 10 November 2026. The first preview published after that date removes the
+`net8.0` and `net9.0` targets from all five packages, with the `net8.0`-only `System.Text.Json` and
+`Microsoft.Bcl.Memory` references; a host still on either must stay on an earlier preview or move to .NET 10. Nothing
+is removed in this release. PostgreSQL 14 (end of life 12 November 2026) stays outside the supported matrix, as it
+is now. See [Target frameworks](docs/compatibility-evidence.md#target-frameworks).
+
 ## 0.1.0-preview.2
 
 Everything since `0.1.0-preview.1`: stories 3.6, 5.1–5.6, 6.1–6.6 and 7.1–7.3. It adds migrations `0011` to `0018`

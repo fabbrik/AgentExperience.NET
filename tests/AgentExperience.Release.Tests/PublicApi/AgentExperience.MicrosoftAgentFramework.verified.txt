@@ -115,6 +115,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     }
     public sealed class ExperienceInjectionOptions
     {
+        public const int MaxSessionStateKeyLength = 128;
         public ExperienceInjectionOptions() { }
         public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; init; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
@@ -122,6 +123,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; init; }
+        public string SessionStateKey { get; init; }
         public System.TimeProvider TimeProvider { get; init; }
     }
     public sealed class ExperienceInjectionResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>
