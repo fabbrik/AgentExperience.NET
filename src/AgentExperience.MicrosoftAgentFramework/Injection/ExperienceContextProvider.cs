@@ -56,7 +56,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// session shows the model every earlier block too. With
 /// <see cref="ExperienceInjectionOptions.SessionLimits"/> set (the default), the provider keeps a small
 /// account of what it gave the session in the session's <see cref="AgentSession.StateBag"/>, under
-/// <see cref="SessionStateKey"/>, and it survives MAF's session serialization like any other state. It
+/// <see cref="ExperienceInjectionOptions.SessionStateKey"/> (<see cref="SessionStateKey"/> by default), and it survives MAF's session serialization like any other state. It
 /// uses that account to bound the conversation (records and bytes across invocations, reported as
 /// <see cref="InjectionOutcome.SessionBudgetExhausted"/> and
 /// <see cref="InjectionOmissionReason.OverSessionBudget"/>), to never inject a record revision the
@@ -114,10 +114,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
     public const string HistoricalReferenceKey = "AgentExperience.HistoricalReference";
 
     /// <summary>
-    /// The single <see cref="AgentSession.StateBag"/> key session tracking keeps its account under, and the
-    /// provider's one entry in <see cref="StateKeys"/>. Its value is a small JSON object of counters and
-    /// record IDs with revisions -- never record content. Removing it resets the session's budget and
-    /// forgets what the session was given, so withdrawal notices for it are no longer delivered.
+    /// The default <see cref="AgentSession.StateBag"/> key session tracking keeps its account under, and so the
+    /// provider's one entry in <see cref="StateKeys"/> unless <see cref="ExperienceInjectionOptions.SessionStateKey"/>
+    /// names another. Its value is a small JSON object of counters and record IDs with revisions -- never record
+    /// content. Removing it resets the session's budget and forgets what the session was given, so withdrawal
+    /// notices for it are no longer delivered.
     /// </summary>
     public const string SessionStateKey = "AgentExperience.InjectionSession";
 
@@ -126,8 +127,6 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// its invocation staged in the session state, so that only that invocation settles it. Metadata only.
     /// </summary>
     internal const string StageKey = "AgentExperience.HistoricalReference.Stage";
-
-    private static readonly IReadOnlyList<string> SessionStateKeys = [SessionStateKey];
 
     private static readonly IReadOnlyList<Guid> NoIds = [];
 
@@ -139,6 +138,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceInjectionOptions _options;
     private readonly ApproachArgumentAllowlist _approachArguments;
+    private readonly string _stateKey;
+    private readonly IReadOnlyList<string> _stateKeys;
 
     /// <summary>
     /// Creates a provider over Core's retrieval service, the record store its final eligibility check
@@ -147,8 +148,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="retrieval">Core's retrieval service. It owns eligibility, ranking, and the retrieval timeout.</param>
     /// <param name="store">The record store each selected candidate is re-read through, in the request's own authorization and scope.</param>
     /// <param name="options">Host configuration: the resolver, the limits, the risk decision, and the result callback.</param>
-    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.ResolveRequest"/>, <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/> or <see cref="ExperienceInjectionOptions.ApproachArguments"/>, is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><see cref="ExperienceInjectionOptions.ApproachArguments"/> is malformed; see its remarks.</exception>
+    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.ResolveRequest"/>, <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/>, <see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/>, is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/> is malformed; see their remarks.</exception>
     public ExperienceContextProvider(
         ExperienceRetrievalService retrieval,
         IExperienceRecordStore store,
@@ -163,6 +164,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
         _store = store;
         _options = options;
         _approachArguments = approachArguments;
+
+        // Snapshotted with the rest: the key this provider reads and writes never changes under it.
+        _stateKey = options.SessionStateKey;
+        _stateKeys = Array.AsReadOnly(new[] { _stateKey });
     }
 
     /// <summary>
@@ -264,7 +269,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                     NoOmissions,
                     retrieved: null,
                     request.CorrelationId,
-                    new InjectionFailure(UnreadableSessionState, Exception: null));
+                    new InjectionFailure(UnreadableSessionState(_stateKey), Exception: null));
             }
         }
         catch (Exception ex)
@@ -510,10 +515,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
         }
     }
 
-    /// <summary>The content-free failure reason for a session state that does not read.</summary>
-    internal const string UnreadableSessionState =
+    /// <summary>The content-free failure reason for a session state that does not read under <paramref name="key"/>.</summary>
+    internal static string UnreadableSessionState(string key) =>
         "The session's injection state could not be read, so nothing was injected. It is left as it is; remove the '"
-        + SessionStateKey + "' state bag key to reset it.";
+        + key + "' state bag key to reset it.";
 
     /// <summary>
     /// Why nothing was injected when every step ran: the session's budget could not take the records that
@@ -536,7 +541,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return null;
         }
 
-        if (!InjectionSessionState.TryLoad(agentSession.StateBag, out var state, out var absent))
+        if (!InjectionSessionState.TryLoad(agentSession.StateBag, _stateKey, out var state, out var absent))
         {
             unreadable = true;
             return null;
@@ -546,14 +551,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             // Written on first use, even with nothing to inject, so that later invocations find the key
             // and never have to tell "absent" from "present as another type" again.
-            return new SessionTracker(agentSession, state, limits, dirty: true);
+            return new SessionTracker(agentSession, _stateKey, state, limits, dirty: true);
         }
 
         // An earlier invocation's stage that MAF never settled -- a stream abandoned before it reported,
         // say. The block was handed over, so the session is charged for it: when unsure, charge. But its
         // withdrawal notices stay owed: MAF keeps no history for an abandoned stream, so a notice marked
         // delivered here could be lost for good. When unsure, withdraw again.
-        return new SessionTracker(agentSession, state.Commit(settled: false), limits, dirty: state.Pending is not null);
+        return new SessionTracker(agentSession, _stateKey, state.Commit(settled: false), limits, dirty: state.Pending is not null);
     }
 
     /// <summary>
@@ -655,7 +660,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         try
         {
-            if (!InjectionSessionState.TryLoad(agentSession.StateBag, out var state)
+            if (!InjectionSessionState.TryLoad(agentSession.StateBag, _stateKey, out var state)
                 || state.Pending is not { } pending
                 || !Carries(context.RequestMessages, pending.Stage))
             {
@@ -665,7 +670,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 return;
             }
 
-            (context.InvokeException is null ? state.Commit() : state.Discard()).Save(agentSession.StateBag);
+            (context.InvokeException is null ? state.Commit() : state.Discard()).Save(agentSession.StateBag, _stateKey);
         }
         catch (Exception)
         {
@@ -673,8 +678,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
         }
     }
 
-    /// <summary>The one state bag key this provider uses: <see cref="SessionStateKey"/>.</summary>
-    public override IReadOnlyList<string> StateKeys => SessionStateKeys;
+    /// <summary>
+    /// The one state bag key this provider uses: <see cref="ExperienceInjectionOptions.SessionStateKey"/>, which is
+    /// <see cref="SessionStateKey"/> unless the host named another. <see cref="ChatClientAgent"/> refuses two
+    /// providers that declare the same key, so two of these providers on one agent need different keys.
+    /// </summary>
+    public override IReadOnlyList<string> StateKeys => _stateKeys;
 
     /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the
@@ -1259,6 +1268,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// </summary>
     private sealed class SessionTracker(
         AgentSession session,
+        string key,
         InjectionSessionState state,
         ExperienceInjectionSessionLimits limits,
         bool dirty)
@@ -1296,7 +1306,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             if (_dirty)
             {
-                State.Save(session.StateBag);
+                State.Save(session.StateBag, key);
                 _dirty = false;
             }
         }

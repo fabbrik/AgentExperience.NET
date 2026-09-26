@@ -260,6 +260,14 @@ included; neither is a forbidden adapter dependency.
 .NET 8 (LTS) and .NET 9 (STS; STS releases now get 24 months) both leave support on 10 November 2026. The first
 preview after that date drops `net8.0` and `net9.0`, and the matrix is then `net10.0` again until .NET 11 ships.
 
+**Planned removal.** The first preview published after 2026-11-10 removes `net8.0` and `net9.0` from
+`AgentExperienceTargetFrameworks`, and with them everything that exists only for them: the `net8.0`-only references
+to `System.Text.Json` and `Microsoft.Bcl.Memory` in Core and the store (and their rows in the dependency tables above),
+the `#if NET9_0_OR_GREATER` branch, and the `net8.0` and `net9.0` runs of every test project. That preview's
+CHANGELOG entry says so under its breaking changes. Until then both stay targeted, built, packed and tested exactly as
+now; nothing is removed early. PostgreSQL 14 is not affected by this: it is already outside the matrix (see
+[Why not 14](#why-not-14)), and stays out when it reaches end of life upstream on 12 November 2026.
+
 ## The PostgreSQL matrix
 
 CI's `postgres` job runs `AgentExperience.Storage.Postgres.Tests`, `…Vectors.Tests`, `AgentExperience.CompatibilityProof`

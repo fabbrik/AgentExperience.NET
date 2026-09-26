@@ -922,6 +922,74 @@ public class VerifiedIndependenceTests
     }
 
     [Fact]
+    public async Task A_confidence_read_counts_only_the_history_up_to_the_revision_it_read()
+    {
+        var world = new World();
+        var trusting = new ExperienceLifecycleService(
+            world.Store, indexingService: null, new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
+
+        // One verified update, then the record as a read at that point would have seen it.
+        Assert.True((await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None)).Counted);
+        var readAt = world.Store.Find(world.Target.ExperienceId)!;
+
+        // Two host-trusted updates land after it -- between the record read and the history read, as a race
+        // would have it. The history the read pages holds all three.
+        for (var i = 0; i < 2; i++)
+        {
+            Assert.True((await trusting.ApplyEvidenceAsync(Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None)).Counted);
+        }
+
+        var latest = world.Store.Find(world.Target.ExperienceId)!;
+        Assert.Equal(readAt.Revision + 2, latest.Revision);
+        world.Store.ReadAs[world.Target.ExperienceId] = readAt;
+
+        var report = (await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None)).Report!;
+
+        // The report describes the record it read, and none of the updates after it: the two host-trusted ones
+        // are neither counted nor excluded from counters that never held them.
+        Assert.Equal(readAt.Revision, report.Revision);
+        Assert.Equal(new ConfidenceAdmissionCounts(1, 0), report.Verified);
+        Assert.Equal(new ConfidenceAdmissionCounts(0, 0), report.HostTrusted);
+        Assert.Equal(readAt.SupportingValidations, report.SupportingValidations);
+        Assert.Equal(readAt.ReuseConfidence, report.ReuseConfidence);
+
+        // Read at the latest revision, the same history counts all three, and the filter excludes two.
+        world.Store.ReadAs.Clear();
+        var current = (await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None)).Report!;
+        Assert.Equal(new ConfidenceAdmissionCounts(2, 0), current.HostTrusted);
+        Assert.Equal(latest.SupportingValidations - 2, current.SupportingValidations);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_history_cursor_that_does_not_move_forward_fails_the_confidence_read_instead_of_looping(bool backwards)
+    {
+        var world = new World();
+        var trusting = new ExperienceLifecycleService(
+            world.Store, indexingService: null, new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers });
+
+        // Five counted updates: more than two pages of the fake's page size of two.
+        for (var i = 0; i < 5; i++)
+        {
+            Assert.True((await trusting.ApplyEvidenceAsync(Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None)).Counted);
+        }
+
+        // A sound cursor reads the history to its end in three pages.
+        var sound = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None);
+        Assert.Equal(new ConfidenceAdmissionCounts(5, 0), sound.Report!.HostTrusted);
+        Assert.Equal(3, world.Store.HistoryCalls);
+
+        // A broken one hands back, from its second page on, a cursor that stays put or goes back.
+        world.Store.HistoryCalls = 0;
+        world.Store.BrokenCursor = backwards ? -1 : 0;
+        var error = await Assert.ThrowsAsync<ExperienceStoreException>(
+            () => world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None));
+        Assert.Contains("did not move forward", error.Message, StringComparison.Ordinal);
+        Assert.Equal(2, world.Store.HistoryCalls);
+    }
+
+    [Fact]
     public async Task A_replay_of_evidence_stored_before_admission_was_recorded_reports_none_and_tags_none()
     {
         using var probe = Diagnostics.TelemetryProbe.SpansOnly();
@@ -1376,6 +1444,18 @@ public class VerifiedIndependenceTests
 
         public HashSet<Guid> SharedByGrant { get; } = [];
 
+        /// <summary>Records a read answers with instead of the stored one: a read that raced a later commit.</summary>
+        public Dictionary<Guid, ExperienceRecord> ReadAs { get; } = [];
+
+        /// <summary>
+        /// When set, every history page after the first names as its cursor the one it was asked for plus this
+        /// (0: stays put; negative: goes back) -- a store whose cursor does not page forward.
+        /// </summary>
+        public long? BrokenCursor { get; set; }
+
+        /// <summary>How many history pages have been asked for.</summary>
+        public int HistoryCalls { get; set; }
+
         public HashSet<Guid> Erased { get; } = [];
 
         public List<LifecycleEvent> Commits { get; } = [];
@@ -1414,6 +1494,8 @@ public class VerifiedIndependenceTests
             {
                 return Task.FromResult(new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, [], SharedByGrant: true));
             }
+
+            record = ReadAs.GetValueOrDefault(experienceId, record);
 
             return Task.FromResult(record.Scope == scope
                 ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Found, record, [])
@@ -1512,6 +1594,12 @@ public class VerifiedIndependenceTests
                 return Task.FromResult(new ExperienceRecordHistoryResult(ExperienceStoreOutcome.NotFound, 0, [], []));
             }
 
+            // A reader that never stops paging is a test failure, not a hang.
+            if (++HistoryCalls > 20)
+            {
+                throw new InvalidOperationException("The history was paged more than 20 times.");
+            }
+
             // A page of two, so a history longer than that is walked through its cursor.
             var events = _history
                 .Where(stored => stored.Event.ExperienceRecordId == query.ExperienceId && stored.AppliedRevision > (query.StartAfterRevision ?? -1))
@@ -1523,7 +1611,9 @@ public class VerifiedIndependenceTests
                 record.Revision,
                 page,
                 [],
-                events.Count > page.Count ? page[^1].AppliedRevision : null));
+                events.Count > page.Count
+                    ? BrokenCursor is { } drift && query.StartAfterRevision is { } asked ? asked + drift : page[^1].AppliedRevision
+                    : null));
         }
 
         public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(

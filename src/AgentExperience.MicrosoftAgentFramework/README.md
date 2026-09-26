@@ -370,9 +370,23 @@ one that does not resolve before any middleware runs, so a recorded name was fix
 not derived from the captured run's own data flow. That is the whole of the claim. A tool name is not guaranteed
 short, plain, or chosen by the host — an MCP or OpenAPI inventory takes its names from a remote server or a
 specification, and nothing in capture sanitizes or bounds `RawToolCall.ToolName` — so the writer bounds it where it
-enters a model's context: whitespace (newlines included) is collapsed, the block's markers and labels are neutralized,
-each name is cut to `HistoricalReferenceWriter.MaxToolNameLength` characters and the sequence to
-`MaxApproachToolNames` names, and both cuts are marked in the text. Until story 4.6 this
+enters a model's context: every control, format, private-use and unassigned code point becomes a space — classified
+per Unicode scalar, so bidirectional overrides and isolates (U+202A–U+202E, U+2066–U+2069), zero-width characters,
+TAG characters (U+E0000–U+E007F), soft hyphens, byte-order marks and lone surrogates all go, by the same routine an
+argument value goes through, so a name can neither use a bidirectional control to reorder the rest of the line when it
+is displayed nor carry text in a code point of those categories — then whitespace (newlines included) is collapsed,
+the block's markers and labels are neutralized (a marker split by an invisible character, even inside a word, is
+checked as a reader sees it, with the character removed, and neutralized), each name is cut to
+`HistoricalReferenceWriter.MaxToolNameLength` characters and the sequence to `MaxApproachToolNames` names, and both
+cuts are marked in the text. A name made only of such characters is written as `(none recorded)`. A name that holds
+none of them renders byte for byte as it did before story 8.2. Until then such characters reached the block: TAG
+characters, controls and private-use code points as they were, and format characters in the Basic Multilingual Plane
+removed rather than turned into spaces. Zero-width joiners go too, so an emoji ZWJ sequence or a Persian or Indic
+name that relies on a joiner renders with a space in it. What this does not strip: default-ignorable code points that
+Unicode classes as letters or marks — variation selectors (U+FE00–U+FE0F, U+E0100–U+E01EF), the combining grapheme
+joiner, Hangul fillers — pass through, in names exactly as in argument values; and strong right-to-left letters in a
+name still take part in ordinary bidirectional display. Which code points are unassigned is the running .NET's Unicode data, so a code point assigned in a newer Unicode
+version can render differently on `net8.0` than on `net10.0`. Until story 4.6 this
 paragraph promised that attempts and tool calls were never serialized at all; it is amended here rather than quietly
 dropped, because a lesson that cannot say *what was done* teaches a later agent nothing. Until story 6.2 it promised
 that tool arguments were never serialized; that is amended just as precisely to "never, unless the host allowlisted
@@ -646,8 +660,8 @@ in-memory history that trims old messages: a trimmed block is one the model no l
 hide it.
 
 **Where the account lives, and when it is charged.** In the session's `StateBag`, under
-`ExperienceContextProvider.SessionStateKey` (`"AgentExperience.InjectionSession"`): counters, and record IDs with
-their revisions — never content, never a scope. It is written on the first invocation that resolves a request, and
+`ExperienceInjectionOptions.SessionStateKey`, which defaults to `ExperienceContextProvider.SessionStateKey`
+(`"AgentExperience.InjectionSession"`): counters, and record IDs with their revisions — never content, never a scope. It is written on the first invocation that resolves a request, and
 travels with MAF's `SerializeSessionAsync`/`DeserializeSessionAsync` like any other session state. A block's delivery
 is staged when it is handed to MAF and charged when MAF reports the invocation succeeded; a failed invocation —
 streaming or not — is not charged, its records are delivered again, and its notices stay owed. A stage nothing
@@ -675,8 +689,31 @@ invocation then fails, has an access row: the row records that the store handed 
 
 With no session, nothing is tracked. `SessionLimits = null` turns tracking off: no state is written and the block,
 the omissions and the outcomes are what they were before (the provider still declares
-`SessionStateKey` as its `StateKeys` entry, and `InvokedCoreAsync` does nothing). `ExperienceInjectionTests` pins
+its session state key as its `StateKeys` entry, and `InvokedCoreAsync` does nothing). `ExperienceInjectionTests` pins
 that; `SessionInjectionTests` pins everything above.
+
+**Two providers on one agent need two keys.** The account is per provider — its budget, the revisions it delivered,
+the notices it owes — so two `ExperienceContextProvider`s on one agent (over two stores, say, or two scopes) must not
+share a key. Set `SessionStateKey` on one of them:
+
+```csharp
+var tenantB = new ExperienceContextProvider(retrievalB, storeB, new ExperienceInjectionOptions
+{
+    ResolveRequest = ResolveForTenantB,
+    SessionStateKey = "Contoso.TenantB.InjectionSession",
+});
+```
+
+With different keys they keep independent budgets, deduplication and withdrawals in one session. `ChatClientAgent`
+refuses two of its own `AIContextProviders` (or one and its `ChatHistoryProvider`) that declare the same `StateKeys`
+entry, with an `InvalidOperationException` when the agent is built, so leaving both on the default there fails rather
+than sharing an account. That check covers only one `ChatClientAgent`'s own providers: a provider wired elsewhere (in
+the chat-client pipeline, or on another agent sharing the session), and a key some other component writes to the
+session's `StateBag` without declaring it, are not checked — choosing a key no one else writes is the host's job. The key is validated when the
+provider is constructed: it may not be null, blank, longer than `ExperienceInjectionOptions.MaxSessionStateKeyLength`
+(128) characters, contain whitespace or a control, format, private-use, unassigned or surrogate code point, or be
+capture's `"AgentExperience.RunId"`. Changing the key of a deployed provider starts every existing session afresh:
+the old account is no longer read, so its budget resets and a notice owed under it is never delivered.
 
 ### Failure behaviour
 
