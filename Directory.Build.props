@@ -53,7 +53,7 @@
     <PackageProjectUrl>https://github.com/fabbrik/AgentExperience.NET</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>agents;ai;agent-memory;experience;microsoft-agent-framework;maf;postgresql;pgvector;preview</PackageTags>
-    <PackageReleaseNotes>Preview release. Not production ready: the Known limits table in the repository README lists every unresolved item, and any unresolved item blocks a production-readiness claim. Public APIs may change between previews. See https://github.com/fabbrik/AgentExperience.NET#known-limits</PackageReleaseNotes>
+    <PackageReleaseNotes>Preview release. Not production ready, and it claims no production readiness: the Known limits table in the repository README lists every unresolved item, and any unresolved item blocks a production-readiness claim. The Documented boundaries table beside it states exactly what no code change can remove. Public APIs may change between previews. See https://github.com/fabbrik/AgentExperience.NET#known-limits</PackageReleaseNotes>
   </PropertyGroup>
 
   <!-- Symbols, SourceLink, and deterministic builds. The .NET 8+ SDK ships SourceLink for GitHub

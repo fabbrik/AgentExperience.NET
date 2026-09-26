@@ -220,14 +220,14 @@ full-text vector (its task ID, summary and lesson as lexemes) and its embedding 
 replica and dead tuple, because PostgreSQL searches them in the clear; in plaintext mode every copy of everything
 stays readable. Nor does it prove a production key store's custody: the property holds only if the keys live
 outside the database's backup domain and the key store's own backups are kept no longer than the erasure deadline.
-Both are KL-2 in the root README's Known limits table.
+Both are KL-2 in the root README's Documented boundaries table.
 
 The label on an injected block is hygiene, not a control: nothing here claims a model will *treat* retrieved text
 as data. The control is the approval boundary around tools, which lives outside the block, and section 4 is what
 proves that boundary holds when the model does obey. The same goes for a withdrawal notice: the suite proves one is
 delivered, once, carrying nothing but an ID, and that record text cannot forge one — not that a model that already
 read the withdrawn text stops using it. That residual, and that the earlier block stays in a reused session's
-history, is KL-12 in the root README's Known limits table.
+history, is KL-12 in the root README's Documented boundaries table.
 
 Nor does it prove that an argument value a host allowlists through `ExperienceInjectionOptions.ApproachArguments` is
 safe to show. Such a value was chosen by the captured run's model and is only as clean as the capture-time sanitizer,

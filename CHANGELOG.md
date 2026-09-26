@@ -1,7 +1,27 @@
 # Changelog
 
 AgentExperience.NET is a **preview**. It is not production ready, and public APIs may change between previews. The
-[Known limits](README.md#known-limits) table lists every limit that is still unresolved.
+[Known limits](README.md#known-limits) table lists every limit that is still unresolved, and the
+[Documented boundaries](README.md#documented-boundaries) table states what no code change can remove.
+
+## Unreleased
+
+### Release criteria: known limits and documented boundaries
+
+The README's Known limits table is split in two, and the `1.0` gate is redefined. No code changes, and this does
+not claim `1.0` or production readiness; it makes the gate reachable. The decision is reversible, and its rationale
+is recorded in [`RELEASING.md`](RELEASING.md#decision-known-limits-and-documented-boundaries).
+
+- **Known limits** are unresolved problems a code change could fix, and they block `1.0`. A row still leaves only by
+  fixing the limit. The table is now empty.
+- **Documented boundaries** are properties the library cannot remove by code, inherent to PostgreSQL, to what
+  independence can prove, or to how models work. They do not block `1.0`. Each row states the boundary exactly, why
+  no code change can remove it, and what the library does about it. KL-2, KL-11 and KL-12 move here with their
+  numbers and their wording unchanged. A row may move from limits to boundaries only with a written reason why no
+  code change can remove it, and it returns to the limits table if that reason stops holding.
+- **The gate** (`RELEASING.md` step 9, and the same step in `release.yml`) now counts only the rows of the Known
+  limits table. Dropping the preview suffix requires that table to be empty and the maintainers' deferred-work ledger
+  to be closed; a non-empty table still requires a preview version. The GitHub release notes carry both tables.
 
 ## 0.1.0-preview.2
 

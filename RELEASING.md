@@ -15,14 +15,47 @@ key, or a write permission.
 
 Every release from this repository is a **preview** — `0.1.0-preview.N`, set once in `Directory.Build.props` — and
 claims no production readiness. That is not modesty; it is the acceptance criterion's own condition: *support limits
-are documented before claiming production readiness, and any unresolved item blocks that claim.* The root README's
-[Known limits](README.md#known-limits) table is non-empty, so the claim is blocked. Step 9 checks that the version
-says so.
+are documented before claiming production readiness, and any unresolved item blocks that claim.* An unresolved item
+is a row in the root README's [Known limits](README.md#known-limits) table, or an open item on the maintainers'
+deferred-work ledger. The README's [Documented boundaries](README.md#documented-boundaries) are documented support
+limits that no code change can remove, so they do not block the claim (see
+[the decision below](#decision-known-limits-and-documented-boundaries)). Step 9 checks that the version says preview
+while any known limit remains, and states what dropping the suffix requires.
+
+This version still claims no production readiness: the deferred-work ledger is not closed, and dropping the suffix
+is a maintainer's decision, not something step 9 makes.
 
 The version is deliberately not `1.0.0`. With no version property at all, `dotnet pack` would emit `1.0.0` — a
 stability promise this codebase declines to make while it still ships documented breaking changes between previews.
 
 To cut the next preview, bump the suffix (`preview.1` → `preview.2`) in `Directory.Build.props`, and nothing else.
+
+## Decision: known limits and documented boundaries
+
+*Status: accepted, after `0.1.0-preview.2`; reversible. Made on the owner's behalf under a standing instruction to
+proceed without waiting.*
+
+**Context.** Story 4.3 froze the gate as "the Known limits table is empty and the deferred-work ledger is closed",
+with "a row leaves the table only by fixing the limit". By `0.1.0-preview.2`, thirteen of the sixteen limits were
+resolved and three (KL-2, KL-11, KL-12) were narrowed as far as they go. What is left of each is inherent: erasure
+cannot reach derived search data PostgreSQL has to read in the clear, or copies the library never sees; no check can
+tell that a model *used* a lesson it was given, or see past the host's own bookkeeping and key custody; and no
+provider can make a model unread an earlier block in a history the host owns. No code change can fix a limit that
+cannot be fixed, so under the frozen gate `1.0` was unreachable.
+
+**Decision.** The README's table is split. **Known limits** are unresolved problems a code change could fix; they
+block `1.0`, and a row still leaves only by fixing it. **Documented boundaries** are properties the library cannot
+remove by code; each states the boundary exactly, why no code change can remove it, and what the library does about
+it, and they do not block `1.0`. KL-2, KL-11 and KL-12 move to the boundaries with their numbers and wording
+unchanged. **A row may move from limits to boundaries only with a written reason why no code change can remove it,
+and it returns to the limits table if that reason stops holding.** Step 9, and the same step in `release.yml`, count
+only the Known limits table's rows.
+
+**Consequences.** The gate is reachable: dropping the preview suffix requires an empty Known limits table and a
+closed deferred-work ledger. The boundaries become support limits a `1.0` ships with, stated, rather than defects it
+must not ship with. The risk is that "inherent" becomes a way to stop fixing things; the written reason, which a
+reviewer can challenge, and the rule that a boundary returns when its reason fails are the guard. Reversing the
+decision means moving the three rows back and restoring the old count; nothing else depends on it.
 
 ## Prerequisites
 
@@ -216,22 +249,35 @@ The sample's promise is one command, no Docker, no database, no credentials, and
 
 ### 9. The production-readiness gate
 
-A release may drop the preview suffix only when the Known limits table is empty **and** every item on the
-maintainers' deferred-work ledger is closed. A row leaves the table only by fixing the limit it describes. Until
-then, the version must say preview:
+A release may drop the preview suffix only when the README's Known limits table is empty **and** every item on the
+maintainers' deferred-work ledger (`deferred-work.md` in their implementation artifacts, kept out of the repository)
+is closed. A row leaves the Known limits table only by fixing the limit it describes, or by moving to Documented
+boundaries with a written reason why no code change can remove it. Documented boundaries do not block. While any
+known limit remains, the version must say preview. The check counts only the rows of the `## Known limits` section,
+so a boundary's `KL-` row is not counted:
 
 ```bash
-( limits="$(grep -cE '^\| KL-[0-9]+ \|' README.md || true)"
-  if [ "$limits" -gt 0 ]; then
-    if grep -qE '<VersionSuffix>preview\.[1-9][0-9]*</VersionSuffix>' Directory.Build.props; then
-      echo "$limits known limit(s): this is a preview release, and it is versioned as one."
-    else
-      echo "FAILED (BLOCKED): $limits known limit(s), but Directory.Build.props does not version this as a preview."; false
-    fi
+( if ! grep -qx '## Known limits' README.md; then
+    echo "FAILED: README.md has no '## Known limits' section to count"; false
   else
-    echo "No known limits. Confirm the deferred-work ledger is closed before dropping the preview suffix."
+    limits="$(awk '/^## / { section = ($0 == "## Known limits") } section' README.md | grep -cE '^\| KL-[0-9]+ \|' || true)"
+    if grep -qE '<VersionSuffix>preview\.[1-9][0-9]*</VersionSuffix>' Directory.Build.props; then
+      if [ "$limits" -gt 0 ]; then
+        echo "$limits known limit(s): this is a preview release, and it is versioned as one."
+      else
+        echo "No known limits: this is a preview release, and it is versioned as one. Dropping the preview suffix requires this empty Known limits table and a closed deferred-work ledger."
+      fi
+    elif [ "$limits" -gt 0 ]; then
+      echo "FAILED (BLOCKED): $limits known limit(s), but Directory.Build.props does not version this as a preview."; false
+    else
+      echo "No known limits and no preview suffix: confirm the deferred-work ledger is closed before releasing."
+    fi
   fi )
 ```
+
+Today it prints `No known limits: this is a preview release, and it is versioned as one.` followed by what dropping
+the suffix requires. The ledger is not in the repository, so no command can check it; the maintainer who drops the
+suffix confirms it is closed.
 
 Before moving on, record the commit steps 1–9 verified; step 10 refuses to tag anything else:
 
@@ -275,8 +321,8 @@ select `nuget-release`, and approve. The `publish` job then:
 3. runs `dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate`,
    which uploads each `.snupkg` alongside its `.nupkg`;
 4. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
-   version's `CHANGELOG.md` section and the Known limits table as its notes. A preview's release notes say what it
-   does not promise.
+   version's `CHANGELOG.md` section, the Known limits table (or "None currently.") and the Documented boundaries
+   table as its notes. A preview's release notes say what it does not promise.
 
 If `publish` fails part-way, re-run the failed job from the Actions tab (it needs approving again): `--skip-duplicate`
 skips the packages nuget.org already has, and an existing GitHub release is left as it is. If `verify` fails,
@@ -305,8 +351,8 @@ nuget.org API key scoped to these five packages can publish from the verified wo
 shell that recorded `$verified`. Packages go first and the tag second, so a failed push never leaves a tag pointing
 at a release that does not exist; `--skip-duplicate` makes a retried push safe after a partial failure. The tag
 push still starts `release.yml`: approving its `publish` job then skips every package already pushed and creates
-the GitHub release; rejecting it leaves the release to be created by hand, with the Known limits table pasted into
-its notes.
+the GitHub release; rejecting it leaves the release to be created by hand, with the Known limits and Documented
+boundaries tables pasted into its notes.
 
 ```bash
 ( if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
