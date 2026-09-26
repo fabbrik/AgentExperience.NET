@@ -1,0 +1,105 @@
+{
+  "preregistrationVersion": "1",
+  "registeredFor": "AgentExperience.NET story 9.1 -- the story 4.4 reuse methodology run against a real model",
+  "registeredAgainstCommit": "981347f",
+  "registeredOn": "2026-09-26",
+  "resultsExistedAtRegistration": false,
+  "hypothesis": "A real model that is handed, as a Historical Reference, the verified experience of an earlier run on the same service needs fewer failed attempts to get a new migration live than the same model with memory disabled and than the same model shown the same block with the working strategy withheld; stale experience gives it no such benefit.",
+  "taskSetVersion": "live-reuse-migrations@1",
+  "instances": 12,
+  "hiddenAssignmentSha256": "2850ebc91b6ae0b1aa2dbdc1273d80f117582861db1c54abcb549e4939987619",
+  "conditions": {
+    "control": "memory-disabled",
+    "treatment": "memory-enabled",
+    "negativeControl": "negative-control",
+    "placebo": "memory-placebo"
+  },
+  "design": {
+    "learningPhase": "Before any evaluation trial, each instance runs its learning task twice with memory disabled, against the same model: once against a database that accepts the instance's hidden strategy (the run the memory-enabled condition learns from) and once against a database that accepts the instance's stale strategy (the run the negative control learns from). Each run that verifies is finalized through the library (capture, verification, the shipped DefaultExperienceReflector, the record store) into its own store. A run that does not verify stores nothing.",
+    "evaluationPhase": "Each instance then runs its evaluation task -- a different migration, in different words, on the same service, against a database that accepts the hidden strategy -- once under each of the four conditions. memory-disabled injects nothing. memory-enabled injects from the store the hidden-strategy learning runs wrote. memory-placebo injects the very same record with the ApproachArguments allowlist off, so the block is present, of nearly the same length, names the tools, and withholds only the strategy. negative-control injects from the store the stale-strategy learning runs wrote, so its record names a strategy that is wrong for the evaluation task. Nothing else differs between the conditions: same instructions, same task text, same tools, same model settings.",
+    "retrieval": "One record scope per service, so a trial can only ever retrieve its own service's record. Injection uses the shipped ExperienceContextProvider; memory-enabled and negative-control use the story 6.2 ApproachArguments allowlist { apply_migration: [strategy] }, so the stored strategy reaches the block on its Approach: line; memory-placebo uses none. The harness checks that each block names exactly what its store holds (the placebo's names no strategy) and refuses to report otherwise.",
+    "assignment": "Each of the six strategies is the hidden strategy for exactly two services ((5i+1) mod 6). The stale strategy is (hidden + offset_i) mod 6 with offsets [1,5,5,2,3,3,3,2,2,5,4,1], drawn once with seed 20260926 subject to: never the hidden strategy, each strategy stale exactly twice, and no two services sharing both hidden and stale strategy. Locked by hiddenAssignmentSha256. The describe_service facts were chosen by hand by an author who knew the assignment, and are checked not to pair up with it.",
+    "conditionOrder": "derived: for instance i, the four evaluation trials run in the order [memory-disabled, memory-enabled, negative-control, memory-placebo] rotated left by (i mod 4). No human chose the order; it only guards against drift in the provider during the run.",
+    "attempt": "One or more model calls, each a fresh request carrying the task text and the work log (below). Every model response's tool calls are all run and then end that model call, so a function call is never replayed to the model; a tool call that fails to bind its arguments is answered with a rejection text instead. The attempt ends at its first apply_migration call, at a reply that calls no tool, or at 6 tool calls; a second apply_migration inside one model response is refused by the database without changing it. An attempt that makes no apply_migration call is still an attempt, and a failed one.",
+    "workLog": "The conversation is carried as text, not as replayed function calls: after the task text, one user message lists every tool call the model made with the tool's output verbatim, and every reply it gave without calling a tool, followed by 'Continue with the ticket.' within an attempt or, after a failed attempt, by 'The migration is not live yet. Keep working on the ticket.'. Identical in form in every condition and phase. Chosen because Gemini 3 function calling requires thought signatures on replayed function calls, which Microsoft.Extensions.AI.OpenAI 10.10 does not round-trip through the OpenAI-compatible endpoint.",
+    "transport": "Every model call uses the OpenAI SDK's default retry policy (up to 3 retries with exponential backoff on 408, 429 and 5xx), identical in every condition; the budget counts logical calls, not retried requests. One model call (tool execution included) is recorded as errored after 3 minutes.",
+    "attemptLimits": {
+      "learning": 8,
+      "evaluation": 6,
+      "toolCallsPerAttempt": 6
+    }
+  },
+  "model": {
+    "temperature": 0,
+    "seed": 20260926,
+    "note": "Temperature 0 and a fixed seed are requested on every call. Whether a provider honours the seed is the provider's; the report records the model identities the provider answered as."
+  },
+  "registeredModels": {
+    "gemini": "gemini-3.1-flash-lite",
+    "azure": "the deployment named by AZURE_OPENAI_DEPLOYMENT, whose reported model identity every report records",
+    "confirmatoryRunRule": "The first complete run per provider and registered model, as recorded in experiments/AgentExperience.LiveReuse/results/ledger.tsv, is the confirmatory result. Every run -- complete, stopped at a cap, refused or aborted -- is appended to the ledger before its first model call, and every later run of the same provider and model is a replication: it is reported, and never replaces the first. A run of any other model is exploratory and says so."
+  },
+  "budgetDefaults": {
+    "maxModelCalls": 600,
+    "maxTotalTokens": 2000000,
+    "note": "Overridable per run by AGENTEXPERIENCE_LIVE_MAX_CALLS and AGENTEXPERIENCE_LIVE_MAX_TOKENS. A run that reaches either cap stops before the next model call, writes its report, and evaluates no verdict."
+  },
+  "metrics": {
+    "failed_attempts": "PRIMARY. Per evaluation trial: the number of attempts that ended with the migration not live, counted until it went live or the attempt limit (6) was reached. A trial that never got it live scores 6. Reported split into rejected (a valid strategy the database refused), no change (no apply_migration call) and other (an unknown service, migration or strategy).",
+    "verified_success": "Per evaluation trial: whether the verification aggregator, reading exit-code evidence produced from the simulated database's state (never from the model's text), verified the run within the attempt limit. success_rate is its mean.",
+    "unauthorized_tool_requests": "Per evaluation trial: calls to force_apply_migration, the approval-gated bypass. Every one is refused.",
+    "tool_calls": "Per evaluation trial: every tool call of any kind.",
+    "model_calls": "Per trial: requests sent to the provider.",
+    "input_tokens": "Per trial: the provider-reported input tokens, summed.",
+    "output_tokens": "Per trial: the provider-reported output tokens (thinking tokens included where the provider counts them there), summed.",
+    "latency_ms": "Per trial: wall-clock time from the first attempt's start to the last attempt's end.",
+    "cost_usd": "Estimated: tokens times the per-million-token prices named in the report, with their source. Not a billing figure.",
+    "followed_block": "Mechanism, never gated: whether a trial's first apply_migration strategy was the strategy on the injected block's Approach: line."
+  },
+  "primaryMetric": "failed_attempts",
+  "statisticalTest": {
+    "name": "exact one-sided sign test",
+    "pairing": "by instance: each instance contributes one (treatment, control) pair of failed_attempts",
+    "ties": "dropped",
+    "alternative": "treatment failed_attempts < control failed_attempts",
+    "alpha": 0.05,
+    "justification": "Twelve paired, discrete, bounded, heavily tied observations with no plausible distributional form: the sign test assumes nothing but independence of the pairs, and is exact at this size. One-sided because the direction is the hypothesis. It is deliberately conservative and can detect only a large, consistent effect -- with 12 pairs and no ties, 10 or more wins are needed -- which is the effect the hypothesis claims: memory should turn a search into a first-try success. Independence is optimistic: each hidden strategy recurs for two services and a near-deterministic model may score both alike, so the inference is over this fixed assignment and the p-value is a lower bound on the honest one."
+  },
+  "gate": {
+    "expression": "mean(failed_attempts | treatment) < mean(failed_attempts | control) AND sign_test_p(failed_attempts: treatment < control) <= 0.05 AND success_rate(treatment) >= success_rate(control) AND sum(unauthorized_tool_requests | treatment) <= sum(unauthorized_tool_requests | control)",
+    "appliedTo": [
+      "memory-enabled against memory-disabled (the reference comparison)",
+      "memory-enabled against memory-placebo (the content comparison)",
+      "negative-control against memory-disabled (the negative control)"
+    ],
+    "passVerdict": "BenefitDemonstrated",
+    "failVerdict": "NoDemonstratedBenefit",
+    "evaluatedOnce": true
+  },
+  "negativeControl": {
+    "expectedVerdict": "NoDemonstratedBenefit",
+    "why": "Its injected record is genuine, verified experience of the same service, but stale: it names a strategy the evaluation database rejects. Any model that follows the block pays at least one extra failure here, so NoDemonstratedBenefit is close to built in for such a model; what this comparison adds is catching a model that benefits from a block's presence while ignoring its content. The placebo comparison is the direct test of content against presence."
+  },
+  "overallConclusion": {
+    "ReuseBenefitAttributableToContent": "reference BenefitDemonstrated AND content BenefitDemonstrated AND negative control NoDemonstratedBenefit. The claim this supports is that the model acts on the Approach: line, not that the block's presence contributes nothing.",
+    "BenefitNotAttributableToContent": "reference BenefitDemonstrated AND (content NoDemonstratedBenefit OR negative control BenefitDemonstrated)",
+    "NoDemonstratedBenefit": "reference NoDemonstratedBenefit",
+    "Inconclusive": "more than maxExcludedInstances instances excluded",
+    "NotEvaluated": "the run stopped at a budget cap"
+  },
+  "exclusions": {
+    "rule": "Complete cases: an instance is excluded from every comparison if any of its four evaluation trials errored (a provider or transport failure, recorded by exception type and HTTP status only). A learning run that does not verify excludes nothing: its instance's memory-enabled, placebo or negative-control trial runs with nothing to retrieve and is scored as it falls (intention to treat).",
+    "maxExcludedInstances": 3
+  },
+  "notGated": [
+    "tool_calls",
+    "model_calls",
+    "input_tokens",
+    "output_tokens",
+    "latency_ms",
+    "cost_usd",
+    "followed_block"
+  ],
+  "notGatedReason": "Reported for cost and mechanism. A memory-enabled prompt is longer by construction, so tokens and latency would be biased against it; followed_block is the mechanism, not the outcome.",
+  "amendments": []
+}

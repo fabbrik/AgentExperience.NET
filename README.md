@@ -207,8 +207,9 @@ cannot afford to lose.
   .NET 8 and 9 leave support on 10 November 2026; the first preview published after that date drops `net8.0` and
   `net9.0`. See [Compatibility evidence](docs/compatibility-evidence.md).
 - **Evidence of benefit:** the end-to-end sample and the reuse baseline use deterministic fixtures and scripted models,
-  so they show the loop works, not that it helps a real model. A live-model experiment (Gemini, then Azure OpenAI) is
-  in progress and has no results yet.
+  so they show the loop works, not that it helps a real model. A pre-registered live-model experiment
+  ([`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md)) runs the same method
+  against Gemini or Azure OpenAI. It is opt-in, costs money, and never runs in CI. No live result has been recorded yet.
 
 ## Documentation
 
@@ -274,6 +275,20 @@ and the two transcripts are byte-identical. Set `AGENTEXPERIENCE_SAMPLE_POSTGRES
 same seven stages against the real PostgreSQL adapters. The sample shows that the loop runs end to end; it does not
 measure whether reuse helps a real model. See [its README](samples/AgentExperience.Sample.EndToEnd/README.md) for
 what it proves and what it deliberately does not.
+
+### Run the live reuse experiment
+
+[`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md) runs the reuse baseline's
+pre-registered method against a real model: a memory-disabled arm, a memory-enabled arm, a placebo that shows the same
+block with the working strategy withheld, and a negative control whose injected experience is stale. It needs a key in
+an environment variable, stops at a hard budget cap, and skips with a message when no key is set.
+
+```bash
+GEMINI_API_KEY=... dotnet run --project experiments/AgentExperience.LiveReuse -c Release
+```
+
+Results, when recorded, go under `experiments/AgentExperience.LiveReuse/results/` with the verdict under the
+pre-registered rule and its limitations.
 
 ## Contributing
 

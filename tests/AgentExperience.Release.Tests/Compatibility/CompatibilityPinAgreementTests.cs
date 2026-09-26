@@ -214,7 +214,7 @@ public sealed class CompatibilityPinAgreementTests
     /// The tests run from the test projects' lock files, not the shipping ones. A test-only dependency
     /// (Testcontainers, a newer DI container) could lift a floored package above its floor there, and the
     /// default run would then test a version the floor does not name. So every lock file under
-    /// <c>tests/</c> and <c>samples/</c> must resolve each floored package, where it appears at all, to the
+    /// <c>tests/</c>, <c>samples/</c> and <c>experiments/</c> must resolve each floored package, where it appears at all, to the
     /// floor itself, in every framework it records.
     /// </summary>
     [Fact]
@@ -239,7 +239,7 @@ public sealed class CompatibilityPinAgreementTests
             .GroupBy(reference => reference.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.SelectMany(reference => reference.Value).ToHashSet(StringComparer.Ordinal), StringComparer.OrdinalIgnoreCase);
 
-        var lockFiles = new[] { "tests", "samples" }
+        var lockFiles = new[] { "tests", "samples", "experiments" }
             .SelectMany(root => Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, root)))
             .Select(directory => Path.Combine(directory, "packages.lock.json"))
             .Where(File.Exists)
