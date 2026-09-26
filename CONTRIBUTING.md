@@ -68,6 +68,9 @@ tests/
   AgentExperience.Release.Tests/            release gates: the public API baseline, pin agreement, the security-suite map, workflow guards, documentation links
 samples/
   AgentExperience.Sample.EndToEnd/          one runnable command: capture, verify, reflect, persist, retrieve, inject, record reuse
+experiments/
+  AgentExperience.LiveReuse/                opt-in, pre-registered reuse experiment against a real model; never run by CI
+  AgentExperience.LiveReuse.Tests/          that experiment's harness, proven offline against scripted models
 eng/                                        release tooling: package verification and the dependency probes
 docs/                                       the guide, known limits, telemetry contract, security-suite map, compatibility evidence, original research
 _sdlc/                                      product brief, PRD, architecture, epics, and specs
