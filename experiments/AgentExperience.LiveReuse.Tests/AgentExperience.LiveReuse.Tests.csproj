@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 9.1: the live experiment's harness, proven offline with scripted IChatClients before any money is spent.
+       Part of the normal `dotnet test` run; it never touches the network and reads no provider variable. Outside
+       src/ and tests/, so net10.0 only (the experiment it tests is net10.0 only). -->
+  <PropertyGroup>
+    <RootNamespace>AgentExperience.LiveReuse.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[17.14.1]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.4]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentExperience.LiveReuse\AgentExperience.LiveReuse.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

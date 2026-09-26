@@ -6,6 +6,40 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Live-model reuse experiment (story 9.1)
+
+- **`experiments/AgentExperience.LiveReuse`**, an opt-in console app that runs story 4.4's reuse methodology against a
+  real model: Gemini (default `gemini-3.1-flash-lite`) or Azure OpenAI, both through `IChatClient`. The model works a
+  migration-rollout task whose working strategy is a hidden property of each service's database; the library
+  captures, verifies, reflects on and stores its verified learning runs; then each service's different evaluation
+  ticket runs memory-disabled, memory-enabled, as a placebo (the same block with the working strategy withheld), and
+  as a negative control with genuine but stale experience injected. Success is decided by the simulated database's
+  state, never by a model.
+- **Pre-registered** in `preregistration.json` before any live run: 12 instances, the metrics, and the verdict rule --
+  a strictly lower mean of failed attempts, an exact one-sided sign test at 0.05, no loss of verified success and no
+  rise in refused bypass requests, with a benefit credited to the injected content only if memory-enabled also beats
+  the placebo and the negative control shows none. The harness reads every value it executes from the file, which is
+  embedded in the build, and a test pins the file's blob id so any later change must be recorded as an amendment. The
+  registered model and a first-complete-run rule, enforced by an append-only `results/ledger.tsv`, fix which run is the
+  confirmatory one.
+- **Configuration from environment variables only**, a hard budget cap on model calls and tokens (default 600 and
+  2,000,000) that stops the run cleanly, and a Markdown report plus raw per-trial JSON under `results/` with no key,
+  no prompt, and only the endpoint's host (for Azure, without the resource name). With no provider variable set it skips with a message and spends nothing.
+  It never runs in CI or in `dotnet test`.
+- **One new package, in the experiment only**: `Microsoft.Extensions.AI.OpenAI` `[10.10.0]`, which reaches Gemini's
+  OpenAI-compatible endpoint and the Azure OpenAI v1 endpoint alike, and resolves `Microsoft.Extensions.AI.Abstractions`
+  to exactly the shipping floor. Nothing under `src/` changes. The comparison with `Google.GenAI` and `Azure.AI.OpenAI`
+  is in the experiment's README.
+- **`experiments/AgentExperience.LiveReuse.Tests`**, part of the normal suite, proves the harness offline with scripted
+  models: a model that follows the block benefits and gains nothing from stale experience or the placebo, a model that
+  ignores the block shows identical numbers in every condition, the four conditions' first requests are byte-identical
+  once the block is removed, no request ever replays a function call (batched calls, unknown tools and unbindable
+  arguments included), the bypass guardrail can fail, the budget cap stops the run, errors are recorded by type only,
+  and a fake key appears in no output.
+- **`CompatibilityPinAgreementTests`** now also checks the lock files under `experiments/`, so the experiment's graph
+  must resolve every floored package to its floor, as the test projects' do.
+- **No live result is recorded yet.** Nothing in this entry claims one.
+
 ### Release criteria: known limits and documented boundaries
 
 The README's Known limits table is split in two, and the `1.0` gate is redefined. No code changes, and this does

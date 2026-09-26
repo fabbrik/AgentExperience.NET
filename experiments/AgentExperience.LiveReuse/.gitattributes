@@ -1,0 +1,6 @@
+# The pre-registration is identified by the git blob id of its exact bytes, which every report prints and a test pins.
+# A checkout that rewrote its line endings would change that identity.
+preregistration.json -text
+
+# Reports and raw results are written with '\n' on every platform; keep them byte-for-byte as written.
+results/** -text

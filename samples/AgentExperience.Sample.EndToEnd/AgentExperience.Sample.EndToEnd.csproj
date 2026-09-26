@@ -36,6 +36,8 @@
          attempt-level tool recorder rather than copying them. It deliberately does not reuse the
          stepping clock or the counter-based identifier source: see ReuseBaselineExperiment. -->
     <InternalsVisibleTo Include="AgentExperience.ReuseBaseline" />
+    <!-- Story 9.1's live-model experiment reuses the same doubles, for the same reason. -->
+    <InternalsVisibleTo Include="AgentExperience.LiveReuse" />
   </ItemGroup>
 
 </Project>
