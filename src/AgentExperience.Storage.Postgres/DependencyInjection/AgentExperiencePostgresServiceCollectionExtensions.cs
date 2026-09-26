@@ -20,8 +20,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// <b>The key store must keep its keys outside the database's backup domain</b>, or erasing a record
-    /// destroys nothing that a restored backup cannot bring back. See <see cref="IExperienceKeyStore"/> and the
-    /// store README's key custody section. A component constructed directly, without the same
+    /// destroys nothing that a restored backup cannot bring back. See <see cref="IExperienceKeyStore"/> and
+    /// docs/guide/crypto-shredding.md, "Key custody". A component constructed directly, without the same
     /// <see cref="ExperienceEncryption"/>, runs in plaintext mode.
     /// </remarks>
     /// <param name="services">The service collection.</param>

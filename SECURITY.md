@@ -3,8 +3,8 @@
 ## Supported versions
 
 AgentExperience.NET is a **preview** (`0.1.0-preview.N`) and is not production ready. The
-[Known limits](README.md#known-limits) table lists every unresolved item a code change could fix, and the
-[Documented boundaries](README.md#documented-boundaries) table states exactly what no code change can remove; several
+[Known limits](docs/known-limits.md#known-limits) table lists every unresolved item a code change could fix, and the
+[Documented boundaries](docs/known-limits.md#documented-boundaries) table states exactly what no code change can remove; several
 of the boundaries are security-relevant (erasure that cannot reach derived search data in backups, and a withdrawn
 record that stays in a reused session). Only the latest preview is supported, and security fixes land on the `main`
 branch.

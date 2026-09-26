@@ -229,14 +229,14 @@ full-text vector (its task ID, summary and lesson as lexemes) and its embedding 
 replica and dead tuple, because PostgreSQL searches them in the clear; in plaintext mode every copy of everything
 stays readable. Nor does it prove a production key store's custody: the property holds only if the keys live
 outside the database's backup domain and the key store's own backups are kept no longer than the erasure deadline.
-Both are KL-2 in the root README's Documented boundaries table.
+Both are KL-2 in the [Documented boundaries](known-limits.md#documented-boundaries) table.
 
 The label on an injected block is hygiene, not a control: nothing here claims a model will *treat* retrieved text
 as data. The control is the approval boundary around tools, which lives outside the block, and section 4 is what
 proves that boundary holds when the model does obey. The same goes for a withdrawal notice: the suite proves one is
 delivered, once, carrying nothing but an ID, and that record text cannot forge one — not that a model that already
 read the withdrawn text stops using it. That residual, and that the earlier block stays in a reused session's
-history, is KL-12 in the root README's Documented boundaries table.
+history, is KL-12 in the [Documented boundaries](known-limits.md#documented-boundaries) table.
 
 Nor does it prove that an argument value a host allowlists through `ExperienceInjectionOptions.ApproachArguments` is
 safe to show. Such a value was chosen by the captured run's model and is only as clean as the capture-time sanitizer,
@@ -248,11 +248,11 @@ value orders a guarded call, nested and borrowed included; which keys are harmle
 
 Nor does it prove that a run cited as confidence evidence *used* the record. The suite proves that a run, a round and
 an assessment cannot be invented — each must be one the library finalized, captured or minted — that none can be
-moved to another scope or record or used twice, and (story 7.3) that the run must be one the library recorded
+moved to another scope or record or used twice, and that the run must be one the library recorded
 delivering the record into; a caller can still cite each run that was given the lesson, once per run, whatever the
 lesson did there. It does not prove the host's own statements: a host that calls `RecordExposure` itself, marks a
 hand-written record `Finalized`, or passes a dishonest `ClosedRound` to finalization is believed; so is an
 application role granted `AllowSealing`, which can replace a plaintext payload — exposures and origin included — while
 the grant stands. And the
 trust-the-host opt-out still trusts everything; the suite proves only that what it admits is labelled and can be left
-out of a read. Those residuals are KL-11.
+out of a read. Those residuals are KL-11 in the same table.

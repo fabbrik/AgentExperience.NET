@@ -27,7 +27,7 @@ namespace AgentExperience.Storage.Postgres;
 /// event reasons; and a reuse-feedback rationale, sealed once per exposed record. <b>What is not</b>: IDs,
 /// scope, statuses, scores, counters, timestamps, principal and reviewer identities, and the derived search
 /// data PostgreSQL must read in the clear to search -- the full-text vector (stemmed words with positions)
-/// and the embedding. The store README states each mode's guarantee exactly.
+/// and the embedding. docs/guide/crypto-shredding.md states each mode's guarantee exactly.
 /// </para>
 /// <para>
 /// <b>Key custody decides whether any of this is true.</b> The key store must keep its keys outside the

@@ -1,8 +1,8 @@
 # Changelog
 
 AgentExperience.NET is a **preview**. It is not production ready, and public APIs may change between previews. The
-[Known limits](README.md#known-limits) table lists every limit that is still unresolved, and the
-[Documented boundaries](README.md#documented-boundaries) table states what no code change can remove.
+[Known limits](docs/known-limits.md#known-limits) table lists every limit that is still unresolved, and the
+[Documented boundaries](docs/known-limits.md#documented-boundaries) table states what no code change can remove.
 
 ## Unreleased
 
@@ -72,7 +72,7 @@ matrix (`net8.0`, `net9.0` and `net10.0`; PostgreSQL 15 to 18; MAF `[1.22.0, 2.0
 ### Known limits resolved or narrowed
 
 `0.1.0-preview.1` shipped sixteen known limits. This preview resolves thirteen and narrows the other three, which stay
-in the table (see [Known limits](README.md#known-limits)).
+in the table (see [Known limits](docs/known-limits.md#known-limits)).
 
 - **Resolved:** KL-1 (story 5.6), KL-3 and KL-10 (5.4), KL-4 (6.1), KL-5 and KL-6 (5.5), KL-7 (5.3), KL-8 (6.2, then
   7.1), KL-9 (3.6), KL-13 (6.3, then 7.2), KL-14 and KL-15 (5.1), and KL-16 (5.2).
@@ -110,7 +110,7 @@ role cannot read or write any table until step 4 grants it the manifest. Step 6 
    would otherwise accept it.
 1. **Stop every process running `0.1.0-preview.1`**, and keep it stopped until step 5.
 2. **Create an owner role and move ownership to it, as a superuser** (story 6.1), using the SQL in
-   [Store: upgrading an existing single-role database](src/AgentExperience.Storage.Postgres/README.md#upgrading-an-existing-single-role-database).
+   [Store: upgrading an existing single-role database](docs/guide/deployment.md#upgrading-an-existing-single-role-database).
    It creates the owner, grants it the one superuser-only privilege a non-superuser migrating role needs —
    `GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized` — and moves
    ownership of the database, the `agent_experience` schema and every table, sequence and function in it. The role
@@ -307,7 +307,7 @@ the stores need: no `ALTER TABLE`, so it cannot disable a trigger or replace a g
 `TRUNCATE` or `UPDATE` on any ledger, so a purge marker it sets by hand admits nothing; `UPDATE` only on the columns
 the store moves, so it cannot write a tombstone by hand; and `EXECUTE` on the purge functions only when the host opts
 in. The owner role and superusers remain unbound, which is inherent in PostgreSQL. See
-[Store: deploying with two roles](src/AgentExperience.Storage.Postgres/README.md#deploying-with-two-roles).
+[Store: deploying with two roles](docs/guide/deployment.md#deploying-with-two-roles).
 
 - `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` and `ExperienceApplicationRoleOptions`
   (`AllowErasure`, `AllowAccessLogPurge`, `AllowSealing`). In one transaction, the call:
@@ -323,7 +323,7 @@ in. The owner role and superusers remain unbound, which is inherent in PostgreSQ
   functions and on every guard trigger function, and `EXECUTE` on the purge functions revoked from `PUBLIC` again.
 
 **Crypto-shredding** (story 6.4, KL-2), an opt-in mode in which erasure reaches every copy of a record's text. See
-[Store: crypto-shredding](src/AgentExperience.Storage.Postgres/README.md#crypto-shredding-erasure-that-reaches-every-copy).
+[Store: crypto-shredding](docs/guide/crypto-shredding.md).
 
 - **`ExperienceEncryption`** (Storage.Postgres): with it, every free-text column erasure removes is stored as
   AES-256-GCM ciphertext under a per-record data key. That covers the record payload together with the task ID,
@@ -360,7 +360,7 @@ in. The owner role and superusers remain unbound, which is inherent in PostgreSQ
   function. It touches no row.
 
 **Verified, exposure-bound confidence evidence** (stories 6.6 and 7.3, KL-11). See
-[Updating confidence from evidence](README.md#updating-confidence-from-evidence).
+[Updating confidence from evidence](docs/guide/confidence.md).
 
 - **Verified independence keys.** `ExperienceLifecycleService.ApplyEvidenceAsync`, and so every attributed feedback
   submission, refuses with `ConfidenceUpdateOutcome.Unverified` and an `IndependenceRefusal` an independence key it
@@ -415,8 +415,8 @@ in. The owner role and superusers remain unbound, which is inherent in PostgreSQ
   manifest is unchanged.
 
 **Injection into MAF** (stories 6.2, 6.5 and 7.1, KL-8 and KL-12). See
-[Adapter: showing selected argument values](src/AgentExperience.MicrosoftAgentFramework/README.md#showing-selected-argument-values)
-and [Adapter: reused sessions](src/AgentExperience.MicrosoftAgentFramework/README.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
+[Adapter: showing selected argument values](docs/guide/injection.md#showing-selected-argument-values)
+and [Adapter: reused sessions](docs/guide/injection.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
 
 - **`ExperienceInjectionOptions.ApproachArguments`: selected argument values on the `Approach:` line.** A host can
   allowlist, per tool name, the argument keys whose values the injected `Approach:` line shows, for example

@@ -4,7 +4,8 @@ This is the release procedure and the release verification checks, **in the orde
 command you can paste into an interactive bash or zsh shell; each prints an explicit OK or FAILED line rather than leaving a
 judgement to whoever is running it, and each multi-line check runs in a `( ... )` subshell so a failure never closes
 your terminal. Automation
-builds, tests, packs, and verifies on every push (`.github/workflows/ci.yml`). **Publishing takes two maintainer
+builds, tests, packs, and verifies on every pull request, every push to `main`, and a weekly schedule
+(`.github/workflows/ci.yml`). **Publishing takes two maintainer
 actions**: pushing a version tag, and approving the deployment it starts (step 10). Only
 `.github/workflows/release.yml` can publish. It re-runs these checks on the tagged commit, and pushes to nuget.org
 with a short-lived key from NuGet Trusted Publishing, so no NuGet API key is stored in the repository or its secrets.
@@ -16,8 +17,8 @@ key, or a write permission.
 Every release from this repository is a **preview** — `0.1.0-preview.N`, set once in `Directory.Build.props` — and
 claims no production readiness. That is not modesty; it is the acceptance criterion's own condition: *support limits
 are documented before claiming production readiness, and any unresolved item blocks that claim.* An unresolved item
-is a row in the root README's [Known limits](README.md#known-limits) table, or an open item on the maintainers'
-deferred-work ledger. The README's [Documented boundaries](README.md#documented-boundaries) are documented support
+is a row in the [Known limits](docs/known-limits.md#known-limits) table, or an open item on the maintainers'
+deferred-work ledger. The [Documented boundaries](docs/known-limits.md#documented-boundaries) are documented support
 limits that no code change can remove, so they do not block the claim (see
 [the decision below](#decision-known-limits-and-documented-boundaries)). Step 9 checks that the version says preview
 while any known limit remains, and states what dropping the suffix requires.
@@ -28,23 +29,25 @@ is a maintainer's decision, not something step 9 makes.
 The version is deliberately not `1.0.0`. With no version property at all, `dotnet pack` would emit `1.0.0` — a
 stability promise this codebase declines to make while it still ships documented breaking changes between previews.
 
-To cut the next preview, bump the suffix (`preview.1` → `preview.2`) in `Directory.Build.props`, and nothing else.
+To cut the next preview, bump the suffix (for example `preview.2` → `preview.3`) in `Directory.Build.props`, add
+that version's section to `CHANGELOG.md` (step 10's release notes are built from it), and nothing else.
 
 ## Decision: known limits and documented boundaries
 
 *Status: accepted, after `0.1.0-preview.2`; reversible. Made on the owner's behalf under a standing instruction to
 proceed without waiting.*
 
-**Context.** Story 4.3 froze the gate as "the Known limits table is empty and the deferred-work ledger is closed",
-with "a row leaves the table only by fixing the limit". By `0.1.0-preview.2`, thirteen of the sixteen limits were
+**Context.** The original release criteria froze the gate as "the Known limits table is empty and the deferred-work
+ledger is closed", with "a row leaves the table only by fixing the limit". By `0.1.0-preview.2`, thirteen of the sixteen limits were
 resolved and three (KL-2, KL-11, KL-12) were narrowed as far as they go. What is left of each is inherent: erasure
 cannot reach derived search data PostgreSQL has to read in the clear, or copies the library never sees; no check can
 tell that a model *used* a lesson it was given, or see past the host's own bookkeeping and key custody; and no
 provider can make a model unread an earlier block in a history the host owns. No code change can fix a limit that
 cannot be fixed, so under the frozen gate `1.0` was unreachable.
 
-**Decision.** The README's table is split. **Known limits** are unresolved problems a code change could fix; they
-block `1.0`, and a row still leaves only by fixing it. **Documented boundaries** are properties the library cannot
+**Decision.** The table is split in two, and both halves now live in [`docs/known-limits.md`](docs/known-limits.md)
+(they were in the root README when this was decided). **Known limits** are unresolved problems a code change could
+fix; they block `1.0`, and a row still leaves only by fixing it. **Documented boundaries** are properties the library cannot
 remove by code; each states the boundary exactly, why no code change can remove it, and what the library does about
 it, and they do not block `1.0`. KL-2, KL-11 and KL-12 move to the boundaries with their numbers and wording
 unchanged. **A row may move from limits to boundaries only with a written reason why no code change can remove it,
@@ -120,7 +123,7 @@ which a release test holds equal to the list the fixtures accept, so this runs e
       AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
         || { echo "FAILED: $project on PostgreSQL $major"; ok=false; }
     done
-    # Story 6.4: the store and vector suites again, unmodified, in crypto-shredding mode.
+    # The store and vector suites again, unmodified, in crypto-shredding mode.
     for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests; do
       AGENTEXPERIENCE_TEST_ENCRYPTION=on AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
         || { echo "FAILED: $project on PostgreSQL $major, crypto-shredding mode"; ok=false; }
@@ -135,10 +138,10 @@ All of these already ran in step 3. Run them again by name so the release log sh
 line — and so a gate that was accidentally filtered out of step 3 cannot hide.
 
 ```bash
-# Story 4.5: deletion and retention, against a real PostgreSQL (16 unless AGENTEXPERIENCE_POSTGRES_MAJOR says otherwise).
+# Deletion and retention, against a real PostgreSQL (16 unless AGENTEXPERIENCE_POSTGRES_MAJOR says otherwise).
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~PostgresDeletionTests"
 
-# Story 6.1: the two-role deployment. The application role owns nothing, cannot rewrite, remove or truncate a
+# The two-role deployment. The application role owns nothing, cannot rewrite, remove or truncate a
 # ledger whatever marker it sets, and reaches a purge only when the host opts in. (Every other store test in that
 # project also runs as the application role.)
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~PostgresApplicationRoleTests"
@@ -193,7 +196,7 @@ nuget.org and update the date before continuing.
 
 ### 6. The MAF compatibility matrix, and the floating dependencies
 
-`Microsoft.Agents.AI` is a range, `[floor, next major)` (story 7.2), so both ends are support claims and both probes
+`Microsoft.Agents.AI` is a range, `[floor, next major)`, so both ends are support claims and both probes
 **are** release blockers: the floor, and the newest stable version inside the range. Both run on a throwaway copy of
 the **tracked files** (HEAD plus uncommitted changes to them); untracked files are not copied, and the script warns
 when `src/` or `tests/` has any. The floor restores the committed lock files exactly (`--locked-mode`); a newer
@@ -208,8 +211,8 @@ If the newest stable MAF on nuget.org is outside the range (a new major), the se
 newest version inside it. Probing the new major itself (`eng/probe-maf-version.sh <version>`) is information for the
 evidence document, not a release blocker; widening the range is a deliberate change.
 
-Every other dependency is a floor, which claims every later release in its major, so the newest ones must pass too
-(story 6.3). This one is a release blocker as well. Like the MAF probe it works on a throwaway copy of the tracked files:
+Every other dependency is a floor, which claims every later release in its major, so the newest ones must pass too.
+This one is a release blocker as well. Like the MAF probe it works on a throwaway copy of the tracked files:
 
 ```bash
 eng/probe-floating-dependencies.sh   # must print "... PASSED" and exit 0; record the resolved table in the evidence
@@ -249,7 +252,8 @@ The sample's promise is one command, no Docker, no database, no credentials, and
 
 ### 9. The production-readiness gate
 
-A release may drop the preview suffix only when the README's Known limits table is empty **and** every item on the
+A release may drop the preview suffix only when the Known limits table in
+[`docs/known-limits.md`](docs/known-limits.md) is empty **and** every item on the
 maintainers' deferred-work ledger (`deferred-work.md` in their implementation artifacts, kept out of the repository)
 is closed. A row leaves the Known limits table only by fixing the limit it describes, or by moving to Documented
 boundaries with a written reason why no code change can remove it. Documented boundaries do not block. While any
@@ -257,10 +261,10 @@ known limit remains, the version must say preview. The check counts only the row
 so a boundary's `KL-` row is not counted:
 
 ```bash
-( if ! grep -qx '## Known limits' README.md; then
-    echo "FAILED: README.md has no '## Known limits' section to count"; false
+( if ! grep -qx '## Known limits' docs/known-limits.md; then
+    echo "FAILED: docs/known-limits.md has no '## Known limits' section to count"; false
   else
-    limits="$(awk '/^## / { section = ($0 == "## Known limits") } section' README.md | grep -cE '^\| KL-[0-9]+ \|' || true)"
+    limits="$(awk '/^## / { section = ($0 == "## Known limits") } section' docs/known-limits.md | grep -cE '^\| KL-[0-9]+ \|' || true)"
     if grep -qE '<VersionSuffix>preview\.[1-9][0-9]*</VersionSuffix>' Directory.Build.props; then
       if [ "$limits" -gt 0 ]; then
         echo "$limits known limit(s): this is a preview release, and it is versioned as one."
@@ -318,11 +322,11 @@ select `nuget-release`, and approve. The `publish` job then:
 
 1. downloads exactly the files `verify` uploaded (it does not check out or build anything);
 2. exchanges the job's GitHub OIDC token for a short-lived nuget.org key through `NuGet/login`;
-3. runs `dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate`,
+3. runs `dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate`, with the short-lived key from step 2,
    which uploads each `.snupkg` alongside its `.nupkg`;
 4. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
    version's `CHANGELOG.md` section, the Known limits table (or "None currently.") and the Documented boundaries
-   table as its notes. A preview's release notes say what it does not promise.
+   table from `docs/known-limits.md` as its notes. A preview's release notes say what it does not promise.
 
 If `publish` fails part-way, re-run the failed job from the Actions tab (it needs approving again): `--skip-duplicate`
 skips the packages nuget.org already has, and an existing GitHub release is left as it is. If `verify` fails,

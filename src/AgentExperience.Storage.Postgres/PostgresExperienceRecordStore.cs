@@ -134,7 +134,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// The derived full-text vector of a sealed record, computed from exactly the expression <c>0003</c>'s
     /// generated <c>search_vector</c> uses -- task ID, task summary, lesson, bounded to 100000 characters -- so a
     /// sealed record ranks exactly as its plaintext twin would. The text is sent as parameters and never stored;
-    /// what is stored is the tsvector (stemmed words and positions), which is the residual the README names.
+    /// what is stored is the tsvector (stemmed words and positions), which is the residual docs/guide/crypto-shredding.md names.
     /// </summary>
     internal const string SealedSearchVectorExpression =
         "to_tsvector('english', left(coalesce(@search_task_id, '') || ' ' || coalesce(@search_summary, '') || ' ' || " +
@@ -1610,14 +1610,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <see cref="ExperienceRecord.Revision"/>, the deletion timestamp, a tombstone status, and a fixed
     /// <c>task_id</c> placeholder. <c>experience_grant_access</c> rows are deliberately kept: they name
     /// a grant and a principal, carry no payload, and are the answer to "who read this before it was
-    /// deleted". See the package README for the retained list, stated exhaustively.
+    /// deleted". See docs/guide/deletion-and-retention.md for the retained list, stated exhaustively.
     /// </para>
     /// <para>
     /// <b>One transaction, one code path.</b> Every step runs inside <c>0010</c>'s
     /// <c>purge_experience_record</c> function, in the order that script pins, under a
     /// transaction-scoped marker the append-only guards recognise. The guards are never disabled and
     /// never widened for another session. That buys atomicity and a single path -- not a privilege
-    /// boundary; the README says exactly what it does not bind.
+    /// boundary; docs/guide/deletion-and-retention.md says exactly what it does not bind.
     /// </para>
     /// <para>
     /// <b>Foreign scope is indistinguishable from absent</b>, exactly as it is everywhere else: both are
@@ -2154,7 +2154,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// detail, feedback rationale, grant events -- and grant reasons written before the switch stay
     /// plaintext: this library does not open an <c>UPDATE</c> path on its audit trail. Copies made before
     /// sealing (backups, WAL archives, the dead tuple each seal leaves until <c>VACUUM</c>) are plaintext too.
-    /// The store README's upgrade runbook says what to do about each.
+    /// The upgrade runbook in docs/guide/crypto-shredding.md says what to do about each.
     /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>

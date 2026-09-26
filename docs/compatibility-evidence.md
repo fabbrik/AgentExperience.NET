@@ -29,9 +29,10 @@ each "everything else" cell says why the line is where it is.
 
 ## The version policy: floors, and one bounded range
 
-Story 6.3 (KL-13) replaced the exact-pin policy. Before it, every shipping `PackageReference` was exact, so a host
-whose graph needed a newer `Microsoft.Extensions.*` package, `Npgsql`, or a MAF that brought newer ones, got a restore
-conflict until a new preview moved the pins. Story 7.2 removed the last exact pin, MAF's. Now:
+`0.1.0-preview.2` replaced the exact-pin policy (resolving KL-13). Before it, every shipping `PackageReference` was
+exact, so a host whose graph needed a newer `Microsoft.Extensions.*` package, `Npgsql`, or a MAF that brought newer
+ones, got a restore conflict until a new preview moved the pins. MAF's exact pin was the last to go; it is now a range
+to the next major. Now:
 
 | Kind | Declared as | What CI proves | Which packages |
 | --- | --- | --- | --- |
@@ -363,7 +364,7 @@ CI's `maf-compatibility` job runs the MAF adapter's tests and the MAF proofs twi
 A failing `latest` leg is triaged like a failing floating leg ([the version policy](#the-version-policy-floors-and-one-bounded-range)):
 fix the adapter so it works at both ends of the range, or raise the floor past the broken release. A version outside
 the range (a 2.x, once one exists) is probed only on request, and a pass there is information, not a claim: widening
-the range is a deliberate change to the csproj files, this document and the README. The floating-dependency leg floats
+the range is a deliberate change to the csproj files, this document, the MAF package README and the guide. The floating-dependency leg floats
 MAF too, within the major, so the newest 1.x also runs the *whole* suite (the store, the sample and the reuse
 baseline, which reach MAF through the adapter), not only the adapter's.
 

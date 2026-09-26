@@ -173,7 +173,7 @@ internal static class ApplicationRolePrivileges
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            throw Refused("no role by that name exists; create it first (see the store README's two-role deployment)");
+            throw Refused("no role by that name exists; create it first (see docs/guide/deployment.md, Deploying with two roles)");
         }
 
         var facts = new RoleFacts(reader.GetFieldValue<uint>(0), reader.GetString(2));
