@@ -76,6 +76,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | `SessionStateKey` (on `main`; not in `0.1.0-preview.2`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
 | `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Approach:` line may show. See [Showing selected argument values](#showing-selected-argument-values). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. |
+| `ReceivingAgent` | none (off) | The receiving agent's tools and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
 
@@ -88,6 +89,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | The request scope lies outside the host authorization | Nothing, reported as `RetrievalDenied`; no search is issued, and a foreign scope reveals nothing |
 | A record revoked, re-scoped, re-scored below the confidence floor, aged past `MaxAge`, environment-mismatched, or unreadable since retrieval | It is absent from the block; the omission is recorded with the rule that dropped it and the stored record is untouched |
 | The host's `DecideInjection` denies a record | Absent whatever its stored confidence or status; the denial is recorded and nothing is written |
+| A record's verified approach calls a tool the receiving agent lacks, or one above its maximum risk class | Absent; recorded as `ToolUnavailable` or `RiskClassExceeded`, naming no tool |
 | More records, or more bytes, than the limits allow | Whole records are dropped — never cut — and each omission is recorded as `OverRecordLimit` or `OverByteBudget` |
 | A reused session: a revision it already holds, a spent session budget, or a record it was given that has since been withdrawn | Not injected again (`AlreadyDelivered`); nothing more once the budget is spent (`OverSessionBudget`, `SessionBudgetExhausted`); a fixed withdrawal notice ahead of any new record (`Retracted`) |
 
@@ -286,6 +288,59 @@ still needs the host's own `IExperienceReflector` to say so in the reflection's 
 carry; what that reflector writes there is the host's to keep free of secrets, because the lesson is emitted as
 written.
 
+## Gating on the receiving agent's capabilities
+
+A lesson's `Approach:` line teaches the tools a verified run called. Retrieved into an agent that lacks those tools,
+or must not use tools that risky, it teaches an approach the agent cannot, or must not, carry out. Declare the
+receiving agent and the provider keeps such a record out of the block:
+
+```csharp
+new ExperienceInjectionOptions
+{
+    ResolveRequest = ...,
+    ReceivingAgent = new ReceivingAgentCapabilities
+    {
+        AvailableTools = new HashSet<string> { "read_ledger", "wait_for_lock", "retry_refund" },
+        MaxRiskClass = ToolRiskClass.Medium,
+        ToolRiskClasses = new Dictionary<string, ToolRiskClass>
+        {
+            ["read_ledger"] = ToolRiskClass.Low,
+            ["wait_for_lock"] = ToolRiskClass.Low,
+            ["retry_refund"] = ToolRiskClass.Medium,
+        },
+    },
+}
+```
+
+- **What is checked.** Exactly the tool names the record's `Approach:` line would carry: the verified final attempt's
+  calls, in order, up to `HistoricalReferenceWriter.MaxApproachToolNames` (20). Both are read by one helper, so the
+  gate and the line cannot disagree. A record with no approach (not verified, quarantined, or no unambiguous error-free
+  final attempt) has nothing to gate and passes, and so does a borrowed record whose grant withholds the line
+  (`LessonOnly`): checking the lender's tool names there would let the reader probe for them. Names compare
+  ordinally, as recorded, and a recorded call with a null or blank name is always unavailable. Only the `Approach:`
+  line is checked: a tool name the lesson, reuse guidance, preconditions or warnings mention is not.
+- **Tool check first, then risk.** Any approach tool missing from `AvailableTools` omits the record as
+  `ToolUnavailable`. Otherwise, any approach tool whose class in `ToolRiskClasses` is above `MaxRiskClass` omits it as
+  `RiskClassExceeded`. A tool missing from `ToolRiskClasses` counts as `Critical`: the library never infers a tool's
+  risk from its name, and records carry no risk class — so a tool you list in `AvailableTools` but not in
+  `ToolRiskClasses` is still `Critical`. The first failure decides the reason. Leave `AvailableTools` or
+  `MaxRiskClass` `null` to skip that check: `ToolRiskClasses` has no effect without `MaxRiskClass`, and
+  `MaxRiskClass = ToolRiskClass.Critical` disables the risk check.
+- **Where it sits.** Between the final eligibility re-read and `DecideInjection`: on the re-read record, after the
+  eligibility rules and `AlreadyDelivered`. That is after the `Limits.MaxRecords` cut, so a gated record still takes a
+  record slot and the agent may get fewer records than the limit. A gated record is never shown to the host's decision, rendered,
+  charged to the session budget, tracked as delivered, or recorded as a run exposure. It withdraws nothing: like the
+  request's environment attributes, it is about this agent, not the record. The re-read before it is still a
+  delivery, so a gated borrowed record writes a grant access row (the store disclosed it), as one `DecideInjection`
+  denies does, but it is never injected or recorded as an exposure.
+- **It leaks nothing.** The omission's `Detail` is `null`, so no tool name reaches the result or telemetry.
+- **It grants nothing.** A record that passes teaches an approach; the approval boundary still decides every tool
+  call (see [Labeling is not a security control](#labeling-is-not-a-security-control)).
+- **Validated and snapshotted at construction.** The provider copies the declaration into ordinal collections when
+  it is built, so a later edit changes nothing, and refuses a null, empty or whitespace tool name in either
+  collection, or an undefined `ToolRiskClass`, with `ArgumentException`. With `ReceivingAgent` unset, the block, the omissions and the outcomes are byte for byte what
+  they are without it. `CapabilityGateTests` pins each case.
+
 ## Labeling is not a security control
 
 The block says it is untrusted reference material and that nothing inside it authorizes anything. That wording is
@@ -304,6 +359,7 @@ call anyway; the tool body never runs. See the [security suite](../security-suit
 | Retrieve | `ExperienceRetrievalService` applies scope, status, confidence, expiry, and environment eligibility, then ranks. Its own timeout bounds the call |
 | Record limit | The top `Limits.MaxRecords` (default 8) in rank order are kept; the rest are recorded as `OverRecordLimit` and are never even re-read. The provider owns this limit — `HistoricalReferenceWriter.Write` *rejects* an untrimmed list rather than applying it a second time |
 | Final eligibility check | Every kept candidate is re-read through the store in **one** batched call, `IExperienceRecordStore.GetManyAsync`, in the request's own authorization and scope, and each is put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 2 s) |
+| Capability gate | With `ReceivingAgent` set, a record whose approach calls a tool the agent lacks, or one riskier than it may use, is omitted as `ToolUnavailable` or `RiskClassExceeded`, before the host is asked about it |
 | Host decision | `DecideInjection` is asked about each survivor. A denial omits it as `HostDenied` whatever its stored confidence or status, and **never writes to the record**. Fail-closed: a callback that throws or returns `null` denies |
 | Write | Records are written in rank order until the next would exceed `Limits.MaxBytes` (default 16 KB of UTF-8); that record and everything after it are recorded as `OverByteBudget` |
 

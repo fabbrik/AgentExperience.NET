@@ -762,6 +762,49 @@ public static class HistoricalReferenceWriter
     private static string? Approach(ExperienceRecord record, ApproachArgumentAllowlist approachArguments, bool borrowed, out bool argumentsShown)
     {
         argumentsShown = false;
+        var ordered = ApproachToolCalls(record, out var clamped);
+        if (ordered is null)
+        {
+            return null;
+        }
+
+        if (ordered.Count == 0)
+        {
+            return NoToolsUsed;
+        }
+
+        var budget = new ArgumentBudget();
+        var steps = new List<string>(ordered.Count);
+        foreach (var call in ordered)
+        {
+            var name = Name(call.ToolName);
+            var shown = approachArguments.IsEmpty ? null : Arguments(call, approachArguments.KeysFor(call.ToolName), budget);
+            steps.Add(shown is null ? name : name + "(" + shown + ")");
+        }
+
+        argumentsShown = budget.Shown;
+        return ApproachPrefix
+            + string.Join(ApproachSeparator, steps)
+            + (clamped ? ApproachClamped : ".")
+            + (!budget.Shown ? ApproachSuffix : borrowed ? ApproachGrantArgumentsSuffix : ApproachArgumentsSuffix)
+            + (budget.Exhausted ? ApproachArgumentsClamped : string.Empty);
+    }
+
+    /// <summary>
+    /// The tool calls a record's <c>Approach:</c> line carries, in order and cut to
+    /// <see cref="MaxApproachToolNames"/>: the final attempt's calls, when the record's outcome is
+    /// <see cref="TaskVerificationStatus.Verified"/>, it is not quarantined, and its final attempt is
+    /// unambiguous and error-free. <see langword="null"/> when the record has no approach; empty when the
+    /// final attempt called no tool. The one place both the renderer and the capability gate
+    /// (<see cref="ExperienceInjectionOptions.ReceivingAgent"/>) read a record's approach from, so the gate
+    /// checks exactly the tools the line would name.
+    /// </summary>
+    /// <param name="record">The record whose approach is wanted.</param>
+    /// <param name="clamped"><see langword="true"/> when the sequence was longer than <see cref="MaxApproachToolNames"/> and was cut.</param>
+    internal static List<ToolCallRecord>? ApproachToolCalls(ExperienceRecord record, out bool clamped)
+    {
+        clamped = false;
+
         // Two different fields, deliberately both checked: Outcome.Status is the verification the run
         // reached, record.Status is where the record's lifecycle has since put it.
         if (record.Outcome.Status != TaskVerificationStatus.Verified || record.Status == ExperienceStatus.Quarantined)
@@ -813,7 +856,7 @@ public static class HistoricalReferenceWriter
         var calls = final.ToolCalls;
         if (calls is null or { Count: 0 })
         {
-            return NoToolsUsed;
+            return [];
         }
 
         var ordered = calls
@@ -822,33 +865,14 @@ public static class HistoricalReferenceWriter
             .Take(MaxApproachToolNames + 1)
             .ToList();
 
-        if (ordered.Count == 0)
-        {
-            return NoToolsUsed;
-        }
-
         // One more than the cap was taken, purely to tell "exactly at the cap" from "over it".
-        var clamped = ordered.Count > MaxApproachToolNames;
+        clamped = ordered.Count > MaxApproachToolNames;
         if (clamped)
         {
             ordered.RemoveAt(ordered.Count - 1);
         }
 
-        var budget = new ArgumentBudget();
-        var steps = new List<string>(ordered.Count);
-        foreach (var call in ordered)
-        {
-            var name = Name(call.ToolName);
-            var shown = approachArguments.IsEmpty ? null : Arguments(call, approachArguments.KeysFor(call.ToolName), budget);
-            steps.Add(shown is null ? name : name + "(" + shown + ")");
-        }
-
-        argumentsShown = budget.Shown;
-        return ApproachPrefix
-            + string.Join(ApproachSeparator, steps)
-            + (clamped ? ApproachClamped : ".")
-            + (!budget.Shown ? ApproachSuffix : borrowed ? ApproachGrantArgumentsSuffix : ApproachArgumentsSuffix)
-            + (budget.Exhausted ? ApproachArgumentsClamped : string.Empty);
+        return ordered;
     }
 
     /// <summary>What separates two arguments of one call on an <c>Approach:</c> line.</summary>

@@ -121,6 +121,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; init; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; init; }
         public string SessionStateKey { get; init; }
@@ -233,6 +234,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         OverByteBudget = 4,
         AlreadyDelivered = 5,
         OverSessionBudget = 6,
+        ToolUnavailable = 7,
+        RiskClassExceeded = 8,
     }
     public enum InjectionOutcome
     {
@@ -252,5 +255,19 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public string? Detail { get; init; }
         public System.Guid ExperienceId { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.InjectionOmissionReason Reason { get; init; }
+    }
+    public sealed class ReceivingAgentCapabilities : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities>
+    {
+        public ReceivingAgentCapabilities() { }
+        public System.Collections.Generic.IReadOnlySet<string>? AvailableTools { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ToolRiskClass? MaxRiskClass { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, AgentExperience.MicrosoftAgentFramework.Injection.ToolRiskClass> ToolRiskClasses { get; init; }
+    }
+    public enum ToolRiskClass
+    {
+        Low = 0,
+        Medium = 1,
+        High = 2,
+        Critical = 3,
     }
 }

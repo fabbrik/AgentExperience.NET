@@ -6,6 +6,32 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Capability gate for injection (story 10.4)
+
+- **`ExperienceInjectionOptions.ReceivingAgent`**, an optional `ReceivingAgentCapabilities` declaring what the agent
+  receiving the Historical Reference can and may do: `AvailableTools` (tool names), `MaxRiskClass`, and
+  `ToolRiskClasses` (each tool's host-declared `ToolRiskClass`: `Low`, `Medium`, `High`, `Critical`). With it set, a
+  record whose verified approach calls a tool the agent lacks is omitted as the new
+  `InjectionOmissionReason.ToolUnavailable`, and one whose approach calls a tool riskier than `MaxRiskClass` as the new
+  `RiskClassExceeded`. The tool check runs first, and the first failure decides the reason. Either check is skipped
+  when its property is `null`.
+- **Risk classes are declared, never inferred.** A tool missing from `ToolRiskClasses` counts as `Critical`, even one
+  listed in `AvailableTools`. `ToolRiskClasses` has no effect without `MaxRiskClass`, and `MaxRiskClass = Critical`
+  disables the risk check. A recorded call with a null or blank tool name is always unavailable, and `Critical`.
+- **Only the tools the `Approach:` line would name** are checked: the verified final attempt's calls, up to
+  `MaxApproachToolNames`. Tool names the lesson text mentions are not. A record with no approach passes, and so does a
+  borrowed record whose grant withholds the line, so the gate cannot be used to probe a lender's tool names. Tool
+  names compare ordinally, whatever comparer the host's collections use.
+- **Between the final eligibility re-read and `DecideInjection`**, after `AlreadyDelivered`. It runs after the
+  `MaxRecords` cut, so a gated record still takes a record slot and the agent may get fewer records than the limit. A
+  gated record is never shown to the host's decision, rendered, charged to a session budget, or recorded as a run
+  exposure. Its omission has no detail, so no tool name reaches results or telemetry. A gated borrowed record still
+  writes a grant access row, because the store disclosed it on the re-read, as one the host denies does.
+- **Passing grants nothing.** The approval boundary still decides every tool call.
+- **Validated and snapshotted at construction.** A null, empty or whitespace tool name in either collection, or an
+  undefined risk class, throws `ArgumentException`. With `ReceivingAgent` unset, the block, omissions and outcomes are
+  unchanged. The new enum members are appended, so existing numeric values are stable.
+
 ### Confidence decay by domain (story 10.3)
 
 - **`ConfidenceDecayPolicy`**, an optional retrieval setting. With one configured, each eligible record's `Confidence`

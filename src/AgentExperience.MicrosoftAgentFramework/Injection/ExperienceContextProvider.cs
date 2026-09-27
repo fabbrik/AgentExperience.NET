@@ -24,7 +24,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <b>What happens on each invocation.</b> The resolver turns the invocation into a
 /// <see cref="RetrieveExperienceRequest"/>; retrieval ranks what is eligible and bounded by its own
 /// timeout; the top <see cref="ExperienceInjectionLimits.MaxRecords"/> are re-read together, in one
-/// batched read through the record store; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
+/// batched read through the record store; with <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
+/// capability gate then drops each record whose <c>Approach:</c> line names a tool the agent lacks or may not use
+/// -- after the record limit, so a gated record still takes a slot and the agent may get fewer records than
+/// the limit; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
 /// asked about each survivor; and <see cref="HistoricalReferenceWriter"/> renders the rest inside the
 /// byte budget. Every record that falls out at any of those steps is reported with its reason.
 /// </para>
@@ -138,6 +141,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceInjectionOptions _options;
     private readonly ApproachArgumentAllowlist _approachArguments;
+    private readonly CapabilityGate? _capabilityGate;
     private readonly string _stateKey;
     private readonly IReadOnlyList<string> _stateKeys;
 
@@ -149,7 +153,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="store">The record store each selected candidate is re-read through, in the request's own authorization and scope.</param>
     /// <param name="options">Host configuration: the resolver, the limits, the risk decision, and the result callback.</param>
     /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.ResolveRequest"/>, <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/>, <see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/>, is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/> is malformed; see their remarks.</exception>
+    /// <exception cref="ArgumentException"><see cref="ExperienceInjectionOptions.ApproachArguments"/>, <see cref="ExperienceInjectionOptions.SessionStateKey"/> or <see cref="ExperienceInjectionOptions.ReceivingAgent"/> is malformed; see their remarks.</exception>
     public ExperienceContextProvider(
         ExperienceRetrievalService retrieval,
         IExperienceRecordStore store,
@@ -159,11 +163,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(options);
         var approachArguments = options.Validate(nameof(options));
+        var capabilityGate = CapabilityGate.Create(options.ReceivingAgent, nameof(options));
 
         _retrieval = retrieval;
         _store = store;
         _options = options;
         _approachArguments = approachArguments;
+        _capabilityGate = capabilityGate;
 
         // Snapshotted with the rest: the key this provider reads and writes never changes under it.
         _stateKey = options.SessionStateKey;
@@ -988,6 +994,20 @@ public sealed class ExperienceContextProvider : AIContextProvider
                         ? FrozenGrantArguments(result.GrantApproachArguments)
                         : null,
             };
+
+            // The capability gate (story 10.4): a record whose verified approach the receiving agent
+            // cannot, or must not, carry out is kept out, on the record as it stands now and on exactly the
+            // tools its Approach: line would name -- none for a borrowed record whose grant withholds the
+            // line, so the gate cannot be used to probe a lender's tool names. Before the host's decision,
+            // so a gated record is never shown to it; with no detail, so no tool name reaches the result. It
+            // withdraws nothing: like the environment attributes, it is about this agent, not the record.
+            if (_capabilityGate is { } gate
+                && (!refreshed.SharedByGrant || HistoricalReferenceWriter.ShowsApproach(refreshed.GrantDisclosure))
+                && gate.Check(HistoricalReferenceWriter.ApproachToolCalls(current, out _)) is { } gated)
+            {
+                omitted.Add(new OmittedExperience(experienceId, gated));
+                continue;
+            }
 
             if (_options.DecideInjection is { } decide)
             {
