@@ -49,7 +49,7 @@ public static class LiveReuseReport
                 amendmentsAfterResults = design.AmendmentsAfterResults,
             },
             taskSetVersion = result.TaskSetVersion,
-            settings = new { temperature = design.Temperature, seed = design.Seed, design.LearningAttemptLimit, design.EvaluationAttemptLimit, design.ToolCallsPerAttempt },
+            settings = new { temperature = design.Temperature, seed = design.Seed, seedSent = result.Descriptor.SeedSent, design.LearningAttemptLimit, design.EvaluationAttemptLimit, design.ToolCallsPerAttempt },
             budget = result.Budget,
             complete = result.Complete,
             stopReason = result.StopReason,
@@ -108,7 +108,7 @@ public static class LiveReuseReport
         Line($"| Provider | {d.Provider}, host `{d.EndpointHost}` (the endpoint's host only) |");
         Line($"| Model requested | `{d.RequestedModel}` |");
         Line($"| Model identities the provider reported | {(result.ModelIds.Count == 0 ? "none reported" : string.Join(", ", result.ModelIds.Select(id => "`" + Safe(id) + "`")))} |");
-        Line($"| Settings | temperature {Number(design.Temperature)}, seed {design.Seed} (requested on every call; honouring the seed is the provider's) |");
+        Line($"| Settings | temperature {Number(design.Temperature)}, seed {(d.SeedSent ? $"{design.Seed} (requested on every call; honouring the seed is the provider's)" : $"{design.Seed} not sent: this provider rejects the field (amendment 1)")} |");
         Line($"| Pre-registration | `preregistration.json` at git blob `{design.GitBlobId}` ({design.ByteCount} bytes), registered on {design.RegisteredOn} against commit `{design.RegisteredAgainstCommit}`; check with `git hash-object experiments/AgentExperience.LiveReuse/preregistration.json` |");
         Line($"| Amendments | {(design.Amendments.Count == 0 ? "none: the design is exactly as first registered" : $"{design.Amendments.Count} recorded, {design.AmendmentsAfterResults} made after results existed (listed below)")} |");
         Line($"| Task set | `{result.TaskSetVersion}`, {design.Instances} instances, hidden-assignment digest `{design.HiddenAssignmentSha256}` |");
@@ -271,7 +271,9 @@ public static class LiveReuseReport
             yield return "This is a scripted run. The scripted operator follows an injected block by construction, so any benefit here is a property of the script.";
         }
 
-        yield return "One model, one provider, one run. Temperature 0 and a fixed seed are requested, but neither provider guarantees determinism, and a model version change can change every number. Re-run before relying on a result.";
+        yield return result.Descriptor.SeedSent
+            ? "One model, one provider, one run. Temperature 0 and a fixed seed are requested, but neither provider guarantees determinism, and a model version change can change every number. Re-run before relying on a result."
+            : "One model, one provider, one run. Temperature 0 is requested and no seed is sent (this provider rejects the field; amendment 1), so nothing asks for determinism beyond temperature, and a model version change can change every number. Re-run before relying on a result.";
         yield return $"{result.Design.Instances} instances. The sign test can detect only a large, consistent effect; NoDemonstratedBenefit here is not evidence that there is no smaller effect.";
         yield return "The sign test treats the instance pairs as independent. Each hidden strategy is the answer for two services, and a near-deterministic model with a fixed search order will tend to score both alike, so the effective sample is smaller than the instance count and the p-value is optimistic. The inference is over this fixed, pre-committed assignment, not over tasks in general.";
         yield return "A synthetic task family: a simulated database whose accepted rollout strategy is a stand-in for tacit, environment-specific knowledge. Real tasks usually leave the answer partly inferable, which would shrink the gap between the conditions.";

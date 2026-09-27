@@ -6,6 +6,19 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### First live result (story 9.1)
+
+- **The first confirmatory run, against `gemini-3.1-flash-lite`, concluded `ReuseBenefitAttributableToContent`**
+  ([report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md)). Mean failed attempts were 0.00 with memory, 2.17 without it,
+  2.42 with the strategy withheld (placebo) and 2.75 with stale experience. Memory beat both no memory (sign test
+  p = 0.0010) and the placebo (p = 0.0005), and the stale control showed no benefit (p = 0.94). Every condition
+  verified all 12 tasks. The run cost about USD 0.08 (288 model calls). It is one model, one run, 12 instances and a
+  synthetic task; the report lists its limitations.
+- **Pre-registration amendment 1**, recorded before any trial completed: the seed is sent only to a provider that
+  accepts it. Gemini's OpenAI-compatible endpoint rejects a `seed` field with HTTP 400, which errored the first
+  attempt's first two calls; that attempt was stopped and stays in `results/ledger.tsv`, with its partial record.
+  `RunDescriptor.SeedSent` carries the choice, and the report says whether the seed was sent.
+
 ### Graded environment compatibility (story 10.1)
 
 - **`RetrieveExperienceRequest.PreferredEnvironmentAttributes`**, an optional init property. Preferred attributes only
@@ -61,7 +74,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   and a fake key appears in no output.
 - **`CompatibilityPinAgreementTests`** now also checks the lock files under `experiments/`, so the experiment's graph
   must resolve every floored package to its floor, as the test projects' do.
-- **No live result is recorded yet.** Nothing in this entry claims one.
+- The first live result is recorded separately, below the heading "First live result (story 9.1)".
 
 ### Release criteria: known limits and documented boundaries
 

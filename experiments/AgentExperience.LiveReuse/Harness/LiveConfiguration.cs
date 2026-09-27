@@ -113,7 +113,10 @@ public sealed class LiveConfiguration
         Provider == LiveProvider.Gemini ? Endpoint.Host : RedactedAzureHost(Endpoint.Host),
         InputPrice,
         OutputPrice,
-        PriceSource);
+        PriceSource)
+    {
+        SeedSent = Provider != LiveProvider.Gemini,
+    };
 
     /// <summary>
     /// The provider's <see cref="IChatClient"/>: the OpenAI SDK pointed at the provider's OpenAI-compatible endpoint,

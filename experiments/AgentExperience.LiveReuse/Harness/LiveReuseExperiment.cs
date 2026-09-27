@@ -44,7 +44,14 @@ public sealed record RunDescriptor(
     string EndpointHost,
     double? InputUsdPerMillionTokens,
     double? OutputUsdPerMillionTokens,
-    string PriceSource);
+    string PriceSource)
+{
+    /// <summary>
+    /// Whether the pre-registered seed is sent. Gemini's OpenAI-compatible endpoint rejects a <c>seed</c> field with
+    /// HTTP 400, so Gemini calls carry temperature 0 only (pre-registration amendment 1).
+    /// </summary>
+    public bool SeedSent { get; init; } = true;
+}
 
 /// <summary>One learning run or evaluation trial, as recorded. No prompt, no message text, no key.</summary>
 public sealed record RunRecord(
@@ -465,7 +472,7 @@ public static class LiveReuseExperiment
                     Instructions = Instructions,
                     Tools = environment.Tools,
                     Temperature = design.Temperature,
-                    Seed = design.Seed,
+                    Seed = options.Descriptor.SeedSent ? design.Seed : null,
                 },
                 AIContextProviders = memory is null
                     ? []

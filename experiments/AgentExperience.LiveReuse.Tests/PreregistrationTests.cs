@@ -11,9 +11,9 @@ public sealed class PreregistrationTests
     /// file fails this test until both are updated here, and a changed file with no new amendment entry fails whatever
     /// this constant says: editing the pre-registration is always a visible act in review.
     /// </summary>
-    private const string RegisteredBlobId = "238d644d79c256c79f73f8025fdc7b41cd672b5f";
+    private const string RegisteredBlobId = "64a06da847b2311c30fff8c0e8c576b6d8198678";
 
-    private const int RegisteredAmendments = 0;
+    private const int RegisteredAmendments = 1;
 
     private static string OnDisk => Path.Combine(TestSupport.ExperimentDirectory(), "preregistration.json");
 

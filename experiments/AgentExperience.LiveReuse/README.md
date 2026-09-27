@@ -9,9 +9,23 @@ them can show the library's premise with a real model. This experiment runs 4.4'
 > with memory disabled and fewer than when shown the same block with the working strategy withheld -- and gets no
 > such help when the injected experience is stale.
 
-**Status: no live result has been recorded yet.** The harness, the pre-registration and the offline tests are in place;
-`results/` will hold the first report once someone runs it with a key. Nothing in this repository claims a live result
-until a report under `results/` says so.
+**Status: one confirmatory result, for `gemini-3.1-flash-lite`.** The first complete run with the registered Gemini
+model ([report](results/gemini-gemini-3.1-flash-lite-2026-09-27.md)) concluded **ReuseBenefitAttributableToContent** under the pre-registered rule:
+
+| Condition | Mean failed attempts | First-try success | Verified success |
+| --- | ---: | ---: | ---: |
+| memory-disabled | 2.17 | 2 / 12 | 12 / 12 |
+| memory-enabled | **0.00** | **12 / 12** | 12 / 12 |
+| memory-placebo (strategy withheld) | 2.42 | 1 / 12 | 12 / 12 |
+| negative-control (stale experience) | 2.75 | 0 / 12 | 12 / 12 |
+
+Memory-enabled beat memory-disabled (sign test p = 0.0010, 10 of 12 pairs better, 2 tied) and the placebo (p = 0.0005,
+11 better, 1 tied); stale experience showed no benefit (p = 0.94) and led to the run's only refused bypass request.
+The run used 288 model calls and about USD 0.08. Read it with the report's own limitations: one model, one run,
+12 instances with pairs that are not fully independent, a synthetic task, and a strategy that reaches the block
+verbatim. It shows that this model acts on the `Approach:` line, not that the library helps on real tasks in general.
+Pre-registration amendment 1, recorded before any trial completed, stops sending the seed to Gemini, whose endpoint
+rejects the field; the ledger keeps the aborted first attempt. No Azure OpenAI run has been made.
 
 ## Run it
 
