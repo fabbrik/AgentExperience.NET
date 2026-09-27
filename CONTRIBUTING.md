@@ -94,5 +94,13 @@ _sdlc/                                      product brief, PRD, architecture, ep
   the compatibility proof and the shipping packages disagree on a version. Releasing is described in
   [RELEASING.md](RELEASING.md).
 - **A new known limit** is a row in [docs/known-limits.md](docs/known-limits.md), which the release gate counts.
+- **A change to `.github/workflows/`** must pass on the GitHub runner before review closes: push the branch and wait for
+  the workflow run. A workflow that only passed locally, or only in a test that parses the YAML, is not done.
+- **State code facts with a verified `file:line`.** When a design note, spec or review cites how existing code behaves,
+  cite the file and line you read, not what you remember; a claim nobody checked has been wrong before.
+- **Hand work on explicitly.** If a review or triage leaves something for a later change, record it in that change's
+  plan or in the deferred-work ledger in the same PR, not only in a review thread, where it will be lost.
+- **Tests must fail when the behaviour breaks.** For each behaviour a PR adds, check that the covering test fails if
+  you break the code it covers (a quick mutation by hand is enough); a test that still passes is not coverage.
 
 By contributing, you agree that your contributions are licensed under the [Apache-2.0 License](LICENSE).
