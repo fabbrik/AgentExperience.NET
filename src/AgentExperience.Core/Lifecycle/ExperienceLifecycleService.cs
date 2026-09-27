@@ -75,7 +75,7 @@ namespace AgentExperience.Core.Lifecycle;
 /// <b>Confidence moves only through <see cref="ApplyEvidenceAsync"/>.</b> That is the one entry point
 /// that touches <see cref="ExperienceRecord.ReuseConfidence"/> and the counters behind it, and it owns
 /// the arithmetic outright: it reads the record, computes the new counters and the new score with
-/// <see cref="ReuseConfidenceHeuristic"/>, and submits them on the lifecycle event with the revision it
+/// <see cref="IExperienceConfidenceEngine"/> (by default <see cref="ReuseConfidenceHeuristicEngine"/>), and submits them on the lifecycle event with the revision it
 /// read. The adapter writes those numbers and never derives any. A contradiction moves a live record to
 /// <see cref="ExperienceStatus.Contested"/> in the same transaction; supporting evidence never moves a
 /// status by itself. <see cref="CommitAsync"/> carries no confidence payload and changes no counter, so
@@ -117,6 +117,7 @@ public sealed class ExperienceLifecycleService
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceIndexingService? _indexingService;
     private readonly IndependenceVerifier _independence;
+    private readonly ConfidenceEngineRule _confidence;
 
     /// <summary>
     /// Creates a lifecycle service over a record store, with no de-indexing hook, verifying independence
@@ -175,12 +176,44 @@ public sealed class ExperienceLifecycleService
         ExperienceIndependenceOptions independence,
         IExperienceCaptureService? captureService = null,
         TimeSpan? deindexingTimeout = null)
+        : this(store, indexingService, independence, captureService, deindexingTimeout, confidenceEngine: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a lifecycle service with an optional post-commit de-indexing hook, explicit independence
+    /// verification, and an optional host confidence engine.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="confidenceEngine"/> computes the score every accepted piece of evidence moves a record
+    /// to, and the score <see cref="ReadConfidenceAsync"/> recomputes. It owns nothing else: which statuses
+    /// accept evidence, status changes, counters, independence and exposure admission stay the library's. Its
+    /// identity is checked here, once, and every update records it (see
+    /// <see cref="IExperienceConfidenceEngine"/>).
+    /// </remarks>
+    /// <param name="store">The port that persists events and projections atomically.</param>
+    /// <param name="indexingService">Optional. Removes the record's stored vector once it leaves eligibility.</param>
+    /// <param name="independence">How independence is verified, and the assessment token key.</param>
+    /// <param name="captureService">Optional. The capture service whose runs count as known.</param>
+    /// <param name="deindexingTimeout">How long the de-indexing hook may take. Must be strictly positive. <see langword="null"/> means <see cref="DefaultDeindexingTimeout"/>.</param>
+    /// <param name="confidenceEngine">Scores evidence. <see langword="null"/> means <see cref="ReuseConfidenceHeuristicEngine"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="store"/> or <paramref name="independence"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="independence"/> is invalid; or <paramref name="confidenceEngine"/>'s <see cref="IExperienceConfidenceEngine.RuleId"/> or <see cref="IExperienceConfidenceEngine.RuleVersion"/> is not 1 to 64 characters from <c>[A-Za-z0-9._-]</c>, or its rule ID is <see cref="ReuseConfidenceHeuristicEngine.HeuristicRuleId"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="deindexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceLifecycleService(
+        IExperienceRecordStore store,
+        ExperienceIndexingService? indexingService,
+        ExperienceIndependenceOptions independence,
+        IExperienceCaptureService? captureService,
+        TimeSpan? deindexingTimeout,
+        IExperienceConfidenceEngine? confidenceEngine)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(independence);
         _store = store;
         _indexingService = indexingService;
         _independence = new IndependenceVerifier(store, captureService, independence);
+        _confidence = ConfidenceEngineRule.For(confidenceEngine, nameof(confidenceEngine));
         DeindexingTimeout = deindexingTimeout ?? DefaultDeindexingTimeout;
 
         if (DeindexingTimeout <= TimeSpan.Zero || DeindexingTimeout.TotalMilliseconds > int.MaxValue)
@@ -380,7 +413,7 @@ public sealed class ExperienceLifecycleService
     /// <remarks>
     /// <para>
     /// <b>Core owns the arithmetic.</b> The new counters and the new score are computed here, by
-    /// <see cref="ReuseConfidenceHeuristic"/>, from the record this call read, and are submitted with
+    /// the service's <see cref="IExperienceConfidenceEngine"/>, from the record this call read, and are submitted with
     /// <em>that</em> record's revision. The store writes those numbers and enforces two rules only it
     /// can: that the revision has not moved, and that this submission's independence key has not already
     /// been counted. Nothing downstream derives a score.
@@ -434,6 +467,8 @@ public sealed class ExperienceLifecycleService
     /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="request"/> is <see langword="null"/>.</exception>
     /// <exception cref="ExperienceStoreException">Storage infrastructure failed. Lifecycle state and counters are unchanged.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    /// <exception cref="InvalidOperationException">The confidence engine returned a value that is not a score (NaN, an infinity, or outside [0, 1]). Nothing was written.</exception>
+    /// <exception cref="Exception">Any exception the confidence engine throws, propagated unchanged. Nothing was written.</exception>
     public async Task<ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(
         AuthorizationContext authorization,
         ApplyConfidenceEvidenceRequest request,
@@ -606,8 +641,16 @@ public sealed class ExperienceLifecycleService
             request.RunId,
             request.VerificationRoundId,
             request.Source == ConfidenceEvidenceSource.Human ? authorization.PrincipalId : null,
-            request.Detail) with
+            request.Detail);
+
+        // The heuristic's Apply settles the counters (and refuses an overflow); the score is the engine's,
+        // computed from the record as read and the counters after this evidence, and refused -- never
+        // clamped -- when it is not a score. Either failure throws before the store is asked anything.
+        update = update with
         {
+            NewReuseConfidence = _confidence.Score(record, update.NewSupportingValidations, update.NewContradictions),
+            RuleVersion = _confidence.Recorded,
+
             // Carried to the store, which spends it: one assessment lands at most one piece of evidence
             // per record, atomically with the evidence itself.
             AssessmentId = independence.AssessmentId,
@@ -989,7 +1032,7 @@ public sealed class ExperienceLifecycleService
     /// A record's counters are moved only by counted confidence updates, and every counted update is on a
     /// lifecycle event in the record's history, carrying the <see cref="ConfidenceUpdate.Admission"/> it was
     /// stored with. This read pages that history up to the record's revision as it read it, counts counted
-    /// updates by admission, and recomputes the score with <see cref="ReuseConfidenceHeuristic.Score"/> from
+    /// updates by admission, and recomputes the score with the service's <see cref="IExperienceConfidenceEngine"/> from
     /// the stored counters less the ones <paramref name="filter"/> excludes. With
     /// <see cref="ConfidenceEvidenceFilter.All"/>, or when nothing is excluded, it reports the stored score
     /// unchanged.
@@ -1008,6 +1051,8 @@ public sealed class ExperienceLifecycleService
     /// <returns>The store's outcome for the read, and the report on <see cref="ExperienceStoreOutcome.Found"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
     /// <exception cref="ExperienceStoreException">Storage infrastructure failed, or the store's history does not page forward.</exception>
+    /// <exception cref="InvalidOperationException">The recomputation's confidence engine returned a value that is not a score (NaN, an infinity, or outside [0, 1]).</exception>
+    /// <exception cref="Exception">Any exception the confidence engine throws while recomputing, propagated unchanged.</exception>
     public async Task<ConfidenceReadResult> ReadConfidenceAsync(
         AuthorizationContext authorization,
         Scope scope,
@@ -1132,7 +1177,7 @@ public sealed class ExperienceLifecycleService
                 record.Revision,
                 record.Status,
                 filter,
-                ReuseConfidence: excludedAny ? ReuseConfidenceHeuristic.Score(supportingCounted, contradictionsCounted) : record.ReuseConfidence,
+                ReuseConfidence: excludedAny ? _confidence.Score(record, supportingCounted, contradictionsCounted) : record.ReuseConfidence,
                 SupportingValidations: supportingCounted,
                 Contradictions: contradictionsCounted,
                 StoredReuseConfidence: record.ReuseConfidence,

@@ -19,6 +19,36 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   attempt's first two calls; that attempt was stopped and stays in `results/ledger.tsv`, with its partial record.
   `RunDescriptor.SeedSent` carries the choice, and the report says whether the seed was sent.
 
+### Replaceable confidence engine (story 10.2)
+
+- **`IExperienceConfidenceEngine`**, a Core port with `RuleId`, `RuleVersion` and `Score(ExperienceConfidenceInput)`.
+  The input is the record as read and the evidence counters after this evidence is applied. The engine supplies only
+  the score. Status changes, accepted statuses, counter increments, independence and exposure admission, and replay
+  stay in the library.
+- **`ReuseConfidenceHeuristicEngine`**, the default (`Instance`, rule ID `reuse-heuristic`, version `1.0.0`), wraps
+  `ReuseConfidenceHeuristic.Score`. With no host engine, every stored value, rule version, outcome and event is
+  unchanged.
+- **The rule is recorded with no migration.** The default engine still records `"1.0.0"` in
+  `ConfidenceUpdate.RuleVersion`; a host engine records `"{RuleId}/{RuleVersion}"`, on the lifecycle event and in the
+  evidence ledger. Both parts must be 1 to 64 characters from `[A-Za-z0-9._-]`, and a host engine may not use
+  `reuse-heuristic`. A violation throws `ArgumentException` when the lifecycle service is constructed.
+- **A score is validated, never clamped.** NaN, an infinity, or a value outside [0, 1] throws
+  `InvalidOperationException` naming the rule, with nothing written. An engine exception propagates unchanged.
+- **`ReadConfidenceAsync`** recomputes a filtered score through the same engine, so with a host engine it can now
+  throw when it recomputes: `InvalidOperationException` for a value that is not a score, or the engine's own
+  exception.
+- **Reuse feedback keeps going.** An engine failure while `ExperienceReuseFeedbackService` submits one exposed
+  record fails that record only, reported as retryable like a storage failure; the other records are still
+  submitted.
+- **Replay compares the rule string.** Retrying evidence stored under a different rule string (for example after
+  installing or changing an engine) is reported as `Conflict`. Keep one engine per deployment, and roll a change out
+  after in-flight retries drain.
+- **A new `ExperienceLifecycleService` constructor overload** takes `confidenceEngine` as its last parameter, after
+  `deindexingTimeout` (`null` means the default for either), and
+  `AddAgentExperienceCore` resolves a registered `IExperienceConfidenceEngine` once, from the root provider. The
+  existing constructors are unchanged. Finalization's initial 2/3 is still the
+  heuristic's; a host engine applies from the first evidence onward.
+
 ### Graded environment compatibility (story 10.1)
 
 - **`RetrieveExperienceRequest.PreferredEnvironmentAttributes`**, an optional init property. Preferred attributes only

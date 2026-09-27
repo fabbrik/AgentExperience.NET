@@ -52,6 +52,7 @@ the record was finalized with; `F` counts independent accepted contradictions. S
 reuse held up — useful for ranking and for a floor. It is not calibrated against anything, and nothing here claims
 it is the probability that the next reuse will succeed. The rule is versioned: every accepted update records the
 `RuleVersion` that produced it, so a later rule change stays auditable against scores computed under an earlier one.
+It is also only the default: a host can supply its own scoring rule (see [Replacing the engine](#replacing-the-engine)).
 
 **It never changes eligibility by itself.** Confidence is independent of the completion score and of status; a number
 cannot make an ineligible record eligible. What takes a record out of reuse is the *status*: a contradiction moves a
@@ -60,6 +61,66 @@ there while its counters keep moving. Supporting evidence never changes a status
 keeps being reinforced through its counters even though `Validated → Reinforced` happens only once (see
 [Lifecycle](lifecycle.md#the-transition-table)). Retrieval does apply a confidence floor
 (`RetrievalPolicy.MinimumConfidence`, 0.5 by default), so a low score stops a record being *returned*.
+
+## Replacing the engine
+
+The score comes from an `IExperienceConfidenceEngine` (in `AgentExperience.Core.Confidence`). With none configured,
+`ReuseConfidenceHeuristicEngine` computes `(1 + S) / (2 + S + F)`, and every stored value, `RuleVersion`, outcome and
+event is exactly what it was before the engine was replaceable. A host that wants a different evidence model supplies
+its own:
+
+```csharp
+public sealed class BayesianConfidenceEngine : IExperienceConfidenceEngine
+{
+    public string RuleId => "bayes";
+    public string RuleVersion => "2.1";
+
+    // input.Record is the record as read; the counters are the ones *after* this evidence.
+    public double Score(ExperienceConfidenceInput input) =>
+        (2d + input.SupportingValidations) / (4d + input.SupportingValidations + input.Contradictions);
+}
+
+services.AddSingleton<IExperienceConfidenceEngine, BayesianConfidenceEngine>(); // before or after AddAgentExperienceCore
+```
+
+Or pass it to the `ExperienceLifecycleService` constructor overload that takes `confidenceEngine` as its last
+parameter (`null` means the default). `AddAgentExperienceCore` resolves it once, from the root provider, so register
+it as a singleton. One instance serves concurrent calls, so it must be thread-safe; it must also be deterministic,
+and it runs synchronously, so it must not block.
+
+What the engine is given, and what it is not:
+
+- **The counters include finalization's validation.** `S` counts the supporting validation a record is finalized
+  with, so a finalized record's first supporting evidence scores `S = 2`, and its first contradiction `S = 1, F = 1`.
+- **Only counters and the record.** The input carries the record and the two counters, not the evidence's kind or
+  source, the run, or the reviewer. A rule that needs to weigh human evidence differently cannot do it here.
+- **On a confidence read, the record is unfiltered.** When `ReadConfidenceAsync` recomputes, `input.Record` is the
+  stored record, with the stored (unfiltered) counters and score; the input's counters are the filtered ones. Score
+  from the input's counters.
+- **The retrieval floor uses your scale.** `RetrievalPolicy.MinimumConfidence` (0.5 by default) is compared against
+  the stored score, which is your engine's, so choose the floor for your engine's distribution.
+
+- **The engine owns only the score.** Which statuses accept evidence, the move to `Contested`, the counter
+  increments, independence keys, verification, exposure and idempotent replay stay in the library, and no engine can
+  change them. It scores every accepted piece of evidence, and `ReadConfidenceAsync` scores its recomputation through
+  the same engine.
+- **The rule is recorded without a migration.** The default engine records the plain `"1.0.0"`, as before. A host
+  engine records `"{RuleId}/{RuleVersion}"` (`bayes/2.1` above) in the existing `ConfidenceUpdate.RuleVersion` field,
+  and so on the lifecycle event and in the evidence ledger. `RuleId` and `RuleVersion` must each be 1 to 64 characters
+  from `[A-Za-z0-9._-]`, and a host engine may not use the default's `RuleId`, `reuse-heuristic`. They are checked
+  when the lifecycle service is constructed, and a violation throws `ArgumentException`. Bump `RuleVersion` whenever
+  the arithmetic changes. Keep one engine per deployment: a retry of stored evidence under a different rule string is
+  a `Conflict`, because the replay check compares the rule version.
+- **A wrong score is refused, never repaired.** A score that is NaN, infinite or outside [0, 1] throws
+  `InvalidOperationException` naming the rule, with nothing written. An exception the engine throws propagates
+  unchanged, like a store failure, and nothing is written either. `ReadConfidenceAsync` throws the same way when it
+  recomputes. The reuse-feedback service reports an engine failure as that record's retryable failure and carries
+  on with the next record.
+- **It applies from the first evidence onward.** Finalization still stamps a freshly validated record with the
+  heuristic's 2/3 (`ExperienceFinalizationService.InitialValidatedReuseConfidence`); that stamp is not the engine's,
+  and the engine is not asked for it. The engine's score replaces it
+  when the record's first evidence is applied. Scores stored before the engine changed keep the rule they were
+  recorded under until new evidence arrives.
 
 ## Independence is keyed, and the database owns the key
 
@@ -160,7 +221,8 @@ an operator can see the opt-out in use without reading the ledger. To read a sco
 
 ```csharp
 var read = await lifecycle.ReadConfidenceAsync(authorization, scope, experienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, ct);
-// read.Report.ReuseConfidence: the heuristic over the counters less the host-trusted evidence.
+// read.Report.ReuseConfidence: the confidence engine's score (the heuristic by default) over the counters less the
+// host-trusted evidence.
 // read.Report.HostTrusted / .Verified / .Unrecorded: what each admission counted. VerifiedOnly also drops Unrecorded
 // (no admission recorded: stored before 0018, or written by something other than Core) and, for a record written by
 // hand, the initial counters its writer chose (read.Report.Initial, read.Report.Origin).
@@ -222,9 +284,9 @@ named it.
 
 A `LifecycleEvent` may carry an optional `ConfidenceUpdate`. When it does, the same transaction that appends the
 event and updates the projection also writes a row to `confidence_evidence` and sets the record's
-`reuse_confidence`, `supporting_validations`, and `contradictions`. Every number in it was computed by Core's
-`ReuseConfidenceHeuristic` from the record Core read; the store writes them and derives none. The `RuleVersion` that
-produced the score travels on the row.
+`reuse_confidence`, `supporting_validations`, and `contradictions`. Every number in it was computed by Core from the
+record Core read (the counters by `ReuseConfidenceHeuristic`, the score by the confidence engine); the store writes
+them and derives none. The `RuleVersion` that produced the score travels on the row.
 
 - **Independence is a unique index.** `confidence_evidence.independence_key` is a **generated** column:
   `'machine:' || run_id || ':' || verification_round_id` for machine evidence, `'human:' || reviewer_identity || ':'

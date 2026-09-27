@@ -221,7 +221,7 @@ public sealed record ConfidenceAdmissionCounts(int Supporting, int Contradicting
 /// <param name="Revision">The revision the report reflects.</param>
 /// <param name="Status">The record's status at that revision.</param>
 /// <param name="Filter">Which evidence was counted.</param>
-/// <param name="ReuseConfidence">The score over the counted evidence: the stored score when nothing was excluded, otherwise <see cref="ReuseConfidenceHeuristic.Score"/> over <paramref name="SupportingValidations"/> and <paramref name="Contradictions"/>.</param>
+/// <param name="ReuseConfidence">The score over the counted evidence: the stored score when nothing was excluded, otherwise the lifecycle service's <see cref="IExperienceConfidenceEngine"/> (by default <see cref="ReuseConfidenceHeuristic.Score"/>) over <paramref name="SupportingValidations"/> and <paramref name="Contradictions"/>.</param>
 /// <param name="SupportingValidations">The supporting count with the excluded evidence taken out.</param>
 /// <param name="Contradictions">The contradiction count with the excluded evidence taken out.</param>
 /// <param name="StoredReuseConfidence">The record's stored score.</param>
