@@ -101,5 +101,13 @@
     "followed_block"
   ],
   "notGatedReason": "Reported for cost and mechanism. A memory-enabled prompt is longer by construction, so tokens and latency would be biased against it; followed_block is the mechanism, not the outcome.",
-  "amendments": []
+  "amendments": [
+    {
+      "date": "2026-09-27",
+      "change": "The seed is sent only to providers that accept it. Gemini calls carry temperature 0 and no seed; Azure calls are unchanged.",
+      "why": "Gemini's OpenAI-compatible endpoint rejects a seed field with HTTP 400 (Unknown name \"seed\"). The first live attempt (ledger run 20260927T190451Z) errored on its first two calls for this reason and was stopped by hand; no trial completed.",
+      "resultsExisted": false,
+      "resultsChanged": "None: no trial had completed, and no verdict, metric or comparison was computed."
+    }
+  ]
 }
