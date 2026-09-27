@@ -25,8 +25,15 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 
 - Epic 1: 1.1 → 1.7 → 1.4 → 1.2 → 1.5 → 1.3 → 1.6.
 - Epic 2: 2.1 → 2.4 → 2.5 → 2.2 → 2.6 → 2.3. Minimum storage and retrieval policy is implemented here, without depending on Epic 3.
-- Epic 3: 3.1 → 3.2 → 3.4 → 3.3 → 3.5.
+- Epic 3: 3.1 → 3.2 → 3.4 → 3.3 → 3.5 → 3.6.
 - Epic 4: 4.1 → 4.2 → 4.4 → 4.5 → 4.6 → 4.3.
+- Epic 5: 5.1 → 5.2 → 5.3 → 5.4 → 5.5 → 5.6.
+- Epic 6: 6.2 → 6.1 → 6.3 → 6.5 → 6.6 → 6.4.
+- Epic 7: 7.2 → 7.1 → 7.3.
+- Epic 8: 8.1 → 8.2.
+- Epic 9: 9.2 → 9.1.
+
+Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
 
 Every implementation story includes automated happy-path and failure tests, safe correlated diagnostics, and documented public behavior. Tests and diagnostics are delivered with their owning behavior, not postponed to Epic 4. Schemas and entities are introduced only when their story needs them.
 
@@ -111,6 +118,21 @@ Operators can control scope, lifecycle, trust, contradiction, revocation, and re
 
 ### Epic 4: Operate and Measure the Learning Loop
 Developers and operators can observe, test, and validate the complete production learning loop.
+
+### Epic 5: Close the Directly Fixable Known Limits
+Maintainers can resolve the known limits of `0.1.0-preview.1` that needed no new trust model: dependency pins, erasure telemetry, open-run bounds, retention reach, verification binding, and round trips.
+
+### Epic 6: Resolve or Narrow the Remaining Known Limits
+Operators get a bound application role, argument values on the approach line, a wider support matrix, bounded reused sessions, verified confidence independence, and opt-in crypto-shredding, each limit resolved or narrowed to an exact residual.
+
+### Epic 7: Close the Residuals of the Narrowed Limits
+Maintainers can close what Epic 6 left of KL-8 and KL-13 and narrow KL-11 to what no code change can remove.
+
+### Epic 8: Make the Release Gate Reachable and Clear Deferred Work
+Maintainers can reach a production-readiness decision by separating fixable limits from inherent boundaries, and close the items earlier stories deferred.
+
+### Epic 9: Make the Project Readable and Its Benefit Testable
+Newcomers can understand the project from a short README and focused guides, and maintainers can test the reuse benefit against a real model under a pre-registered design.
 
 ## Epic 1: Capture and Explain Agent Experience
 
@@ -717,6 +739,32 @@ So that "who read our team's experience, and when" is answerable and no grant is
 **When** a grant is requested with a longer expiry
 **Then** it is refused with a field path and nothing is written; an expiry may still only shrink, and the maximum cannot be raised for a grant already issued.
 
+### Story 3.6: Let a Grant Withhold the Approach Line
+
+**Traces:** KL-9, FR9, NFR1 · **Depends on:** 3.5, 4.6 · **Delivered:** PR #23
+
+As an enterprise platform engineer,
+I want a sharing grant to state whether the borrowing scope's model may see the lending scope's `Approach:` line,
+So that lending a lesson does not also disclose the tool names our agents used, without denying the whole record.
+
+**Acceptance Criteria:**
+
+**Given** a grant is issued without a disclosure level, or existed before migration `0011`
+**When** it is stored or migrated
+**Then** its `ExperienceGrantDisclosure` is `LessonOnly`; the level is immutable under the grant monotonicity trigger, so changing it means revoking the grant and issuing a new one, and an undefined enum value is refused as `Invalid` with nothing written.
+
+**Given** a record is borrowed through a `LessonOnly` grant
+**When** its Historical Reference block is written
+**Then** the `Approach:` line is omitted and the `Shared:` line says the grant withholds the approach only when there was an approach to withhold; under `LessonAndApproach` the line is rendered, and a record in the reader's own scope is unaffected.
+
+**Given** a store reports a shared record with no level or an unknown one
+**When** it is injected
+**Then** it is treated as `LessonOnly`; the host decision can deny the record but never widen its level.
+
+**Given** a borrowed record is delivered by get, text search or vector search
+**When** the access row and the grant's issue event are written
+**Then** they record the level taken from the same row that names the permitting grant.
+
 ## Epic 4: Operate and Measure the Learning Loop
 
 Developers and operators can observe, test, and validate the complete production learning loop.
@@ -885,3 +933,473 @@ So that each release is safe for downstream .NET users.
 **Given** release verification begins
 **When** the maintainer runs the documented checks
 **Then** exact SDK, MAF, storage, and telemetry package pins have source-backed compatibility evidence; Story 4.5 deletion/retention tests pass and support limits are documented before claiming production readiness, and any unresolved item blocks that claim.
+
+## Epic 5: Close the Directly Fixable Known Limits
+
+Maintainers resolve the `0.1.0-preview.1` known limits that a bounded change to existing code could fix, without breaking what did not have to break.
+
+### Story 5.1: Unblock Newer MAF by Moving the Shared Pins
+
+**Traces:** KL-14, KL-15, NFR6 · **Depends on:** 4.3 · **Delivered:** PR #24
+
+As a .NET developer on a newer Microsoft Agent Framework,
+I want the adapter and its shared dependencies pinned to versions that work with MAF 1.22.0,
+So that the exact pins no longer block me from adopting it.
+
+**Acceptance Criteria:**
+
+**Given** the shipping packages
+**When** their references are inspected
+**Then** `Microsoft.Agents.AI` is `[1.22.0]`, the DI abstractions `[10.0.12]`, `Microsoft.Extensions.AI.Abstractions` `[10.10.0]`, and Core's redaction dependency an exact `[10.10.0]` instead of a floor, and the pin agreement test has no documented-floor exception.
+
+**Given** MAF 1.22.0 copies `ChatClientAgentRunOptions` per run
+**When** a run's options are reused sequentially, plainly, streaming, or with a host-set factory
+**Then** the adapter needs no code change and tests pin that behaviour.
+
+**Given** release verification
+**When** the pin evidence and the pinned and latest MAF probes run
+**Then** the evidence has hashed rows for the new pins and both probes pass at 1.22.0.
+
+### Story 5.2: Instrument Erasure
+
+**Traces:** KL-16, FR11, NFR7 · **Depends on:** 4.1, 4.5 · **Delivered:** PR #25
+
+As an operator,
+I want deletion, the retention sweep and the grant purge to emit the same telemetry as every other operation,
+So that the library's one irreversible operation is visible and alertable.
+
+**Acceptance Criteria:**
+
+**Given** `DeleteAsync`, `SweepExpiredAsync` or `PurgeExpiredAsync` runs
+**When** it succeeds, is refused or faults
+**Then** it emits the `delete`, `retention.sweep` or `grant.purge` operation on an `AgentExperience.Storage.Postgres` source and meter, with Core's span naming, instruments, four dimensions and failure classes, pinned to Core by an agreement test.
+
+**Given** the storage adapter references only Abstractions
+**When** the instrumentation is added
+**Then** it emits through the BCL, and a boundary test forbids a Core or OpenTelemetry reference from the adapter.
+
+**Given** a planted marker in erased content
+**When** any of the three operations succeeds, is refused or faults
+**Then** no erased content reaches telemetry.
+
+**Given** a sweep is interrupted by a storage failure, or a telemetry listener throws
+**When** the operation reports
+**Then** the count of records already erased is kept, and a throwing listener neither orphans `Activity.Current` nor drops an instrument.
+
+### Story 5.3: Bound Every Run from the Moment It Is Opened
+
+**Traces:** KL-7, FR2 · **Depends on:** 4.6 · **Delivered:** PR #26
+
+As a platform engineer,
+I want the open-run duration bound armed when a run is opened, not only when an invocation releases it,
+So that an invocation that never returns cannot hold its run and captured payload indefinitely.
+
+**Acceptance Criteria:**
+
+**Given** a run is started or continued through the adapter
+**When** the run is opened
+**Then** its per-run timer is armed for what remains of `MaxOpenRunDuration`, reused when the invocation releases the run, and disposed when the run's entry is removed.
+
+**Given** an invocation still running after one `MaxOpenRunDuration`
+**When** twice that duration has passed
+**Then** its run is completed as Cancelled underneath it and the close is reported; its answer is untouched but its attempt is refused.
+
+**Given** the guarantees of Story 4.6
+**When** the bound is armed early
+**Then** there is still one live scope per run, no false report for a run that completed normally, and disposal cancels every bound.
+
+### Story 5.4: Retention That Reaches a Subtree, and a Grant Access-Log Purge
+
+**Traces:** KL-3, KL-10, FR10, NFR1 · **Depends on:** 4.5, 5.2 · **Delivered:** PR #27
+
+As an operator,
+I want a retention sweep that can reach every scope beneath a root, and a bounded purge of old grant access rows,
+So that a project-level or per-user sweep is complete and the access log does not grow without limit.
+
+**Acceptance Criteria:**
+
+**Given** `SweepExpiredAsync` with `ScopeMatch.Subtree`
+**When** it runs for a root scope
+**Then** it reaches records with the same tenant, application and project whose team, agent and user fields are either null on the root or equal to it, never an ancestor, sibling or other project; the existing overload stays exact, and `MoreRemain` is truthful across the subtree.
+
+**Given** a caller authorized for the root
+**When** the subtree sweep runs
+**Then** each candidate is re-checked against authorization and containment, erased one per transaction through the unchanged purge function, and `DeletedCount` counts only records this call erased.
+
+**Given** an administrator calls `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` with a scope and a cutoff
+**When** the purge runs
+**Then** it removes access rows older than the cutoff in bounded batches through migration `0012`'s `SECURITY DEFINER` function with `EXECUTE` revoked from `PUBLIC`, refuses a cutoff inside the 30-day floor on the database's clock, and emits `grant.access.purge`.
+
+### Story 5.5: Default-Deny Evidence Kinds, and Bind an Evaluation to Its Run
+
+**Traces:** KL-5, KL-6, FR4, FR5 · **Depends on:** 1.3, 1.5, 2.5 · **Delivered:** PR #28
+
+As a platform engineer,
+I want a required check to name the evidence kind it accepts, and an evaluation that cannot be paired with another run's reflection,
+So that verification does not silently accept any evidence and a reflection always describes the run it was computed from.
+
+**Acceptance Criteria:**
+
+**Given** a `RequiredCheck`
+**When** it is constructed or aggregated
+**Then** its expected kind is required, accepting any kind is spelled `RequiredCheck.AnyKind`, and a null or blank kind is refused.
+
+**Given** `VerificationAggregator.Aggregate` is called with a run ID
+**When** it returns
+**Then** the `VerificationResult` records the run, round, revision and checks it was computed from, and only the aggregator can construct one.
+
+**Given** a `ReflectionRequest` built from an evaluation for another run, or one whose status contradicts the run's outcome
+**When** it is constructed
+**Then** it throws `ReflectionBindingException`; finalization checks the reflector's output against its request and quarantines a mismatched reflection instead of storing it as Validated.
+
+### Story 5.6: Batch the Embedding and Injection Re-Read Round Trips
+
+**Traces:** KL-1, FR7, FR8, NFR5 · **Depends on:** 2.6, 2.3, 3.5, 3.6 · **Delivered:** PR #29
+
+As an operator,
+I want the injection eligibility re-read and the re-index path to batch their round trips,
+So that retrieval and indexing latency does not grow with one call per record.
+
+**Acceptance Criteria:**
+
+**Given** `IExperienceRecordStore.GetManyAsync` with up to 200 IDs
+**When** the PostgreSQL store answers it
+**Then** one statement applies exactly `GetAsync`'s scope, grant, disclosure, tombstone and readability rules, grant deliveries are written in one access-row append, and an equivalence test compares both paths field by field.
+
+**Given** a re-index pass
+**When** records need a vector
+**Then** they are embedded through `GenerateBatchAsync` in batches of `EmbeddingBatchSize` (default 16, 1-128), and a failed batch is retried one record at a time.
+
+**Given** the MAF provider's final eligibility check
+**When** it runs
+**Then** it is one batch read, falling back to the per-record loop if that read throws, with omission reasons and the injected block identical to before.
+
+**Given** an out-of-tree store or generator
+**When** it does not override the new methods
+**Then** the default interface implementations keep its previous per-item behaviour.
+
+## Epic 6: Resolve or Narrow the Remaining Known Limits
+
+Operators get each remaining known limit resolved, or narrowed to a residual stated exactly in the known-limits table.
+
+### Story 6.2: Show Allowlisted Argument Values on the Approach Line
+
+**Traces:** KL-8 (narrowed), FR8, NFR2 · **Depends on:** 4.6, 3.6 · **Delivered:** PR #31
+
+As a platform engineer,
+I want to allowlist, per tool, argument keys whose values the injected `Approach:` line may show,
+So that a later agent learns the verified argument that mattered, not only the tool name.
+
+**Acceptance Criteria:**
+
+**Given** no `ExperienceInjectionOptions.ApproachArguments`, or one matching no call
+**When** a block is written
+**Then** it is byte for byte what it was before.
+
+**Given** an allowlisted key for a tool
+**When** the `Approach:` line is written
+**Then** only that key's sanitized stored scalar value is shown, neutralized, quoted and clamped to 64 characters, under a 512-character per-line cap; other keys, objects, arrays and unreadable values render a marker or nothing.
+
+**Given** a borrowed record under any grant level
+**When** it is injected
+**Then** no argument values are shown.
+
+**Given** an allowlisted value that orders a guarded tool call
+**When** the model obeys it
+**Then** the approval boundary still denies the call.
+
+### Story 6.1: Bind the Application Role in a Two-Role Deployment
+
+**Traces:** KL-4, NFR1 · **Depends on:** 4.5, 5.4 · **Delivered:** PR #33
+
+As an operator,
+I want the stores to run as an application role that owns nothing and holds only the privileges they need,
+So that the purge path is a privilege boundary, not only an audit trail.
+
+**Acceptance Criteria:**
+
+**Given** `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` run by the owner
+**When** it targets a role
+**Then** it refuses a missing role, an unmigrated schema, a superuser, the caller, and any owning role or member of one, revokes everything the role holds, grants the manifest, verifies effective privileges including those reachable through `SET ROLE`, and rolls back on any difference.
+
+**Given** the application role's own connection
+**When** it tries to alter a table, replace or disable a guard, modify a ledger, write a tombstone by hand, or call a purge without the opt-in
+**Then** each attempt is refused.
+
+**Given** migration `0013`
+**When** it is applied
+**Then** every purge and guard function pins `search_path` and the purges' `EXECUTE` stays revoked from `PUBLIC`; the entire store and vectors suites run as the application role.
+
+### Story 6.3: Widen the Supported Matrix
+
+**Traces:** KL-13 (narrowed), NFR6 · **Depends on:** 5.1, 6.1 · **Delivered:** PR #32
+
+As a .NET developer,
+I want the packages supported on more frameworks, PostgreSQL versions and dependency versions,
+So that I can adopt the library without matching one exact environment.
+
+**Acceptance Criteria:**
+
+**Given** the packages
+**When** they are built and tested
+**Then** they target `net9.0` and `net10.0` with one public API baseline, and the storage suites run on PostgreSQL 15, 16, 17 and 18.
+
+**Given** every dependency except MAF
+**When** it is referenced
+**Then** it is a floor with no upper bound; the lock files resolve the floor, and a floating-dependencies job tests the top of each range, gating on push and the weekly schedule and reporting on pull requests.
+
+**Given** PostgreSQL 17
+**When** the application-role verification runs
+**Then** it refuses the `MAINTAIN` privilege and `pg_maintain` role.
+
+### Story 6.5: Bound and Track Injection Across a Reused Session
+
+**Traces:** KL-12 (narrowed), FR8, FR10 · **Depends on:** 5.6, 3.6, 6.2 · **Delivered:** PR #34
+
+As a platform engineer,
+I want the context provider to track what it gave each session,
+So that a reused session gets a bounded budget, no repeated records, and a notice when a record it holds is no longer valid.
+
+**Acceptance Criteria:**
+
+**Given** a session and the default `SessionLimits` (32 records, 64 KB)
+**When** invocations run
+**Then** the budget caps records and bytes across the session, retrieval is not run once it is spent, and a revision the session already holds is omitted as `AlreadyDelivered` while a strictly newer revision is injected.
+
+**Given** a held record that is erased, revoked, superseded, quarantined, un-granted, below the confidence floor, past `MaxAge`, or now read through a grant that withholds what the session saw
+**When** the next invocation re-checks held records in one scope-check read with no access row
+**Then** the block carries one fixed withdrawal notice, with no reason and no content, ahead of any new record, and record text cannot forge it.
+
+**Given** an invocation fails
+**When** its staged delivery is settled
+**Then** it is not charged and its notices stay owed; an invalid session state injects nothing and reports `Failed`.
+
+**Given** `SessionLimits = null` or no session
+**When** a block is written
+**Then** output is byte-identical to before.
+
+### Story 6.6: Verify Confidence Independence Keys
+
+**Traces:** KL-11 (narrowed), FR10 · **Depends on:** 3.3, 3.4, 5.5 · **Delivered:** PR #35
+
+As an operator,
+I want the run, round and assessment identifiers behind confidence evidence checked against what the library knows,
+So that a caller cannot inflate confidence with invented independence keys.
+
+**Acceptance Criteria:**
+
+**Given** confidence evidence or attributed feedback naming a run
+**When** it is submitted in the default mode
+**Then** it is refused as `Unverified` with an `IndependenceRefusal` unless the run is finalized into a record in the evidence's scope or held by the capture service, and the record's own run is refused in every mode.
+
+**Given** machine evidence naming a verification round
+**When** it is checked
+**Then** it must be the round finalization closed for that run, stamped as `ExperienceRecord.ClosedRoundId`.
+
+**Given** a human assessment
+**When** it is submitted
+**Then** it must present an `AssessmentTokenIssuer` HMAC token bound to scope, run, reviewer, direction and records, compared in constant time, unexpired, and spent once per record by migration `0015`'s unique index in the evidence's transaction; forged, expired, replayed or mismatched tokens are refused with nothing written.
+
+**Given** `IndependenceVerification.TrustHostSuppliedIdentifiers`
+**When** a host opts out
+**Then** the previous behaviour returns, keeping only the own-run rule.
+
+### Story 6.4: Crypto-Shred Erased Records
+
+**Traces:** KL-2 (narrowed), FR10, NFR2 · **Depends on:** 4.5, 5.2, 5.4, 6.1, 6.3 · **Delivered:** PR #36
+
+As an operator,
+I want erasure to make a record's text unreadable in every backup, replica, WAL segment and dead tuple,
+So that erasure reaches copies the library cannot delete.
+
+**Acceptance Criteria:**
+
+**Given** `ExperienceEncryption` over an `IExperienceKeyStore` is configured
+**When** records, lifecycle and evidence detail, grant reasons and reuse-feedback rationale are written
+**Then** every free-text column erasure removes is stored as AES-256-GCM ciphertext under a per-record key, with associated data binding it to its record, row, column and scope; plaintext mode stays the default and behaves as before.
+
+**Given** a sealed record is erased
+**When** the erasure commits
+**Then** the purge and key destruction run in one transaction: a key-store failure rolls back and leaves the record live, a destroyed key with a lost commit reads as a tombstone, and migration `0016` refuses to tombstone a sealed row unless the transaction declares it destroys the key.
+
+**Given** a real `pg_dump` and a read of the dead tuple after erasure
+**When** they are inspected
+**Then** they hold only ciphertext, except the full-text vector and embedding, which stay plaintext for search and are stated as the residual.
+
+**Given** existing records or a rotated KEK
+**When** `SealPlaintextRecordsAsync` or `EnvelopeExperienceKeyStore.RewrapAsync` runs
+**Then** existing records are sealed in bounded, resumable, authorized batches gated by `AllowSealing`, and keys are re-wrapped under the current KEK.
+
+## Epic 7: Close the Residuals of the Narrowed Limits
+
+Maintainers close what could still be fixed in KL-8, KL-11 and KL-13 after Epic 6, leaving only inherent residuals.
+
+### Story 7.2: Close KL-13: MAF Range, net8.0, and the PostgreSQL 14 Decision
+
+**Traces:** KL-13, NFR6 · **Depends on:** 6.3 · **Delivered:** PR #37
+
+As a .NET developer,
+I want to take a newer MAF 1.x and to run on `net8.0`,
+So that the adapter's pin and the framework list no longer block my host.
+
+**Acceptance Criteria:**
+
+**Given** the adapter package
+**When** its MAF reference is inspected
+**Then** it is `[1.22.0, 2.0.0)`, the lock files resolve 1.22.0, a latest-in-range compatibility leg gates on push and the weekly schedule, and the pin agreement test refuses any other exact pin.
+
+**Given** `net8.0`
+**When** all five packages are built and tested
+**Then** they target it as well, taking the .NET 10 train's `System.Text.Json` and `Microsoft.Bcl.Memory` on that framework only, and package verification checks each framework's dependency group.
+
+**Given** PostgreSQL 14
+**When** support is assessed
+**Then** it stays out, with the reason recorded in the compatibility evidence: migration `0005` does not parse on 14 and every path to it edits a journaled script or adds a second schema lineage.
+
+### Story 7.1: Show Borrowed and Nested Argument Values
+
+**Traces:** KL-8, FR8, FR9 · **Depends on:** 3.6, 6.1, 6.2, 6.4 · **Delivered:** PR #39
+
+As an enterprise platform engineer,
+I want an owner to consent, on the grant, to specific argument values, and allowlisted keys that can reach nested values,
+So that borrowed records and structured arguments can carry the verified argument without widening disclosure.
+
+**Acceptance Criteria:**
+
+**Given** a grant issued at `ExperienceGrantDisclosure.LessonApproachAndArguments` with `ApproachArguments`
+**When** a borrowed record is injected
+**Then** a value is shown only for a key both the grant and the reader's `ApproachArguments` name for the same tool, so the reader can narrow but never widen the owner's consent; `LessonOnly` and `LessonAndApproach` keep their behaviour.
+
+**Given** an allowlisted dotted path such as `options.mode` or `targets.0`
+**When** the line is written
+**Then** only the scalar it ends on is shown under every Story 6.2 bound, a path ending on an object or array shows the marker, and a literal top-level key matches first.
+
+**Given** migration `0017`
+**When** it is applied
+**Then** the grant's argument allowlist is stored immutably under the monotonicity trigger with no privilege-manifest change, and access rows record the new level.
+
+**Given** a session holds a delivery that showed borrowed values
+**When** the record is later read through another grant or a lower level
+**Then** session tracking withdraws it.
+
+### Story 7.3: Bind Confidence Evidence to Recorded Exposure
+
+**Traces:** KL-11 (narrowed), FR10, NFR7 · **Depends on:** 6.5, 6.6 · **Delivered:** PR #40
+
+As an operator,
+I want evidence counted only from runs the library itself delivered the record to,
+So that choosing among real runs no longer yields one independence key per run.
+
+**Acceptance Criteria:**
+
+**Given** an agent wrapped with capture and the context provider
+**When** records are injected
+**Then** each record and rendered revision is recorded on the captured run as `Provenance.ExposedTo`, only in its own agent's capture scope and not for what a reused session carried from earlier turns, and finalization copies it onto the record marked `Finalized`.
+
+**Given** confidence evidence or a feedback attribution
+**When** the run was not exposed to the record at or before the evidence's revision
+**Then** it is refused as `NotExposed`, and a run known only through a hand-written record is refused as `HostWrittenRun`.
+
+**Given** evidence admitted under the opt-out
+**When** it is stored and read
+**Then** it is labelled `HostTrusted` on both ledgers by migration `0018`, tagged in telemetry, and excluded on request by `ReadConfidenceAsync`.
+
+## Epic 8: Make the Release Gate Reachable and Clear Deferred Work
+
+Maintainers can reach a production-readiness decision and close the items earlier stories deferred. Alongside this epic, PR #41 added tag-triggered publishing through NuGet Trusted Publishing and PR #42 prepared `0.1.0-preview.2`.
+
+### Story 8.1: Split Known Limits from Documented Boundaries
+
+**Traces:** NFR6 · **Depends on:** 4.3, 6.4, 6.5, 7.3 · **Delivered:** PR #43
+
+As an open-source maintainer,
+I want fixable known limits separated from boundaries no code change can remove,
+So that the release gate blocks on real limits and 1.0 is reachable, without claiming it.
+
+**Acceptance Criteria:**
+
+**Given** the README's limits
+**When** they are split
+**Then** a Known limits table (now empty) and a Documented boundaries table exist, KL-2, KL-11 and KL-12 move with their numbers and a written reason, and a boundary returns to Known limits if its reason stops holding.
+
+**Given** RELEASING step 9 and the release workflow's gate
+**When** they run
+**Then** both count only the Known limits rows, fail if that section is missing, require a preview suffix while it is non-empty, and dropping the suffix also requires a closed deferred-work ledger.
+
+**Given** the release tests
+**When** they run
+**Then** they check that the gate counts only the Known limits section, that RELEASING and the workflow run the same count, and the shape of both tables; the release notes carry both tables.
+
+### Story 8.2: Tool-Name Hygiene, a Configurable Session State Key, and Deferred Tests
+
+**Traces:** FR8, NFR2 · **Depends on:** 6.2, 6.4, 6.5, 7.3 · **Delivered:** PR #44
+
+As a maintainer,
+I want the items earlier stories deferred closed,
+So that nothing known is left open behind the empty known-limits table.
+
+**Acceptance Criteria:**
+
+**Given** a tool name containing control, format, private-use or unassigned code points or lone surrogates
+**When** the `Approach:` line is written
+**Then** they become spaces, a name made only of them renders as `(none recorded)`, a split block marker is still neutralized, and a clean name renders byte for byte as before.
+
+**Given** `ExperienceInjectionOptions.SessionStateKey`
+**When** a provider is constructed
+**Then** the key defaults to `AgentExperience.InjectionSession`, is validated (not blank, at most 128 characters, no whitespace or invisible code points, not capture's run key), and two providers with different keys keep independent session tracking.
+
+**Given** the tests deferred from Stories 6.4 and 7.3
+**When** they are added
+**Then** they cover the seal function's `Deleted` and `AlreadySealed` outcomes, a feedback replay with no openable sealed copy, and `ReadConfidenceAsync`'s revision cut-off and cursor guard, each checked by temporarily breaking the code it covers.
+
+## Epic 9: Make the Project Readable and Its Benefit Testable
+
+Newcomers can read the project quickly, and maintainers can test the reuse benefit against a real model.
+
+### Story 9.2: Make the Documentation Readable
+
+**Traces:** NFR6 · **Depends on:** 8.1 · **Delivered:** PR #45
+
+As a .NET developer new to the project,
+I want a short README and one guide page per topic,
+So that I can understand and start using the library in minutes without losing any documented guarantee.
+
+**Acceptance Criteria:**
+
+**Given** the root README
+**When** a newcomer reads it
+**Then** it covers what the project is, the learning loop, the five packages, a quick start that compiles against the current API, preview status, and a documentation index; depth lives in `docs/guide/`, and no fact, guarantee or caveat is dropped.
+
+**Given** the limits tables
+**When** they move to `docs/known-limits.md`, with history in `docs/limits-history.md`
+**Then** RELEASING step 9, the release workflow's gate and release notes, and the workflow tests read the new file.
+
+**Given** tracked Markdown outside `_sdlc/` and released CHANGELOG sections
+**When** `MarkdownLinkTests` runs
+**Then** it fails on a broken relative link or a missing anchor, and stale facts found against the code are corrected.
+
+### Story 9.1: Run a Pre-Registered Live-Model Reuse Experiment
+
+**Traces:** FR11 (measurement) · **Depends on:** 4.4 · **Delivered:** PR #46
+
+As a maintainer,
+I want Story 4.4's methodology runnable against a real model under a pre-registered design,
+So that a benefit claim, or its absence, can be checked independently.
+
+**Acceptance Criteria:**
+
+**Given** `preregistration.json`
+**When** the experiment runs
+**Then** learning runs are finalized through the library, and evaluation tickets run under memory-disabled, memory-enabled, placebo and negative-control conditions, with success read from simulated state and no LLM judge.
+
+**Given** the gate
+**When** it is assessed
+**Then** a benefit is credited only if memory-enabled beats both memory-disabled and the placebo on mean failed attempts with a one-sided sign test at p <= 0.05, with no loss of verified success and no rise in refused bypass requests, and the negative control shows no benefit; the first complete run per registered model in the append-only ledger is the confirmatory one.
+
+**Given** provider configuration
+**When** it is absent or present
+**Then** the experiment never runs in CI or `dotnet test` and skips when unconfigured, takes configuration from environment variables only, stops at a hard call and token budget, and reports carry no key or prompt.
+
+**Given** no provider key was available
+**When** the story merged
+**Then** no live result is recorded or claimed.
