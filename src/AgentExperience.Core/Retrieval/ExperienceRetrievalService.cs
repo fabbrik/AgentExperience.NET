@@ -132,6 +132,7 @@ public sealed class ExperienceRetrievalService
     private readonly IExperienceEmbeddingIndex? _embeddingIndex;
     private readonly IExperienceEmbeddingGenerator? _embeddingGenerator;
     private readonly IEnvironmentCompatibilityScorer _environmentScorer;
+    private readonly ConfidenceDecayPolicy? _confidenceDecay;
 
     /// <summary>
     /// Creates a text-only retrieval service over a candidate source, its policy, its weights, and the
@@ -202,6 +203,43 @@ public sealed class ExperienceRetrievalService
         IExperienceEmbeddingIndex? embeddingIndex,
         IExperienceEmbeddingGenerator? embeddingGenerator,
         IEnvironmentCompatibilityScorer? environmentScorer)
+        : this(candidateSource, policy, weights, timeProvider, embeddingIndex, embeddingGenerator, environmentScorer, confidenceDecay: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a retrieval service with an optional vector channel, an optional
+    /// <see cref="IEnvironmentCompatibilityScorer"/>, and an optional
+    /// <see cref="ConfidenceDecayPolicy"/> that decays the confidence component by domain at ranking
+    /// time.
+    /// </summary>
+    /// <param name="candidateSource">Where scope-, status- and confidence-filtered text matches come from.</param>
+    /// <param name="policy">The timeout, confidence floor, expiry, recency half-life, and candidate bound. Both channels run under it.</param>
+    /// <param name="weights">The weights applied to each normalized ranking component.</param>
+    /// <param name="timeProvider">The clock the timeout, expiry, recency, and confidence decay are measured with.</param>
+    /// <param name="embeddingIndex">Optional. Where scope-, status- and confidence-filtered vector matches come from.</param>
+    /// <param name="embeddingGenerator">Optional. What turns the request's task text into a query vector.</param>
+    /// <param name="environmentScorer">
+    /// Optional. Grades every eligible record's environment against the request's preferred
+    /// attributes. <see langword="null"/> means <see cref="AttributeMatchEnvironmentScorer.Instance"/>,
+    /// which scores 1.0 whenever nothing is preferred.
+    /// </param>
+    /// <param name="confidenceDecay">
+    /// Optional. Decays each record's confidence component by its domain's half-life, measured from
+    /// <see cref="ExperienceRecord.CreatedAt"/>. <see langword="null"/> means no decay: the component
+    /// is the stored confidence, exactly as before. Decay only reorders; eligibility still uses the
+    /// stored value.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    public ExperienceRetrievalService(
+        IExperienceCandidateSource candidateSource,
+        RetrievalPolicy policy,
+        RankingWeights weights,
+        TimeProvider timeProvider,
+        IExperienceEmbeddingIndex? embeddingIndex,
+        IExperienceEmbeddingGenerator? embeddingGenerator,
+        IEnvironmentCompatibilityScorer? environmentScorer,
+        ConfidenceDecayPolicy? confidenceDecay)
     {
         ArgumentNullException.ThrowIfNull(candidateSource);
         ArgumentNullException.ThrowIfNull(policy);
@@ -215,6 +253,7 @@ public sealed class ExperienceRetrievalService
         _embeddingIndex = embeddingIndex;
         _embeddingGenerator = embeddingGenerator;
         _environmentScorer = environmentScorer ?? AttributeMatchEnvironmentScorer.Instance;
+        _confidenceDecay = confidenceDecay;
     }
 
     /// <summary>The policy this service runs under.</summary>
@@ -825,7 +864,7 @@ public sealed class ExperienceRetrievalService
         RankingComponent[] components =
         [
             new(RankingComponentKind.Relevance, Normalize(candidate.Relevance), _weights.Relevance),
-            new(RankingComponentKind.Confidence, Normalize(record.ReuseConfidence), _weights.Confidence),
+            Confidence(record, now),
             new(RankingComponentKind.Recency, Recency(record.UpdatedAt, now), _weights.Recency),
             new(RankingComponentKind.Status, StatusScore(record.Status), _weights.Status),
             new(RankingComponentKind.EnvironmentCompatibility, Normalize(environment), _weights.EnvironmentCompatibility),
@@ -843,18 +882,52 @@ public sealed class ExperienceRetrievalService
     }
 
     /// <summary>
+    /// The confidence component: the stored confidence, or -- when a decay policy gives the record's
+    /// domain a half-life -- the stored confidence times <c>2^(-age / halfLife)</c>, age measured from
+    /// <see cref="ExperienceRecord.CreatedAt"/>, with the stored value reported alongside it. Nothing
+    /// here is written back.
+    /// </summary>
+    private RankingComponent Confidence(ExperienceRecord record, DateTimeOffset now)
+    {
+        var stored = Normalize(record.ReuseConfidence);
+        if (_confidenceDecay is not { } decay)
+        {
+            return new(RankingComponentKind.Confidence, stored, _weights.Confidence);
+        }
+
+        record.Environment.Metadata.TryGetValue(decay.DomainKey, out var domain);
+        if (decay.HalfLifeFor(domain) is not { } halfLife)
+        {
+            return new(RankingComponentKind.Confidence, stored, _weights.Confidence);
+        }
+
+        var factor = Decay(record.CreatedAt, now, halfLife);
+        return new(RankingComponentKind.Confidence, Normalize(stored * factor), _weights.Confidence)
+        {
+            UndecayedValue = stored,
+        };
+    }
+
+    /// <summary>
     /// Exponential decay with the policy's half-life: 1 for a record updated now (or, with clock skew,
     /// in the future), 0.5 at one half-life, and always inside (0, 1].
     /// </summary>
-    private double Recency(DateTimeOffset updatedAt, DateTimeOffset now)
+    private double Recency(DateTimeOffset updatedAt, DateTimeOffset now) => Decay(updatedAt, now, _policy.RecencyHalfLife);
+
+    /// <summary>
+    /// <c>2^(-age / halfLife)</c>, normalized: 1 when <paramref name="since"/> is now or (with clock
+    /// skew) in the future, 0.5 at one half-life, and always inside [0, 1]. It reaches exactly 0 only
+    /// when <see cref="Math.Pow(double, double)"/> underflows, for an age vastly beyond the half-life.
+    /// </summary>
+    private static double Decay(DateTimeOffset since, DateTimeOffset now, TimeSpan halfLife)
     {
-        var age = now - updatedAt;
+        var age = now - since;
         if (age <= TimeSpan.Zero)
         {
             return 1d;
         }
 
-        return Normalize(Math.Pow(2d, -age.TotalSeconds / _policy.RecencyHalfLife.TotalSeconds));
+        return Normalize(Math.Pow(2d, -age.TotalSeconds / halfLife.TotalSeconds));
     }
 
     private static double StatusScore(ExperienceStatus status) => status switch

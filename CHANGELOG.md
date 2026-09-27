@@ -6,6 +6,30 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Confidence decay by domain (story 10.3)
+
+- **`ConfidenceDecayPolicy`**, an optional retrieval setting. With one configured, each eligible record's `Confidence`
+  ranking component is its stored `ReuseConfidence` times `2^(-age / halfLife)`. The half-life is chosen by the
+  record's domain: the `EnvironmentFingerprint.Metadata` entry named `DomainKey` (default `"domain"`), matched
+  ordinally against `HalfLives` (stored as a read-only copy). The factor is in [0, 1] and reaches 0 only for an age
+  vastly beyond the half-life. A domain mapped to `null` never decays. A missing or unlisted domain uses
+  `DefaultHalfLife`, whose default of `null` means no decay.
+- **Age is the lesson's, not its last activity's.** It is measured from `CreatedAt`, because `UpdatedAt` already drives
+  the separate Recency component. A `CreatedAt` in the future (clock skew) decays nothing.
+- **Ranking only.** Eligibility, including the `MinimumConfidence` floor, uses the stored value, so decay never
+  excludes a record, and it only reorders candidates already fetched under the stored-confidence floor and the
+  candidate bound. A read never writes. Decay can change the order of injected records, and the MAF Historical
+  Reference block's `Confidence:` line still shows the stored confidence, so it can differ from the decayed value on
+  the components line.
+- **`RankingComponent.UndecayedValue`**, an optional init property. On the Confidence component it holds the stored,
+  normalized confidence whenever a half-life applied, and it is `null` everywhere else. With no policy, scores,
+  components, ordering and the golden ranking fixture are unchanged.
+- **Validated at construction and on `with`.** A zero or negative half-life throws `ArgumentOutOfRangeException`. A
+  blank `DomainKey`, or a null or blank key in `HalfLives`, throws `ArgumentException`.
+- **A new `ExperienceRetrievalService` constructor overload** takes an optional policy (`null` means no decay). The
+  existing constructors are unchanged, and `AddAgentExperienceRetrieval` resolves a registered
+  `ConfidenceDecayPolicy` in any registration order.
+
 ### First live result (story 9.1)
 
 - **The first confirmatory run, against `gemini-3.1-flash-lite`, concluded `ReuseBenefitAttributableToContent`**

@@ -212,6 +212,11 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// to this call, has it grade the environment component; otherwise
     /// <see cref="AttributeMatchEnvironmentScorer"/> does.
     /// </para>
+    /// <para>
+    /// A host that registers a <see cref="ConfidenceDecayPolicy"/>, in any order relative to this call,
+    /// has each record's confidence component decay by its domain's half-life at ranking time;
+    /// otherwise confidence ranks as stored.
+    /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="policy">The retrieval bounds and thresholds. Defaults to <see cref="RetrievalPolicy.Default"/>.</param>
@@ -240,7 +245,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         // failure. A host adds it by registering an IExperienceEmbeddingIndex and an
         // IExperienceEmbeddingGenerator, in any order relative to this call. An
         // IEnvironmentCompatibilityScorer is resolved the same way; without one, the default
-        // attribute-match scorer grades the environment component.
+        // attribute-match scorer grades the environment component. A ConfidenceDecayPolicy is
+        // resolved the same way; without one, confidence does not decay.
         services.TryAddSingleton(provider => new ExperienceRetrievalService(
             provider.GetRequiredService<IExperienceCandidateSource>(),
             effectivePolicy,
@@ -248,7 +254,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<TimeProvider>(),
             provider.GetService<IExperienceEmbeddingIndex>(),
             provider.GetService<IExperienceEmbeddingGenerator>(),
-            provider.GetService<IEnvironmentCompatibilityScorer>()));
+            provider.GetService<IEnvironmentCompatibilityScorer>(),
+            provider.GetService<ConfidenceDecayPolicy>()));
 
         return services;
     }
