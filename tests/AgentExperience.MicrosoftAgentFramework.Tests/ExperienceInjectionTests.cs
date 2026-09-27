@@ -338,6 +338,65 @@ public class ExperienceInjectionTests
         Assert.Contains("region", omission.Detail!, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Preferred_environment_attributes_set_through_ResolveRequest_reorder_the_injected_records_without_changing_the_block_format()
+    {
+        // Equal in every component but environment, and the lower ID lacks the preferred attribute,
+        // so without a preference the tie-break puts it first and with one the graded score does not.
+        var plain = InjectionRecords.Id(1);
+        var regional = InjectionRecords.Id(2);
+
+        static Harness Seeded(Guid plain, Guid regional, IReadOnlyDictionary<string, string>? preferred)
+        {
+            var harness = new Harness
+            {
+                Resolve = _ => new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: "corr-1")
+                {
+                    PreferredEnvironmentAttributes = preferred,
+                },
+            };
+            harness.World.Publish(InjectionRecords.Record(plain, TestScope, lesson: "Plain lesson."), relevance: 0.5d);
+            harness.World.Publish(
+                InjectionRecords.Record(regional, TestScope, lesson: "Regional lesson.") with
+                {
+                    Environment = new EnvironmentFingerprint("host", "net10.0", "test-os", null, new Dictionary<string, string>(StringComparer.Ordinal) { ["region"] = "us-east" }),
+                },
+                relevance: 0.5d);
+            return harness;
+        }
+
+        var unpreferred = Seeded(plain, regional, preferred: null);
+        await unpreferred.Agent().RunAsync("refund ticket stuck on a lock");
+        Assert.Equal([plain, regional], Assert.Single(unpreferred.Results).InjectedExperienceIds);
+
+        var preferring = Seeded(plain, regional, new Dictionary<string, string>(StringComparer.Ordinal) { ["region"] = "us-east" });
+        await preferring.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(preferring.Results);
+        Assert.Equal(InjectionOutcome.Injected, result.Outcome);
+        Assert.Equal([regional, plain], result.InjectedExperienceIds);
+        Assert.Empty(result.Omitted); // a preference never excludes
+
+        var text = preferring.InjectedText();
+        Assert.NotNull(text);
+        Assert.StartsWith(HistoricalReferenceWriter.BlockBegin, text, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.BlockEnd + "\n", text, StringComparison.Ordinal);
+        Assert.True(text!.IndexOf(regional.ToString("D"), StringComparison.Ordinal) < text.IndexOf(plain.ToString("D"), StringComparison.Ordinal));
+        Assert.Contains($"{RankingComponentKind.EnvironmentCompatibility} 1.000 x 0.100 = 0.100", text, StringComparison.Ordinal);
+        Assert.Contains($"{RankingComponentKind.EnvironmentCompatibility} 0.000 x 0.100 = 0.000", text, StringComparison.Ordinal);
+
+        // Same format: the two blocks have the same lines, differing only in the Applicability scores
+        // and the order the records appear in.
+        static string[] Shape(string block) =>
+        [
+            .. block.Split('\n')
+                .Where(line => !line.StartsWith("Applicability", StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal),
+        ];
+
+        Assert.Equal(Shape(unpreferred.InjectedText()!), Shape(text));
+    }
+
     // ---- Matrix: Access changed -----------------------------------------------------------------
 
     [Fact]

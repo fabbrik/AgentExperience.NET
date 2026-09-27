@@ -197,6 +197,11 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// Every registration uses <c>TryAdd</c>, so a host that registered its own policy, weights,
     /// clock, or service keeps it.
     /// </para>
+    /// <para>
+    /// A host that registers an <see cref="IEnvironmentCompatibilityScorer"/>, in any order relative
+    /// to this call, has it grade the environment component; otherwise
+    /// <see cref="AttributeMatchEnvironmentScorer"/> does.
+    /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="policy">The retrieval bounds and thresholds. Defaults to <see cref="RetrievalPolicy.Default"/>.</param>
@@ -223,14 +228,17 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         // The vector channel is resolved optionally: both halves of it present means hybrid
         // retrieval, and anything less means an explicitly flagged text-only result rather than a
         // failure. A host adds it by registering an IExperienceEmbeddingIndex and an
-        // IExperienceEmbeddingGenerator, in any order relative to this call.
+        // IExperienceEmbeddingGenerator, in any order relative to this call. An
+        // IEnvironmentCompatibilityScorer is resolved the same way; without one, the default
+        // attribute-match scorer grades the environment component.
         services.TryAddSingleton(provider => new ExperienceRetrievalService(
             provider.GetRequiredService<IExperienceCandidateSource>(),
             effectivePolicy,
             effectiveWeights,
             provider.GetRequiredService<TimeProvider>(),
             provider.GetService<IExperienceEmbeddingIndex>(),
-            provider.GetService<IExperienceEmbeddingGenerator>()));
+            provider.GetService<IExperienceEmbeddingGenerator>(),
+            provider.GetService<IEnvironmentCompatibilityScorer>()));
 
         return services;
     }

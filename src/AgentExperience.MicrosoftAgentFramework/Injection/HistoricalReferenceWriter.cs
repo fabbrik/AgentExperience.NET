@@ -632,7 +632,7 @@ public static class HistoricalReferenceWriter
             .Append("; last lifecycle activity ").Append(Timestamp(record.UpdatedAt)).Append('\n');
 
         // The environment the lesson came from, for the same reason: the EnvironmentCompatibility
-        // component says a requirement was met, not what the environment actually was.
+        // component grades how closely it fit the preferred attributes, not what it actually was.
         text.Append("Environment: ").Append(Environment(record.Environment)).Append('\n');
 
         // Verification is the record's own outcome status; the reflection carries a copy of it.
