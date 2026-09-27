@@ -252,6 +252,96 @@ public class ExperienceReuseFeedbackServiceTests
         Assert.Equal(2, Assert.Single(ledger.Submissions).Exposures.Count);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_confidence_engine_failing_on_one_record_fails_only_that_record_and_the_next_is_still_submitted(bool engineThrows)
+    {
+        var failing = Guid.NewGuid();
+        var succeeding = Guid.NewGuid();
+        var records = new FeedbackRecordStore(Validated(succeeding));
+        records.Records[failing] = Validated(failing);
+        records.Records[succeeding] = Validated(succeeding);
+
+        // Throws, or returns a value that is not a score, for the first record only.
+        var engine = new SelectiveEngine(failing, engineThrows);
+        var lifecycle = new ExperienceLifecycleService(
+            records,
+            indexingService: null,
+            new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers },
+            captureService: null,
+            deindexingTimeout: null,
+            engine);
+        var ledger = new FakeReuseFeedbackLedger();
+        var service = new ExperienceReuseFeedbackService(ledger, lifecycle);
+
+        var feedback = Feedback([failing, succeeding]) with
+        {
+            HumanAssessment = Assessment(ExperienceReuseBenefit.Improved, [failing, succeeding], "both applied"),
+        };
+
+        var result = await service.RecordAsync(Authorization, feedback, CancellationToken.None);
+
+        Assert.Equal(ExperienceReuseFeedbackOutcome.Recorded, result.Outcome);
+        Assert.True(result.IsRetryable);
+
+        var failed = result.Exposures.Single(exposure => exposure.ExperienceId == failing);
+        Assert.Equal(ExperienceExposureDisposition.Failed, failed.Disposition);
+        Assert.True(failed.Retryable);
+        Assert.False(failed.Counted);
+
+        var applied = result.Exposures.Single(exposure => exposure.ExperienceId == succeeding);
+        Assert.Equal(ExperienceExposureDisposition.EvidenceApplied, applied.Disposition);
+        Assert.Equal(0.8, applied.ReuseConfidence);
+        Assert.Equal(succeeding, Assert.Single(records.Commits).Event.ExperienceRecordId);
+        Assert.Equal(2, Assert.Single(ledger.Submissions).Exposures.Count);
+    }
+
+    [Fact]
+    public async Task An_engine_exception_still_propagates_unchanged_from_the_confidence_path_itself()
+    {
+        var failing = Guid.NewGuid();
+        var records = new FeedbackRecordStore(Validated(failing));
+        var lifecycle = new ExperienceLifecycleService(
+            records,
+            indexingService: null,
+            new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers },
+            captureService: null,
+            deindexingTimeout: null,
+            new SelectiveEngine(failing, engineThrows: true));
+
+        var thrown = await Assert.ThrowsAsync<FormatException>(() => lifecycle.ApplyEvidenceAsync(
+            Authorization,
+            new ApplyConfidenceEvidenceRequest(
+                EventId: Guid.NewGuid(),
+                ExperienceId: failing,
+                Scope: TestScope,
+                EvidenceId: Guid.NewGuid(),
+                Kind: ConfidenceEvidenceKind.Supporting,
+                Source: ConfidenceEvidenceSource.Machine,
+                RunId: Guid.NewGuid(),
+                VerificationRoundId: Guid.NewGuid(),
+                Reason: "reused",
+                Producer: "tests",
+                OccurredAt: Now),
+            CancellationToken.None));
+
+        Assert.Equal("engine failure", thrown.Message);
+        Assert.Empty(records.Commits);
+    }
+
+    private sealed class SelectiveEngine(Guid failFor, bool engineThrows) : IExperienceConfidenceEngine
+    {
+        public string RuleId => "selective";
+
+        public string RuleVersion => "1";
+
+        public double Score(ExperienceConfidenceInput input) =>
+            input.Record.ExperienceId != failFor ? 0.8
+            : engineThrows ? throw new FormatException("engine failure")
+            : double.NaN;
+    }
+
     [Fact]
     public async Task Evidence_the_same_run_already_produced_is_recorded_and_not_counted()
     {

@@ -77,6 +77,61 @@ public sealed class PostgresConfidenceEvidenceTests
     }
 
     [Fact]
+    public async Task A_host_confidence_engine_is_stored_as_rule_id_slash_version_with_no_schema_change()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+        var lifecycle = new ExperienceLifecycleService(
+            _store,
+            indexingService: null,
+            new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers },
+            captureService: null,
+            deindexingTimeout: null,
+            new FixedEngine());
+
+        var applied = await lifecycle.ApplyEvidenceAsync(
+            auth, Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting), CancellationToken.None);
+
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, applied.Outcome);
+        Assert.True(applied.Counted);
+        await AssertConfidenceAsync(auth, scope, record.ExperienceId, 0.9, 2, 0, ExperienceStatus.Validated);
+
+        // In the evidence ledger and on the lifecycle event, as the existing free-text columns hold it.
+        await using (var command = _fixture.DataSource.CreateCommand(
+            "SELECT rule_version FROM agent_experience.confidence_evidence WHERE evidence_id = @id"))
+        {
+            command.Parameters.Add(new NpgsqlParameter<Guid>("id", applied.Update!.EvidenceId));
+            Assert.Equal("bayes/2.1", (string?)await command.ExecuteScalarAsync());
+        }
+
+        await using (var command = _fixture.DataSource.CreateCommand(
+            "SELECT confidence_rule_version FROM agent_experience.lifecycle_events WHERE event_id = @id"))
+        {
+            command.Parameters.Add(new NpgsqlParameter<Guid>("id", applied.Event!.EventId));
+            Assert.Equal("bayes/2.1", (string?)await command.ExecuteScalarAsync());
+        }
+
+        var history = await _store.GetFirstHistoryPageAsync(auth, scope, record.ExperienceId, CancellationToken.None);
+        Assert.Equal("bayes/2.1", history.Events.Single(e => e.Event.Confidence is not null).Event.Confidence!.RuleVersion);
+
+        // A retry of the same submission under the same engine replays rather than conflicting.
+        var replay = await lifecycle.ApplyEvidenceAsync(
+            auth,
+            Machine(scope, record.ExperienceId, ConfidenceEvidenceKind.Supporting) with
+            {
+                EventId = applied.Event.EventId,
+                EvidenceId = applied.Update.EvidenceId,
+                RunId = applied.Update.RunId,
+                VerificationRoundId = applied.Update.VerificationRoundId,
+            },
+            CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replay.Outcome);
+        Assert.Equal(1L, await CountEvidenceAsync(record.ExperienceId, counted: null));
+    }
+
+    [Fact]
     public async Task The_same_run_and_round_under_a_new_evidence_id_is_stored_and_counted_zero_times()
     {
         var tenant = NewTenant();
@@ -712,6 +767,15 @@ public sealed class PostgresConfidenceEvidenceTests
         }
 
         return await command.ExecuteNonQueryAsync();
+    }
+
+    private sealed class FixedEngine : IExperienceConfidenceEngine
+    {
+        public string RuleId => "bayes";
+
+        public string RuleVersion => "2.1";
+
+        public double Score(ExperienceConfidenceInput input) => 0.9;
     }
 
     /// <summary>

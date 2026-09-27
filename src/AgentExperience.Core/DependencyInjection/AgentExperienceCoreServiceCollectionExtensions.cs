@@ -57,6 +57,13 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// <em>not</em> registered: anything that can resolve it can mint, so construct it where your review flow
     /// records a person's decision, not in a container agent-driven components resolve from.
     /// </para>
+    /// <para>
+    /// <b>Confidence engine.</b> A host that registers an <see cref="IExperienceConfidenceEngine"/>, in any
+    /// order relative to this call, has it score confidence evidence; otherwise
+    /// <see cref="ReuseConfidenceHeuristicEngine"/> does. It is resolved once, from the root provider, so
+    /// register it as a singleton. An engine with a malformed identity fails when the lifecycle service is
+    /// first resolved.
+    /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="sanitizationOptions">The per-<c>Kind</c> sanitization policy the default sanitizer applies.</param>
@@ -84,12 +91,15 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
         // Both hooks are resolved through an explicit factory rather than by constructor selection,
         // because the optional ExperienceIndexingService has to come back as null when nothing
-        // registered it -- which is what a text-only deployment is.
+        // registered it -- which is what a text-only deployment is. A host IExperienceConfidenceEngine
+        // is resolved the same way; without one, the heuristic scores evidence.
         services.TryAddSingleton(provider => new ExperienceLifecycleService(
             provider.GetRequiredService<IExperienceRecordStore>(),
             provider.GetService<ExperienceIndexingService>(),
             provider.GetService<ExperienceIndependenceOptions>() ?? new ExperienceIndependenceOptions(),
-            provider.GetRequiredService<IExperienceCaptureService>()));
+            provider.GetRequiredService<IExperienceCaptureService>(),
+            deindexingTimeout: null,
+            provider.GetService<IExperienceConfidenceEngine>()));
 
         // The indexing hook is resolved optionally, not required: a host that never registered
         // AddAgentExperienceIndexing gets finalization with no hook at all, which is exactly the

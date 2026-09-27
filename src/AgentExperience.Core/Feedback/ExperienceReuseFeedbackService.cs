@@ -417,10 +417,11 @@ public sealed class ExperienceReuseFeedbackService
             // of them that failed -- cannot tell a working feedback loop from a stuck one.
             applied = await _lifecycleService.ApplyEvidenceAsync(authorization, request, cancellationToken).ConfigureAwait(false);
         }
-        catch (ExperienceStoreException ex)
+        catch (Exception ex) when (ex is ExperienceStoreException || ConfidenceEngineRule.IsEngineFailure(ex))
         {
             // The exposure is already durable, so this is one record's retryable failure rather than the
-            // submission's. Every other exposed record is still submitted.
+            // submission's. Every other exposed record is still submitted. A confidence engine that threw, or
+            // returned a value that is not a score, fails its record the same way: nothing was written for it.
             return new(
                 exposure.ExperienceId,
                 ExperienceExposureDisposition.Failed,

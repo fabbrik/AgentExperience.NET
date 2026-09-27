@@ -125,6 +125,13 @@ namespace AgentExperience.Core.Confidence
         public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey ForHuman(string reviewerIdentity, System.Guid runId) { }
         public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey ForMachine(System.Guid runId, System.Guid verificationRoundId) { }
     }
+    public sealed class ExperienceConfidenceInput : System.IEquatable<AgentExperience.Core.Confidence.ExperienceConfidenceInput>
+    {
+        public ExperienceConfidenceInput(AgentExperience.Abstractions.ExperienceRecord Record, int SupportingValidations, int Contradictions) { }
+        public int Contradictions { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
+        public int SupportingValidations { get; init; }
+    }
     public sealed class ExperienceIndependenceOptions
     {
         public const int MinimumAssessmentTokenKeyBytes = 32;
@@ -135,6 +142,12 @@ namespace AgentExperience.Core.Confidence
         public System.TimeSpan AssessmentTokenLifetime { get; init; }
         public System.TimeProvider TimeProvider { get; init; }
         public AgentExperience.Core.Confidence.IndependenceVerification Verification { get; init; }
+    }
+    public interface IExperienceConfidenceEngine
+    {
+        string RuleId { get; }
+        string RuleVersion { get; }
+        double Score(AgentExperience.Core.Confidence.ExperienceConfidenceInput input);
     }
     public enum IndependenceRefusal
     {
@@ -172,6 +185,14 @@ namespace AgentExperience.Core.Confidence
         public static AgentExperience.Core.Confidence.ConfidenceIndependenceKey IndependenceKeyFor(AgentExperience.Abstractions.ConfidenceUpdate update) { }
         public static double Score(int supportingValidations, int contradictions) { }
         public static AgentExperience.Abstractions.ExperienceStatus StatusAfter(AgentExperience.Abstractions.ExperienceStatus currentStatus, AgentExperience.Abstractions.ConfidenceEvidenceKind kind) { }
+    }
+    public sealed class ReuseConfidenceHeuristicEngine : AgentExperience.Core.Confidence.IExperienceConfidenceEngine
+    {
+        public const string HeuristicRuleId = "reuse-heuristic";
+        public string RuleId { get; }
+        public string RuleVersion { get; }
+        public static AgentExperience.Core.Confidence.ReuseConfidenceHeuristicEngine Instance { get; }
+        public double Score(AgentExperience.Core.Confidence.ExperienceConfidenceInput input) { }
     }
 }
 namespace AgentExperience.Core.DependencyInjection
@@ -535,6 +556,7 @@ namespace AgentExperience.Core.Lifecycle
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store) { }
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? deindexingTimeout = default) { }
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, AgentExperience.Core.Confidence.ExperienceIndependenceOptions independence, AgentExperience.Core.Capture.IExperienceCaptureService? captureService = null, System.TimeSpan? deindexingTimeout = default) { }
+        public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, AgentExperience.Core.Confidence.ExperienceIndependenceOptions independence, AgentExperience.Core.Capture.IExperienceCaptureService? captureService, System.TimeSpan? deindexingTimeout, AgentExperience.Core.Confidence.IExperienceConfidenceEngine? confidenceEngine) { }
         public System.TimeSpan DeindexingTimeout { get; }
         public AgentExperience.Core.Confidence.IndependenceVerification IndependenceVerification { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest request, System.Threading.CancellationToken cancellationToken) { }
