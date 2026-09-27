@@ -332,6 +332,10 @@ public class EnvironmentCompatibilityScoringTests
             Task.FromResult(new ExperienceCandidateSearchResult(ExperienceStoreOutcome.Found, candidates, []));
     }
 
+    /// <summary>
+    /// A clock frozen at a known instant. Its timers never fire, so the retrieval timeout cannot trip on
+    /// a slow runner: without this override, <see cref="TimeProvider.CreateTimer"/> is a real-time timer.
+    /// </summary>
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
@@ -339,5 +343,18 @@ public class EnvironmentCompatibilityScoringTests
         public override long GetTimestamp() => now.UtcTicks;
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new FrozenTimer();
+
+        private sealed class FrozenTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 }

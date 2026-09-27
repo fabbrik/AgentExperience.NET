@@ -19,7 +19,9 @@ public class EnvironmentScorerTelemetryTests
 
         var retrieval = new ExperienceRetrievalService(
             new OneRecordSource(),
-            RetrievalPolicy.Default,
+            // The real clock is kept for the span's duration, so the timeout is made unreachable
+            // instead: a cold runner must not turn the scorer failure into a timeout.
+            RetrievalPolicy.Default with { Timeout = RetrievalPolicy.MaxTimeout },
             RankingWeights.Default,
             TimeProvider.System,
             embeddingIndex: null,
