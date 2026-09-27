@@ -22,7 +22,20 @@ public sealed record RetrieveExperienceRequest(
     string TaskText,
     IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes = null,
     string? CorrelationId = null,
-    int? Limit = null);
+    int? Limit = null)
+{
+    /// <summary>
+    /// Optional. Environment attributes the request would <em>prefer</em> a record to carry. They
+    /// never exclude a record: they only grade the
+    /// <see cref="RankingComponentKind.EnvironmentCompatibility"/> component, through the service's
+    /// <see cref="IEnvironmentCompatibilityScorer"/>. The default scorer scores the fraction of these
+    /// pairs the record's <see cref="EnvironmentFingerprint.Metadata"/> carries with an ordinally
+    /// equal value. <see langword="null"/> or empty means nothing is preferred, and the default scorer
+    /// then scores every record 1.0, exactly as before preferences existed. Required attributes are
+    /// applied first, so a record that fails them is excluded and never scored.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? PreferredEnvironmentAttributes { get; init; }
+}
 
 /// <summary>The component axes a retrieved record is scored on. Each is normalized to [0, 1].</summary>
 public enum RankingComponentKind
@@ -44,7 +57,12 @@ public enum RankingComponentKind
     /// <summary>The record's lifecycle status among the eligible ones.</summary>
     Status,
 
-    /// <summary>How well the record's environment matches the request's required attributes.</summary>
+    /// <summary>
+    /// How closely the record's environment fits the request's
+    /// <see cref="RetrieveExperienceRequest.PreferredEnvironmentAttributes"/>, as graded by the
+    /// service's <see cref="IEnvironmentCompatibilityScorer"/>. Every ranked record already satisfied
+    /// the required attributes, which only exclude; this axis only prefers.
+    /// </summary>
     EnvironmentCompatibility,
 }
 

@@ -101,16 +101,20 @@ public sealed class ExperienceRetrievalService
     public const double ReinforcedStatusScore = 1.0;
 
     /// <summary>
-    /// The environment component's value for a record that satisfied the request's required
-    /// attributes -- which, by construction, every ranked record did, since a mismatch excludes the
-    /// record before ranking. It is reported anyway, with its effective weight, so the score a host
-    /// sees always adds up from every documented axis.
+    /// The default scorer's (<see cref="AttributeMatchEnvironmentScorer"/>) environment component
+    /// value when the request prefers nothing. Every ranked record already satisfied the request's
+    /// required attributes, since a mismatch excludes the record before ranking; preferred attributes
+    /// (<see cref="RetrieveExperienceRequest.PreferredEnvironmentAttributes"/>) then grade the
+    /// component below this value. It is reported with its effective weight either way, so the score
+    /// a host sees always adds up from every documented axis.
     /// </summary>
     public const double CompatibleEnvironmentScore = 1.0;
 
     private static readonly IReadOnlyList<RankedExperience> NoRecords = [];
 
     private static readonly IReadOnlyList<ExcludedExperience> NoExclusions = [];
+
+    private static readonly IReadOnlyDictionary<string, string> NoPreferences = new Dictionary<string, string>();
 
     /// <summary>
     /// The text-only signal for a deployment that has no vector channel at all. It is a statement
@@ -127,6 +131,7 @@ public sealed class ExperienceRetrievalService
     private readonly TimeProvider _timeProvider;
     private readonly IExperienceEmbeddingIndex? _embeddingIndex;
     private readonly IExperienceEmbeddingGenerator? _embeddingGenerator;
+    private readonly IEnvironmentCompatibilityScorer _environmentScorer;
 
     /// <summary>
     /// Creates a text-only retrieval service over a candidate source, its policy, its weights, and the
@@ -169,6 +174,34 @@ public sealed class ExperienceRetrievalService
         TimeProvider timeProvider,
         IExperienceEmbeddingIndex? embeddingIndex,
         IExperienceEmbeddingGenerator? embeddingGenerator)
+        : this(candidateSource, policy, weights, timeProvider, embeddingIndex, embeddingGenerator, environmentScorer: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a retrieval service with an optional vector channel and an optional
+    /// <see cref="IEnvironmentCompatibilityScorer"/> that grades the environment component.
+    /// </summary>
+    /// <param name="candidateSource">Where scope-, status- and confidence-filtered text matches come from.</param>
+    /// <param name="policy">The timeout, confidence floor, expiry, recency half-life, and candidate bound. Both channels run under it.</param>
+    /// <param name="weights">The weights applied to each normalized ranking component.</param>
+    /// <param name="timeProvider">The clock the timeout, expiry, and recency are measured with.</param>
+    /// <param name="embeddingIndex">Optional. Where scope-, status- and confidence-filtered vector matches come from.</param>
+    /// <param name="embeddingGenerator">Optional. What turns the request's task text into a query vector.</param>
+    /// <param name="environmentScorer">
+    /// Optional. Grades every eligible record's environment against the request's preferred
+    /// attributes. <see langword="null"/> means <see cref="AttributeMatchEnvironmentScorer.Instance"/>,
+    /// which scores 1.0 whenever nothing is preferred.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    public ExperienceRetrievalService(
+        IExperienceCandidateSource candidateSource,
+        RetrievalPolicy policy,
+        RankingWeights weights,
+        TimeProvider timeProvider,
+        IExperienceEmbeddingIndex? embeddingIndex,
+        IExperienceEmbeddingGenerator? embeddingGenerator,
+        IEnvironmentCompatibilityScorer? environmentScorer)
     {
         ArgumentNullException.ThrowIfNull(candidateSource);
         ArgumentNullException.ThrowIfNull(policy);
@@ -181,6 +214,7 @@ public sealed class ExperienceRetrievalService
         _timeProvider = timeProvider;
         _embeddingIndex = embeddingIndex;
         _embeddingGenerator = embeddingGenerator;
+        _environmentScorer = environmentScorer ?? AttributeMatchEnvironmentScorer.Instance;
     }
 
     /// <summary>The policy this service runs under.</summary>
@@ -353,7 +387,7 @@ public sealed class ExperienceRetrievalService
                 return Empty(RetrievalOutcome.Failed, request, unrestricted, startedAt, failure, outcome.Vector.Fallback);
             }
 
-            return Rank(request, outcome, unrestricted, startedAt);
+            return Rank(request, outcome, unrestricted, startedAt, cancellationToken);
         }
         finally
         {
@@ -571,10 +605,12 @@ public sealed class ExperienceRetrievalService
         RetrieveExperienceRequest request,
         ChannelOutcome channels,
         bool unrestricted,
-        long startedAt)
+        long startedAt,
+        CancellationToken cancellationToken)
     {
         var now = _timeProvider.GetUtcNow();
         var required = request.RequiredEnvironmentAttributes;
+        var preferred = request.PreferredEnvironmentAttributes ?? NoPreferences;
 
         // Each channel was asked for one candidate past the ceiling: its presence means more matched
         // than were considered, and it is dropped rather than ranked, so the ceiling still holds for
@@ -621,7 +657,32 @@ public sealed class ExperienceRetrievalService
                 continue;
             }
 
-            ranked.Add((Score(record, candidate, now), record.ExperienceId.ToString("D")));
+            // The caller's token is checked between records, never during a scorer call.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            double environment;
+            try
+            {
+                environment = _environmentScorer.Score(record.Environment, preferred);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // A host scorer is untrusted: its failure fails the call closed rather than leaving
+                // a partial ranking. The reason is fixed, so no record content or attribute reaches it.
+                return Empty(
+                    RetrievalOutcome.Failed,
+                    request,
+                    unrestricted,
+                    startedAt,
+                    new RetrievalFailure("The environment compatibility scorer threw while ranking an eligible record.", ex),
+                    channels.Vector.Fallback);
+            }
+
+            ranked.Add((Score(record, candidate, environment, now), record.ExperienceId.ToString("D")));
         }
 
         // Ties sort by ExperienceId ascending and ordinal, so the order is total and stable rather than
@@ -755,7 +816,11 @@ public sealed class ExperienceRetrievalService
     /// Scores one eligible record. Every component is normalized to [0, 1] and reported with the
     /// weight applied to it, so the total is always reproducible from what the result carries.
     /// </summary>
-    private RankedExperience Score(ExperienceRecord record, ExperienceCandidate candidate, DateTimeOffset now)
+    private RankedExperience Score(
+        ExperienceRecord record,
+        ExperienceCandidate candidate,
+        double environment,
+        DateTimeOffset now)
     {
         RankingComponent[] components =
         [
@@ -763,7 +828,7 @@ public sealed class ExperienceRetrievalService
             new(RankingComponentKind.Confidence, Normalize(record.ReuseConfidence), _weights.Confidence),
             new(RankingComponentKind.Recency, Recency(record.UpdatedAt, now), _weights.Recency),
             new(RankingComponentKind.Status, StatusScore(record.Status), _weights.Status),
-            new(RankingComponentKind.EnvironmentCompatibility, CompatibleEnvironmentScore, _weights.EnvironmentCompatibility),
+            new(RankingComponentKind.EnvironmentCompatibility, Normalize(environment), _weights.EnvironmentCompatibility),
         ];
 
         var score = 0d;

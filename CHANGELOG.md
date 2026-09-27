@@ -6,6 +6,29 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Graded environment compatibility (story 10.1)
+
+- **`RetrieveExperienceRequest.PreferredEnvironmentAttributes`**, an optional init property. Preferred attributes only
+  grade the `EnvironmentCompatibility` ranking component; they never exclude a record. Required attributes still
+  exclude a mismatch as `EnvironmentMismatch`, and are applied before anything is scored.
+- **`IEnvironmentCompatibilityScorer`**, a Core port called for every eligible record with its `EnvironmentFingerprint`
+  and the preferred attributes (an empty dictionary when none are set). Its value is clamped to [0, 1], and NaN counts
+  as 0. A scorer that throws fails the retrieval closed: `RetrievalOutcome.Failed` and no records. The
+  `RetrievalFailure`'s reason is fixed and content-free; its exception is the scorer's own, passed through as is. An
+  `OperationCanceledException` while the caller's token is cancelled propagates unwrapped.
+- **`AttributeMatchEnvironmentScorer`**, the default: the fraction of preferred attributes the record's
+  `Metadata` carries with an ordinally equal value, and 1.0 when nothing is preferred. With no preferences and the
+  default scorer, scores, components, ordering and exclusions are unchanged, and the golden ranking fixture still
+  passes as it was.
+- **A new `ExperienceRetrievalService` constructor overload** takes an optional scorer (`null` means the default), and
+  `AddAgentExperienceRetrieval` resolves a host-registered `IEnvironmentCompatibilityScorer` once, from the root
+  provider, so register it as a singleton. It must be thread-safe, and it is not bounded by `RetrievalPolicy.Timeout`:
+  the caller's token is checked between records, not during a call. The
+  existing constructors are unchanged. `CompatibleEnvironmentScore` stays, now documented as the default scorer's value
+  when nothing is preferred.
+- MAF hosts set preferred attributes in `ExperienceInjectionOptions.ResolveRequest`, as they already do for required
+  ones. The Historical Reference block format is unchanged.
+
 ### Live-model reuse experiment (story 9.1)
 
 - **`experiments/AgentExperience.LiveReuse`**, an opt-in console app that runs story 4.4's reuse methodology against a

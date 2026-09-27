@@ -22,7 +22,11 @@ var result = await retrieval.RetrieveAsync(
         Scope: scope,                            // the exact scope to retrieve within, never widened
         TaskText: "refund ticket stuck on a lock",
         RequiredEnvironmentAttributes: new Dictionary<string, string> { ["region"] = "us-east" },
-        CorrelationId: traceId),
+        CorrelationId: traceId)
+    {
+        // Optional: grades ranking, never excludes. See "Preferring an environment" below.
+        PreferredEnvironmentAttributes = new Dictionary<string, string> { ["dotnet"] = "10.0" },
+    },
     cancellationToken);
 
 if (result.TimedOut)
@@ -114,12 +118,50 @@ so the score is always reproducible from what the result holds.
 | Confidence | 0.25 | The record's `ReuseConfidence` |
 | Recency | 0.15 | `2^(-age / RecencyHalfLife)`, half-life 30 days by default. *Age* is measured from `UpdatedAt` |
 | Status | 0.15 | `Reinforced` 1.0, `Validated` 0.5 |
-| Environment compatibility | 0.10 | 1.0 for a record that satisfied the request's required attributes — which every ranked record did, since a mismatch excludes it before ranking |
+| Environment compatibility | 0.10 | The environment scorer's value for the record against the request's `PreferredEnvironmentAttributes`. The default is the fraction of preferred attributes the record matches, and 1.0 when nothing is preferred. Every ranked record already satisfied the *required* attributes, since a mismatch excludes it before ranking |
 
 Weights must be finite, non-negative, and sum to 1 (within `RankingWeights.SumTolerance`); anything else throws
 `ArgumentOutOfRangeException` at construction, so an invalid weighting can never reach a retrieval call. Ties sort by
 `ExperienceId` ascending and ordinal, so the ordering is total and stable, and a golden fixture pins the default
 ordering together with every component value.
+
+## Preferring an environment
+
+Required attributes decide eligibility; preferred attributes only decide order. Set
+`PreferredEnvironmentAttributes` on the request and a record captured in a closer environment outranks one from a
+merely acceptable environment, with every other component equal:
+
+```csharp
+var request = new RetrieveExperienceRequest(authorization, scope, "refund ticket stuck on a lock",
+    RequiredEnvironmentAttributes: new Dictionary<string, string> { ["region"] = "us-east" })
+{
+    PreferredEnvironmentAttributes = new Dictionary<string, string> { ["dotnet"] = "10.0", ["db"] = "postgres-17" },
+};
+```
+
+- **The default scorer, `AttributeMatchEnvironmentScorer`, counts exact matches.** A record whose
+  `EnvironmentFingerprint.Metadata` carries `dotnet=10.0` but `db=postgres-16` scores 0.5; one with neither key scores
+  0.0 and is still returned. Matching is ordinal: `10.0` does not match `10.0.1`, and there is no version-range or
+  semantic comparison.
+- **Nothing preferred means nothing changes.** With no preferred attributes, the default scorer returns 1.0 for every
+  record (`ExperienceRetrievalService.CompatibleEnvironmentScore`), so scores and ordering are exactly what they were
+  before preferences existed.
+- **Required attributes come first.** A record that fails a required attribute is excluded as `EnvironmentMismatch`
+  and is never scored.
+- **Bring your own scorer.** Implement `IEnvironmentCompatibilityScorer` and register it in the container as a
+  singleton (`AddAgentExperienceRetrieval` resolves it once, from the root provider, in any registration order), or
+  pass it to the `ExperienceRetrievalService` constructor. One instance serves concurrent retrievals, so it must be
+  thread-safe. It is called for every eligible record, with an empty dictionary when nothing is preferred, so it can
+  grade on the fingerprint alone, version ranges included. Its value is clamped to [0, 1] and NaN counts as 0.
+- **A throwing scorer fails closed.** The retrieval is `Failed` with no records, never a partial ranking.
+  `result.Failure.Reason` is fixed and content-free; `result.Failure.Exception` is the scorer's own exception, passed
+  through as is, so treat it as local diagnostics. An `OperationCanceledException` thrown while the caller's token is
+  cancelled propagates unwrapped instead.
+- **Keep it cheap.** It runs synchronously after both channels answer and is not bounded by
+  `RetrievalPolicy.Timeout`. The caller's cancellation token is checked between records, not during a call.
+- **MAF.** Set the property in `ExperienceInjectionOptions.ResolveRequest`, where you build the request anyway. The
+  injected Historical Reference block's format does not change; only the order of its records and the
+  `EnvironmentCompatibility` value in each record's applicability line do.
 
 ## Bounded, and fail-closed
 
@@ -132,6 +174,7 @@ The whole call is bounded by `RetrievalPolicy.Timeout` (default 500 ms, maximum 
 | Exceeded the timeout | `TimedOut` (`result.TimedOut`), with the request's `CorrelationId` — never an exception | Empty |
 | Request scope outside the authorization | `Denied` | Empty; **neither channel is issued a query, and nothing is embedded** |
 | The **text** search failed, or a candidate from either channel could not be read, came back out of scope, or was returned twice | `Failed`, with `result.Failure` | Empty, never unfiltered |
+| The environment compatibility scorer threw | `Failed`, with `result.Failure` (a fixed reason; the scorer's own exception, passed through as is) | Empty, never a partial ranking |
 | The **vector** channel failed, timed out on its own, or was incomparable | `Completed`, with `result.TextOnly` and `result.VectorFallback` | The text channel's eligible records, ranked |
 | Caller cancelled | `OperationCanceledException`, unwrapped and distinct from the timeout | — |
 

@@ -591,6 +591,11 @@ namespace AgentExperience.Core.Reflections
 }
 namespace AgentExperience.Core.Retrieval
 {
+    public sealed class AttributeMatchEnvironmentScorer : AgentExperience.Core.Retrieval.IEnvironmentCompatibilityScorer
+    {
+        public static AgentExperience.Core.Retrieval.AttributeMatchEnvironmentScorer Instance { get; }
+        public double Score(AgentExperience.Abstractions.EnvironmentFingerprint recordEnvironment, System.Collections.Generic.IReadOnlyDictionary<string, string> preferredAttributes) { }
+    }
     public sealed class ExcludedExperience : System.IEquatable<AgentExperience.Core.Retrieval.ExcludedExperience>
     {
         public ExcludedExperience(System.Guid ExperienceId, AgentExperience.Core.Retrieval.RetrievalExclusionReason Reason) { }
@@ -619,11 +624,16 @@ namespace AgentExperience.Core.Retrieval
         public const double ValidatedStatusScore = 0.5D;
         public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider) { }
         public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceEmbeddingIndex? embeddingIndex, AgentExperience.Abstractions.IExperienceEmbeddingGenerator? embeddingGenerator) { }
+        public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceEmbeddingIndex? embeddingIndex, AgentExperience.Abstractions.IExperienceEmbeddingGenerator? embeddingGenerator, AgentExperience.Core.Retrieval.IEnvironmentCompatibilityScorer? environmentScorer) { }
         public bool HybridEnabled { get; }
         public AgentExperience.Core.Retrieval.RetrievalPolicy Policy { get; }
         public AgentExperience.Core.Retrieval.RankingWeights Weights { get; }
         public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.ExperienceRetrievalResult> RetrieveAsync(AgentExperience.Core.Retrieval.RetrieveExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public interface IEnvironmentCompatibilityScorer
+    {
+        double Score(AgentExperience.Abstractions.EnvironmentFingerprint recordEnvironment, System.Collections.Generic.IReadOnlyDictionary<string, string> preferredAttributes);
     }
     public sealed class RankedExperience : System.IEquatable<AgentExperience.Core.Retrieval.RankedExperience>
     {
@@ -705,6 +715,7 @@ namespace AgentExperience.Core.Retrieval
         public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
         public string? CorrelationId { get; init; }
         public int? Limit { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, string>? PreferredEnvironmentAttributes { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }
         public string TaskText { get; init; }

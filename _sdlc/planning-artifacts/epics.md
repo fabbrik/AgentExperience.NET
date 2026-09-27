@@ -32,6 +32,7 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 7: 7.2 → 7.1 → 7.3.
 - Epic 8: 8.1 → 8.2.
 - Epic 9: 9.2 → 9.1.
+- Epic 10: 10.1 → 10.2 → 10.3 → 10.4.
 
 Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
 
@@ -133,6 +134,9 @@ Maintainers can reach a production-readiness decision by separating fixable limi
 
 ### Epic 9: Make the Project Readable and Its Benefit Testable
 Newcomers can understand the project from a short README and focused guides, and maintainers can test the reuse benefit against a real model under a pre-registered design.
+
+### Epic 10: Make Retrieval Environment- and Confidence-Aware
+Agents get the experience that fits their environment and capabilities best, ranked by a confidence model the host can replace and age by domain.
 
 ## Epic 1: Capture and Explain Agent Experience
 
@@ -1403,3 +1407,91 @@ So that a benefit claim, or its absence, can be checked independently.
 **Given** no provider key was available
 **When** the story merged
 **Then** no live result is recorded or claimed.
+
+## Epic 10: Make Retrieval Environment- and Confidence-Aware
+
+Retrieval ranks by how well a record's environment fits, by a confidence model the host can replace and age, and never injects a lesson the current agent cannot act on. Planned on 2026-09-27 from architecture sections 9.6, 9.9, 15 and 18.1.
+
+### Story 10.1: Grade Environment Compatibility
+
+**Traces:** FR7, Architecture 5.1#9, 9.9 · **Depends on:** 2.2, 2.6
+
+As a platform engineer,
+I want retrieval to score how closely a record's environment matches the current one, not only whether required attributes are equal,
+So that among eligible records the one captured in the closest environment ranks first.
+
+**Acceptance Criteria:**
+
+**Given** a retrieval request with no preferred environment attributes and the default scorer
+**When** records are ranked
+**Then** every score, component and order is identical to before, and required attributes still exclude a mismatch as `EnvironmentMismatch`.
+
+**Given** a request with preferred environment attributes
+**When** an eligible record is ranked
+**Then** its environment component is the scorer's value in [0, 1], reported with its weight, so a closer environment ranks higher all else equal; a preferred attribute never excludes a record.
+
+**Given** a host-supplied `IEnvironmentCompatibilityScorer`
+**When** it returns a value outside [0, 1], NaN, or throws
+**Then** the value is clamped, NaN is treated as 0, and a throw fails the retrieval the way other port failures do, without leaking record content to telemetry.
+
+**Given** the MAF context provider
+**When** the host configures preferred attributes
+**Then** they flow into retrieval the same way required attributes do, and the injected block is unchanged in format.
+
+### Story 10.2: Make the Confidence Engine Replaceable
+
+**Traces:** FR10, Architecture 9.6, 15 · **Depends on:** 3.4, 6.6, 7.3
+
+As a platform engineer,
+I want reuse confidence computed through a port whose default is today's heuristic,
+So that a host can adopt a different evidence model without forking the library, and every stored score says which rule produced it.
+
+**Acceptance Criteria:**
+
+**Given** no host engine
+**When** confidence is updated
+**Then** the default engine reproduces `ReuseConfidenceHeuristic` exactly, and stored results are unchanged.
+
+**Given** a host engine
+**When** it returns a score
+**Then** the score is validated to [0, 1], recorded with the engine's rule identifier and version on the lifecycle event, and evidence admission rules (independence, exposure) are unchanged by the engine.
+
+### Story 10.3: Decay Confidence by Domain at Read Time
+
+**Traces:** FR7, Architecture 15 · **Depends on:** 10.2
+
+As a platform engineer,
+I want an optional per-domain half-life applied to confidence when records are ranked,
+So that lessons about fast-moving APIs fade faster than lessons about stable business rules.
+
+**Acceptance Criteria:**
+
+**Given** no decay policy
+**When** records are ranked
+**Then** results are identical to before.
+
+**Given** a decay policy mapping a record's domain to a half-life (or no decay)
+**When** a record is ranked
+**Then** the confidence component is the stored confidence times the decay factor, the ranking result reports both, and stored confidence is never rewritten by a read.
+
+### Story 10.4: Gate Injection on the Receiving Agent's Capabilities
+
+**Traces:** FR8, FR9, Architecture 18.1, 18.2 · **Depends on:** 10.1, 6.2
+
+As a platform engineer,
+I want a record excluded from injection when its approach relies on tools the receiving agent does not have or on a risk class above the agent's,
+So that an agent is not taught an approach it cannot, or must not, carry out.
+
+**Acceptance Criteria:**
+
+**Given** the host declares the receiving agent's available tools and maximum risk class
+**When** a candidate record's approach uses an unavailable tool or exceeds the risk class
+**Then** it is omitted with a distinct reason and no content leaves the store for it.
+
+**Given** a record passes the gate
+**When** it is injected
+**Then** nothing about tool permission changes: the approval boundary still decides every tool call, as Architecture 18.2 requires.
+
+**Given** no capability declaration
+**When** records are injected
+**Then** behaviour is identical to before.
