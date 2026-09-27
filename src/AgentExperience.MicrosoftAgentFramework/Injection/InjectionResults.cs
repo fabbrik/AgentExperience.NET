@@ -88,6 +88,23 @@ public enum InjectionOmissionReason
     /// budget has left. Dropped whole, like <see cref="OverByteBudget"/>.
     /// </summary>
     OverSessionBudget,
+
+    /// <summary>
+    /// The capability gate (<see cref="ExperienceInjectionOptions.ReceivingAgent"/>): the record's verified
+    /// approach calls a tool that is not among the receiving agent's
+    /// <see cref="ReceivingAgentCapabilities.AvailableTools"/>, so it would teach an approach the agent cannot
+    /// carry out. Checked after the final eligibility re-read and before the host's
+    /// <see cref="ExperienceInjectionOptions.DecideInjection"/>. The omission names no tool.
+    /// </summary>
+    ToolUnavailable,
+
+    /// <summary>
+    /// The capability gate (<see cref="ExperienceInjectionOptions.ReceivingAgent"/>): the record's verified
+    /// approach calls a tool whose host-declared <see cref="ToolRiskClass"/> -- <see cref="ToolRiskClass.Critical"/>
+    /// when undeclared -- is above the receiving agent's <see cref="ReceivingAgentCapabilities.MaxRiskClass"/>.
+    /// Checked after <see cref="ToolUnavailable"/>. The omission names no tool.
+    /// </summary>
+    RiskClassExceeded,
 }
 
 /// <summary>

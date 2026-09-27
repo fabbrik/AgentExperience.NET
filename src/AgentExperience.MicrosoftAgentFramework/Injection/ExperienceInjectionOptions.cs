@@ -305,6 +305,43 @@ public sealed class ExperienceInjectionOptions
     public Func<ExperienceInjectionDecisionContext, InjectionDecision>? DecideInjection { get; init; }
 
     /// <summary>
+    /// Optional. What the agent receiving the Historical Reference can and may do, so that a record whose
+    /// verified approach calls a tool the agent lacks, or a tool riskier than it may use, is kept out of
+    /// the block: omitted as <see cref="InjectionOmissionReason.ToolUnavailable"/> or
+    /// <see cref="InjectionOmissionReason.RiskClassExceeded"/>. Leave it <see langword="null"/> (the default)
+    /// and nothing is gated: the block and the omissions are byte for byte what they are without it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Checked on the record the final eligibility re-read returned, after
+    /// <see cref="InjectionOmissionReason.AlreadyDelivered"/> and before <see cref="DecideInjection"/>. A gated
+    /// record is never passed to <see cref="DecideInjection"/>, rendered, charged to the session budget, or
+    /// recorded as a run exposure, and its omission carries no detail, so no tool name reaches the result or
+    /// telemetry. See <see cref="ReceivingAgentCapabilities"/> for exactly what is checked.
+    /// </para>
+    /// <para>
+    /// The gate sits between the re-read and <see cref="DecideInjection"/>, so it runs after the
+    /// <see cref="ExperienceInjectionLimits.MaxRecords"/> cut: a gated record still takes a record slot, and the
+    /// agent may get fewer records than the limit. It checks only the tools the <c>Approach:</c> line names, not
+    /// tool names the lesson text may mention. <see cref="ReceivingAgentCapabilities.ToolRiskClasses"/> has no
+    /// effect without <see cref="ReceivingAgentCapabilities.MaxRiskClass"/>; <see cref="ToolRiskClass.Critical"/>
+    /// as the maximum disables the risk check; and an available tool missing from
+    /// <see cref="ReceivingAgentCapabilities.ToolRiskClasses"/> counts as <see cref="ToolRiskClass.Critical"/>. A
+    /// gated borrowed record still writes a grant access row, because the store disclosed it on the re-read, but
+    /// it is never injected or recorded as an exposure.
+    /// </para>
+    /// <para>
+    /// Passing the gate grants nothing: the host's approval boundary still decides every tool call.
+    /// </para>
+    /// <para>
+    /// <b>Validated and snapshotted at construction.</b> <see cref="ExperienceContextProvider"/> copies the
+    /// declaration into ordinal collections when it is built, so a later edit changes nothing, and refuses a
+    /// <see langword="null"/>, empty or whitespace tool name (in either collection) or a risk class that is not a defined <see cref="ToolRiskClass"/>.
+    /// </para>
+    /// </remarks>
+    public ReceivingAgentCapabilities? ReceivingAgent { get; init; }
+
+    /// <summary>
     /// Optional. Receives the content-free account of every injection attempt -- injected, empty,
     /// skipped, timed out, denied, or failed -- including each omission and its reason. Exceptions
     /// thrown by the callback are swallowed.
