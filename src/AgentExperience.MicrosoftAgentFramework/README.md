@@ -104,6 +104,9 @@ What to know:
   allowlist in `ApproachArguments`.
 - **Every record is re-checked immediately before injection**, in one batched read, against every rule retrieval
   applies, and then offered to your `DecideInjection` (fail-closed).
+- **A lesson the agent cannot act on is not injected**, when you declare `ReceivingAgent`: its available tools and
+  the highest tool risk class it may use. A record whose approach needs a missing tool, or a riskier one, is omitted
+  with its own reason. Passing the gate grants no permission; your approval boundary still decides every call.
 - **Limits drop whole records**: 8 records and 16 KB per block, re-checked within 2 s, by default.
 - **Reused sessions are tracked by default**: at most 32 records and 64 KB per session, no revision twice, and a
   fixed withdrawal notice when a record the session was given stops being valid. The notice is advisory: the earlier

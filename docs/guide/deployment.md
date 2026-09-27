@@ -42,6 +42,10 @@ services.AddSingleton(new ExperienceIndependenceOptions         // optional: the
 services.AddAgentExperienceIndexing();                          // ExperienceIndexingService, and finalization's
                                                                 //    post-commit hook, in either registration order
 services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService
+// Optional, each picked up in any registration order (register them as singletons):
+// services.AddSingleton<IEnvironmentCompatibilityScorer>(myScorer);    // grades preferred environment attributes
+// services.AddSingleton(new ConfidenceDecayPolicy { HalfLives = ... }); // per-domain confidence decay when ranking
+// services.AddSingleton<IExperienceConfidenceEngine>(myEngine);        // replaces the default confidence heuristic
 // -> defaults to RetrievalPolicy.Default and RankingWeights.Default; pass your own to override
 // -> hybrid, because an index *and* a generator are registered; text-only, and flagged, if either is missing
 services.AddAgentExperienceReuseFeedback();                     // ExperienceReuseFeedbackService, over the ledger
