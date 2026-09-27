@@ -74,7 +74,8 @@ as a count.
 `ExperienceRecord.UpdatedAt`, which every lifecycle commit bumps. A years-old lesson reinforced yesterday is one day
 old by this measure: it scores as fully recent and never expires. That is deliberate — recent revalidation is
 evidence the lesson still holds — but it is not a measure of how old the underlying knowledge is, and a policy that
-needs one should not use `MaxAge` for it.
+needs one should not use `MaxAge` for it. [Confidence decay](#decaying-confidence-by-domain) is the one measure
+that reads `CreatedAt`, the age of the lesson itself.
 
 ## Two channels, one answer
 
@@ -115,7 +116,7 @@ so the score is always reproducible from what the result holds.
 | Component | Default weight | Normalized as |
 | --- | --- | --- |
 | Relevance | 0.35 | `ts_rank_cd` of the text match, or `1 - cosine_distance / 2` of the vector match — whichever is higher for that record — normalized to 0–1 |
-| Confidence | 0.25 | The record's `ReuseConfidence` |
+| Confidence | 0.25 | The record's `ReuseConfidence`, or, with a [decay policy](#decaying-confidence-by-domain), that value times `2^(-age / halfLife)` for the record's domain. *Age* is measured from `CreatedAt` |
 | Recency | 0.15 | `2^(-age / RecencyHalfLife)`, half-life 30 days by default. *Age* is measured from `UpdatedAt` |
 | Status | 0.15 | `Reinforced` 1.0, `Validated` 0.5 |
 | Environment compatibility | 0.10 | The environment scorer's value for the record against the request's `PreferredEnvironmentAttributes`. The default is the fraction of preferred attributes the record matches, and 1.0 when nothing is preferred. Every ranked record already satisfied the *required* attributes, since a mismatch excludes it before ranking |
@@ -162,6 +163,53 @@ var request = new RetrieveExperienceRequest(authorization, scope, "refund ticket
 - **MAF.** Set the property in `ExperienceInjectionOptions.ResolveRequest`, where you build the request anyway. The
   injected Historical Reference block's format does not change; only the order of its records and the
   `EnvironmentCompatibility` value in each record's applicability line do.
+
+## Decaying confidence by domain
+
+Stored confidence never fades on its own. A lesson about a fast-moving framework API would otherwise rank as
+confidently a year after it was verified as on the day it was, just like a stable business rule. A
+`ConfidenceDecayPolicy` makes the confidence component fade at ranking time, at a rate set by the record's domain:
+
+```csharp
+services.AddSingleton(new ConfidenceDecayPolicy
+{
+    HalfLives = new Dictionary<string, TimeSpan?>
+    {
+        ["framework-api"] = TimeSpan.FromDays(30),   // fast-moving: halves every month
+        ["security"] = TimeSpan.FromDays(60),
+        ["business-rule"] = TimeSpan.FromDays(365),
+        ["math"] = null,                             // an invariant: never decays
+    },
+    DefaultHalfLife = null,                          // missing or unlisted domain: no decay (the default)
+});
+services.AddAgentExperienceRetrieval();
+```
+
+- **The confidence component becomes `stored * 2^(-age / halfLife)`.** A record verified at 0.8 that is one half-life
+  old ranks on 0.4. The factor is always in [0, 1], so decay can only lower a record's confidence, never raise it. It
+  reaches exactly 0 only for an age vastly beyond the half-life, where the arithmetic underflows.
+- **The domain is a metadata entry.** It is the value of the record's `EnvironmentFingerprint.Metadata[DomainKey]`,
+  where `DomainKey` defaults to `"domain"`. It is matched ordinally against `HalfLives`, whatever comparer your
+  dictionary used, so `Framework-API` is not `framework-api`. A domain mapped to `null` never decays, even when `DefaultHalfLife` is set. A record with no domain,
+  or with one that is not listed, uses `DefaultHalfLife`.
+- **Age is the lesson's age, measured from `CreatedAt`.** This differs from recency and expiry, which read `UpdatedAt`.
+  Reinforcing a lesson already earns it recency, and a lesson about an API that has since moved on does not become
+  current because someone reused it again. A `CreatedAt` in the future (clock skew) decays nothing.
+- **It only reorders.** Eligibility, including the `MinimumConfidence` floor applied in SQL, uses the stored value, so
+  decay never excludes a record, even one decayed far below the floor. A read never writes, so `ReuseConfidence` is
+  never rewritten. Decay only reorders candidates already fetched: the candidate bound (`CandidateLimit`) and the
+  store's confidence floor are applied on stored confidence first, so decay cannot bring in a record they left out.
+- **It can change what an agent sees first.** Decay can change the order of the records injected into a MAF agent.
+  In the Historical Reference block, the `Confidence:` line shows the stored confidence, while the `Applicability`
+  components line shows the decayed value that was ranked on, so the two can differ for the same record.
+- **Both values are reported.** When a half-life applied, the Confidence component's `Value` is the decayed value that
+  was ranked on, and its `UndecayedValue` is the stored confidence. In every other case `UndecayedValue` is `null`.
+  Without a policy, nothing changes: scores, components and ordering are exactly as before.
+- **Invalid settings fail at construction.** A zero or negative half-life throws `ArgumentOutOfRangeException`, and a
+  blank `DomainKey` or a null or blank domain in `HalfLives` throws `ArgumentException`. This also applies to a `with`
+  expression. The map is copied into a read-only one, so changing the dictionary afterwards has no effect.
+- **Wiring.** `AddAgentExperienceRetrieval` picks up a registered `ConfidenceDecayPolicy` in any registration order, or
+  you can pass one to the `ExperienceRetrievalService` constructor. Age is measured with the service's `TimeProvider`.
 
 ## Bounded, and fail-closed
 

@@ -150,7 +150,9 @@ decayed, normalized numbers: neither a model nor a human can read a date or a re
 `Applicability` is labeled *as ranked at retrieval* because that is what it is. Everything else in the entry is the
 record as the final eligibility check re-read it moments later; the score and its components were computed when the
 record was ranked. Saying so is what keeps a confidence component that has since moved from silently contradicting
-the `Confidence:` line above it.
+the `Confidence:` line above it. With a retrieval [confidence decay policy](retrieval.md#decaying-confidence-by-domain),
+the two differ by design: `Confidence:` is the stored value, while the components line shows the decayed value the
+record was ranked on, and decay can change the order the records appear in.
 
 ### Raw payloads never appear
 

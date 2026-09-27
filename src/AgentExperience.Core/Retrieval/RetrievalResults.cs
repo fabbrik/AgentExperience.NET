@@ -43,7 +43,14 @@ public enum RankingComponentKind
     /// <summary>How strongly the record's indexed text matched the request's task text.</summary>
     Relevance,
 
-    /// <summary>The record's <see cref="ExperienceRecord.ReuseConfidence"/>, which is already in [0, 1].</summary>
+    /// <summary>
+    /// The record's <see cref="ExperienceRecord.ReuseConfidence"/>, which is already in [0, 1]. When the
+    /// service has a <see cref="ConfidenceDecayPolicy"/> that gives the record's domain a half-life, it
+    /// is that stored value multiplied by <c>2^(-age / halfLife)</c>, with age measured from
+    /// <see cref="ExperienceRecord.CreatedAt"/>, and the stored value is reported as
+    /// <see cref="RankingComponent.UndecayedValue"/>. Decay affects ranking only: it never excludes a
+    /// record and never rewrites stored confidence.
+    /// </summary>
     Confidence,
 
     /// <summary>
@@ -75,6 +82,16 @@ public enum RankingComponentKind
 /// <param name="Weight">The effective weight applied to <paramref name="Value"/>.</param>
 public sealed record RankingComponent(RankingComponentKind Kind, double Value, double Weight)
 {
+    /// <summary>
+    /// The component's value before any read-time decay, in [0, 1]. Set only on the
+    /// <see cref="RankingComponentKind.Confidence"/> component, and only when a
+    /// <see cref="ConfidenceDecayPolicy"/> applied a half-life to the record: it is then the stored,
+    /// normalized <see cref="ExperienceRecord.ReuseConfidence"/>, and <see cref="Value"/> is the decayed
+    /// value that was ranked on. <see langword="null"/> in every other case, including every component
+    /// of a service with no decay policy.
+    /// </summary>
+    public double? UndecayedValue { get; init; }
+
     /// <summary>This component's contribution to the record's total score: <see cref="Value"/> times <see cref="Weight"/>.</summary>
     public double Contribution => Value * Weight;
 }

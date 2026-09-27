@@ -618,6 +618,15 @@ namespace AgentExperience.Core.Retrieval
         public static AgentExperience.Core.Retrieval.AttributeMatchEnvironmentScorer Instance { get; }
         public double Score(AgentExperience.Abstractions.EnvironmentFingerprint recordEnvironment, System.Collections.Generic.IReadOnlyDictionary<string, string> preferredAttributes) { }
     }
+    public sealed class ConfidenceDecayPolicy : System.IEquatable<AgentExperience.Core.Retrieval.ConfidenceDecayPolicy>
+    {
+        public const string DefaultDomainKey = "domain";
+        public ConfidenceDecayPolicy() { }
+        public System.TimeSpan? DefaultHalfLife { get; init; }
+        public string DomainKey { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.TimeSpan?> HalfLives { get; init; }
+        public System.TimeSpan? HalfLifeFor(string? domain) { }
+    }
     public sealed class ExcludedExperience : System.IEquatable<AgentExperience.Core.Retrieval.ExcludedExperience>
     {
         public ExcludedExperience(System.Guid ExperienceId, AgentExperience.Core.Retrieval.RetrievalExclusionReason Reason) { }
@@ -647,6 +656,7 @@ namespace AgentExperience.Core.Retrieval
         public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider) { }
         public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceEmbeddingIndex? embeddingIndex, AgentExperience.Abstractions.IExperienceEmbeddingGenerator? embeddingGenerator) { }
         public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceEmbeddingIndex? embeddingIndex, AgentExperience.Abstractions.IExperienceEmbeddingGenerator? embeddingGenerator, AgentExperience.Core.Retrieval.IEnvironmentCompatibilityScorer? environmentScorer) { }
+        public ExperienceRetrievalService(AgentExperience.Abstractions.IExperienceCandidateSource candidateSource, AgentExperience.Core.Retrieval.RetrievalPolicy policy, AgentExperience.Core.Retrieval.RankingWeights weights, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceEmbeddingIndex? embeddingIndex, AgentExperience.Abstractions.IExperienceEmbeddingGenerator? embeddingGenerator, AgentExperience.Core.Retrieval.IEnvironmentCompatibilityScorer? environmentScorer, AgentExperience.Core.Retrieval.ConfidenceDecayPolicy? confidenceDecay) { }
         public bool HybridEnabled { get; }
         public AgentExperience.Core.Retrieval.RetrievalPolicy Policy { get; }
         public AgentExperience.Core.Retrieval.RankingWeights Weights { get; }
@@ -673,6 +683,7 @@ namespace AgentExperience.Core.Retrieval
         public RankingComponent(AgentExperience.Core.Retrieval.RankingComponentKind Kind, double Value, double Weight) { }
         public double Contribution { get; }
         public AgentExperience.Core.Retrieval.RankingComponentKind Kind { get; init; }
+        public double? UndecayedValue { get; init; }
         public double Value { get; init; }
         public double Weight { get; init; }
     }
