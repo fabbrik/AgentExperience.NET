@@ -20,8 +20,8 @@ for values you build as in the [quick start](../../README.md#quick-start).
 | Verify and reflect | Check the run against your own required checks, and draw a lesson that points at its evidence | [Finalization](finalization.md) |
 | Store | Persist the lesson as an Experience Record, then move it through an audited lifecycle | [Finalization](finalization.md), [Lifecycle](lifecycle.md) |
 | Index | Optionally embed the record, after it is stored, for search by meaning | [Indexing](indexing.md) |
-| Retrieve | Find the records that apply to a new task, filtered for eligibility and ranked with every weight shown | [Retrieval](retrieval.md) |
-| Inject | Put what survives into the agent's context as one labeled Historical Reference block | [Injection into MAF](injection.md) |
+| Retrieve | Find the records that apply to a new task, filtered for eligibility and ranked with every weight shown, including how closely each record's environment fits | [Retrieval](retrieval.md) |
+| Inject | Put what survives, and what the receiving agent can act on, into its context as one labeled Historical Reference block | [Injection into MAF](injection.md) |
 | Feedback | Record what a run was given, and let only real evidence move a record's confidence | [Reuse feedback](reuse-feedback.md), [Confidence and independence](confidence.md) |
 
 And around the loop:
@@ -53,7 +53,10 @@ These terms have a specific meaning in this library.
 | **Scope** | Where a record lives: tenant, application and project (required), and optionally team, agent and user. Matching is exact; a null field is not a wildcard. (Two deliberate exceptions: a null *bound* on an authorization context leaves that field unrestricted, and a subtree retention sweep treats a null root field as "any".) |
 | **Authorization context** | What the host's own authentication says the caller may touch. It always comes from the host, never from a request payload or model output. Every operation checks the scope against it first. |
 | **Eligible** | A record in `Validated` or `Reinforced` status. Only eligible records are retrieved, injected or indexed. |
-| **Reuse confidence** | A score in (0, 1), `(1 + S) / (2 + S + F)` over independent supporting validations `S` and contradictions `F`. A heuristic for ranking, not a probability. |
+| **Reuse confidence** | A score in [0, 1] over independent supporting validations `S` and contradictions `F`. By default `(1 + S) / (2 + S + F)`, strictly inside (0, 1); a host can [replace the engine](confidence.md#replacing-the-engine), and every stored score records the rule that produced it. A heuristic for ranking, not a probability. |
+| **Preferred environment** | Environment attributes a retrieval would *prefer* a record to carry. Unlike required attributes, they never exclude a record; they grade its environment ranking component. |
+| **Domain** | The value of a record's `domain` environment attribute (the key is configurable). An optional decay policy gives each domain its own confidence half-life at ranking time. |
+| **Receiving agent capabilities** | What the host declares the agent about to be given lessons can do: its available tools and the highest tool risk class it may use. A lesson whose approach needs more is not injected. |
 | **Historical Reference** | The single, delimited, labeled message the MAF adapter injects before an invocation. It carries retrieved lessons as untrusted reference material, never as instructions. |
 | **Exposure** | The fact that the library delivered a record into a run. Confidence evidence about a run counts only for records the run was exposed to. |
 | **Sharing grant** | An administrator's explicit, expiring permission for one other scope to *read* one record. |
@@ -90,11 +93,11 @@ These terms have a specific meaning in this library.
 | Auditable, template-based reflections traceable to evidence IDs | `AgentExperience.Core` |
 | One finalization call: evaluate, gate on authorization and the host's storage decision, reflect, create the record, commit its first lifecycle event — replay-safe | `AgentExperience.Core` |
 | The audited lifecycle transition table, with supersession and database-enforced append-only logs | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
-| Evidence-based reuse confidence with verified, exposure-bound independence | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
+| Evidence-based reuse confidence with verified, exposure-bound independence, computed by a replaceable engine | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
 | Reuse feedback that records exposure and lets only established evidence move a score | `AgentExperience.Core`, `AgentExperience.Storage.Postgres` |
-| Text retrieval and hybrid (text plus vector) retrieval, bounded by a timeout, with explainable ranking | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
+| Text retrieval and hybrid (text plus vector) retrieval, bounded by a timeout, with explainable ranking, graded environment fit and optional per-domain confidence decay | `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 | Embedding ingestion after the canonical commit, conditional on the record's revision | `AgentExperience.Core`, `AgentExperience.Storage.Postgres.Vectors` |
-| MAF adapter: capture of ordinary, streaming, failed and cancelled runs and their tool calls, retries as attempts of one run, and Historical Reference injection with session tracking | `AgentExperience.MicrosoftAgentFramework` |
+| MAF adapter: capture of ordinary, streaming, failed and cancelled runs and their tool calls, retries as attempts of one run, and Historical Reference injection with session tracking and a gate on the receiving agent's tools and risk class | `AgentExperience.MicrosoftAgentFramework` |
 | Sharing grants with a bounded lifetime, disclosure levels, and an optional access log | `AgentExperience.Abstractions`, `AgentExperience.Storage.Postgres` |
 | Deletion, retention sweeps and purges, with append-only guards that are never disabled | `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |
 | Opt-in crypto-shredding with an envelope key store for any KMS | `AgentExperience.Abstractions`, `AgentExperience.Core`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors` |

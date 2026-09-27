@@ -49,9 +49,11 @@ flowchart LR
 2. **Verify.** Your own required checks, over evidence from a verification round you closed. No model is involved.
 3. **Reflect.** A lesson with reuse guidance, preconditions and warnings, traceable to the evidence it came from.
 4. **Store.** A verified run becomes a reusable *Experience Record*; a failed one is kept but quarantined.
-5. **Retrieve.** Text search, plus optional vector search, filtered for eligibility before anything is ranked.
+5. **Retrieve.** Text search, plus optional vector search, filtered for eligibility before anything is ranked. The
+   ranking shows every weight, grades how closely each record's environment fits, and can age confidence by domain.
 6. **Inject.** The surviving lessons go into the agent's context as one *Historical Reference* message, labeled as
-   untrusted reference material. Your tool-approval boundary, not the label, is what stops a harmful action.
+   untrusted reference material. Lessons that need tools the agent lacks, or a higher risk class than it may use, can
+   be held back. Your tool-approval boundary, not the label, is what stops a harmful action.
 7. **Feedback.** You record which lessons a run was given. That alone moves nothing: a lesson's confidence changes
    only on evidence about a run the library actually delivered it into — your own verified checks, a human
    assessment carrying a token your review flow minted, or a comparative evaluation with its own evidence.

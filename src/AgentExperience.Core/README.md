@@ -25,10 +25,10 @@ Targets `net8.0`, `net9.0` and `net10.0`.
 | `VerificationAggregator`, `TaskCheckEvaluators` | Deterministic task verification bound to a host-closed round; no LLM | [Finalization](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/finalization.md#verifying-a-run-and-binding-its-evaluation) |
 | `DefaultExperienceReflector` | Template-based reflections traceable to evidence IDs (`IExperienceReflector` is the seam for your own) | [Finalization](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/finalization.md) |
 | `ExperienceFinalizationService` | One call from a completed run to a durable record: evaluate, gate, reflect, create, commit — replay-safe | [Finalization](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/finalization.md) |
-| `ExperienceLifecycleService` | The audited transition table, and evidence-based confidence updates whose independence key is verified | [Lifecycle](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/lifecycle.md), [Confidence](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/confidence.md) |
+| `ExperienceLifecycleService` | The audited transition table, and evidence-based confidence updates whose independence key is verified, scored by a replaceable `IExperienceConfidenceEngine` | [Lifecycle](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/lifecycle.md), [Confidence](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/confidence.md) |
 | `AssessmentTokenIssuer` | Mints the HMAC assessment tokens a human assessment must present to move a score (never registered in DI: whoever can call it can mint) | [Confidence](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/confidence.md#the-keys-inputs-are-verified) |
 | `ExperienceIndexingService` | Embedding ingestion after the canonical commit; derived data never blocks canonical data | [Indexing](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/indexing.md) |
-| `ExperienceRetrievalService` | Bounded, fail-closed text and hybrid retrieval with explainable ranking | [Retrieval](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/retrieval.md) |
+| `ExperienceRetrievalService` | Bounded, fail-closed text and hybrid retrieval with explainable ranking; optional `IEnvironmentCompatibilityScorer` and `ConfidenceDecayPolicy` | [Retrieval](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/retrieval.md) |
 | `ExperienceReuseFeedbackService` | Records what a run was exposed to, and lets only established evidence move a score — for records the run was actually given | [Reuse feedback](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/reuse-feedback.md) |
 | `EnvelopeExperienceKeyStore` | Per-record data keys wrapped by your KMS key, for crypto-shredding | [Crypto-shredding](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/crypto-shredding.md) |
 
@@ -47,6 +47,10 @@ services.AddSingleton(new ExperienceIndependenceOptions
 // AssessmentTokenIssuer is deliberately not registered: construct it in your review flow, where a person decides.
 services.AddAgentExperienceIndexing();       // optional: needs an IExperienceEmbeddingIndex and generator
 services.AddAgentExperienceRetrieval();      // ExperienceRetrievalService
+// Optional seams, picked up from the container in any order (register as singletons):
+//   IEnvironmentCompatibilityScorer  grades a request's PreferredEnvironmentAttributes
+//   ConfidenceDecayPolicy            per-domain confidence half-lives, applied only when ranking
+//   IExperienceConfidenceEngine      replaces the default (1+S)/(2+S+F) confidence heuristic
 services.AddAgentExperienceReuseFeedback();  // needs an IExperienceReuseFeedbackStore
 ```
 
@@ -62,8 +66,8 @@ clock, and the opt-out. The full wiring for every package is in
   the injection risk decision all travel in the request; Core obeys them.
 - **It never throws for an expected outcome.** Finalization, retrieval, indexing, and feedback return structured
   results; retrieval is bounded by a timeout (500 ms by default) that is never an exception.
-- **It never makes a completion score into reuse confidence.** Confidence is a versioned `(1 + S) / (2 + S + F)`
-  heuristic over independent evidence — useful for ranking, not a calibrated probability.
+- **It never makes a completion score into reuse confidence.** Confidence is a versioned score over independent
+  evidence, by default the `(1 + S) / (2 + S + F)` heuristic (the engine is replaceable), — useful for ranking, not a calibrated probability.
 - **It never stores hidden reasoning.** Only observable evidence, sanitized at capture.
 
 ## Limits to know

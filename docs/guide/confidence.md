@@ -44,7 +44,7 @@ if (result.Outcome == ConfidenceUpdateOutcome.Applied)
 }
 ```
 
-**The score is `(1 + S) / (2 + S + F)`.** `S` counts independent accepted supporting validations, including the one
+**By default, the score is `(1 + S) / (2 + S + F)`** (a host can [replace the engine](#replacing-the-engine)). `S` counts independent accepted supporting validations, including the one
 the record was finalized with; `F` counts independent accepted contradictions. So a fresh validated record is
 `2/3`, a first independent confirmation takes it to `3/4`, and a contradiction after that takes it to `3/5`.
 

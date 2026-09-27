@@ -137,8 +137,8 @@ attempt as "the approach that worked" would be causal invention. A verified atte
 (`the verified run's final attempt completed without calling any tool.`) rather than printing an empty list, and a
 quarantined or unverified record carries no `Approach:` line at all.
 
-`Confidence:` is the record's stored reuse confidence, `(1 + S) / (2 + S + F)` over the independent supporting
-validations and contradictions that have been submitted against it. It is a **heuristic**, not a calibrated
+`Confidence:` is the record's stored reuse confidence, by default `(1 + S) / (2 + S + F)` over the independent
+supporting validations and contradictions that have been submitted against it (a host can replace the engine). It is a **heuristic**, not a calibrated
 probability: it summarizes how often reuse held up, and the block never presents it as the chance this lesson will
 work again. It also decides nothing about eligibility — a record reaches this block because of its status, its
 scope, and the policy's floor, and no score moves a record into or out of that set. See
