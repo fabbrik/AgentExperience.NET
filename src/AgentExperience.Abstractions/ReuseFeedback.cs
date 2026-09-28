@@ -318,7 +318,9 @@ public sealed record ExperienceReuseExposure(
 /// <param name="TrialLabel">The experimental condition, or <see langword="null"/>.</param>
 /// <param name="ObservedAt">When the feedback was observed.</param>
 /// <param name="Exposures">
-/// One entry per exposed record, ordered by <see cref="ExperienceReuseExposure.ExperienceId"/>. The
+/// One entry per exposed record. A caller may list them in any order: a store normalizes them into
+/// <see cref="ExperienceReuseExposure.ExperienceId"/> order (by <see cref="Guid"/>'s own comparison)
+/// before it stores or compares them, and every submission it hands back lists them in that order. The
 /// order is normalized rather than the caller's, so two hosts submitting the same feedback with the same
 /// records listed differently still produce the same stored submission and converge instead of
 /// colliding.
@@ -416,6 +418,13 @@ public interface IExperienceReuseFeedbackStore
     /// nothing; one that differs in any stored field, or in its set of exposed records, is
     /// <see cref="ExperienceReuseFeedbackStoreOutcome.Conflict"/> and writes nothing. Nothing is ever
     /// updated or deleted.
+    /// <para>
+    /// The caller need not order <see cref="RecordedExperienceReuseFeedback.Exposures"/>: the store sorts
+    /// them by <see cref="ExperienceReuseExposure.ExperienceId"/> before it stores the submission or
+    /// compares a resubmission with the stored one, so the same exposures listed in another order are an
+    /// identical resubmission, and the submission handed back lists them in ID order. Naming the same
+    /// record twice is still <see cref="ExperienceReuseFeedbackStoreOutcome.Invalid"/>.
+    /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do. Applied to <see cref="RecordedExperienceReuseFeedback.Scope"/>.</param>
     /// <param name="feedback">The submission, with Core's attribution decision already made.</param>

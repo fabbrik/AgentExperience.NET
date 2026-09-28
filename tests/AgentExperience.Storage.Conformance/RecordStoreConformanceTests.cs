@@ -361,10 +361,14 @@ public abstract class RecordStoreConformanceTests
         Assert.Equal(ExperienceStoreOutcome.Committed, committed.Outcome);
         Assert.Equal(ExperienceStoreOutcome.Committed, replay.Outcome);
         Assert.Equal(committed.Revision, replay.Revision);
+
+        // An event with no confidence payload replays with no CurrentStatus: the status it moved the record to is the
+        // one it carries, which the caller already holds.
+        Assert.Null(replay.CurrentStatus);
         await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 1, events: 1);
 
-        // After a later commit, the replay still reports its own revision, not the record's current one. (Whether a
-        // replay's CurrentStatus is set is left out: see the README.)
+        // After a later commit, the replay still reports its own revision, not the record's current one, and still no
+        // CurrentStatus: in particular not the status the record has moved on to.
         Assert.Equal(
             ExperienceStoreOutcome.Committed,
             (await Store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, second, CancellationToken.None)).Outcome);
@@ -372,6 +376,7 @@ public abstract class RecordStoreConformanceTests
 
         Assert.Equal(ExperienceStoreOutcome.Committed, lateReplay.Outcome);
         Assert.Equal(1, lateReplay.Revision);
+        Assert.Null(lateReplay.CurrentStatus);
         await AssertStoredAsync(tenant, record, ExperienceStatus.Reinforced, revision: 2, events: 2);
     }
 
@@ -929,6 +934,18 @@ public abstract class RecordStoreConformanceTests
         Assert.Equal(ExperienceSupersessionOutcome.RecordNotFound, missingRecord.Outcome);
         Assert.Null(missingRecord.ReplacementStatus);
         Assert.Equal(Json(missingRecord), Json(recordInOtherProject));
+
+        // With no record there is nothing to supersede, so no replacement status is reported, even for a replacement
+        // that is in scope -- whether the record is missing or in another scope.
+        var replacementInScope = await CreateAsync(tenant, Record(scope, ExperienceStatus.Reinforced));
+        var missingRecordRealReplacement = await Store.CheckSupersessionAsync(
+            Authorize(tenant), scope, Guid.NewGuid(), replacementInScope.ExperienceId, CancellationToken.None);
+        var foreignRecordRealReplacement = await Store.CheckSupersessionAsync(
+            Authorize(tenant), scope, otherProject.ExperienceId, replacementInScope.ExperienceId, CancellationToken.None);
+
+        Assert.Equal(ExperienceSupersessionOutcome.RecordNotFound, missingRecordRealReplacement.Outcome);
+        Assert.Null(missingRecordRealReplacement.ReplacementStatus);
+        Assert.Equal(Json(missingRecordRealReplacement), Json(foreignRecordRealReplacement));
     }
 
     [Fact]

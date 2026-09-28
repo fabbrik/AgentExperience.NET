@@ -46,7 +46,7 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - `CommitLifecycleEventAsync`:
   - moves the status, sets the revision to expected + 1, moves `UpdatedAt` forward, and changes nothing else;
   - is idempotent on `EventId`: a replay returns the revision the original commit produced (even after later
-    commits) and writes nothing, and the same ID with any different field (reason, producer, statuses, revision,
+    commits), a `null` `CurrentStatus` for an event that carried no confidence payload, and writes nothing, and the same ID with any different field (reason, producer, statuses, revision,
     time, record, scope, replacement, confidence payload), in any scope, is `Conflict` and writes nothing;
   - checks `ExpectedRevision` optimistically: anything but the current revision is `StaleRevision` with the current
     revision and writes nothing, and of many concurrent commits from one revision exactly one wins;
@@ -64,7 +64,8 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - `CheckSupersessionAsync` walks the replacement chain directly and transitively (`Cycle`), never allows a record to
   replace itself, and reports the replacement's status without deciding eligibility (a revoked replacement is
   `Allowed`, with its status). A record or replacement in another scope is `RecordNotFound` or
-  `ReplacementNotFound`, the same as a missing one.
+  `ReplacementNotFound`, the same as a missing one. `RecordNotFound` reports no replacement status, even when the
+  replacement exists in the scope: with no record there is nothing to supersede.
 - `GetManyAsync` answers every position exactly as `GetAsync` would answer it alone. More IDs than its maximum is
   `Invalid`.
 
@@ -83,21 +84,17 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 
 **Reuse-feedback store**
 
-- A submission is returned exactly as it was submitted, on `Recorded` and on `AlreadyRecorded`.
-- The feedback ID is the idempotency key. An identical resubmission is `AlreadyRecorded`. The same ID with any
+- A submission is returned exactly as it was submitted, on `Recorded` and on `AlreadyRecorded`, except that its
+  exposures always come back ordered by record ID, whatever order they were listed in.
+- The feedback ID is the idempotency key. An identical resubmission is `AlreadyRecorded`, including one that lists
+  the same exposures in another order: the store normalizes the order before it stores or compares. The same ID with any
   different stored field (run, outcome, measure, time, benefits, attribution fields, evidence, trial label, scope,
   or any exposure; the attribution fields are varied on a comparative result's evaluator and round and on a human
   assessment's reviewer and assessment) is `Conflict`, the stored submission stays as it was, and it is handed back
   when the caller has authority over its scope.
 - A colliding ID from a tenant the caller has no authority over is `Conflict`, and no stored content comes back.
-- A non-finite measure, a blank measure kind, and a benefit with no attribution are `Invalid`.
-
-**Left open by the port, so not asserted**
-
-- Whether an identical lifecycle replay sets `CurrentStatus` on its result.
-- Whether the same exposures listed in another order are a replay. The ledger shape orders exposures by ID, and
-  Core normalizes them before the port sees them.
-- `ReplacementStatus` on `RecordNotFound` when the replacement itself exists.
+- A non-finite measure, a blank measure kind, a benefit with no attribution, and the same record named twice in
+  the exposures are `Invalid`.
 
 ## Deliberately excluded
 

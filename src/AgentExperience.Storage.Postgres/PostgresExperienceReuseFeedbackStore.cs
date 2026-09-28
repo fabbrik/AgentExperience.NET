@@ -30,7 +30,9 @@ namespace AgentExperience.Storage.Postgres;
 /// <para>
 /// <b>Idempotency is the feedback ID, and it is compared field by field.</b> A colliding
 /// <see cref="RecordedExperienceReuseFeedback.FeedbackId"/> is read back inside the same transaction and
-/// compared against the submission in hand -- every stored column, and the exposures in order.
+/// compared against the submission in hand -- every stored column, and the exposures, which are
+/// stored and compared in <see cref="ExperienceReuseExposure.ExperienceId"/> order whatever order the
+/// caller listed them in.
 /// Identical is <see cref="ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded"/> with nothing written;
 /// anything else is <see cref="ExperienceReuseFeedbackStoreOutcome.Conflict"/>, again with nothing
 /// written. A conflict is reported without the stored submission, because the colliding ID may name a
@@ -205,6 +207,12 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Stored, compared and handed back in ExperienceId order, whatever order the caller listed them in, so a
+        // reordered resubmission is a replay rather than a conflict. The caller's own list is kept for naming an
+        // erased exposure by the position the caller gave it.
+        var submitted = feedback;
+        feedback = ExperienceRecordValidator.NormalizeReuseFeedback(feedback);
+
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -239,7 +247,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
                     NoErrors);
             }
 
-            var (erased, keys) = await ReadErasedExposuresAsync(connection, transaction, feedback, cancellationToken).ConfigureAwait(false);
+            var (erased, keys) = await ReadErasedExposuresAsync(connection, transaction, submitted, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (erased.Count > 0)
@@ -570,8 +578,9 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
     /// sequences (record equality would compare them by reference and report every replay as a
     /// conflict). The exposures are part of the comparison because they are part of the submission --
     /// a resubmission naming a different set of records is a different submission, whatever its header
-    /// columns say. Core normalizes the exposure order before deriving ordinals, so comparing them
-    /// positionally here compares record <em>sets</em>, not the order a caller happened to list them in.
+    /// columns say. <see cref="RecordAsync"/> normalizes the exposure order before deriving ordinals and
+    /// before this comparison, so comparing them positionally here compares record <em>sets</em>, not the
+    /// order a caller happened to list them in.
     /// </summary>
     private static bool SameContent(
         RecordedExperienceReuseFeedback stored,

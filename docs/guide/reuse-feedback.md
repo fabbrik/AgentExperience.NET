@@ -160,8 +160,10 @@ before any connection opens.
   `recorded_at` is excluded from the comparison, because it is this store's own clock reading and comparing it
   would make every replay a conflict. The stored timestamps are compared against the truncated values that were
   actually written, so a sub-microsecond original does not report itself as a conflict.
-- **The exposures compare as a set, not as typing order.** Core orders the records by experience ID before deriving
-  ordinals, so the positional comparison here is a comparison of record *sets*. Without that, a host that crashed
+- **The exposures compare as a set, not as typing order.** Core orders the records by experience ID, and the store
+  normalizes them into the same order again before it derives ordinals or compares a replay, so the positional
+  comparison here is a comparison of record *sets* whoever called the port, and the submission handed back lists its
+  exposures in ID order. Without that, a host that crashed
   mid-submission and retried with its records in a different order would get a permanent `Conflict` — and, since
   retrying is the only way to finish an interrupted fan-out, would be locked out of ever completing it.
 - **A conflict reveals nothing it should not.** The lookup is by primary key with no scope predicate — it has to

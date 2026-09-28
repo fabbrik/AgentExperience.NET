@@ -12,7 +12,8 @@ namespace AgentExperience.Storage.InMemory;
 /// It keeps the ledger's rules and passes the same conformance suite as the PostgreSQL store: every submission is
 /// validated with that store's own rules; the feedback ID is the idempotency key, so an identical resubmission is
 /// <see cref="ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded"/> and one differing in any stored field (the
-/// exposures included) is <see cref="ExperienceReuseFeedbackStoreOutcome.Conflict"/> with nothing written; and a
+/// set of exposures included; their order is normalized by record ID before anything is stored or compared) is
+/// <see cref="ExperienceReuseFeedbackStoreOutcome.Conflict"/> with nothing written; and a
 /// conflicting submission is handed back only when the caller has authority over its scope.
 /// </para>
 /// <para>
@@ -54,9 +55,10 @@ public sealed class InMemoryExperienceReuseFeedbackStore : IExperienceReuseFeedb
             return Task.FromCanceled<ExperienceReuseFeedbackStoreResult>(cancellationToken);
         }
 
-        // Copied before the lock, with its timestamps normalized as the PostgreSQL ledger stores and compares them, so
-        // nothing stored or compared is an instance the caller can still change.
-        var submitted = StoredSnapshots.Feedback(feedback);
+        // Copied before the lock, with its exposures in ID order and its timestamps normalized as the PostgreSQL ledger
+        // stores and compares them, so a reordered resubmission is a replay and nothing stored or compared is an
+        // instance the caller can still change.
+        var submitted = StoredSnapshots.Feedback(ExperienceRecordValidator.NormalizeReuseFeedback(feedback));
 
         lock (_gate)
         {

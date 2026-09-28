@@ -464,6 +464,25 @@ internal static partial class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>
+    /// The submission with its exposures in <see cref="ExperienceReuseExposure.ExperienceId"/> order, the one order
+    /// a store keeps them in, so the same exposures listed differently are stored, compared and handed back as one
+    /// submission. Only for a submission <see cref="ValidateReuseFeedback"/> accepted: it names no record twice and
+    /// holds no null, so the order is total. The sort is <see cref="Guid"/>'s own comparison, the one Core orders by.
+    /// </summary>
+    public static RecordedExperienceReuseFeedback NormalizeReuseFeedback(RecordedExperienceReuseFeedback feedback)
+    {
+        for (var i = 1; i < feedback.Exposures.Count; i++)
+        {
+            if (feedback.Exposures[i - 1].ExperienceId.CompareTo(feedback.Exposures[i].ExperienceId) > 0)
+            {
+                return feedback with { Exposures = [.. feedback.Exposures.OrderBy(exposure => exposure.ExperienceId)] };
+            }
+        }
+
+        return feedback;
+    }
+
     private static void ValidateReuseAttributionShape(RecordedExperienceReuseFeedback feedback, List<StoreValidationError> errors)
     {
         // "Benefit is Unknown" and "there was no attribution" are one fact. Two columns that could

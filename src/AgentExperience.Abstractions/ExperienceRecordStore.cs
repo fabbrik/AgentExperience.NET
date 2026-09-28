@@ -654,12 +654,15 @@ public sealed record ExperienceRecordQueryResult(
 /// <see cref="ExperienceStoreOutcome.ReplacementNotAllowed"/> it is the <em>replacement's</em> stored
 /// status instead, or <see langword="null"/> when the replacement is not in the record's scope at all.
 /// <para>
-/// On <see cref="ExperienceStoreOutcome.Committed"/> it is set only when the commit did <em>not</em>
-/// move the record -- a confidence submission whose independence key was already taken, or an identical
-/// resubmission replaying an earlier one -- and then it is the status the record is in, read in the same
-/// breath as <see cref="Revision"/> so the two describe one moment. It is <see langword="null"/> for a
-/// commit that moved the record, whose new status the caller already knows: it is the one the event
-/// carried. Otherwise <see langword="null"/>.
+/// On <see cref="ExperienceStoreOutcome.Committed"/> it is set only for a confidence submission, when
+/// the commit did <em>not</em> move the record: one whose independence key was already taken, and then it
+/// is the status the record is in, read in the same breath as <see cref="Revision"/> so the two describe
+/// one moment; or a resubmitted <see cref="ConfidenceUpdate.EvidenceId"/> replaying earlier evidence, and
+/// then it is the status the evidence ledger recorded when that submission settled, beside the revision it
+/// settled at. An identical resubmission of an earlier lifecycle event that carried no confidence payload
+/// is a replay too, and reports <see langword="null"/>: the status that event moved the record to is the
+/// one it carried, which the caller already holds. It is <see langword="null"/> for a commit that moved the
+/// record, for the same reason. Otherwise <see langword="null"/>.
 /// </para>
 /// </param>
 /// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
@@ -796,8 +799,11 @@ public enum ExperienceSupersessionOutcome
 /// </summary>
 /// <param name="Outcome">What the check found.</param>
 /// <param name="ReplacementStatus">
-/// The replacement's stored <see cref="ExperienceRecord.Status"/> when it was found in the requested
-/// scope, so the caller can apply its own eligibility rule to it; otherwise <see langword="null"/>.
+/// The replacement's stored <see cref="ExperienceRecord.Status"/> when the record was found and the
+/// replacement was found in the requested scope, so the caller can apply its own eligibility rule to it;
+/// otherwise <see langword="null"/>. It is <see langword="null"/> on
+/// <see cref="ExperienceSupersessionOutcome.RecordNotFound"/> even when the replacement exists in the
+/// scope: with no record there is nothing to supersede, so there is no replacement to report on.
 /// </param>
 /// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceSupersessionOutcome.Invalid"/>; otherwise empty.</param>
 public sealed record ExperienceSupersessionCheckResult(
