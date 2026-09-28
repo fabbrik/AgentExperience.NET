@@ -6,6 +6,17 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.3
+
+Everything since `0.1.0-preview.2`: stories 8.2, 9.1, 9.2, 10.1–10.4, 11.1 and 11.2. It adds a sixth package,
+`AgentExperience.Storage.InMemory` (development and tests only, guarded against production use), graded environment
+compatibility, a replaceable confidence engine, read-time confidence decay by domain, a capability gate on injection,
+a store conformance suite that both stores pass, and the first live-model results: a confirmatory run against Gemini
+and an exploratory one against Claude, both concluding that the injected content reduces failed attempts. There are
+no new migrations; every new behaviour is opt-in and leaves default results unchanged.
+
 ### Store contract clarifications
 
 - **Reordered feedback exposures now converge.** `PostgresExperienceReuseFeedbackStore` and
@@ -297,7 +308,7 @@ is recorded in [`RELEASING.md`](RELEASING.md#decision-known-limits-and-documente
 ### Planned: `net8.0` and `net9.0` leave the matrix
 
 .NET 8 and .NET 9 leave support on 10 November 2026. The first preview published after that date removes the
-`net8.0` and `net9.0` targets from all five packages, with the `net8.0`-only `System.Text.Json` and
+`net8.0` and `net9.0` targets from all six packages, with the `net8.0`-only `System.Text.Json` and
 `Microsoft.Bcl.Memory` references; a host still on either must stay on an earlier preview or move to .NET 10. Nothing
 is removed in this release. PostgreSQL 14 (end of life 12 November 2026) stays outside the supported matrix, as it
 is now. See [Target frameworks](docs/compatibility-evidence.md#target-frameworks).

@@ -30,8 +30,8 @@ limits that no code change can remove, so they do not block the claim (see
 [the decision below](#decision-known-limits-and-documented-boundaries)). Step 9 checks that the version says preview
 while any known limit remains, and states what dropping the suffix requires.
 
-This version still claims no production readiness: the deferred-work ledger is not closed, and dropping the suffix
-is a maintainer's decision, not something step 9 makes.
+This version still claims no production readiness. Even with the Known limits table empty and the deferred-work
+ledger closed, dropping the suffix is a maintainer's decision, not something step 9 makes.
 
 The version is deliberately not `1.0.0`. With no version property at all, `dotnet pack` would emit `1.0.0` — a
 stability promise this codebase declines to make while it still ships documented breaking changes between previews.
