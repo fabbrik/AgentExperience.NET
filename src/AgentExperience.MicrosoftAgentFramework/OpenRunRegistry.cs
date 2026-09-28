@@ -81,6 +81,13 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     internal Action<OpenRun>? AfterLookupForTesting { get; set; }
 
     /// <summary>
+    /// Test seam: how many of the next removals report the entry absent without taking it out, as the
+    /// .NET 8.0.0-8.0.10 <see cref="ConcurrentDictionary{TKey, TValue}"/> can for an entry another thread
+    /// has only just added. Never set outside tests.
+    /// </summary>
+    internal int SpuriousRemoveFailuresForTesting { get; set; }
+
+    /// <summary>
     /// Claims the entry for <paramref name="runId"/>, creating it when the adapter has never seen
     /// that run, for an invocation that is about to capture on it. Returns <see langword="null"/>
     /// when another invocation already holds it, or the registry has been disposed.
@@ -282,10 +289,31 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
 
             // Removed only when it is still this very entry, so forgetting a run can never take away
             // an entry some other invocation has since put there under the same identifier.
-            _entries.TryRemove(new KeyValuePair<Guid, OpenRun>(entry.RunId, entry));
+            //
+            // Retried for as long as this very entry is still there: on .NET 8.0.0 through 8.0.10,
+            // ConcurrentDictionary.TryRemove reads the bucket's item count without its lock and can
+            // report an entry another thread has only just added as absent (dotnet/runtime#107525,
+            // fixed in 8.0.11). A removed entry left behind would never be taken out again, and every
+            // later claim on the run would find it removed and look it up again, forever.
+            while (!TryRemoveEntry(entry)
+                && _entries.TryGetValue(entry.RunId, out var current)
+                && ReferenceEquals(current, entry))
+            {
+            }
         }
 
         entry.DisposeTimer();
+    }
+
+    private bool TryRemoveEntry(OpenRun entry)
+    {
+        if (SpuriousRemoveFailuresForTesting > 0)
+        {
+            SpuriousRemoveFailuresForTesting--;
+            return false;
+        }
+
+        return _entries.TryRemove(new KeyValuePair<Guid, OpenRun>(entry.RunId, entry));
     }
 
     /// <summary>

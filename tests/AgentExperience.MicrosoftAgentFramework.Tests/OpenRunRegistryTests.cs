@@ -73,6 +73,42 @@ public class OpenRunRegistryTests
     }
 
     /// <summary>
+    /// On .NET 8.0.0 through 8.0.10 the dictionary can report an entry another thread has only just
+    /// added as absent when it is removed (dotnet/runtime#107525). Forgetting the run must still take
+    /// the entry out: a removed entry left in the ledger is never taken out again, and every later
+    /// claim on the run finds it removed and looks the run up again, forever.
+    /// </summary>
+    [Theory]
+    [InlineData("forget")]
+    [InlineData("withdraw")]
+    public void A_removal_the_dictionary_spuriously_refuses_still_forgets_the_entry(string how)
+    {
+        var (registry, _, _) = Create();
+        var runId = Guid.NewGuid();
+
+        var holder = registry.TryClaim(runId, out _);
+        Assert.NotNull(holder);
+
+        registry.SpuriousRemoveFailuresForTesting = 1;
+        if (how == "forget")
+        {
+            registry.Forget(holder);
+        }
+        else
+        {
+            registry.Withdraw(holder);
+        }
+
+        Assert.Equal(0, registry.SpuriousRemoveFailuresForTesting);
+        Assert.Equal(0, registry.Count);
+
+        var next = registry.TryClaim(runId, out var nextCreated);
+        Assert.NotNull(next);
+        Assert.NotSame(holder, next);
+        Assert.True(nextCreated);
+    }
+
+    /// <summary>
     /// The same race without a seam: many threads claiming and forgetting one run, counting how many
     /// hold it at once. More than one is two live scopes on one run.
     /// </summary>
