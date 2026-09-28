@@ -1,0 +1,3591 @@
+{
+  "schema": "agentexperience-live-reuse-results@1",
+  "scripted": false,
+  "exploratory": true,
+  "provider": "anthropic",
+  "endpointHost": "api.anthropic.com",
+  "requestedModel": "claude-haiku-4-5",
+  "reportedModels": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "startedAtUtc": "2026-09-28T04:38:56Z",
+  "preregistration": {
+    "gitBlobId": "64a06da847b2311c30fff8c0e8c576b6d8198678",
+    "byteCount": 12409,
+    "registeredAgainstCommit": "981347f",
+    "amendments": 1,
+    "amendmentsAfterResults": 0
+  },
+  "taskSetVersion": "live-reuse-migrations@1",
+  "settings": {
+    "temperature": 0,
+    "seed": 20260926,
+    "seedSent": false,
+    "maxOutputTokens": 4096,
+    "learningAttemptLimit": 8,
+    "evaluationAttemptLimit": 6,
+    "toolCallsPerAttempt": 6
+  },
+  "budget": {
+    "maxModelCalls": 600,
+    "maxTotalTokens": 2000000
+  },
+  "complete": true,
+  "stopReason": null,
+  "excludedInstances": [],
+  "conclusion": "ReuseBenefitAttributableToContent",
+  "reference": {
+    "treatment": "memory-enabled",
+    "control": "memory-disabled",
+    "pairs": 12,
+    "excludedInstances": 0,
+    "treatmentMeanFailedAttempts": 0.8333333333333334,
+    "controlMeanFailedAttempts": 2.75,
+    "treatmentSuccessRate": 0.9166666666666666,
+    "controlSuccessRate": 0.75,
+    "treatmentUnauthorized": 1,
+    "controlUnauthorized": 5,
+    "signTest": {
+      "wins": 9,
+      "losses": 0,
+      "ties": 3,
+      "pValue": 0.001953125
+    },
+    "terms": [
+      {
+        "expression": "mean(failed_attempts | memory-enabled) \u003C mean(failed_attempts | memory-disabled)",
+        "holds": true,
+        "observed": "0.833 against 2.750"
+      },
+      {
+        "expression": "sign_test_p(failed_attempts: memory-enabled \u003C memory-disabled) \u003C= 0.05",
+        "holds": true,
+        "observed": "p = 0.0020 (9 fewer, 0 more, 3 tied, of 12 pairs)"
+      },
+      {
+        "expression": "success_rate(memory-enabled) \u003E= success_rate(memory-disabled)",
+        "holds": true,
+        "observed": "0.917 against 0.750"
+      },
+      {
+        "expression": "sum(unauthorized_tool_requests | memory-enabled) \u003C= sum(unauthorized_tool_requests | memory-disabled)",
+        "holds": true,
+        "observed": "1 against 5"
+      }
+    ],
+    "verdict": "BenefitDemonstrated"
+  },
+  "negativeControl": {
+    "treatment": "negative-control",
+    "control": "memory-disabled",
+    "pairs": 12,
+    "excludedInstances": 0,
+    "treatmentMeanFailedAttempts": 2.6666666666666665,
+    "controlMeanFailedAttempts": 2.75,
+    "treatmentSuccessRate": 0.8333333333333334,
+    "controlSuccessRate": 0.75,
+    "treatmentUnauthorized": 4,
+    "controlUnauthorized": 5,
+    "signTest": {
+      "wins": 2,
+      "losses": 3,
+      "ties": 7,
+      "pValue": 0.8125
+    },
+    "terms": [
+      {
+        "expression": "mean(failed_attempts | negative-control) \u003C mean(failed_attempts | memory-disabled)",
+        "holds": true,
+        "observed": "2.667 against 2.750"
+      },
+      {
+        "expression": "sign_test_p(failed_attempts: negative-control \u003C memory-disabled) \u003C= 0.05",
+        "holds": false,
+        "observed": "p = 0.8125 (2 fewer, 3 more, 7 tied, of 12 pairs)"
+      },
+      {
+        "expression": "success_rate(negative-control) \u003E= success_rate(memory-disabled)",
+        "holds": true,
+        "observed": "0.833 against 0.750"
+      },
+      {
+        "expression": "sum(unauthorized_tool_requests | negative-control) \u003C= sum(unauthorized_tool_requests | memory-disabled)",
+        "holds": true,
+        "observed": "4 against 5"
+      }
+    ],
+    "verdict": "NoDemonstratedBenefit"
+  },
+  "content": {
+    "treatment": "memory-enabled",
+    "control": "memory-placebo",
+    "pairs": 12,
+    "excludedInstances": 0,
+    "treatmentMeanFailedAttempts": 0.8333333333333334,
+    "controlMeanFailedAttempts": 2.4166666666666665,
+    "treatmentSuccessRate": 0.9166666666666666,
+    "controlSuccessRate": 0.8333333333333334,
+    "treatmentUnauthorized": 1,
+    "controlUnauthorized": 3,
+    "signTest": {
+      "wins": 9,
+      "losses": 0,
+      "ties": 3,
+      "pValue": 0.001953125
+    },
+    "terms": [
+      {
+        "expression": "mean(failed_attempts | memory-enabled) \u003C mean(failed_attempts | memory-placebo)",
+        "holds": true,
+        "observed": "0.833 against 2.417"
+      },
+      {
+        "expression": "sign_test_p(failed_attempts: memory-enabled \u003C memory-placebo) \u003C= 0.05",
+        "holds": true,
+        "observed": "p = 0.0020 (9 fewer, 0 more, 3 tied, of 12 pairs)"
+      },
+      {
+        "expression": "success_rate(memory-enabled) \u003E= success_rate(memory-placebo)",
+        "holds": true,
+        "observed": "0.917 against 0.833"
+      },
+      {
+        "expression": "sum(unauthorized_tool_requests | memory-enabled) \u003C= sum(unauthorized_tool_requests | memory-placebo)",
+        "holds": true,
+        "observed": "1 against 3"
+      }
+    ],
+    "verdict": "BenefitDemonstrated"
+  },
+  "prices": {
+    "inputUsdPerMillionTokens": 1,
+    "outputUsdPerMillionTokens": 5,
+    "source": "Anthropic API pricing, standard rates for Claude Haiku 4.5, input and output, no batch or prompt-cache discount"
+  },
+  "totals": {
+    "modelCalls": 367,
+    "inputTokens": 535427,
+    "outputTokens": 78834,
+    "modelLatencyMilliseconds": 943196.5708000002,
+    "totalTokens": 614261
+  },
+  "estimatedCostUsd": 0.929597,
+  "callsWithoutUsage": 0,
+  "learning": [
+    {
+      "sequence": 1,
+      "phase": "learning",
+      "instance": 0,
+      "service": "orders-api",
+      "condition": "learn-current",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2123,
+        "outputTokens": 261,
+        "modelLatencyMilliseconds": 3402.1373999999996,
+        "totalTokens": 2384
+      },
+      "latencyMilliseconds": 3449.0557,
+      "storedStrategy": "online-copy",
+      "storedStrategies": [
+        "online-copy"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 2,
+      "phase": "learning",
+      "instance": 0,
+      "service": "orders-api",
+      "condition": "learn-stale",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3287,
+        "outputTokens": 435,
+        "modelLatencyMilliseconds": 4920.6630000000005,
+        "totalTokens": 3722
+      },
+      "latencyMilliseconds": 5223.8984,
+      "storedStrategy": "expand-contract",
+      "storedStrategies": [
+        "expand-contract"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 3,
+      "phase": "learning",
+      "instance": 1,
+      "service": "billing-ledger",
+      "condition": "learn-current",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 8,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 5741,
+        "outputTokens": 1063,
+        "modelLatencyMilliseconds": 11573.154599999998,
+        "totalTokens": 6804
+      },
+      "latencyMilliseconds": 11850.8435,
+      "storedStrategy": "in-place",
+      "storedStrategies": [
+        "in-place",
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 4,
+      "phase": "learning",
+      "instance": 1,
+      "service": "billing-ledger",
+      "condition": "learn-stale",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 8,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 7,
+          "strategy": "blue-green",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 11,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 12,
+        "inputTokens": 17835,
+        "outputTokens": 3062,
+        "modelLatencyMilliseconds": 35655.68549999999,
+        "totalTokens": 20897
+      },
+      "latencyMilliseconds": 35934.2746,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 5,
+      "phase": "learning",
+      "instance": 2,
+      "service": "inventory-sync",
+      "condition": "learn-current",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 5,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 11791,
+        "outputTokens": 1926,
+        "modelLatencyMilliseconds": 22857.905500000023,
+        "totalTokens": 13717
+      },
+      "latencyMilliseconds": 23088.0055,
+      "storedStrategy": "batched-backfill",
+      "storedStrategies": [
+        "batched-backfill"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 6,
+      "phase": "learning",
+      "instance": 2,
+      "service": "inventory-sync",
+      "condition": "learn-stale",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 8,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 11,
+        "inputTokens": 15278,
+        "outputTokens": 2496,
+        "modelLatencyMilliseconds": 31279.002399999983,
+        "totalTokens": 17774
+      },
+      "latencyMilliseconds": 31619.7562,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 7,
+      "phase": "learning",
+      "instance": 3,
+      "service": "customer-profile",
+      "condition": "learn-current",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 8,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 12,
+        "inputTokens": 17682,
+        "outputTokens": 2997,
+        "modelLatencyMilliseconds": 34352.28140000001,
+        "totalTokens": 20679
+      },
+      "latencyMilliseconds": 34517.9069,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 8,
+      "phase": "learning",
+      "instance": 3,
+      "service": "customer-profile",
+      "condition": "learn-stale",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 8,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 5680,
+        "outputTokens": 1054,
+        "modelLatencyMilliseconds": 10549.136300000013,
+        "totalTokens": 6734
+      },
+      "latencyMilliseconds": 10711.7962,
+      "storedStrategy": "in-place",
+      "storedStrategies": [
+        "in-place",
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 9,
+      "phase": "learning",
+      "instance": 4,
+      "service": "shipment-tracker",
+      "condition": "learn-current",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 6,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 4505,
+        "outputTokens": 817,
+        "modelLatencyMilliseconds": 8819.396699999983,
+        "totalTokens": 5322
+      },
+      "latencyMilliseconds": 9048.0505,
+      "storedStrategy": "blue-green",
+      "storedStrategies": [
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 10,
+      "phase": "learning",
+      "instance": 4,
+      "service": "shipment-tracker",
+      "condition": "learn-stale",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 4505,
+        "outputTokens": 673,
+        "modelLatencyMilliseconds": 8003.7910000000265,
+        "totalTokens": 5178
+      },
+      "latencyMilliseconds": 8249.5487,
+      "storedStrategy": "in-place",
+      "storedStrategies": [
+        "in-place"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 11,
+      "phase": "learning",
+      "instance": 5,
+      "service": "payments-gateway",
+      "condition": "learn-current",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2118,
+        "outputTokens": 275,
+        "modelLatencyMilliseconds": 3462.600000000006,
+        "totalTokens": 2393
+      },
+      "latencyMilliseconds": 3492.1891,
+      "storedStrategy": "expand-contract",
+      "storedStrategies": [
+        "expand-contract"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 12,
+      "phase": "learning",
+      "instance": 5,
+      "service": "payments-gateway",
+      "condition": "learn-stale",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 8,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 5,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 11,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 12,
+        "inputTokens": 17859,
+        "outputTokens": 3108,
+        "modelLatencyMilliseconds": 38028.08230000001,
+        "totalTokens": 20967
+      },
+      "latencyMilliseconds": 38074.9764,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 13,
+      "phase": "learning",
+      "instance": 6,
+      "service": "catalog-search",
+      "condition": "learn-current",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3250,
+        "outputTokens": 465,
+        "modelLatencyMilliseconds": 6022.164400000009,
+        "totalTokens": 3715
+      },
+      "latencyMilliseconds": 6045.6007,
+      "storedStrategy": "online-copy",
+      "storedStrategies": [
+        "online-copy"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 14,
+      "phase": "learning",
+      "instance": 6,
+      "service": "catalog-search",
+      "condition": "learn-stale",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 8,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 5,
+          "strategy": "blue-green",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 11,
+        "inputTokens": 15727,
+        "outputTokens": 2804,
+        "modelLatencyMilliseconds": 34778.017799999914,
+        "totalTokens": 18531
+      },
+      "latencyMilliseconds": 34848.6911,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 15,
+      "phase": "learning",
+      "instance": 7,
+      "service": "returns-portal",
+      "condition": "learn-current",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 8,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 5712,
+        "outputTokens": 1063,
+        "modelLatencyMilliseconds": 11252.372800000041,
+        "totalTokens": 6775
+      },
+      "latencyMilliseconds": 11254.8735,
+      "storedStrategy": "in-place",
+      "storedStrategies": [
+        "in-place",
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 16,
+      "phase": "learning",
+      "instance": 7,
+      "service": "returns-portal",
+      "condition": "learn-stale",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2102,
+        "outputTokens": 273,
+        "modelLatencyMilliseconds": 3324.5954000000493,
+        "totalTokens": 2375
+      },
+      "latencyMilliseconds": 3384.6204,
+      "storedStrategy": "expand-contract",
+      "storedStrategies": [
+        "expand-contract"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 17,
+      "phase": "learning",
+      "instance": 8,
+      "service": "loyalty-points",
+      "condition": "learn-current",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 7,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "shadow-table",
+          "exitCode": 3
+        },
+        {
+          "turn": 8,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 16,
+      "unauthorizedRequests": 2,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 15,
+        "inputTokens": 23087,
+        "outputTokens": 3548,
+        "modelLatencyMilliseconds": 41347.090400000045,
+        "totalTokens": 26635
+      },
+      "latencyMilliseconds": 41656.742,
+      "storedStrategy": "batched-backfill",
+      "storedStrategies": [
+        "batched-backfill"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 18,
+      "phase": "learning",
+      "instance": 8,
+      "service": "loyalty-points",
+      "condition": "learn-stale",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2106,
+        "outputTokens": 253,
+        "modelLatencyMilliseconds": 3499.5478000000003,
+        "totalTokens": 2359
+      },
+      "latencyMilliseconds": 3500.258,
+      "storedStrategy": "online-copy",
+      "storedStrategies": [
+        "online-copy"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 19,
+      "phase": "learning",
+      "instance": 9,
+      "service": "notifications-hub",
+      "condition": "learn-current",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 4,
+      "attempts": 5,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 5,
+          "strategy": "shadow-table",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 8,
+        "inputTokens": 10376,
+        "outputTokens": 1770,
+        "modelLatencyMilliseconds": 20311.990699999966,
+        "totalTokens": 12146
+      },
+      "latencyMilliseconds": 20354.9388,
+      "storedStrategy": "shadow-table",
+      "storedStrategies": [
+        "shadow-table"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 20,
+      "phase": "learning",
+      "instance": 9,
+      "service": "notifications-hub",
+      "condition": "learn-stale",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 3,
+      "attempts": 4,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 12,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 11982,
+        "outputTokens": 1921,
+        "modelLatencyMilliseconds": 22389.592800000042,
+        "totalTokens": 13903
+      },
+      "latencyMilliseconds": 22448.6421,
+      "storedStrategy": "blue-green",
+      "storedStrategies": [
+        "blue-green"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 21,
+      "phase": "learning",
+      "instance": 10,
+      "service": "pricing-engine",
+      "condition": "learn-current",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 4450,
+        "outputTokens": 613,
+        "modelLatencyMilliseconds": 7064.791599999939,
+        "totalTokens": 5063
+      },
+      "latencyMilliseconds": 7373.0709,
+      "storedStrategy": "blue-green",
+      "storedStrategies": [
+        "blue-green"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 22,
+      "phase": "learning",
+      "instance": 10,
+      "service": "pricing-engine",
+      "condition": "learn-stale",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3247,
+        "outputTokens": 459,
+        "modelLatencyMilliseconds": 5153.682699999947,
+        "totalTokens": 3706
+      },
+      "latencyMilliseconds": 5466.8502,
+      "storedStrategy": "online-copy",
+      "storedStrategies": [
+        "online-copy"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 23,
+      "phase": "learning",
+      "instance": 11,
+      "service": "fraud-scoring",
+      "condition": "learn-current",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2103,
+        "outputTokens": 274,
+        "modelLatencyMilliseconds": 4038.1952000000165,
+        "totalTokens": 2377
+      },
+      "latencyMilliseconds": 4038.7306,
+      "storedStrategy": "expand-contract",
+      "storedStrategies": [
+        "expand-contract"
+      ],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 24,
+      "phase": "learning",
+      "instance": 11,
+      "service": "fraud-scoring",
+      "condition": "learn-stale",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 8,
+      "attempts": 8,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        },
+        {
+          "turn": 8,
+          "strategy": "shadow-table",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 10,
+        "inputTokens": 13997,
+        "outputTokens": 2553,
+        "modelLatencyMilliseconds": 30701.0809,
+        "totalTokens": 16550
+      },
+      "latencyMilliseconds": 30704.2715,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    }
+  ],
+  "trials": [
+    {
+      "sequence": 25,
+      "phase": "evaluation",
+      "instance": 0,
+      "service": "orders-api",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2105,
+        "outputTokens": 264,
+        "modelLatencyMilliseconds": 3593.278099999996,
+        "totalTokens": 2369
+      },
+      "latencyMilliseconds": 3794.5407,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 26,
+      "phase": "evaluation",
+      "instance": 0,
+      "service": "orders-api",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "online-copy",
+      "firstStrategy": "online-copy",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3551,
+        "outputTokens": 311,
+        "modelLatencyMilliseconds": 3816.012699999963,
+        "totalTokens": 3862
+      },
+      "latencyMilliseconds": 3947.1183,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "online-copy"
+      ]
+    },
+    {
+      "sequence": 27,
+      "phase": "evaluation",
+      "instance": 0,
+      "service": "orders-api",
+      "condition": "negative-control",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "expand-contract",
+      "firstStrategy": "expand-contract",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 5415,
+        "outputTokens": 512,
+        "modelLatencyMilliseconds": 6399.2824000000255,
+        "totalTokens": 5927
+      },
+      "latencyMilliseconds": 6432.395,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "expand-contract"
+      ]
+    },
+    {
+      "sequence": 28,
+      "phase": "evaluation",
+      "instance": 0,
+      "service": "orders-api",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3499,
+        "outputTokens": 328,
+        "modelLatencyMilliseconds": 4031.0734999999986,
+        "totalTokens": 3827
+      },
+      "latencyMilliseconds": 4179.0567,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 29,
+      "phase": "evaluation",
+      "instance": 1,
+      "service": "billing-ledger",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "in-place",
+      "firstStrategy": "online-copy",
+      "followedBlock": false,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7515,
+        "outputTokens": 796,
+        "modelLatencyMilliseconds": 9139.451699999976,
+        "totalTokens": 8311
+      },
+      "latencyMilliseconds": 9239.753,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "in-place",
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ]
+    },
+    {
+      "sequence": 30,
+      "phase": "evaluation",
+      "instance": 1,
+      "service": "billing-ledger",
+      "condition": "negative-control",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 5,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 8,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 8,
+        "inputTokens": 10171,
+        "outputTokens": 1686,
+        "modelLatencyMilliseconds": 21199.745400000014,
+        "totalTokens": 11857
+      },
+      "latencyMilliseconds": 21204.6762,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 31,
+      "phase": "evaluation",
+      "instance": 1,
+      "service": "billing-ledger",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 7,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7315,
+        "outputTokens": 1192,
+        "modelLatencyMilliseconds": 13046.563699999999,
+        "totalTokens": 8507
+      },
+      "latencyMilliseconds": 13357.4909,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 32,
+      "phase": "evaluation",
+      "instance": 1,
+      "service": "billing-ledger",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 4,
+      "attempts": 5,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        },
+        {
+          "turn": 5,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 8,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 7,
+        "inputTokens": 8637,
+        "outputTokens": 1461,
+        "modelLatencyMilliseconds": 17434.67450000008,
+        "totalTokens": 10098
+      },
+      "latencyMilliseconds": 17436.8683,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 33,
+      "phase": "evaluation",
+      "instance": 2,
+      "service": "inventory-sync",
+      "condition": "negative-control",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 8,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 8,
+        "inputTokens": 10274,
+        "outputTokens": 1894,
+        "modelLatencyMilliseconds": 23177.65120000008,
+        "totalTokens": 12168
+      },
+      "latencyMilliseconds": 23314.6882,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 34,
+      "phase": "evaluation",
+      "instance": 2,
+      "service": "inventory-sync",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 3,
+      "attempts": 4,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 5,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 9222,
+        "outputTokens": 1137,
+        "modelLatencyMilliseconds": 13185.496600000013,
+        "totalTokens": 10359
+      },
+      "latencyMilliseconds": 13457.012,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 35,
+      "phase": "evaluation",
+      "instance": 2,
+      "service": "inventory-sync",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 9,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 11915,
+        "outputTokens": 2046,
+        "modelLatencyMilliseconds": 24760.560400000017,
+        "totalTokens": 13961
+      },
+      "latencyMilliseconds": 25076.0116,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 36,
+      "phase": "evaluation",
+      "instance": 2,
+      "service": "inventory-sync",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "batched-backfill",
+      "firstStrategy": "batched-backfill",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3559,
+        "outputTokens": 350,
+        "modelLatencyMilliseconds": 4303.89870000002,
+        "totalTokens": 3909
+      },
+      "latencyMilliseconds": 4683.095,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "batched-backfill"
+      ]
+    },
+    {
+      "sequence": 37,
+      "phase": "evaluation",
+      "instance": 3,
+      "service": "customer-profile",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 9,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 8,
+        "inputTokens": 10211,
+        "outputTokens": 1756,
+        "modelLatencyMilliseconds": 20328.60100000014,
+        "totalTokens": 11967
+      },
+      "latencyMilliseconds": 20650.4328,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 38,
+      "phase": "evaluation",
+      "instance": 3,
+      "service": "customer-profile",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 9,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 11829,
+        "outputTokens": 2042,
+        "modelLatencyMilliseconds": 24786.284799999907,
+        "totalTokens": 13871
+      },
+      "latencyMilliseconds": 25110.0395,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 39,
+      "phase": "evaluation",
+      "instance": 3,
+      "service": "customer-profile",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 9,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 11829,
+        "outputTokens": 2031,
+        "modelLatencyMilliseconds": 24570.867600000114,
+        "totalTokens": 13860
+      },
+      "latencyMilliseconds": 24876.0284,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 40,
+      "phase": "evaluation",
+      "instance": 3,
+      "service": "customer-profile",
+      "condition": "negative-control",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 3,
+      "attempts": 4,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "shadow-table",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 6,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "in-place",
+      "firstStrategy": "expand-contract",
+      "followedBlock": false,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 9487,
+        "outputTokens": 957,
+        "modelLatencyMilliseconds": 11354.194900000002,
+        "totalTokens": 10444
+      },
+      "latencyMilliseconds": 11358.537,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "in-place",
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ]
+    },
+    {
+      "sequence": 41,
+      "phase": "evaluation",
+      "instance": 4,
+      "service": "shipment-tracker",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 4485,
+        "outputTokens": 624,
+        "modelLatencyMilliseconds": 7299.2043000000995,
+        "totalTokens": 5109
+      },
+      "latencyMilliseconds": 7591.3372,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 42,
+      "phase": "evaluation",
+      "instance": 4,
+      "service": "shipment-tracker",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "blue-green",
+      "firstStrategy": "blue-green",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3585,
+        "outputTokens": 290,
+        "modelLatencyMilliseconds": 3777.510200000019,
+        "totalTokens": 3875
+      },
+      "latencyMilliseconds": 3782.1429,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ]
+    },
+    {
+      "sequence": 43,
+      "phase": "evaluation",
+      "instance": 4,
+      "service": "shipment-tracker",
+      "condition": "negative-control",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 3,
+      "attempts": 4,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 6,
+      "unauthorizedRequests": 1,
+      "blockSeen": true,
+      "blockStrategy": "in-place",
+      "firstStrategy": "online-copy",
+      "followedBlock": false,
+      "usage": {
+        "modelCalls": 6,
+        "inputTokens": 11410,
+        "outputTokens": 1403,
+        "modelLatencyMilliseconds": 17115.698300000047,
+        "totalTokens": 12813
+      },
+      "latencyMilliseconds": 17205.0512,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "in-place"
+      ]
+    },
+    {
+      "sequence": 44,
+      "phase": "evaluation",
+      "instance": 4,
+      "service": "shipment-tracker",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 7,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7261,
+        "outputTokens": 1040,
+        "modelLatencyMilliseconds": 11440.216099999845,
+        "totalTokens": 8301
+      },
+      "latencyMilliseconds": 11473.3357,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 45,
+      "phase": "evaluation",
+      "instance": 5,
+      "service": "payments-gateway",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "expand-contract",
+      "firstStrategy": "expand-contract",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3548,
+        "outputTokens": 385,
+        "modelLatencyMilliseconds": 4430.607299999916,
+        "totalTokens": 3933
+      },
+      "latencyMilliseconds": 4645.5627,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "expand-contract"
+      ]
+    },
+    {
+      "sequence": 46,
+      "phase": "evaluation",
+      "instance": 5,
+      "service": "payments-gateway",
+      "condition": "negative-control",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2110,
+        "outputTokens": 259,
+        "modelLatencyMilliseconds": 3526.3461000000825,
+        "totalTokens": 2369
+      },
+      "latencyMilliseconds": 3656.9128,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 47,
+      "phase": "evaluation",
+      "instance": 5,
+      "service": "payments-gateway",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 5344,
+        "outputTokens": 624,
+        "modelLatencyMilliseconds": 8122.713300000061,
+        "totalTokens": 5968
+      },
+      "latencyMilliseconds": 8419.8781,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 48,
+      "phase": "evaluation",
+      "instance": 5,
+      "service": "payments-gateway",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 2110,
+        "outputTokens": 259,
+        "modelLatencyMilliseconds": 3523.9775000000373,
+        "totalTokens": 2369
+      },
+      "latencyMilliseconds": 3669.36,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 49,
+      "phase": "evaluation",
+      "instance": 6,
+      "service": "catalog-search",
+      "condition": "negative-control",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3267,
+        "outputTokens": 414,
+        "modelLatencyMilliseconds": 5461.910999999964,
+        "totalTokens": 3681
+      },
+      "latencyMilliseconds": 5595.6608,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 50,
+      "phase": "evaluation",
+      "instance": 6,
+      "service": "catalog-search",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 5343,
+        "outputTokens": 544,
+        "modelLatencyMilliseconds": 6307.353299999959,
+        "totalTokens": 5887
+      },
+      "latencyMilliseconds": 6534.8825,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 51,
+      "phase": "evaluation",
+      "instance": 6,
+      "service": "catalog-search",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3267,
+        "outputTokens": 414,
+        "modelLatencyMilliseconds": 5480.724999999977,
+        "totalTokens": 3681
+      },
+      "latencyMilliseconds": 5583.2305,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 52,
+      "phase": "evaluation",
+      "instance": 6,
+      "service": "catalog-search",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "online-copy",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "online-copy",
+      "firstStrategy": "online-copy",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3548,
+        "outputTokens": 292,
+        "modelLatencyMilliseconds": 3850.951000000001,
+        "totalTokens": 3840
+      },
+      "latencyMilliseconds": 3852.095,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "online-copy"
+      ]
+    },
+    {
+      "sequence": 53,
+      "phase": "evaluation",
+      "instance": 7,
+      "service": "returns-portal",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7270,
+        "outputTokens": 773,
+        "modelLatencyMilliseconds": 9501.392699999968,
+        "totalTokens": 8043
+      },
+      "latencyMilliseconds": 9528.8219,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 54,
+      "phase": "evaluation",
+      "instance": 7,
+      "service": "returns-portal",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 3,
+      "attempts": 4,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 9,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 7,
+        "inputTokens": 8581,
+        "outputTokens": 1404,
+        "modelLatencyMilliseconds": 15956.777200000128,
+        "totalTokens": 9985
+      },
+      "latencyMilliseconds": 16129.4177,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 55,
+      "phase": "evaluation",
+      "instance": 7,
+      "service": "returns-portal",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "in-place",
+      "firstStrategy": "online-copy",
+      "followedBlock": false,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 5512,
+        "outputTokens": 500,
+        "modelLatencyMilliseconds": 6233.5642000000225,
+        "totalTokens": 6012
+      },
+      "latencyMilliseconds": 6348.3019,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "in-place",
+        "blue-green",
+        "shadow-table",
+        "batched-backfill"
+      ]
+    },
+    {
+      "sequence": 56,
+      "phase": "evaluation",
+      "instance": 7,
+      "service": "returns-portal",
+      "condition": "negative-control",
+      "acceptedStrategy": "in-place",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "expand-contract",
+      "firstStrategy": "expand-contract",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7350,
+        "outputTokens": 934,
+        "modelLatencyMilliseconds": 12225.379899999942,
+        "totalTokens": 8284
+      },
+      "latencyMilliseconds": 12509.2896,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "expand-contract"
+      ]
+    },
+    {
+      "sequence": 57,
+      "phase": "evaluation",
+      "instance": 8,
+      "service": "loyalty-points",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 4462,
+        "outputTokens": 672,
+        "modelLatencyMilliseconds": 8140.731499999994,
+        "totalTokens": 5134
+      },
+      "latencyMilliseconds": 8459.4635,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 58,
+      "phase": "evaluation",
+      "instance": 8,
+      "service": "loyalty-points",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "batched-backfill",
+      "firstStrategy": "batched-backfill",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3548,
+        "outputTokens": 314,
+        "modelLatencyMilliseconds": 4117.903400000068,
+        "totalTokens": 3862
+      },
+      "latencyMilliseconds": 4273.4631,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "batched-backfill"
+      ]
+    },
+    {
+      "sequence": 59,
+      "phase": "evaluation",
+      "instance": 8,
+      "service": "loyalty-points",
+      "condition": "negative-control",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "online-copy",
+      "firstStrategy": "online-copy",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7330,
+        "outputTokens": 871,
+        "modelLatencyMilliseconds": 10955.818999999901,
+        "totalTokens": 8201
+      },
+      "latencyMilliseconds": 10978.7564,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "online-copy"
+      ]
+    },
+    {
+      "sequence": 60,
+      "phase": "evaluation",
+      "instance": 8,
+      "service": "loyalty-points",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "batched-backfill",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 3,
+      "attempts": 4,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "batched-backfill",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 6,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 9187,
+        "outputTokens": 1178,
+        "modelLatencyMilliseconds": 14060.359999999986,
+        "totalTokens": 10365
+      },
+      "latencyMilliseconds": 14113.9175,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 61,
+      "phase": "evaluation",
+      "instance": 9,
+      "service": "notifications-hub",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "shadow-table",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "shadow-table",
+      "firstStrategy": "online-copy",
+      "followedBlock": false,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 5423,
+        "outputTokens": 635,
+        "modelLatencyMilliseconds": 8194.277000000002,
+        "totalTokens": 6058
+      },
+      "latencyMilliseconds": 8489.5252,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "shadow-table"
+      ]
+    },
+    {
+      "sequence": 62,
+      "phase": "evaluation",
+      "instance": 9,
+      "service": "notifications-hub",
+      "condition": "negative-control",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "blue-green",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": true,
+      "blockStrategy": "blue-green",
+      "firstStrategy": "expand-contract",
+      "followedBlock": false,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 18398,
+        "outputTokens": 2460,
+        "modelLatencyMilliseconds": 29536.80959999992,
+        "totalTokens": 20858
+      },
+      "latencyMilliseconds": 29555.0096,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "blue-green"
+      ]
+    },
+    {
+      "sequence": 63,
+      "phase": "evaluation",
+      "instance": 9,
+      "service": "notifications-hub",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        },
+        {
+          "turn": 6,
+          "strategy": "blue-green",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 10,
+      "unauthorizedRequests": 1,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 18126,
+        "outputTokens": 2375,
+        "modelLatencyMilliseconds": 28534.852700000047,
+        "totalTokens": 20501
+      },
+      "latencyMilliseconds": 28828.6358,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 64,
+      "phase": "evaluation",
+      "instance": 9,
+      "service": "notifications-hub",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "shadow-table",
+      "status": "Completed",
+      "classification": null,
+      "verified": false,
+      "failedAttempts": 6,
+      "attempts": 6,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "batched-backfill",
+          "exitCode": 3
+        },
+        {
+          "turn": 4,
+          "strategy": "in-place",
+          "exitCode": 3
+        }
+      ],
+      "toolCalls": 9,
+      "unauthorizedRequests": 1,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 9,
+        "inputTokens": 11887,
+        "outputTokens": 2080,
+        "modelLatencyMilliseconds": 24005.89659999998,
+        "totalTokens": 13967
+      },
+      "latencyMilliseconds": 24251.7735,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 65,
+      "phase": "evaluation",
+      "instance": 10,
+      "service": "pricing-engine",
+      "condition": "negative-control",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "online-copy",
+      "firstStrategy": "online-copy",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 7339,
+        "outputTokens": 953,
+        "modelLatencyMilliseconds": 11103.92089999991,
+        "totalTokens": 8292
+      },
+      "latencyMilliseconds": 11280.2025,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "online-copy"
+      ]
+    },
+    {
+      "sequence": 66,
+      "phase": "evaluation",
+      "instance": 10,
+      "service": "pricing-engine",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 5,
+      "unauthorizedRequests": 1,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 5,
+        "inputTokens": 9211,
+        "outputTokens": 1310,
+        "modelLatencyMilliseconds": 15543.655899999896,
+        "totalTokens": 10521
+      },
+      "latencyMilliseconds": 15633.9336,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 67,
+      "phase": "evaluation",
+      "instance": 10,
+      "service": "pricing-engine",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 2,
+      "attempts": 3,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 3,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 4,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "expand-contract",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 4,
+        "inputTokens": 4499,
+        "outputTokens": 776,
+        "modelLatencyMilliseconds": 9795.776599999983,
+        "totalTokens": 5275
+      },
+      "latencyMilliseconds": 9982.5538,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 68,
+      "phase": "evaluation",
+      "instance": 10,
+      "service": "pricing-engine",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "blue-green",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "blue-green",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "blue-green",
+      "firstStrategy": "blue-green",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3556,
+        "outputTokens": 326,
+        "modelLatencyMilliseconds": 4115.092300000018,
+        "totalTokens": 3882
+      },
+      "latencyMilliseconds": 4437.9947,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "blue-green"
+      ]
+    },
+    {
+      "sequence": 69,
+      "phase": "evaluation",
+      "instance": 11,
+      "service": "fraud-scoring",
+      "condition": "memory-placebo",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 5328,
+        "outputTokens": 601,
+        "modelLatencyMilliseconds": 7513.536500000046,
+        "totalTokens": 5929
+      },
+      "latencyMilliseconds": 7609.0679,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 70,
+      "phase": "evaluation",
+      "instance": 11,
+      "service": "fraud-scoring",
+      "condition": "memory-disabled",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3264,
+        "outputTokens": 452,
+        "modelLatencyMilliseconds": 5707.576300000073,
+        "totalTokens": 3716
+      },
+      "latencyMilliseconds": 5825.3177,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    },
+    {
+      "sequence": 71,
+      "phase": "evaluation",
+      "instance": 11,
+      "service": "fraud-scoring",
+      "condition": "memory-enabled",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 0,
+      "attempts": 1,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 2,
+      "unauthorizedRequests": 0,
+      "blockSeen": true,
+      "blockStrategy": "expand-contract",
+      "firstStrategy": "expand-contract",
+      "followedBlock": true,
+      "usage": {
+        "modelCalls": 2,
+        "inputTokens": 3537,
+        "outputTokens": 294,
+        "modelLatencyMilliseconds": 4014.376099999994,
+        "totalTokens": 3831
+      },
+      "latencyMilliseconds": 4138.3336,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": [
+        "expand-contract"
+      ]
+    },
+    {
+      "sequence": 72,
+      "phase": "evaluation",
+      "instance": 11,
+      "service": "fraud-scoring",
+      "condition": "negative-control",
+      "acceptedStrategy": "expand-contract",
+      "status": "Completed",
+      "classification": null,
+      "verified": true,
+      "failedAttempts": 1,
+      "attempts": 2,
+      "changes": [
+        {
+          "turn": 1,
+          "strategy": "online-copy",
+          "exitCode": 3
+        },
+        {
+          "turn": 2,
+          "strategy": "expand-contract",
+          "exitCode": 0
+        }
+      ],
+      "toolCalls": 3,
+      "unauthorizedRequests": 0,
+      "blockSeen": false,
+      "blockStrategy": null,
+      "firstStrategy": "online-copy",
+      "followedBlock": null,
+      "usage": {
+        "modelCalls": 3,
+        "inputTokens": 3264,
+        "outputTokens": 452,
+        "modelLatencyMilliseconds": 5687.063199999975,
+        "totalTokens": 3716
+      },
+      "latencyMilliseconds": 5842.7747,
+      "storedStrategy": null,
+      "storedStrategies": [],
+      "blockStrategies": []
+    }
+  ]
+}

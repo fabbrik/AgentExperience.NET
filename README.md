@@ -211,11 +211,14 @@ cannot afford to lose.
 - **Evidence of benefit:** the end-to-end sample and the reuse baseline use deterministic fixtures and scripted models,
   so they show the loop works, not that it helps a real model. A pre-registered live-model experiment
   ([`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md)) runs the same method
-  against Gemini or Azure OpenAI. It is opt-in, costs money, and never runs in CI. Its first confirmatory run, against
-  `gemini-3.1-flash-lite`, found a benefit attributable to the injected content: 0 failed attempts on average with
-  memory, against 2.17 without it and 2.42 with the strategy withheld, while stale experience helped not at all. That
-  is one model, one run and a synthetic task; see the [report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md) and its
-  limitations before relying on it.
+  against Gemini, Azure OpenAI or Anthropic (Claude, exploratory only). It is opt-in, costs money, and never runs in
+  CI. Its first confirmatory run, against `gemini-3.1-flash-lite`, found a benefit attributable to the injected
+  content: 0 failed attempts on average with memory, against 2.17 without it and 2.42 with the strategy withheld, while
+  stale experience helped not at all. An exploratory run against Claude Haiku 4.5 reached the same conclusion (0.83
+  failed attempts with memory against 2.75 without and 2.42 with the strategy withheld). That is two models, one run
+  each and a synthetic task; see the [Gemini](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md)
+  and [Claude](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md) reports and their
+  limitations before relying on them.
 
 ## Documentation
 

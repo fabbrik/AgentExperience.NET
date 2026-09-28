@@ -32,8 +32,8 @@ public enum RunStatus
 }
 
 /// <summary>What the provider was, with nothing secret in it: the key never enters this type.</summary>
-/// <param name="Provider">gemini, azure, or scripted.</param>
-/// <param name="RequestedModel">The model (Gemini) or deployment (Azure) asked for.</param>
+/// <param name="Provider">gemini, azure, anthropic, or scripted.</param>
+/// <param name="RequestedModel">The model (Gemini, Anthropic) or deployment (Azure) asked for.</param>
 /// <param name="EndpointHost">The endpoint's host only. No path, no query, no key.</param>
 /// <param name="InputUsdPerMillionTokens">The input price used for the cost estimate, if one is known.</param>
 /// <param name="OutputUsdPerMillionTokens">The output price used for the cost estimate, if one is known.</param>
@@ -48,9 +48,16 @@ public sealed record RunDescriptor(
 {
     /// <summary>
     /// Whether the pre-registered seed is sent. Gemini's OpenAI-compatible endpoint rejects a <c>seed</c> field with
-    /// HTTP 400, so Gemini calls carry temperature 0 only (pre-registration amendment 1).
+    /// HTTP 400, so Gemini calls carry temperature 0 only (pre-registration amendment 1); the Anthropic Messages API has
+    /// no seed parameter at all.
     /// </summary>
     public bool SeedSent { get; init; } = true;
+
+    /// <summary>
+    /// The per-call output-token cap the provider client sends, or <see langword="null"/> when none is sent (the
+    /// provider's own default applies). Set for Anthropic, whose Messages API requires <c>max_tokens</c>.
+    /// </summary>
+    public int? MaxOutputTokens { get; init; }
 }
 
 /// <summary>One learning run or evaluation trial, as recorded. No prompt, no message text, no key.</summary>
@@ -75,7 +82,21 @@ public sealed record RunRecord(
     bool? FollowedBlock,
     UsageTotals Usage,
     double LatencyMilliseconds,
-    string? StoredStrategy);
+    string? StoredStrategy)
+{
+    /// <summary>
+    /// Every strategy the stored record's final attempt carries on its <c>apply_migration</c> calls, in call order
+    /// (calls whose strategy did not bind are skipped). <see cref="StoredStrategy"/> is the first. More than one when
+    /// the model made a redundant call after the migration went live: the record keeps every call.
+    /// </summary>
+    public IReadOnlyList<string> StoredStrategies { get; init; } = [];
+
+    /// <summary>
+    /// Every strategy named on the Approach: line of the block the model was shown, in order. <see cref="BlockStrategy"/>
+    /// is the first -- what a model reading the line meets first, and what <see cref="FollowedBlock"/> measures.
+    /// </summary>
+    public IReadOnlyList<string> BlockStrategies { get; init; } = [];
+}
 
 /// <summary>Everything one run of the experiment produced.</summary>
 public sealed record LiveExperimentResult(
@@ -102,6 +123,13 @@ public sealed record LiveExperimentResult(
     /// <see langword="null"/> when the run kept no ledger (a scripted or in-test run). Set by the host.
     /// </summary>
     public int? EarlierLedgerEntries { get; init; }
+
+    /// <summary>
+    /// Whether this is an exploratory run: a model run whose provider and model the pre-registration's
+    /// <c>registeredModels</c> does not name. Its rule: "A run of any other model is exploratory and says so." A scripted
+    /// run is not a model run, and is labelled as scripted instead.
+    /// </summary>
+    public bool Exploratory => Descriptor.Provider != "scripted" && !Design.IsRegistered(Descriptor.Provider, Descriptor.RequestedModel);
 }
 
 /// <summary>How to run the experiment.</summary>
@@ -368,7 +396,7 @@ public static class LiveReuseExperiment
     /// that saw a block, or a memory-enabled or negative-control trial whose instance has a stored record and which
     /// saw none, means the harness did not run the design it reports.
     /// </summary>
-    private static void RequireConditionsDifferOnlyByInjection(LivePreregistration design, IReadOnlyList<RunRecord> learning, IReadOnlyList<RunRecord> trials)
+    internal static void RequireConditionsDifferOnlyByInjection(LivePreregistration design, IReadOnlyList<RunRecord> learning, IReadOnlyList<RunRecord> trials)
     {
         foreach (var run in learning.Concat(trials.Where(trial => trial.Condition == design.ControlLabel)))
         {
@@ -381,7 +409,8 @@ public static class LiveReuseExperiment
         foreach (var trial in trials.Where(trial => trial.Condition != design.ControlLabel && trial.Status == RunStatus.Completed))
         {
             var learnedFrom = trial.Condition == design.NegativeControlLabel ? LearnStale : LearnHidden;
-            var stored = learning.SingleOrDefault(run => run.Instance == trial.Instance && run.Condition == learnedFrom)?.StoredStrategy;
+            var learnedRun = learning.SingleOrDefault(run => run.Instance == trial.Instance && run.Condition == learnedFrom);
+            var stored = learnedRun?.StoredStrategy;
             if (stored is not null && !trial.BlockSeen)
             {
                 throw new HarnessIntegrityException($"Trial {trial.Sequence} ({trial.Condition}) has a stored record to retrieve and its model was shown no block.");
@@ -392,12 +421,13 @@ public static class LiveReuseExperiment
                 throw new HarnessIntegrityException($"Trial {trial.Sequence} ({trial.Condition}) was shown a block although its learning run stored no record.");
             }
 
-            // Content, not only presence: the block must name exactly what its store holds, and the placebo's none.
-            var expected = trial.Condition == design.PlaceboLabel ? null : stored;
-            if (trial.BlockSeen && trial.BlockStrategy != expected)
+            // Content, not only presence: the block must name exactly what its store holds -- every strategy of the final
+            // attempt, in order -- and the placebo's none.
+            IReadOnlyList<string> expected = trial.Condition == design.PlaceboLabel ? [] : learnedRun?.StoredStrategies ?? [];
+            if (trial.BlockSeen && !trial.BlockStrategies.SequenceEqual(expected, StringComparer.Ordinal))
             {
                 throw new HarnessIntegrityException(
-                    $"Trial {trial.Sequence} ({trial.Condition}) was shown a block naming '{trial.BlockStrategy ?? "no strategy"}'; its store holds '{expected ?? "no strategy on the line"}'.");
+                    $"Trial {trial.Sequence} ({trial.Condition}) was shown a block naming '{Sequence(trial.BlockStrategies, "no strategy")}'; its store holds '{Sequence(expected, "no strategy on the line")}'.");
             }
         }
     }
@@ -414,8 +444,12 @@ public static class LiveReuseExperiment
             record.Status == RunStatus.Completed
                 ? (record.Verified == true ? "live" : "NOT live") + " after " + record.FailedAttempts + " failed attempt(s)"
                 : record.Status + ": " + record.Classification,
-            record.StoredStrategy is { } stored ? "; stored a record naming " + stored : string.Empty));
+            record.StoredStrategy is not null ? "; stored a record naming " + Sequence(record.StoredStrategies, "-") : string.Empty));
     }
+
+    /// <summary>A strategy sequence as the report shows it: joined with " > ", or <paramref name="empty"/>.</summary>
+    internal static string Sequence(IReadOnlyList<string> strategies, string empty) =>
+        strategies.Count == 0 ? empty : string.Join(" > ", strategies);
 
     private static async Task<RunRecord> RunOneAsync(
         LiveExperimentOptions options,
@@ -609,12 +643,13 @@ public static class LiveReuseExperiment
 
         var latency = options.Clock.GetElapsedTime(started).TotalMilliseconds;
         var usage = metered.Totals.Minus(usageBefore);
-        var blockStrategy = BlockStrategy(metered.FirstBlockSeen);
+        var blockStrategies = BlockStrategies(metered.FirstBlockSeen);
+        var blockStrategy = blockStrategies.Count > 0 ? blockStrategies[0] : null;
         var firstStrategy = environment.Attempts.FirstOrDefault()?.Strategy;
 
         bool? verified = null;
         int? failedAttempts = null;
-        string? storedStrategy = null;
+        IReadOnlyList<string> storedStrategies = [];
 
         if (status == RunStatus.Completed)
         {
@@ -638,7 +673,7 @@ public static class LiveReuseExperiment
 
             if (finalizeInto is not null && verified == true)
             {
-                storedStrategy = await FinalizeAsync(provider, ids, evidence, frozen, finalizeInto, scope, sequence, cancellationToken).ConfigureAwait(false);
+                storedStrategies = await FinalizeAsync(provider, ids, evidence, frozen, finalizeInto, scope, sequence, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -663,7 +698,11 @@ public static class LiveReuseExperiment
             blockStrategy is null ? null : firstStrategy == blockStrategy,
             usage,
             latency,
-            storedStrategy);
+            storedStrategies.Count > 0 ? storedStrategies[0] : null)
+        {
+            StoredStrategies = storedStrategies,
+            BlockStrategies = blockStrategies,
+        };
     }
 
     /// <summary>
@@ -677,8 +716,15 @@ public static class LiveReuseExperiment
             exception = aggregate.InnerExceptions[0];
         }
 
-        return exception is ClientResultException { Status: > 0 } http
-            ? exception.GetType().Name + " (HTTP " + http.Status.ToString(CultureInfo.InvariantCulture) + ")"
+        var status = exception switch
+        {
+            ClientResultException { Status: > 0 } http => http.Status,
+            Anthropic.Exceptions.AnthropicApiException anthropic => (int)anthropic.StatusCode,
+            _ => 0,
+        };
+
+        return status > 0
+            ? exception.GetType().Name + " (HTTP " + status.ToString(CultureInfo.InvariantCulture) + ")"
             : exception.GetType().Name;
     }
 
@@ -705,10 +751,10 @@ public static class LiveReuseExperiment
     }
 
     /// <summary>
-    /// Finalizes a verified learning run into its store, reads the record back, and returns the strategy its final
-    /// attempt's <c>apply_migration</c> call carries as stored -- the value the injected Approach: line will show.
+    /// Finalizes a verified learning run into its store, reads the record back, and returns the strategies its final
+    /// attempt's <c>apply_migration</c> calls carry as stored, in call order -- what the injected Approach: line will show.
     /// </summary>
-    private static async Task<string> FinalizeAsync(
+    private static async Task<IReadOnlyList<string>> FinalizeAsync(
         IServiceProvider provider,
         RunIdentities ids,
         IReadOnlyList<Evidence> evidence,
@@ -742,15 +788,21 @@ public static class LiveReuseExperiment
         }
 
         var final = readBack.Record.Attempts.MaxBy(attempt => attempt.SequenceNumber);
-        // The last apply_migration call that carried a strategy: an earlier one in the same attempt may have been a call
-        // whose arguments did not bind, which carries none.
-        var strategy = final?.ToolCalls
-            .OrderBy(toolCall => toolCall.SequenceNumber)
-            .Where(toolCall => toolCall.ToolName == MigrationEnvironment.ApplyToolName)
-            .Select(toolCall => toolCall.Arguments.TryGetValue("strategy", out var value) ? TextOf(value) : null)
-            .LastOrDefault(value => !string.IsNullOrEmpty(value));
+        // Every apply_migration call that carried a strategy, in order: a call whose arguments did not bind carries none,
+        // and a model may make a redundant call after the migration went live, which the record keeps (the Approach:
+        // line lists every call of the final attempt and does not mark which one succeeded).
+        List<string> strategies = final is null
+            ? []
+            : [.. final.ToolCalls
+                .OrderBy(toolCall => toolCall.SequenceNumber)
+                .Where(toolCall => toolCall.ToolName == MigrationEnvironment.ApplyToolName)
+                .Select(toolCall => toolCall.Arguments.TryGetValue("strategy", out var value) ? TextOf(value) : null)
+                .Where(value => !string.IsNullOrEmpty(value))
+                .Select(value => value!)];
 
-        return strategy ?? throw new HarnessIntegrityException($"Run {sequence}'s stored record has no apply_migration strategy on its final attempt.");
+        return strategies.Count > 0
+            ? strategies
+            : throw new HarnessIntegrityException($"Run {sequence}'s stored record has no apply_migration strategy on its final attempt.");
     }
 
     /// <summary>The strategy on the Approach: line of the block the model was shown, read out of the text itself.</summary>
@@ -764,6 +816,12 @@ public static class LiveReuseExperiment
         var line = block.Split('\n').FirstOrDefault(text => text.StartsWith("Approach:", StringComparison.Ordinal));
         return RolloutStrategies.FirstNamedIn(line);
     }
+
+    /// <summary>Every strategy on the Approach: line of the block the model was shown, in order, read out of the text itself.</summary>
+    internal static IReadOnlyList<string> BlockStrategies(string? block) =>
+        block is null
+            ? []
+            : RolloutStrategies.AllNamedIn(block.Split('\n').FirstOrDefault(text => text.StartsWith("Approach:", StringComparison.Ordinal)));
 
     internal static string? TextOf(object? value) => value switch
     {

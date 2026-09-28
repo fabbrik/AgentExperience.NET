@@ -1,5 +1,6 @@
 using System.ClientModel;
 using System.Globalization;
+using Anthropic;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
@@ -10,6 +11,7 @@ public enum LiveProvider
 {
     Gemini,
     Azure,
+    Anthropic,
 }
 
 /// <summary>What reading the environment decided.</summary>
@@ -41,6 +43,8 @@ public sealed class LiveConfiguration
     public const string AzureEndpointVariable = "AZURE_OPENAI_ENDPOINT";
     public const string AzureKeyVariable = "AZURE_OPENAI_API_KEY";
     public const string AzureDeploymentVariable = "AZURE_OPENAI_DEPLOYMENT";
+    public const string AnthropicKeyVariable = "ANTHROPIC_API_KEY";
+    public const string AnthropicModelVariable = "ANTHROPIC_MODEL";
     public const string MaxCallsVariable = "AGENTEXPERIENCE_LIVE_MAX_CALLS";
     public const string MaxTokensVariable = "AGENTEXPERIENCE_LIVE_MAX_TOKENS";
     public const string MinIntervalVariable = "AGENTEXPERIENCE_LIVE_MIN_CALL_INTERVAL_MS";
@@ -57,13 +61,29 @@ public sealed class LiveConfiguration
     /// <summary>Gemini's OpenAI-compatible Chat Completions base URL (ai.google.dev/gemini-api/docs/openai).</summary>
     public static Uri GeminiEndpoint { get; } = new("https://generativelanguage.googleapis.com/v1beta/openai/");
 
+    /// <summary>Anthropic's low-cost current model (the alias, which follows the latest Claude Haiku 4.5 snapshot).</summary>
+    public const string DefaultAnthropicModel = "claude-haiku-4-5";
+
+    /// <summary>The Anthropic API's base URL, set explicitly so an ambient <c>ANTHROPIC_BASE_URL</c> cannot redirect a run.</summary>
+    public const string AnthropicBaseUrl = "https://api.anthropic.com";
+
+    /// <summary><see cref="AnthropicBaseUrl"/> as a URI, for the report's host.</summary>
+    public static Uri AnthropicEndpoint { get; } = new(AnthropicBaseUrl);
+
+    /// <summary>
+    /// The per-call output cap sent to Anthropic. The Messages API requires <c>max_tokens</c> on every request; the other
+    /// providers are sent none. Generous for this task, where a reply is a few tool calls or a short sentence.
+    /// </summary>
+    public const int AnthropicMaxOutputTokens = 4096;
+
     /// <summary>
     /// Prices the report can name without being told, with their source. Anything else needs the two price variables,
     /// or the report says the cost was not estimated.
     /// </summary>
-    private static readonly Dictionary<string, (double Input, double Output, string Source)> KnownPrices = new(StringComparer.Ordinal)
+    private static readonly Dictionary<(LiveProvider Provider, string Model), (double Input, double Output, string Source)> KnownPrices = new()
     {
-        [DefaultGeminiModel] = (0.25, 1.50, "ai.google.dev/gemini-api/docs/pricing, Standard paid tier, text input and output (thinking included), checked 2026-09-26"),
+        [(LiveProvider.Gemini, DefaultGeminiModel)] = (0.25, 1.50, "ai.google.dev/gemini-api/docs/pricing, Standard paid tier, text input and output (thinking included), checked 2026-09-26"),
+        [(LiveProvider.Anthropic, DefaultAnthropicModel)] = (1.00, 5.00, "Anthropic API pricing, standard rates for Claude Haiku 4.5, input and output, no batch or prompt-cache discount"),
     };
 
     private readonly string _apiKey;
@@ -84,7 +104,7 @@ public sealed class LiveConfiguration
 
     public LiveProvider Provider { get; }
 
-    /// <summary>The Gemini model, or the Azure deployment.</summary>
+    /// <summary>The Gemini or Anthropic model, or the Azure deployment.</summary>
     public string Model { get; }
 
     /// <summary>The full endpoint the SDK is pointed at. Only its host ever reaches a report.</summary>
@@ -103,31 +123,51 @@ public sealed class LiveConfiguration
 
     public string? ResultsDirectory { get; }
 
+    /// <summary>The provider's name as reports and the ledger spell it.</summary>
+    public string ProviderName => Provider switch
+    {
+        LiveProvider.Gemini => "gemini",
+        LiveProvider.Azure => "azure",
+        _ => "anthropic",
+    };
+
     /// <summary>
     /// What the report may know about the provider: its name, the model, and the endpoint's host -- for Azure with the
     /// resource name replaced, because an Azure host is the resource name and reports are committed to a public repository.
     /// </summary>
     public RunDescriptor Describe() => new(
-        Provider == LiveProvider.Gemini ? "gemini" : "azure",
+        ProviderName,
         Model,
-        Provider == LiveProvider.Gemini ? Endpoint.Host : RedactedAzureHost(Endpoint.Host),
+        Provider == LiveProvider.Azure ? RedactedAzureHost(Endpoint.Host) : Endpoint.Host,
         InputPrice,
         OutputPrice,
         PriceSource)
     {
-        SeedSent = Provider != LiveProvider.Gemini,
+        // Only Azure accepts a seed: Gemini's OpenAI-compatible endpoint rejects the field (amendment 1), and the
+        // Anthropic Messages API has no such parameter.
+        SeedSent = Provider == LiveProvider.Azure,
+        MaxOutputTokens = Provider == LiveProvider.Anthropic ? AnthropicMaxOutputTokens : null,
     };
 
     /// <summary>
-    /// The provider's <see cref="IChatClient"/>: the OpenAI SDK pointed at the provider's OpenAI-compatible endpoint,
-    /// adapted by Microsoft.Extensions.AI.OpenAI. The only place the key is used.
+    /// The provider's <see cref="IChatClient"/>. The only place the key is used. Gemini and Azure: the OpenAI SDK pointed
+    /// at the provider's OpenAI-compatible endpoint, adapted by Microsoft.Extensions.AI.OpenAI. Anthropic: Anthropic's own
+    /// SDK and its <c>AsIChatClient</c> adapter, with the key and the base URL set here rather than read from the
+    /// environment, and <see cref="AnthropicMaxOutputTokens"/> as the default <c>max_tokens</c>. No thinking mode is
+    /// requested: the harness never sets <see cref="ChatOptions.Reasoning"/>.
     /// </summary>
-    public IChatClient CreateChatClient() =>
-        new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
-            .GetChatClient(Model)
-            .AsIChatClient();
+    public IChatClient CreateChatClient() => Provider switch
+    {
+        LiveProvider.Anthropic =>
+            new AnthropicClient { ApiKey = _apiKey, BaseUrl = AnthropicBaseUrl }
+                .AsIChatClient(Model, AnthropicMaxOutputTokens),
+        _ =>
+            new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
+                .GetChatClient(Model)
+                .AsIChatClient(),
+    };
 
-    public override string ToString() => $"{Describe().Provider} model={Model} host={Describe().EndpointHost} (key redacted)";
+    public override string ToString() => $"{ProviderName} model={Model} host={Describe().EndpointHost} (key redacted)";
 
     internal static string RedactedAzureHost(string host) =>
         host.IndexOf('.', StringComparison.Ordinal) is var dot and > 0 ? "<resource>" + host[dot..] : "<resource>";
@@ -142,23 +182,41 @@ public sealed class LiveConfiguration
         var chosen = Get(ProviderVariable)?.ToLowerInvariant();
         var geminiKey = Get(GeminiKeyVariable);
         var azureAny = Get(AzureEndpointVariable) is not null || Get(AzureKeyVariable) is not null || Get(AzureDeploymentVariable) is not null;
+        var anthropicKey = Get(AnthropicKeyVariable);
 
         if (chosen is null)
         {
-            if (geminiKey is null && !azureAny)
+            var configured = new List<string>(3);
+            if (geminiKey is not null)
             {
-                return (ConfigurationOutcome.NotConfigured, null,
-                    $"No provider is configured, so no live run was attempted and nothing was spent. Set {GeminiKeyVariable} "
-                    + $"(and optionally {GeminiModelVariable}), or {AzureEndpointVariable}, {AzureKeyVariable} and {AzureDeploymentVariable}; "
-                    + $"choose between them with {ProviderVariable}=gemini|azure. See experiments/AgentExperience.LiveReuse/README.md.");
+                configured.Add("gemini");
             }
 
-            if (geminiKey is not null && azureAny)
+            if (azureAny)
             {
-                return (ConfigurationOutcome.Invalid, null, $"Both Gemini and Azure variables are set; choose one with {ProviderVariable}=gemini|azure.");
+                configured.Add("azure");
             }
 
-            chosen = geminiKey is not null ? "gemini" : "azure";
+            if (anthropicKey is not null)
+            {
+                configured.Add("anthropic");
+            }
+
+            switch (configured.Count)
+            {
+                case 0:
+                    return (ConfigurationOutcome.NotConfigured, null,
+                        $"No provider is configured, so no live run was attempted and nothing was spent. Set {GeminiKeyVariable} "
+                        + $"(and optionally {GeminiModelVariable}), or {AzureEndpointVariable}, {AzureKeyVariable} and {AzureDeploymentVariable}, "
+                        + $"or {AnthropicKeyVariable} (and optionally {AnthropicModelVariable}); "
+                        + $"choose between them with {ProviderVariable}=gemini|azure|anthropic. See experiments/AgentExperience.LiveReuse/README.md.");
+                case 1:
+                    chosen = configured[0];
+                    break;
+                default:
+                    return (ConfigurationOutcome.Invalid, null,
+                        $"Variables for more than one provider are set ({string.Join(", ", configured)}); choose one with {ProviderVariable}=gemini|azure|anthropic.");
+            }
         }
 
         LiveBudget? budget = null;
@@ -222,8 +280,20 @@ public sealed class LiveConfiguration
                 model = Get(AzureDeploymentVariable)!;
                 break;
 
+            case "anthropic":
+                if (anthropicKey is null)
+                {
+                    return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable}=anthropic, but {AnthropicKeyVariable} is not set.");
+                }
+
+                provider = LiveProvider.Anthropic;
+                apiKey = anthropicKey;
+                model = Get(AnthropicModelVariable) ?? DefaultAnthropicModel;
+                endpoint = AnthropicEndpoint;
+                break;
+
             default:
-                return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini' or 'azure'.");
+                return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini', 'azure' or 'anthropic'.");
         }
 
         if (model.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_')))
@@ -246,7 +316,7 @@ public sealed class LiveConfiguration
 
             (inputPrice, outputPrice, priceSource) = (input, output, $"{InputPriceVariable} and {OutputPriceVariable}, as set for this run");
         }
-        else if (provider == LiveProvider.Gemini && KnownPrices.TryGetValue(model, out var known))
+        else if (KnownPrices.TryGetValue((provider, model), out var known))
         {
             (inputPrice, outputPrice, priceSource) = (known.Input, known.Output, known.Source);
         }

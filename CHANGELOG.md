@@ -6,6 +6,36 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Anthropic provider for the live experiment
+
+- **An exploratory run against `claude-haiku-4-5` concluded `ReuseBenefitAttributableToContent`**
+  ([report](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md)): mean failed attempts 0.83 with memory, 2.75 without it, 2.42
+  with the strategy withheld and 2.67 with stale experience (sign tests p = 0.0020 against both no memory and the
+  placebo; the stale control p = 0.81). It is exploratory because no Anthropic model is registered, and it cost about
+  USD 0.93.
+- **`experiments/AgentExperience.LiveReuse` can run against Anthropic (Claude).** Set `ANTHROPIC_API_KEY` (and
+  optionally `ANTHROPIC_MODEL`, default `claude-haiku-4-5`); `AGENTEXPERIENCE_LIVE_PROVIDER=anthropic` chooses it when
+  another provider's variables are set too, and any two or three configured providers without a choice are refused.
+- **Anthropic's own C# SDK**, `Anthropic` exact-pinned `[12.50.0]` in the experiment only, through its
+  `AsIChatClient` adapter; not an OpenAI-compatible endpoint. It keeps `Microsoft.Extensions.AI.Abstractions` at
+  10.10.0. The key and base URL are set explicitly, the SDK's default retries (two) are kept, and API errors are
+  recorded by exception type and HTTP status only.
+- **Request differences, recorded in the report's Settings row:** no seed (the API has none), a 4096-token
+  `max_tokens` cap per call (the API requires one; other providers are sent none), no thinking. Built-in price for
+  `claude-haiku-4-5`: USD 1.00 / 5.00 per million input / output tokens.
+- **Exploratory runs are labelled.** The harness now reads `registeredModels` from `preregistration.json` (which is
+  unchanged). A run of a provider or model it does not register -- any Anthropic run, or a non-default Gemini model --
+  says **EXPLORATORY RUN** in its first lines and its *Run* table, carries `"exploratory": true` in its raw results,
+  and is never called a candidate for the confirmatory result. The seed wording no longer claims every seedless
+  provider rejects the field.
+- **A redundant call after success no longer stops the report.** Claude sometimes made a second `apply_migration`
+  call in the response that got the migration live; the stored record and the `Approach:` line keep both, in order.
+  The harness took the last strategy as stored and the first on the line as shown, and refused to report. It now
+  compares the full ordered sequences (`storedStrategies`, `blockStrategies` in the raw results; joined with ` > ` in
+  the report), still refuses a block that differs from its store, and keeps `StoredStrategy`, `BlockStrategy` and
+  `Followed` on the first strategy.
+- No change to `src/`, to any shipping package, or to the registered design.
+
 ### Capability gate for injection (story 10.4)
 
 - **`ExperienceInjectionOptions.ReceivingAgent`**, an optional `ReceivingAgentCapabilities` declaring what the agent

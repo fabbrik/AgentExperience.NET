@@ -6,6 +6,7 @@ public sealed class ConfigurationTests
 {
     private const string FakeGeminiKey = "not-a-real-gemini-key-should-never-appear";
     private const string FakeAzureKey = "fake-azure-key-9f8e7d6c5b4a-should-never-appear";
+    private const string FakeAnthropicKey = "sk-ant-fake-anthropic-key-0a1b2c3d-should-never-appear";
 
     private static (ConfigurationOutcome Outcome, LiveConfiguration? Configuration, string Message) Read(params (string Name, string Value)[] variables)
     {
@@ -20,7 +21,73 @@ public sealed class ConfigurationTests
         Assert.Equal(ConfigurationOutcome.NotConfigured, outcome);
         Assert.Null(configuration);
         Assert.Contains("GEMINI_API_KEY", message, StringComparison.Ordinal);
+        Assert.Contains("ANTHROPIC_API_KEY", message, StringComparison.Ordinal);
         Assert.Contains("nothing was spent", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_anthropic_key_alone_selects_anthropic_with_the_default_model_its_price_and_the_anthropic_host()
+    {
+        var (outcome, configuration, _) = Read(("ANTHROPIC_API_KEY", FakeAnthropicKey));
+        Assert.Equal(ConfigurationOutcome.Ready, outcome);
+        Assert.Equal(LiveProvider.Anthropic, configuration!.Provider);
+        Assert.Equal("claude-haiku-4-5", configuration.Model);
+        Assert.Equal(1.00, configuration.InputPrice);
+        Assert.Equal(5.00, configuration.OutputPrice);
+        Assert.Contains("Anthropic API pricing", configuration.PriceSource, StringComparison.Ordinal);
+
+        var descriptor = configuration.Describe();
+        Assert.Equal("anthropic", descriptor.Provider);
+        Assert.Equal("api.anthropic.com", descriptor.EndpointHost);
+        Assert.Equal(LiveConfiguration.AnthropicMaxOutputTokens, descriptor.MaxOutputTokens);
+    }
+
+    [Fact]
+    public void Anthropic_model_can_be_overridden_and_an_unknown_model_has_no_built_in_price()
+    {
+        var (_, configuration, _) = Read(("ANTHROPIC_API_KEY", FakeAnthropicKey), ("ANTHROPIC_MODEL", "claude-sonnet-4-5"));
+        Assert.Equal("claude-sonnet-4-5", configuration!.Model);
+        Assert.Null(configuration.InputPrice);
+        Assert.Null(configuration.OutputPrice);
+        Assert.StartsWith("none", configuration.PriceSource, StringComparison.Ordinal);
+
+        // The Haiku price is Anthropic's, not a price for any provider's model of that name.
+        var (_, gemini, _) = Read(("GEMINI_API_KEY", FakeGeminiKey), ("GEMINI_MODEL", "claude-haiku-4-5"));
+        Assert.Null(gemini!.InputPrice);
+    }
+
+    [Fact]
+    public void Choosing_anthropic_without_its_key_names_the_missing_variable()
+    {
+        var (outcome, _, message) = Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "anthropic"), ("GEMINI_API_KEY", FakeGeminiKey));
+        Assert.Equal(ConfigurationOutcome.Invalid, outcome);
+        Assert.Contains("ANTHROPIC_API_KEY", message, StringComparison.Ordinal);
+        Assert.DoesNotContain(FakeGeminiKey, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Any_two_or_all_three_providers_configured_without_a_choice_is_refused_and_a_choice_resolves_it()
+    {
+        (string, string)[] gemini = [("GEMINI_API_KEY", FakeGeminiKey)];
+        (string, string)[] azure = [("AZURE_OPENAI_ENDPOINT", "https://contoso-ai.openai.azure.com/"), ("AZURE_OPENAI_API_KEY", FakeAzureKey), ("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")];
+        (string, string)[] anthropic = [("ANTHROPIC_API_KEY", FakeAnthropicKey)];
+
+        foreach (var set in new[] { gemini.Concat(anthropic), azure.Concat(anthropic), gemini.Concat(azure).Concat(anthropic) }.Select(pairs => pairs.ToArray()))
+        {
+            var (outcome, configuration, message) = Read(set);
+            Assert.Equal(ConfigurationOutcome.Invalid, outcome);
+            Assert.Null(configuration);
+            Assert.Contains("anthropic", message, StringComparison.Ordinal);
+            Assert.Contains("gemini|azure|anthropic", message, StringComparison.Ordinal);
+            Assert.DoesNotContain(FakeAnthropicKey, message, StringComparison.Ordinal);
+
+            Assert.Equal(LiveProvider.Anthropic, Read([.. set, ("AGENTEXPERIENCE_LIVE_PROVIDER", "Anthropic")]).Configuration!.Provider);
+        }
+
+        (string, string)[] all = [.. gemini, .. azure, .. anthropic];
+        Assert.Equal(LiveProvider.Gemini, Read([.. all, ("AGENTEXPERIENCE_LIVE_PROVIDER", "gemini")]).Configuration!.Provider);
+        Assert.Equal(LiveProvider.Azure, Read([.. all, ("AGENTEXPERIENCE_LIVE_PROVIDER", "azure")]).Configuration!.Provider);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read([.. all, ("AGENTEXPERIENCE_LIVE_PROVIDER", "claude")]).Outcome);
     }
 
     [Fact]
@@ -112,8 +179,9 @@ public sealed class ConfigurationTests
     {
         var gemini = Read(("GEMINI_API_KEY", FakeGeminiKey)).Configuration!;
         var azure = Read(("AZURE_OPENAI_ENDPOINT", "https://contoso-ai.openai.azure.com/"), ("AZURE_OPENAI_API_KEY", FakeAzureKey), ("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")).Configuration!;
+        var anthropic = Read(("ANTHROPIC_API_KEY", FakeAnthropicKey)).Configuration!;
 
-        foreach (var (configuration, key) in new[] { (gemini, FakeGeminiKey), (azure, FakeAzureKey) })
+        foreach (var (configuration, key) in new[] { (gemini, FakeGeminiKey), (azure, FakeAzureKey), (anthropic, FakeAnthropicKey) })
         {
             Assert.DoesNotContain(key, configuration.ToString(), StringComparison.Ordinal);
             Assert.DoesNotContain(key, configuration.Describe().ToString(), StringComparison.Ordinal);
@@ -128,5 +196,15 @@ public sealed class ConfigurationTests
         var metadata = (Microsoft.Extensions.AI.ChatClientMetadata?)client.GetService(typeof(Microsoft.Extensions.AI.ChatClientMetadata));
         Assert.Equal("gemini-3.1-flash-lite", metadata?.DefaultModelId);
         Assert.Equal("generativelanguage.googleapis.com", metadata?.ProviderUri?.Host);
+    }
+
+    [Fact]
+    public void The_anthropic_client_is_built_without_a_network_call_through_anthropics_own_sdk()
+    {
+        using var client = Read(("ANTHROPIC_API_KEY", FakeAnthropicKey)).Configuration!.CreateChatClient();
+        var metadata = (Microsoft.Extensions.AI.ChatClientMetadata?)client.GetService(typeof(Microsoft.Extensions.AI.ChatClientMetadata));
+        Assert.Equal("claude-haiku-4-5", metadata?.DefaultModelId);
+        Assert.Equal("api.anthropic.com", metadata?.ProviderUri?.Host);
+        Assert.NotNull(client.GetService(typeof(Anthropic.IAnthropicClient)));
     }
 }

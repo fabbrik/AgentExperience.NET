@@ -16,14 +16,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The ONLY provider package, exact-pinned, and only here: never in src/, whose dependency-boundary tests
-         forbid provider packages by name. One package reaches both providers through their OpenAI-compatible
+    <!-- Provider packages, exact-pinned, and only here: never in src/, whose dependency-boundary tests
+         forbid provider packages by name. This one reaches both OpenAI-compatible providers through their OpenAI-compatible
          Chat Completions endpoints (Gemini: generativelanguage.googleapis.com/v1beta/openai/; Azure OpenAI: the v1
          endpoint, <resource>/openai/v1/), so the experiment code sees only IChatClient. 10.10.0 is chosen because it
          depends on Microsoft.Extensions.AI.Abstractions 10.10.0, exactly the shipping floor, so the graph is not lifted
          above what src/ declares. It brings OpenAI 2.13.0 and System.ClientModel transitively. The comparison with
          Google.GenAI and Azure.AI.OpenAI is in README.md ("Provider integration"). -->
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="[10.10.0]" />
+    <!-- Anthropic (Claude), through Anthropic's own C# SDK and its Microsoft.Extensions.AI IChatClient adapter: Anthropic
+         has no OpenAI-compatible endpoint the experiment relies on. It asks for Microsoft.Extensions.AI.Abstractions
+         >= 10.5.1, so the graph stays at the 10.10.0 the line above already resolves. See README.md ("Provider integration"). -->
+    <PackageReference Include="Anthropic" Version="[12.50.0]" />
     <!-- The container, so each trial is composed the way a host composes one. Same pin as the sample and 4.4. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.12]" />
   </ItemGroup>

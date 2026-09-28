@@ -2,3 +2,8 @@ run	utc	provider	model	host	preregistration	event	report
 20260927T190451Z	2026-09-27T19:04:51Z	gemini	gemini-3.1-flash-lite	generativelanguage.googleapis.com	238d644d79c256c79f73f8025fdc7b41cd672b5f	started	-
 20260927T190714Z	2026-09-27T19:07:14Z	gemini	gemini-3.1-flash-lite	generativelanguage.googleapis.com	64a06da847b2311c30fff8c0e8c576b6d8198678	started	-
 20260927T190714Z	2026-09-27T19:39:05Z	gemini	gemini-3.1-flash-lite	generativelanguage.googleapis.com	64a06da847b2311c30fff8c0e8c576b6d8198678	complete: ReuseBenefitAttributableToContent	gemini-gemini-3.1-flash-lite-2026-09-27.md
+20260928T040803Z	2026-09-28T04:08:04Z	anthropic	claude-haiku-4-5	api.anthropic.com	64a06da847b2311c30fff8c0e8c576b6d8198678	started	-
+20260928T041840Z	2026-09-28T04:18:40Z	anthropic	claude-haiku-4-5	api.anthropic.com	64a06da847b2311c30fff8c0e8c576b6d8198678	started	-
+20260928T041840Z	2026-09-28T04:35:33Z	anthropic	claude-haiku-4-5	api.anthropic.com	64a06da847b2311c30fff8c0e8c576b6d8198678	refused	-
+20260928T043856Z	2026-09-28T04:38:56Z	anthropic	claude-haiku-4-5	api.anthropic.com	64a06da847b2311c30fff8c0e8c576b6d8198678	started	-
+20260928T043856Z	2026-09-28T04:54:51Z	anthropic	claude-haiku-4-5	api.anthropic.com	64a06da847b2311c30fff8c0e8c576b6d8198678	complete: ReuseBenefitAttributableToContent	anthropic-claude-haiku-4-5-2026-09-28.md

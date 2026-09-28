@@ -2,6 +2,15 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
+      "Anthropic": {
+        "type": "Direct",
+        "requested": "[12.50.0, 12.50.0]",
+        "resolved": "12.50.0",
+        "contentHash": "BBtKetn0gsVeaFfRHcqW5hhUwWdNuIp4lTCvrd4roN6HivnJqrKBbEhPWjA/a5eypg2rvGdUr/Z5qzV6Fr7+Bg==",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "10.5.1"
+        }
+      },
       "Microsoft.Extensions.AI.OpenAI": {
         "type": "Direct",
         "requested": "[10.10.0, 10.10.0]",

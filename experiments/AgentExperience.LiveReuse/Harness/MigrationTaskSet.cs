@@ -40,11 +40,33 @@ public static class RolloutStrategies
             .FirstOrDefault();
     }
 
+    /// <summary>
+    /// Every strategy named in <paramref name="text"/>, in the order they appear, repeats included: an Approach: line
+    /// lists every call of the final attempt, so a strategy called twice is named twice.
+    /// </summary>
+    public static IReadOnlyList<string> AllNamedIn(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return [];
+        }
+
+        var found = new List<(int At, string Strategy)>();
+        foreach (var strategy in All)
+        {
+            for (var at = IndexOfWord(text, strategy, 0); at >= 0; at = IndexOfWord(text, strategy, at + strategy.Length))
+            {
+                found.Add((at, strategy));
+            }
+        }
+
+        return [.. found.OrderBy(entry => entry.At).Select(entry => entry.Strategy)];
+    }
+
     // "in-place" must not match inside another token; no strategy name is a substring of another, but a
     // word boundary keeps it that way if one is ever added.
-    private static int IndexOfWord(string text, string word)
+    private static int IndexOfWord(string text, string word, int from = 0)
     {
-        var from = 0;
         while (from < text.Length)
         {
             var at = text.IndexOf(word, from, StringComparison.Ordinal);

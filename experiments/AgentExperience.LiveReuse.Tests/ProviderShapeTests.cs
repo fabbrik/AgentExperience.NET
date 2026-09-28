@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using AgentExperience.LiveReuse.Harness;
 using Microsoft.Extensions.AI;
@@ -89,6 +90,53 @@ public sealed class ProviderShapeTests
     {
         Assert.Equal("TaskCanceledException", LiveReuseExperiment.Classify(new AggregateException(new TaskCanceledException("secret"))));
         Assert.Equal("InvalidOperationException", LiveReuseExperiment.Classify(new InvalidOperationException("secret")));
+    }
+
+    /// <summary>
+    /// An Anthropic API error, as it surfaces through the SDK's IChatClient adapter, is classified by type and HTTP
+    /// status and never by its body. Offline: the SDK's HttpClient is answered by a stub, with retries off.
+    /// </summary>
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, 429)]
+    [InlineData(HttpStatusCode.BadRequest, 400)]
+    [InlineData(HttpStatusCode.InternalServerError, 500)]
+    public async Task An_anthropic_api_error_is_classified_by_type_and_http_status(HttpStatusCode status, int code)
+    {
+        var handler = new StatusHandler(status);
+        using var http = new HttpClient(handler);
+        using var client = new Anthropic.AnthropicClient { ApiKey = "fake-key", BaseUrl = LiveConfiguration.AnthropicBaseUrl, HttpClient = http, MaxRetries = 0 }
+            .AsIChatClient("claude-haiku-4-5", LiveConfiguration.AnthropicMaxOutputTokens);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => client.GetResponseAsync("hello"));
+        var classification = LiveReuseExperiment.Classify(thrown);
+
+        Assert.IsAssignableFrom<Anthropic.Exceptions.AnthropicApiException>(thrown);
+        Assert.Equal(thrown.GetType().Name + " (HTTP " + code + ")", classification);
+        Assert.DoesNotContain("secret", classification, StringComparison.Ordinal);
+
+        // The request went, once, to the native Messages API with the output cap the API requires, and no seed field.
+        Assert.Equal("https://api.anthropic.com/v1/messages", Assert.Single(handler.Uris));
+        using var body = JsonDocument.Parse(Assert.Single(handler.Bodies));
+        Assert.Equal(LiveConfiguration.AnthropicMaxOutputTokens, body.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.False(body.RootElement.TryGetProperty("seed", out _));
+        Assert.False(body.RootElement.TryGetProperty("thinking", out _));
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        public List<string> Uris { get; } = [];
+
+        public List<string> Bodies { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Uris.Add(request.RequestUri!.ToString());
+            Bodies.Add(request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
+            return new HttpResponseMessage(status)
+            {
+                Content = new StringContent("{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"secret body\"}}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        }
     }
 
     /// <summary>Calls describe_service and apply_migration together in its first response, as real models do.</summary>
