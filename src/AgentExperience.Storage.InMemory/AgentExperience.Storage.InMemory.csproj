@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Preview, not production ready. For development and tests only: a thread-safe, in-memory implementation of AgentExperience.NET's record store, candidate source and reuse-feedback store, so the learning loop runs without PostgreSQL. Data is lost when the process ends, and none of the PostgreSQL guarantees apply (append-only enforcement, erasure reach, backups, the two database roles, crypto-shredding). Its only registration, AddAgentExperienceInMemoryStorageForDevelopment, refuses to run in a Production host environment unless explicitly overridden. Passes the same store conformance suite as the PostgreSQL adapter. Requires Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12 and Microsoft.Extensions.Hosting.Abstractions 10.0.3 or later within the same major.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Selects this package's namespace in the shared validation rules linked below. -->
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_INMEMORY</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Floors, not exact pins (story 6.3, KL-13), like every other shipping reference; docs/compatibility-evidence.md
+         has the evidence rows. DI abstractions for the registration extension, and the hosting abstractions for
+         IHostEnvironment, which the production guard reads. No container, no host, no Core, no Npgsql. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentExperience.Abstractions\AgentExperience.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Story 11.2: the PostgreSQL store's validation rules for the core ports, compiled here from the same source
+         file (src/Shared), so this store refuses exactly what that one refuses. -->
+    <Compile Include="..\Shared\ExperienceRecordValidator.Shared.cs" Link="Shared\ExperienceRecordValidator.Shared.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

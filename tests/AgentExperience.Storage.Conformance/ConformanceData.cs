@@ -229,6 +229,30 @@ public static class ConformanceData
     }
 
     /// <summary>
+    /// A human-assessment submission: a reviewer, the assessment it came out of, a rationale and an attribution time,
+    /// with one attributed exposure (with its derived evidence ID) and one unattributed one.
+    /// </summary>
+    public static RecordedExperienceReuseFeedback HumanAssessedFeedback(Scope scope)
+    {
+        var exposed = new[] { Guid.NewGuid(), Guid.NewGuid() }.Order().ToArray();
+        return Feedback(scope, exposed) with
+        {
+            ClaimedBenefit = ExperienceReuseBenefit.Improved,
+            Benefit = ExperienceReuseBenefit.Harmed,
+            AttributionSource = ReuseAttributionSource.HumanAssessment,
+            ReviewerIdentity = "conformance-reviewer",
+            AssessmentId = Guid.NewGuid(),
+            Rationale = "the reviewer judged that the injected lesson misled the run",
+            AttributedAt = Time.AddMinutes(10),
+            Exposures =
+            [
+                new ExperienceReuseExposure(exposed[0], Attributed: true, EvidenceId: Guid.NewGuid()),
+                new ExperienceReuseExposure(exposed[1], Attributed: false, EvidenceId: null),
+            ],
+        };
+    }
+
+    /// <summary>
     /// A value's canonical JSON: object keys sorted recursively, so two values compare equal however their
     /// dictionaries are ordered, and a record's collections compare by content rather than by reference.
     /// </summary>

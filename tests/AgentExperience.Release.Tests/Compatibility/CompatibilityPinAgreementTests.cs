@@ -356,8 +356,10 @@ public sealed class CompatibilityPinAgreementTests
         return value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal).ToList();
     }
 
+    /// <summary>Every directory under src/ holding its own csproj; src/Shared holds linked source files only.</summary>
     private static IEnumerable<string> ShippingProjects() =>
         Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, "src"))
+            .Where(path => File.Exists(Path.Combine(path, Path.GetFileName(path) + ".csproj")))
             .Select(path => Path.GetFileName(path)!)
             .Order(StringComparer.Ordinal);
 

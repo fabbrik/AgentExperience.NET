@@ -95,8 +95,8 @@ jobs:
           diff -u "$out/run-1.txt" "$out/run-2.txt"
           diff -u tests/AgentExperience.Sample.EndToEnd.Tests/GoldenTranscript.txt "$out/run-1.txt"
 
-  # Packs the five packages and asserts, from the built .nupkg and .snupkg files rather than from the csproj
-  # files: ten artifacts at 0.1.0-preview.N, license/readme/tags/repository metadata, the exact dependency set
+  # Packs the six packages and asserts, from the built .nupkg and .snupkg files rather than from the csproj
+  # files: twelve artifacts at 0.1.0-preview.N, license/readme/tags/repository metadata, the exact dependency set
   # of each package (so Abstractions and Core carry no adapter dependency), and SourceLink-carrying,
   # deterministic symbols. The packages are uploaded as a workflow artifact for inspection. NOT published.
   pack:

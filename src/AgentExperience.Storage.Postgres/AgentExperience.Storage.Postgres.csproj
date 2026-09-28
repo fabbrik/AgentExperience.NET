@@ -4,6 +4,8 @@
     <Description>Preview, not production ready. PostgreSQL adapter for AgentExperience.NET: persists canonical, scoped Experience Records through the IExperienceRecordStore port with plain Npgsql, host-authorization checks before any database access, exact scope predicates applied in SQL, and a journaled schema migration runner over embedded, versioned scripts. Requires Npgsql 10.0.3, dbup-postgresql 7.0.1, and dbup-core 6.1.1 or later within the same major.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Selects this package's namespace in the shared validation rules linked below (story 11.2). -->
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_POSTGRES</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -65,6 +67,12 @@
     <!-- Only so the vectors suite can set ExperienceEncryption.TestSuiteDefault and run a second time in
          encrypted mode (AGENTEXPERIENCE_TEST_ENCRYPTION); see that property. -->
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Story 11.2: the validation rules for the core storage ports, shared with AgentExperience.Storage.InMemory so
+         both stores refuse exactly the same requests. The rules only this adapter has are in ExperienceRecordValidator.cs. -->
+    <Compile Include="..\Shared\ExperienceRecordValidator.Shared.cs" Link="Shared\ExperienceRecordValidator.Shared.cs" />
   </ItemGroup>
 
   <ItemGroup>

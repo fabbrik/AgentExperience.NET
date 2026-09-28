@@ -7,7 +7,7 @@
 //     dotnet run eng/verify-packages.cs -- artifacts/packages
 //
 // Exit code 0 when every check passes; 1 with every failure listed otherwise. It checks, per package:
-//   * exactly the five expected package ids, each with one .nupkg and one .snupkg, all at one version
+//   * exactly the six expected package ids, each with one .nupkg and one .snupkg, all at one version
 //   * the version is 0.1.0-preview.N -- never 1.0.0, never a bare 0.x (story 4.3, frozen rule 2)
 //   * license expression, readme (declared and present in the package), tags, project and repository URL,
 //     and the repository commit SourceLink stamped
@@ -16,9 +16,10 @@
 //     supported target framework -- so Abstractions and Core can never gain an adapter dependency (MAF,
 //     Npgsql, DbUp, Pgvector, a model provider, OpenTelemetry) without this list being edited in review --
 //     plus, in one framework's group only, the framework-only dependencies listed for it (story 7.2: the
-//     net8.0 System.Text.Json and Microsoft.Bcl.Memory floors), and nothing else
+//     net8.0 System.Text.Json and Microsoft.Bcl.Memory floors), and nothing else; the same forbidden-dependency guard
+//     covers the development-only in-memory store (story 11.2), which must also never depend on Core
 //   * lib/ holds exactly the supported target frameworks (story 6.3), and each one below is checked on its own
-//   * all five packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
+//   * all six packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
 //   * per framework, the .snupkg holds a portable PDB whose id matches the assembly's CodeView debug entry, every
 //     SourceLink target points at the repository, every document path is deterministic-mapped (/_/), and the assembly is marked
 //     reproducible (deterministic build)
@@ -83,6 +84,14 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
         "Npgsql 10.0.3",
         "Pgvector 0.3.2",
     ],
+    // Story 11.2: development and tests only. Abstractions, the DI abstractions for its one registration, and the
+    // hosting abstractions for the IHostEnvironment its production guard reads -- no Core, no adapter dependency.
+    ["AgentExperience.Storage.InMemory"] =
+    [
+        "AgentExperience.Abstractions {self}",
+        "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+        "Microsoft.Extensions.Hosting.Abstractions 10.0.3",
+    ],
 };
 
 // Dependencies declared for one target framework only, added to that framework's group (and only that one) on top
@@ -102,8 +111,8 @@ var frameworkOnly = new Dictionary<(string Package, string Framework), string[]>
     ],
 };
 
-// Belt and braces for the two adapter-independent packages: even if someone edits the table above, these
-// substrings may never appear in their dependency ids.
+// Belt and braces for the adapter-independent packages (Abstractions, Core, and the in-memory store): even if
+// someone edits the table above, these substrings may never appear in their dependency ids.
 string[] forbiddenInCore =
 [
     "Microsoft.Agents", "Microsoft.EntityFrameworkCore", "Npgsql", "dbup", "Pgvector", "OpenTelemetry",
@@ -163,7 +172,7 @@ foreach (var nupkgPath in nupkgs)
 
     if (!expected.TryGetValue(id, out var expectedDependencies))
     {
-        Fail(id, "is not one of the five packages this repository ships");
+        Fail(id, "is not one of the six packages this repository ships");
         continue;
     }
 
@@ -275,7 +284,7 @@ foreach (var nupkgPath in nupkgs)
         }
     }
 
-    if (id is "AgentExperience.Abstractions" or "AgentExperience.Core")
+    if (id is "AgentExperience.Abstractions" or "AgentExperience.Core" or "AgentExperience.Storage.InMemory")
     {
         foreach (var dependency in declared)
         {
@@ -285,6 +294,14 @@ foreach (var nupkgPath in nupkgs)
                 {
                     Fail(id, $"depends on '{dependency}', which matches forbidden adapter dependency '{forbidden}'");
                 }
+            }
+
+            // The in-memory store implements the ports and nothing more: it never brings Core (or another store) in.
+            if (id is "AgentExperience.Storage.InMemory"
+                && dependency.StartsWith("AgentExperience.", StringComparison.Ordinal)
+                && !dependency.StartsWith("AgentExperience.Abstractions ", StringComparison.Ordinal))
+            {
+                Fail(id, $"depends on '{dependency}'; it may depend on AgentExperience.Abstractions only");
             }
         }
     }
@@ -465,7 +482,7 @@ foreach (var id in expected.Keys)
     }
 }
 
-// One commit for all five packages, and -- when git is available -- the commit checked out here.
+// One commit for all six packages, and -- when git is available -- the commit checked out here.
 if (commits.Count > 1)
 {
     failures.Add($"packages were built from different commits: {string.Join(", ", commits.Order(StringComparer.Ordinal))}");

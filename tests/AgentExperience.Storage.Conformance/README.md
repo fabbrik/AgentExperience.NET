@@ -86,8 +86,9 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - A submission is returned exactly as it was submitted, on `Recorded` and on `AlreadyRecorded`.
 - The feedback ID is the idempotency key. An identical resubmission is `AlreadyRecorded`. The same ID with any
   different stored field (run, outcome, measure, time, benefits, attribution fields, evidence, trial label, scope,
-  or any exposure) is `Conflict`, the stored submission stays as it was, and it is handed back when the caller
-  has authority over its scope.
+  or any exposure; the attribution fields are varied on a comparative result's evaluator and round and on a human
+  assessment's reviewer and assessment) is `Conflict`, the stored submission stays as it was, and it is handed back
+  when the caller has authority over its scope.
 - A colliding ID from a tenant the caller has no authority over is `Conflict`, and no stored content comes back.
 - A non-finite measure, a blank measure kind, and a benefit with no attribution are `Invalid`.
 

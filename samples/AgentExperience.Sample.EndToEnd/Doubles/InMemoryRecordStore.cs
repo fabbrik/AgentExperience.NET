@@ -8,11 +8,15 @@ namespace AgentExperience.Sample.EndToEnd.Doubles;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It exists so the sample runs on a fresh clone with no Docker and no database. It lives under
-/// <c>samples/</c> and is <see langword="internal"/> on purpose: shipping an in-memory record store
-/// from a published package would invite someone to run it in production. Set
-/// <c>AGENTEXPERIENCE_SAMPLE_POSTGRES</c> to run the same seven stages against the real PostgreSQL
-/// adapter instead.
+/// It exists so the sample runs on a fresh clone with no Docker and no database. It stays under
+/// <c>samples/</c>, <see langword="internal"/> and unchanged, so the sample's golden transcript does not move.
+/// This used to say that no in-memory store would ever be published, because one would invite
+/// someone to run it in production. Story 11.2 reversed that, by the maintainer's decision: an
+/// in-memory store you can use outside the sample is the <c>AgentExperience.Storage.InMemory</c>
+/// package, which is complete, passes the same store conformance suite as the PostgreSQL adapter, and
+/// registers only through <c>AddAgentExperienceInMemoryStorageForDevelopment</c>, which refuses a
+/// Production host environment unless overridden. Set <c>AGENTEXPERIENCE_SAMPLE_POSTGRES</c> to run the
+/// same seven stages against the real PostgreSQL adapter instead.
 /// </para>
 /// <para>
 /// Only the three operations this sample's loop reaches are implemented --

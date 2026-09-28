@@ -6,6 +6,51 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### In-memory storage for development (story 11.2)
+
+- **A sixth package, `AgentExperience.Storage.InMemory`, for development and tests only.** It holds
+  `InMemoryExperienceRecordStore` (`IExperienceRecordStore`), `InMemoryExperienceCandidateSource`
+  (`IExperienceCandidateSource`, searching that same record store) and `InMemoryExperienceReuseFeedbackStore`
+  (`IExperienceReuseFeedbackStore`), all sealed and thread-safe, and copying everything on write into read-only
+  snapshots (timestamps in UTC, truncated to whole microseconds, as PostgreSQL stores them), so capture, finalization, retrieval, injection and
+  feedback run without PostgreSQL. Data is lost when the process ends, and none of the PostgreSQL guarantees apply
+  (append-only enforcement, erasure reach, backups, the two database roles, crypto-shredding); every public type says
+  so. This reverses the earlier "never publish an in-memory store" policy, by the maintainer's decision, on the
+  condition that the package is guarded and conformance-tested.
+- **It passes the whole store conformance suite of story 11.1** on `net8.0`, `net9.0` and `net10.0`
+  (`tests/AgentExperience.Storage.InMemory.Tests`), with the suite unchanged, and keeps the confidence ledger's
+  evidence-ID idempotency, independence key and single-use assessment.
+- **One registration, `AddAgentExperienceInMemoryStorageForDevelopment(configure)`,** registers the three ports as
+  singletons, sharing one record store. It runs only when the environment is `Development`, `Test` or `Testing`
+  (case-insensitive): the registered `IHostEnvironment`'s name, or with none registered `DOTNET_ENVIRONMENT`, else
+  `ASPNETCORE_ENVIRONMENT` (neither set: nothing to check). Anywhere else, `Staging` and blank names included, a hosted
+  service it registers stops a Generic Host from starting and resolving a store throws `InvalidOperationException`,
+  unless `InMemoryStorageOptions.AllowProductionEnvironment` is set. It throws at registration beside a different
+  `IExperienceRecordStore`, and on a second call that passes options. Constructing the stores directly is not guarded.
+- **Search matches every query word, without stemming.** Text is normalized (Unicode form KC, case-folded) and split
+  into words; a query drops the common English stopwords PostgreSQL's `english` configuration drops and terms shorter
+  than two characters, and a record matches only when its task ID, task summary or lesson (first 100,000 characters)
+  contains every remaining term. Relevance is the fraction of the terms it contains, weighted towards the task
+  summary, in (0, 1]; its values still differ from PostgreSQL's. Candidates come strongest first, then by ID, after
+  the scope, status and confidence filters and before the limit.
+- **Same validation as PostgreSQL.** The PostgreSQL store's rules for the core ports moved into
+  `src/Shared/ExperienceRecordValidator.Shared.cs`, which both packages link, so both stores refuse exactly the same
+  requests. The only wording change: a reserved sealed-value prefix or placeholder is now "reserved for sealed values"
+  rather than "which the store reserves". No new public API in Abstractions or the PostgreSQL package.
+- **The feedback conformance suite also varies a human assessment's reviewer and assessment** (a new
+  `HumanAssessedFeedback` fixture), for both stores.
+- **Not provided:** sharing grants and the grant access log (every read behaves as if no grant exists), the embedding
+  index, deletion, retention and encryption.
+- **Dependencies:** Abstractions, `Microsoft.Extensions.DependencyInjection.Abstractions` 10.0.12+ and
+  `Microsoft.Extensions.Hosting.Abstractions` 10.0.3+ (new, the version the repository already resolves; evidence row
+  in `docs/compatibility-evidence.md`). No Core, Npgsql or MAF; `eng/verify-packages.cs` holds it to that.
+- **Release checks count six packages:** package verification, the public API baselines (a new
+  `AgentExperience.Storage.InMemory.verified.txt`), `release.yml`'s artifact count, and `RELEASING.md`, which also
+  documents checking the first push of the new package ID under the Trusted Publishing policy, and the one-time
+  API-key push if nuget.org refuses it. Nothing was published.
+- The end-to-end sample keeps its own in-memory doubles; the comment that stated the old policy now points at this
+  package.
+
 ### Anthropic provider for the live experiment
 
 - **An exploratory run against `claude-haiku-4-5` concluded `ReuseBenefitAttributableToContent`**

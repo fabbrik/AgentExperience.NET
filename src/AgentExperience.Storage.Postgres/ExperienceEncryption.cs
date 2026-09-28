@@ -236,13 +236,13 @@ internal sealed class RecordKey : IDisposable
 /// </remarks>
 internal static class SealedText
 {
-    internal const string Prefix = "aexp-sealed:v1:";
+    internal const string Prefix = ReservedStoredText.SealedPrefix;
 
     /// <summary>The stored <c>task_id</c> of a sealed record: the real one is inside the sealed payload.</summary>
     internal const string SealedTaskId = "(sealed)";
 
     /// <summary>What a nullable sealed-per-exposure column's parent row holds instead of the text.</summary>
-    internal const string SealedPlaceholder = "(sealed)";
+    internal const string SealedPlaceholder = ReservedStoredText.SealedPlaceholder;
 
     /// <summary>The <c>payload_version</c> of a sealed record: a v1 payload inside a sealed envelope.</summary>
     internal const int SealedPayloadVersion = 2;

@@ -3,8 +3,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>AgentExperience.Sample.EndToEnd</RootNamespace>
-    <!-- A demonstration, never a package: shipping an in-memory record store from a published
-         package would invite someone to run it in production. -->
+    <!-- A demonstration, never a package. Its in-memory doubles stay here, unchanged; the published,
+         development-only in-memory store is AgentExperience.Storage.InMemory (story 11.2). -->
     <IsPackable>false</IsPackable>
     <!-- Directory.Build.props turns on GenerateDocumentationFile with TreatWarningsAsErrors, which
          would make every undocumented public member a build error. The sample documents the types a

@@ -1,6 +1,6 @@
 <Project>
 
-  <!-- The supported target frameworks (stories 6.3 and 7.2, KL-13), each built and tested in CI. The five shipping
+  <!-- The supported target frameworks (stories 6.3 and 7.2, KL-13), each built and tested in CI. The six shipping
        packages and every test project that exercises them multi-target all three. net8.0 (story 7.2) takes the APIs
        its shared framework lacks from the .NET 10 train's System.Text.Json and Microsoft.Bcl.Memory packages,
        referenced for net8.0 only in Core and the store. The
@@ -33,7 +33,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
-  <!-- Versioning. Set here, once, for all five packages. This is a PREVIEW: the version is deliberately
+  <!-- Versioning. Set here, once, for all six packages. This is a PREVIEW: the version is deliberately
        not 1.0.0, because 1.0.0 is a stability promise this codebase declines to make while the Known
        limits table in docs/known-limits.md is non-empty (see RELEASING.md). Bump the suffix (preview.2, ...)
        for each preview; only a release that satisfies RELEASING.md's production-readiness gate may drop
@@ -43,7 +43,7 @@
     <VersionSuffix>preview.2</VersionSuffix>
   </PropertyGroup>
 
-  <!-- Package metadata: applies to every packable project (the five under src/). -->
+  <!-- Package metadata: applies to every packable project (the six under src/). -->
   <PropertyGroup>
     <Authors>AgentExperience.NET Contributors</Authors>
     <Company>AgentExperience.NET</Company>
@@ -67,7 +67,7 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <DebugType>portable</DebugType>
-    <!-- The five shipping projects are exactly the ones under src/. -->
+    <!-- The six shipping projects are exactly the ones under src/. -->
     <AgentExperienceShippingProject Condition="$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/').StartsWith('src/'))">true</AgentExperienceShippingProject>
   </PropertyGroup>
 

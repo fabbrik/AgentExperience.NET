@@ -62,7 +62,8 @@ The terms are defined in the [glossary](docs/guide/README.md#glossary).
 
 ## Install
 
-Five packages, all published on nuget.org as `0.1.0-preview.2`. Each targets `net8.0`, `net9.0` and `net10.0`.
+Six packages. The first five are published on nuget.org as `0.1.0-preview.2`; `AgentExperience.Storage.InMemory` is
+new since then and ships with the next preview. Each targets `net8.0`, `net9.0` and `net10.0`.
 
 | Package | What it is for |
 | --- | --- |
@@ -71,6 +72,7 @@ Five packages, all published on nuget.org as `0.1.0-preview.2`. Each targets `ne
 | [`AgentExperience.MicrosoftAgentFramework`](src/AgentExperience.MicrosoftAgentFramework/README.md) | The MAF adapter: capture of agent runs and tool calls, and Historical Reference injection. Needs `Microsoft.Agents.AI` `[1.22.0, 2.0.0)` |
 | [`AgentExperience.Storage.Postgres`](src/AgentExperience.Storage.Postgres/README.md) | PostgreSQL storage: records, lifecycle, text search, sharing grants, reuse feedback, deletion, crypto-shredding, and the schema migrator. PostgreSQL 15–18 |
 | [`AgentExperience.Storage.Postgres.Vectors`](src/AgentExperience.Storage.Postgres.Vectors/README.md) | Optional. pgvector embeddings for search by meaning, over any `Microsoft.Extensions.AI` embedding generator |
+| [`AgentExperience.Storage.InMemory`](src/AgentExperience.Storage.InMemory/README.md) | **For development and tests only.** An in-memory record store, candidate source and reuse-feedback store, so you can try the loop without PostgreSQL. Data is lost when the process ends, none of the PostgreSQL guarantees apply, and its one registration, `AddAgentExperienceInMemoryStorageForDevelopment`, refuses to run in any environment but `Development`, `Test` or `Testing` unless you override it |
 
 ```bash
 dotnet add package AgentExperience.MicrosoftAgentFramework --prerelease
@@ -79,7 +81,9 @@ dotnet add package AgentExperience.Storage.Postgres --prerelease
 dotnet add package AgentExperience.Storage.Postgres.Vectors --prerelease
 ```
 
-The MAF adapter brings in Core and Abstractions.
+The MAF adapter brings in Core and Abstractions. To try the loop without a database, register
+`AddAgentExperienceInMemoryStorageForDevelopment()` from `AgentExperience.Storage.InMemory` in place of the PostgreSQL
+stores; it is for development and tests only, and keeps nothing across a restart.
 
 ## Quick start
 

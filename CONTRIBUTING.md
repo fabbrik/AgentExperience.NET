@@ -56,6 +56,8 @@ src/
   AgentExperience.MicrosoftAgentFramework/  MAF adapter: run and tool capture, Historical Reference injection (Microsoft.Agents.AI [1.22.0, 2.0.0))
   AgentExperience.Storage.Postgres/         PostgreSQL store, text search, grants, access log, reuse feedback ledger, deletion, crypto-shredding, schema migrator (0001-0003, 0005-0018)
   AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, vector search (0004)
+  AgentExperience.Storage.InMemory/         development and tests only: in-memory record store, candidate source and reuse-feedback store, guarded to development and test environments
+  Shared/                                   source files linked into more than one package (not a project): the core-port validation rules
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
   AgentExperience.Core.Tests/               sanitizer, capture, verification, reflection, lifecycle, indexing, retrieval tests
@@ -63,6 +65,7 @@ tests/
   AgentExperience.Storage.Conformance/      the store conformance suite: abstract tests every implementation of the storage ports must pass
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container, and the PostgreSQL run of the conformance suite
   AgentExperience.Storage.Postgres.Vectors.Tests/  embedding index and hybrid retrieval, against a pgvector container
+  AgentExperience.Storage.InMemory.Tests/   the in-memory run of the conformance suite, the production guard, search and concurrency; no Docker
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
   AgentExperience.Sample.EndToEnd.Tests/    the sample's seven stages, its determinism, and what it does not claim
   AgentExperience.ReuseBaseline/            the controlled reuse experiment and its golden reports
@@ -87,7 +90,7 @@ _sdlc/                                      product brief, PRD, architecture, ep
   `floating-dependencies` probe also run, but on a pull request they only report; they gate pushes to `main` and the
   weekly schedule.
 - **Changing a public API is a reviewed diff.** `tests/AgentExperience.Release.Tests` holds an approval baseline of all
-  five packages' public surface, and any change fails it. If the change is deliberate, regenerate the baseline with
+  six packages' public surface, and any change fails it. If the change is deliberate, regenerate the baseline with
   `AGENTEXPERIENCE_ACCEPT_API_CHANGES=true dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~PublicApi"`
   and commit the resulting `PublicApi/*.verified.txt` diff with your change, so reviewers see it. The baseline never
   updates itself.
