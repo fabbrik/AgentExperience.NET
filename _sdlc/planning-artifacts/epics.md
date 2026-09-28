@@ -33,6 +33,7 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 8: 8.1 → 8.2.
 - Epic 9: 9.2 → 9.1.
 - Epic 10: 10.1 → 10.2 → 10.3 → 10.4.
+- Epic 11: 11.1 → 11.2.
 
 Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
 
@@ -137,6 +138,9 @@ Newcomers can understand the project from a short README and focused guides, and
 
 ### Epic 10: Make Retrieval Environment- and Confidence-Aware
 Agents get the experience that fits their environment and capabilities best, ranked by a confidence model the host can replace and age by domain.
+
+### Epic 11: Try It Without PostgreSQL
+Developers can run the whole learning loop in memory for tests, demos and quick starts, with a store proven to behave like PostgreSQL and guarded against production use.
 
 ## Epic 1: Capture and Explain Agent Experience
 
@@ -1495,3 +1499,51 @@ So that an agent is not taught an approach it cannot, or must not, carry out.
 **Given** no capability declaration
 **When** records are injected
 **Then** behaviour is identical to before.
+
+## Epic 11: Try It Without PostgreSQL
+
+Developers can run the learning loop without a database, for tests, demos and quick starts, using a store that passes the same behaviour contract as PostgreSQL and refuses to run in production by accident. Planned on 2026-09-28. It reverses the earlier policy of not publishing an in-memory store (stated in the sample's `InMemoryRecordStore`), by the maintainer's decision, on the condition that the package is guarded and conformance-tested.
+
+### Story 11.1: Define a Store Conformance Suite
+
+**Traces:** NFR6, NFR8 · **Depends on:** 2.1, 2.2, 2.4, 3.3
+
+As a maintainer,
+I want one reusable set of behaviour tests that every implementation of the core storage ports must pass,
+So that a second store cannot quietly differ from PostgreSQL on the rules the library relies on.
+
+**Acceptance Criteria:**
+
+**Given** the record store, candidate source and reuse-feedback store ports
+**When** the conformance suite is defined
+**Then** it is a set of abstract xUnit test classes, parameterized by a factory for the store under test, covering create-only records and cross-scope id conflicts, idempotent lifecycle-event replay and conflicting replays, optimistic revision checks, status guards, scope and tombstone rules on reads, history and supersession, candidate filtering by scope, status and confidence with a limit and strongest-first order, and feedback idempotency.
+
+**Given** the PostgreSQL adapter
+**When** its tests run
+**Then** it passes the full suite through a subclass, proving the suite describes real behaviour, and no existing PostgreSQL test changes.
+
+**Given** a behaviour that is PostgreSQL-specific (full-text relevance values, the application role, append-only triggers)
+**When** the suite is written
+**Then** it is left out of the contract and named as such in the suite's documentation.
+
+### Story 11.2: Ship a Guarded In-Memory Storage Package
+
+**Traces:** NFR6 · **Depends on:** 11.1
+
+As a .NET developer evaluating the library,
+I want an in-memory store I can register in one line,
+So that I can run capture, finalization, retrieval, injection and feedback without provisioning PostgreSQL.
+
+**Acceptance Criteria:**
+
+**Given** the new package `AgentExperience.Storage.InMemory`
+**When** it is built and tested
+**Then** its record store, candidate source and reuse-feedback store pass the full conformance suite from Story 11.1, are thread-safe, and depend only on Abstractions and the DI abstractions.
+
+**Given** a host
+**When** it registers the package
+**Then** it does so only through an explicitly named method such as `AddAgentExperienceInMemoryStorageForDevelopment`, which refuses to run when the host environment is Production unless the host passes an explicit override, and every public type states that data is lost on restart and none of the PostgreSQL guarantees (append-only enforcement, erasure reach, roles) apply.
+
+**Given** the release checks
+**When** the package is added
+**Then** the solution, package verification, public API baselines, pin agreement, README install table, guide package table, CONTRIBUTING layout and RELEASING are updated, and the first publish of the new package id through Trusted Publishing is verified or documented.
