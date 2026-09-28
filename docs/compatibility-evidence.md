@@ -9,7 +9,7 @@ not match), and the executable test that proves this repository works against it
 It is the successor to the Story 1.7 research digest, which lived in a directory excluded from git. Anything a
 reader needs to check a pin is here.
 
-**Last verified: 2026-09-25**, against nuget.org's registration API and a full local run of the suite on all three target
+**Last verified: 2026-09-28** (the `0.1.0-preview.3` release checks), against nuget.org's registration API and a full local run of the suite on all three target
 frameworks and all four PostgreSQL majors, plus the floating-dependency leg and both MAF probe legs. Re-verify — and update the date — whenever
 a pin or a floor moves.
 
@@ -346,6 +346,7 @@ passed on all three frameworks. What the floats resolved to:
 | `Microsoft.Extensions.AI.Abstractions` | 10.10.0 | `10.*` | **10.10.1** |
 | `Microsoft.Extensions.Compliance.Redaction` | 10.10.0 | `10.*` | 10.10.0 |
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | 10.0.12 | `10.*` | 10.0.12 |
+| `Microsoft.Extensions.Hosting.Abstractions` (added 2026-09-28) | 10.0.3 | `10.*` | **10.0.12** |
 | `Npgsql` | 10.0.3 | `10.*` | 10.0.3 |
 | `Pgvector` | 0.3.2 | `0.3.*` | 0.3.2 |
 | `System.Text.Json` (`net8.0`) | 10.0.12 | `10.*` | 10.0.12 |
@@ -353,8 +354,10 @@ passed on all three frameworks. What the floats resolved to:
 Nine of the ten floors are the newest release in their range today, so on the day it landed this leg mostly
 re-proves the floors; its value is every later day.
 
-`Microsoft.Extensions.Hosting.Abstractions` (floor 10.0.3, added in story 11.2) postdates this run, so it has no row
-yet; the next floating run records what it resolves to (10.0.12 is the newest 10.x on nuget.org as of 2026-09-28).
+`Microsoft.Extensions.Hosting.Abstractions` (floor 10.0.3, added in story 11.2) postdates that run. It was first
+floated on 2026-09-28, in the `0.1.0-preview.3` release checks: the floating-dependency probe PASSED with it resolved
+to 10.0.12, the newest 10.x on nuget.org that day, and its floor row's content hash was re-checked against the package
+nuget.org serves.
 
 ## The MAF compatibility matrix
 
