@@ -327,6 +327,14 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }
       },
+      "agentexperience.storage.conformance": {
+        "type": "Project",
+        "dependencies": {
+          "AgentExperience.Abstractions": "[0.1.0-preview.2, )",
+          "xunit.assert": "[2.9.3, )",
+          "xunit.extensibility.core": "[2.9.3, )"
+        }
+      },
       "agentexperience.storage.postgres": {
         "type": "Project",
         "dependencies": {
@@ -687,6 +695,14 @@
           "System.Text.Json": "[10.0.12, )"
         }
       },
+      "agentexperience.storage.conformance": {
+        "type": "Project",
+        "dependencies": {
+          "AgentExperience.Abstractions": "[0.1.0-preview.2, )",
+          "xunit.assert": "[2.9.3, )",
+          "xunit.extensibility.core": "[2.9.3, )"
+        }
+      },
       "agentexperience.storage.postgres": {
         "type": "Project",
         "dependencies": {
@@ -1013,6 +1029,14 @@
           "AgentExperience.Abstractions": "[0.1.0-preview.2, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
+        }
+      },
+      "agentexperience.storage.conformance": {
+        "type": "Project",
+        "dependencies": {
+          "AgentExperience.Abstractions": "[0.1.0-preview.2, )",
+          "xunit.assert": "[2.9.3, )",
+          "xunit.extensibility.core": "[2.9.3, )"
         }
       },
       "agentexperience.storage.postgres": {

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 11.1: the store conformance suite. A class library of abstract xUnit test classes, never a test
+       runner of its own: a test project that implements the storage ports subclasses each class with a factory
+       for its store, and its own runner discovers the inherited tests. It depends on Abstractions and on xUnit's
+       assertion and core (extensibility) packages only, so it carries no knowledge of any implementation.
+       See README.md for the contract and what it deliberately leaves out. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <!-- Not packed/consumed outside this repository, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.assert" Version="2.9.3" />
+    <PackageReference Include="xunit.extensibility.core" Version="2.9.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="AgentExperience.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.Abstractions\AgentExperience.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

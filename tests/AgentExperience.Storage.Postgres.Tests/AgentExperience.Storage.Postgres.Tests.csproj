@@ -53,6 +53,8 @@
          DependencyBoundaryTests. -->
     <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <!-- Story 11.1: the store conformance suite, which Conformance/ subclasses over this project's fixture. -->
+    <ProjectReference Include="..\AgentExperience.Storage.Conformance\AgentExperience.Storage.Conformance.csproj" />
   </ItemGroup>
 
 </Project>
