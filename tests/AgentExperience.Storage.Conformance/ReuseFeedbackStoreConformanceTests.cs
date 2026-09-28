@@ -73,6 +73,8 @@ public abstract class ReuseFeedbackStoreConformanceTests
         "exposure-attributed",
         "exposure-evidence-id",
         "scope",
+        "reviewer",
+        "assessment",
     ];
 
     [Theory]
@@ -85,7 +87,9 @@ public abstract class ReuseFeedbackStoreConformanceTests
         }
 
         var tenant = NewTenant();
-        var feedback = AttributedFeedback(Scope(tenant));
+
+        // The two human-assessment fields are varied on a human assessment; everything else on a comparative result.
+        var feedback = difference is "reviewer" or "assessment" ? HumanAssessedFeedback(Scope(tenant)) : AttributedFeedback(Scope(tenant));
         Assert.Equal(
             ExperienceReuseFeedbackStoreOutcome.Recorded,
             (await Store.RecordAsync(Authorize(tenant), feedback, CancellationToken.None)).Outcome);
@@ -124,6 +128,8 @@ public abstract class ReuseFeedbackStoreConformanceTests
             {
                 Exposures = [attributedExposure with { EvidenceId = Guid.NewGuid() }, plainExposure],
             },
+            "reviewer" => feedback with { ReviewerIdentity = "another-reviewer" },
+            "assessment" => feedback with { AssessmentId = Guid.NewGuid() },
             _ => feedback with { Scope = Scope(tenant, project: "project-2") },
         };
 

@@ -208,7 +208,7 @@ jobs:
           name: release-notes
           path: artifacts/release-notes
 
-      # Five packages and five symbol packages, all at the version the tag names, and nothing else.
+      # Six packages and six symbol packages, all at the version the tag names, and nothing else.
       - name: Check the packages are the tagged version
         env:
           VERSION: ${{ needs.verify.outputs.version }}
@@ -218,8 +218,8 @@ jobs:
           total="$(find artifacts/packages -type f | wc -l)"
           nupkg="$(find artifacts/packages -type f -name "*.$VERSION.nupkg" | wc -l)"
           snupkg="$(find artifacts/packages -type f -name "*.$VERSION.snupkg" | wc -l)"
-          if [ "$nupkg" -ne 5 ] || [ "$snupkg" -ne 5 ] || [ "$total" -ne 10 ]; then
-            echo "::error::Expected 5 .nupkg and 5 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
+          if [ "$nupkg" -ne 6 ] || [ "$snupkg" -ne 6 ] || [ "$total" -ne 12 ]; then
+            echo "::error::Expected 6 .nupkg and 6 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
             exit 1
           fi
 

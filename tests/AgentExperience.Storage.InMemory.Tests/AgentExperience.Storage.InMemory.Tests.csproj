@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Not packed/consumed, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- Test-only: a real container, so the package's registration and its production guard are resolved rather
+         than merely declared. The shipping package takes only the DI and hosting abstractions. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="AgentExperience.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
+    <!-- Story 11.1: the store conformance suite, which Conformance/ subclasses over the in-memory stores. -->
+    <ProjectReference Include="..\AgentExperience.Storage.Conformance\AgentExperience.Storage.Conformance.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,37 @@
+﻿namespace AgentExperience.Storage.InMemory.DependencyInjection
+{
+    public static class AgentExperienceInMemoryServiceCollectionExtensions
+    {
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceInMemoryStorageForDevelopment(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<AgentExperience.Storage.InMemory.InMemoryStorageOptions>? configure = null) { }
+    }
+}
+namespace AgentExperience.Storage.InMemory
+{
+    public sealed class InMemoryExperienceCandidateSource : AgentExperience.Abstractions.IExperienceCandidateSource
+    {
+        public InMemoryExperienceCandidateSource(AgentExperience.Storage.InMemory.InMemoryExperienceRecordStore store) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceCandidateSearchResult> SearchAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceCandidateQuery query, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class InMemoryExperienceRecordStore : AgentExperience.Abstractions.IExperienceRecordStore
+    {
+        public InMemoryExperienceRecordStore(System.TimeProvider? timeProvider = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordHistoryResult> GetHistoryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordHistoryQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class InMemoryExperienceReuseFeedbackStore : AgentExperience.Abstractions.IExperienceReuseFeedbackStore
+    {
+        public InMemoryExperienceReuseFeedbackStore() { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class InMemoryStorageOptions
+    {
+        public InMemoryStorageOptions() { }
+        public bool AllowProductionEnvironment { get; set; }
+    }
+}

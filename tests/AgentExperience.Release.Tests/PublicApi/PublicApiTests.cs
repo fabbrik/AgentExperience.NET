@@ -73,9 +73,13 @@ public sealed class PublicApiTests
         VerifyApi(typeof(AgentExperience.Storage.Postgres.Vectors.PostgresExperienceEmbeddingIndex).Assembly);
 
     [Fact]
+    public Task AgentExperience_Storage_InMemory() =>
+        VerifyApi(typeof(AgentExperience.Storage.InMemory.InMemoryExperienceRecordStore).Assembly);
+
+    [Fact]
     public void Every_shipping_assembly_has_a_baseline_and_no_baseline_is_orphaned()
     {
-        // A sixth package, or a renamed one, must not slip past the gate by simply having no test.
+        // A seventh package, or a renamed one, must not slip past the gate by simply having no test.
         var baselines = Directory.GetFiles(BaselineDirectory(), "*.verified.txt")
             .Select(path => Path.GetFileName(path)!)
             .Order(StringComparer.Ordinal)
@@ -86,12 +90,15 @@ public sealed class PublicApiTests
                 "AgentExperience.Abstractions.verified.txt",
                 "AgentExperience.Core.verified.txt",
                 "AgentExperience.MicrosoftAgentFramework.verified.txt",
+                "AgentExperience.Storage.InMemory.verified.txt",
                 "AgentExperience.Storage.Postgres.Vectors.verified.txt",
                 "AgentExperience.Storage.Postgres.verified.txt",
             ],
             baselines);
 
+        // A shipping project is a directory under src/ holding its own csproj; src/Shared holds linked source only.
         var shipping = Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, "src"))
+            .Where(path => File.Exists(Path.Combine(path, Path.GetFileName(path) + ".csproj")))
             .Select(path => Path.GetFileName(path)!)
             .Order(StringComparer.Ordinal)
             .Select(name => $"{name}.verified.txt")
