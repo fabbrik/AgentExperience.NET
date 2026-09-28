@@ -6,6 +6,21 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Store contract clarifications
+
+- **Reordered feedback exposures now converge.** `PostgresExperienceReuseFeedbackStore` and
+  `InMemoryExperienceReuseFeedbackStore` sort a submission's exposures by `ExperienceId` before they store it or
+  compare a resubmission with it, so the same exposures listed in another order are `AlreadyRecorded` rather than
+  `Conflict`, and the submission handed back lists them in ID order, as `RecordedExperienceReuseFeedback.Exposures`
+  always documented. Naming one record twice is still `Invalid`. Callers going through Core saw no difference: Core
+  already ordered them.
+- **`ExperienceLifecycleCommitResult.CurrentStatus` doc corrected.** On `Committed` it is set only for a confidence
+  submission that did not move the record (an independence key already taken, or a replayed evidence ID); an
+  identical replay of an event that carried no confidence payload reports `null`, as both stores already did.
+- **`ExperienceSupersessionCheckResult.ReplacementStatus` doc corrected.** It is `null` on `RecordNotFound`, even when
+  the replacement exists in the scope, as both stores already did.
+- The store conformance suite now asserts all three instead of leaving them open.
+
 ### In-memory storage for development (story 11.2)
 
 - **A sixth package, `AgentExperience.Storage.InMemory`, for development and tests only.** It holds

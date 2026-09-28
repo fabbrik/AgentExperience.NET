@@ -929,7 +929,8 @@ public sealed class PostgresCryptoShreddingTests
         var replay = await ledger.RecordAsync(auth, submission, CancellationToken.None);
         Assert.Equal(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, replay.Outcome);
         Assert.Equal(SealedText.SealedPlaceholder, replay.Feedback!.Rationale);
-        Assert.Equal(submission.Exposures, replay.Feedback.Exposures);
+        // Stores return exposures ordered by record id, whatever order they were submitted in.
+        Assert.Equal(submission.Exposures.OrderBy(exposure => exposure.ExperienceId), replay.Feedback.Exposures);
         Assert.Equal(
             ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded,
             (await ledger.RecordAsync(auth, submission with { Rationale = "a rationale the store can no longer compare" }, CancellationToken.None)).Outcome);

@@ -6,7 +6,8 @@ namespace AgentExperience.Storage.Conformance;
 /// The behaviour every <see cref="IExperienceReuseFeedbackStore"/> must show, observed through the port alone: a
 /// submission is stored and returned exactly as given; the feedback ID is the idempotency key, so an identical
 /// resubmission is
-/// <see cref="ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded"/>, and the same ID with any different stored
+/// <see cref="ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded"/> (the same exposures listed in another order
+/// included, and exposures are stored and returned in record-ID order), and the same ID with any different stored
 /// field is <see cref="ExperienceReuseFeedbackStoreOutcome.Conflict"/> in any scope, returning the stored submission
 /// only where the caller has authority over it; plus the documented refusals and unwrapped cancellation. A subclass
 /// supplies the store through <see cref="CreateStore"/>.
@@ -51,6 +52,48 @@ public abstract class ReuseFeedbackStoreConformanceTests
         Assert.Equal(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, replay.Outcome);
         AssertStoredAs(feedback, replay.Feedback);
         Assert.Equal(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, replayAgain.Outcome);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task The_same_exposures_listed_in_another_order_are_AlreadyRecorded_and_come_back_in_id_order(bool attributed)
+    {
+        var tenant = NewTenant();
+        var feedback = attributed
+            ? AttributedFeedback(Scope(tenant))
+            : Feedback(Scope(tenant), [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()]);
+        var reordered = feedback with { Exposures = [.. feedback.Exposures.OrderByDescending(e => e.ExperienceId)] };
+        Assert.Equal(
+            ExperienceReuseFeedbackStoreOutcome.Recorded,
+            (await Store.RecordAsync(Authorize(tenant), feedback, CancellationToken.None)).Outcome);
+
+        // The set of exposed records is the fact, not the order a host listed them in, so two hosts that listed the
+        // same records differently converge on one submission instead of colliding.
+        var replay = await Store.RecordAsync(Authorize(tenant), reordered, CancellationToken.None);
+
+        Assert.Equal(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, replay.Outcome);
+        Assert.Empty(replay.Errors);
+        AssertStoredAs(feedback, replay.Feedback);
+    }
+
+    [Fact]
+    public async Task A_submission_listing_its_exposures_out_of_order_is_stored_and_returned_in_id_order()
+    {
+        var tenant = NewTenant();
+        var ordered = Feedback(Scope(tenant), [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()]);
+        var unordered = ordered with { Exposures = [ordered.Exposures[2], ordered.Exposures[0], ordered.Exposures[1]] };
+
+        var first = await Store.RecordAsync(Authorize(tenant), unordered, CancellationToken.None);
+
+        Assert.Equal(ExperienceReuseFeedbackStoreOutcome.Recorded, first.Outcome);
+        Assert.Empty(first.Errors);
+        Assert.Equal(Json(ordered), Json(first.Feedback));
+
+        // What was stored is the ordered form: resubmitting it is a replay, and hands it back in that order.
+        var replay = await Store.RecordAsync(Authorize(tenant), ordered, CancellationToken.None);
+        Assert.Equal(ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded, replay.Outcome);
+        AssertStoredAs(ordered, replay.Feedback);
     }
 
     public static TheoryData<string> Differences =>
@@ -181,6 +224,7 @@ public abstract class ReuseFeedbackStoreConformanceTests
     [InlineData("measure-not-finite")]
     [InlineData("measure-kind-blank")]
     [InlineData("benefit-without-attribution")]
+    [InlineData("exposure-duplicated")]
     public async Task A_malformed_submission_is_Invalid_and_records_nothing(string malformation)
     {
         var tenant = NewTenant();
@@ -189,6 +233,9 @@ public abstract class ReuseFeedbackStoreConformanceTests
         {
             "measure-not-finite" => valid with { Measure = new ReuseMeasure("task-success", double.NaN) },
             "measure-kind-blank" => valid with { Measure = new ReuseMeasure(" ", 1) },
+
+            // Normalizing the order never merges two entries: naming one record twice stays malformed.
+            "exposure-duplicated" => valid with { Exposures = [valid.Exposures[0], valid.Exposures[0]] },
             _ => valid with { Benefit = ExperienceReuseBenefit.Improved },
         };
 
