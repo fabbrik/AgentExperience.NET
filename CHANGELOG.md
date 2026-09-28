@@ -17,6 +17,15 @@ a store conformance suite that both stores pass, and the first live-model result
 and an exploratory one against Claude, both concluding that the injected content reduces failed attempts. There are
 no new migrations; every new behaviour is opt-in and leaves default results unchanged.
 
+### Fixed
+
+- **An invocation can no longer spin forever on a forgotten run on .NET 8.0.10 and earlier.** On .NET 8.0.0 through
+  8.0.10, `ConcurrentDictionary.TryRemove` can report an entry another thread has only just added as absent
+  ([dotnet/runtime#107525](https://github.com/dotnet/runtime/issues/107525), fixed in 8.0.11). When that happened as
+  the Microsoft Agent Framework adapter forgot a run, the forgotten entry stayed in its open-run ledger, and every
+  later invocation naming that run spun at full CPU looking it up again, never returning. The adapter now retries the
+  removal for as long as that very entry is still there.
+
 ### Store contract clarifications
 
 - **Reordered feedback exposures now converge.** `PostgresExperienceReuseFeedbackStore` and
