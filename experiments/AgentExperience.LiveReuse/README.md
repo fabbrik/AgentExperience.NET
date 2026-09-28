@@ -25,7 +25,17 @@ The run used 288 model calls and about USD 0.08. Read it with the report's own l
 12 instances with pairs that are not fully independent, a synthetic task, and a strategy that reaches the block
 verbatim. It shows that this model acts on the `Approach:` line, not that the library helps on real tasks in general.
 Pre-registration amendment 1, recorded before any trial completed, stops sending the seed to Gemini, whose endpoint
-rejects the field; the ledger keeps the aborted first attempt. No Azure OpenAI run has been made.
+rejects the field; the ledger keeps the aborted first attempt. No Azure OpenAI run has been made. An Anthropic (Claude)
+provider is available; no model of it is registered, so any Anthropic run is exploratory and its report says so.
+
+**Exploratory replication: `claude-haiku-4-5`** ([report](results/anthropic-claude-haiku-4-5-2026-09-28.md)). Under the same pre-registered rule it also concluded
+**ReuseBenefitAttributableToContent**: mean failed attempts 0.83 with memory, 2.75 without it, 2.42 with the strategy
+withheld and 2.67 with stale experience; memory beat both no memory and the placebo on 9 of 12 pairs with 3 ties
+(sign test p = 0.0020 each), and the stale control showed none (p = 0.81). Unlike Gemini, Haiku did not always finish:
+it verified 9 of 12 tasks without memory and 11 of 12 with it, and six of its 24 learning runs never verified, so those
+services had less or no experience to retrieve. It cost about USD 0.93 (367 calls). Two earlier Haiku attempts are in
+the ledger: one stopped on an empty credit balance, one refused to report because Haiku sometimes makes a redundant
+second `apply_migration` call after success, which the harness then learned to record as a sequence.
 
 ## Run it
 
@@ -41,6 +51,11 @@ export AZURE_OPENAI_DEPLOYMENT=<deployment name>
 export AGENTEXPERIENCE_LIVE_PROVIDER=azure
 dotnet run --project experiments/AgentExperience.LiveReuse -c Release
 
+# Anthropic (Claude; default model claude-haiku-4-5). Exploratory: no Claude model is registered.
+export ANTHROPIC_API_KEY=...
+export AGENTEXPERIENCE_LIVE_PROVIDER=anthropic   # optional when no other provider's variables are set
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release
+
 # Offline: the whole harness against the scripted stand-in. No key, no network, writes nothing.
 dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --scripted
 ```
@@ -52,20 +67,23 @@ which is part of the ordinary `dotnet test` run.
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENTEXPERIENCE_LIVE_PROVIDER` | `gemini` or `azure`. Optional when only one provider's variables are set. |
+| `AGENTEXPERIENCE_LIVE_PROVIDER` | `gemini`, `azure` or `anthropic`. Optional when only one provider's variables are set; required when two or three are. |
 | `GEMINI_API_KEY` | Gemini API key. |
 | `GEMINI_MODEL` | Optional. Default `gemini-3.1-flash-lite`, Google's stable low-cost model (checked 2026-09-26). |
 | `AZURE_OPENAI_ENDPOINT` | `https://<resource>.openai.azure.com/` (the `/openai/v1/` path is appended if absent). |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI key. |
 | `AZURE_OPENAI_DEPLOYMENT` | The deployment name to call. |
+| `ANTHROPIC_API_KEY` | Anthropic API key. |
+| `ANTHROPIC_MODEL` | Optional. Default `claude-haiku-4-5`, Anthropic's low-cost current model. |
 | `AGENTEXPERIENCE_LIVE_MAX_CALLS` | Hard cap on model calls for the whole run. Default 600 (pre-registered). |
 | `AGENTEXPERIENCE_LIVE_MAX_TOKENS` | Hard cap on input plus output tokens. Default 2,000,000 (pre-registered). |
 | `AGENTEXPERIENCE_LIVE_MIN_CALL_INTERVAL_MS` | Optional pacing between calls, for a free tier's requests-per-minute limit. |
-| `AGENTEXPERIENCE_LIVE_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_PER_MTOK` | USD per million tokens for the cost estimate. Built in only for `gemini-3.1-flash-lite` ($0.25 / $1.50, standard paid tier). |
+| `AGENTEXPERIENCE_LIVE_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_PER_MTOK` | USD per million tokens for the cost estimate. Built in only for `gemini-3.1-flash-lite` ($0.25 / $1.50, standard paid tier) and `claude-haiku-4-5` ($1.00 / $5.00, Anthropic API standard rates). |
 | `AGENTEXPERIENCE_LIVE_RESULTS_DIR` | Optional. Default `experiments/AgentExperience.LiveReuse/results`. |
 
-**Keys.** The key is read from the environment, handed to the OpenAI SDK's `ApiKeyCredential`, and never stored
-anywhere else: the configuration type's `ToString` redacts it, the report carries the endpoint's host only (for Azure,
+**Keys.** The key is read from the environment, handed to the provider SDK in one place (the OpenAI SDK's
+`ApiKeyCredential`, or the Anthropic client's `ApiKey`, set explicitly together with its base URL so that no ambient
+`ANTHROPIC_*` setting is consulted), and never stored anywhere else: the configuration type's `ToString` redacts it, the report carries the endpoint's host only (for Azure,
 with the resource name replaced by `<resource>`, since an Azure host is the resource name), a provider error is
 recorded by exception type and HTTP status only (never its message or body), an unexpected failure prints its type
 only, and the raw results hold no prompt. Strategy names and model identities that reach the report are restricted or
@@ -78,7 +96,10 @@ per million input tokens, $1.50 per million output, thinking included) a full ru
 US dollar, since input tokens dominate. The 2,000,000-token cap bounds the worst case at about $3.00 (every token
 billed at the output price, plus the one call that may start just under the cap), and the run stops cleanly before
 the first call that would start past either cap. Azure costs depend on the deployment; set the two price
-variables to get an estimate in the report.
+variables to get an estimate in the report. At `claude-haiku-4-5` standard rates ($1.00 per million input tokens,
+$5.00 per million output), four times Gemini's input price, the token counts of the Gemini run above would cost about
+USD 0.30; Claude's tokenizer and behaviour differ, so expect the same order, not the same figure. The token cap bounds
+the worst case at about $10 (every token billed at the output price).
 
 ## Provider integration
 
@@ -97,6 +118,18 @@ only `IChatClient`.
 shipping floor: the experiment's graph resolves every floored package to its floor, like the test projects. Nothing in
 `src/` changes, so no row is needed in `docs/compatibility-evidence.md` (its pin rules and
 `CompatibilityPinAgreementTests` cover the shipping projects, the proof, and `tests/`/`samples/` lock files).
+
+**Anthropic** is reached through Anthropic's official C# SDK, `Anthropic` `[12.50.0]`, exact-pinned here only, and its
+own Microsoft.Extensions.AI adapter: `new AnthropicClient { ApiKey = key, BaseUrl = "https://api.anthropic.com" }
+.AsIChatClient(model, 4096)` (`Microsoft.Extensions.AI.AnthropicClientExtensions.AsIChatClient(IAnthropicClient,
+string?, int?)`). The experiment still sees only `IChatClient`, and function invocation is Microsoft.Extensions.AI's, as
+for the other providers. An OpenAI-compatible endpoint is not used for Claude: the native Messages API is the one
+Anthropic documents and supports for tool use. The package asks for `Microsoft.Extensions.AI.Abstractions` >= 10.5.1
+(and, on older frameworks only, `System.Text.Json` and `System.Net.ServerSentEvents`, which net10.0 has in the box), so
+the graph stays at the 10.10.0 floor above. Three request details differ from the other providers, all recorded in the
+report's *Settings* row or here: the Messages API requires `max_tokens`, so Anthropic calls carry a cap of 4096 output
+tokens per call (the other providers are sent none); it has no seed parameter, so none is sent; and no thinking mode is
+requested (the harness never sets `ChatOptions.Reasoning`).
 
 **One consequence of the choice, designed around rather than hidden.** Gemini 3 models attach a thought signature to
 every function call and expect it back when the call is replayed; `Microsoft.Extensions.AI.OpenAI` 10.10 does not
@@ -167,7 +200,9 @@ which is why the placebo exists. An instance with an errored trial is excluded f
 exclusions make the run `Inconclusive`; a run stopped at a budget cap is `NotEvaluated`.
 
 **Which run counts.** The pre-registration names the model (`gemini-3.1-flash-lite` for Gemini; for Azure, the
-deployment, whose reported model identity is recorded). Every run appends to `results/ledger.tsv` before its first
+deployment, whose reported model identity is recorded). A run of any other provider or model -- any Anthropic run, or
+Gemini with `GEMINI_MODEL` set to something else -- is **exploratory**: its report says so in its first lines and in the
+*Run* table, its raw results carry `"exploratory": true`, and it is never a candidate for the confirmatory result. Every run appends to `results/ledger.tsv` before its first
 model call, and again when it ends -- complete, stopped, or refused -- and each report states how many earlier ledger
 entries exist for its provider and model. The **first complete run** per provider and model is the confirmatory
 result; later runs are replications, reported and never substituted. While a run is in progress, every finished trial
@@ -176,7 +211,11 @@ the full raw results are written.
 
 **Settings.** Temperature 0 and seed 20260926 on every call. The report records the model identities the provider
 answered as. Every call uses the OpenAI SDK's default retry policy (up to three retries with backoff on 408, 429 and
-5xx), identically in every condition; a model call that takes longer than three minutes errors its trial.
+5xx), identically in every condition; a model call that takes longer than three minutes errors its trial. Anthropic
+calls instead use the Anthropic SDK's default retry policy (up to two retries with backoff on connection errors,
+timeouts, 408, 409, 429 and 5xx), also identical in every condition; that differs from the registered transport, one
+more reason an Anthropic run is exploratory. Anthropic API errors are recorded, like the others, by exception type (a
+subclass of the SDK's `AnthropicApiException`) and HTTP status only.
 
 ## Reading a report
 
@@ -196,6 +235,12 @@ Each run writes `results/<provider>-<model>-<date>.md` and a `.json` beside it (
 - **Learning phase** shows what each learning run stored; a run that did not verify stored nothing, and its instance's
   trial ran with nothing to retrieve (scored as it fell, which can only work against the hypothesis).
 - **Per-trial results** has every trial, none dropped, with the sequence of strategies it tried.
+- **Stored record names** and **Block named** show every strategy on the final attempt's `apply_migration` calls, joined
+  with ` > ` when there is more than one. The `Approach:` line lists every call of the stored run's final attempt, in
+  order, and does not mark which one succeeded (tool results are never injected), so a redundant extra call a model
+  makes after the migration went live appears on the line after the working strategy. The harness records the full
+  sequence on both sides and refuses to report if the block's differs from its store's; *Followed* is scored against
+  the first strategy on the line.
 - **Tokens and cost** splits learning from evaluation and names the price source.
 - **Limitations** is part of the result, not boilerplate: one model, one run, a synthetic task family, the answer
   reaching the block verbatim, retrieval not under test.

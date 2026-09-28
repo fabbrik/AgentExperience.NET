@@ -122,8 +122,39 @@ public sealed record LivePreregistration(
                 Required(exclusions, "maxExcludedInstances").GetInt32(),
                 amendments,
                 ComputeGitBlobId(bytes),
-                bytes.Length);
+                bytes.Length)
+            {
+                RegisteredModels = RegisteredModelsOf(Required(root, "registeredModels")),
+            };
         }
+    }
+
+    /// <summary>
+    /// <c>registeredModels</c>: provider name to the model registered for it, read only. A value that is a model
+    /// identifier (no whitespace) registers exactly that model; a value that is a description, such as Azure's "the
+    /// deployment named by AZURE_OPENAI_DEPLOYMENT, ...", registers whatever model the run names for that provider.
+    /// <c>confirmatoryRunRule</c> is the rule, not a provider, and is not included.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> RegisteredModels { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether <paramref name="provider"/> and <paramref name="model"/> are registered for a confirmatory run. Any other
+    /// model run is exploratory.
+    /// </summary>
+    public bool IsRegistered(string provider, string model) =>
+        RegisteredModels.TryGetValue(provider, out var registered)
+        && (registered.Any(char.IsWhiteSpace) || string.Equals(registered, model, StringComparison.Ordinal));
+
+    private static Dictionary<string, string> RegisteredModelsOf(JsonElement registered)
+    {
+        if (registered.ValueKind != JsonValueKind.Object)
+        {
+            throw new PreregistrationException("preregistration.json's 'registeredModels' must be an object.");
+        }
+
+        return registered.EnumerateObject()
+            .Where(property => property.Name != "confirmatoryRunRule")
+            .ToDictionary(property => property.Name, property => String(registered, property.Name), StringComparer.Ordinal);
     }
 
     /// <summary>How many amendments were made after results already existed.</summary>

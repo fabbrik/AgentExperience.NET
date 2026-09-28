@@ -29,6 +29,14 @@
         "resolved": "3.1.4",
         "contentHash": "5mj99LvCqrq3CNi06xYdyIAXOEh+5b33F2nErCzI5zWiDdLHXiPXEWFSUAF8zlIv0ZWqjZNCwHTQeAPYbF3pCg=="
       },
+      "Anthropic": {
+        "type": "Transitive",
+        "resolved": "12.50.0",
+        "contentHash": "BBtKetn0gsVeaFfRHcqW5hhUwWdNuIp4lTCvrd4roN6HivnJqrKBbEhPWjA/a5eypg2rvGdUr/Z5qzV6Fr7+Bg==",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "10.5.1"
+        }
+      },
       "dbup-core": {
         "type": "Transitive",
         "resolved": "6.1.1",
@@ -382,6 +390,7 @@
           "AgentExperience.Core": "[0.1.0-preview.2, )",
           "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.2, )",
           "AgentExperience.Sample.EndToEnd": "[0.1.0-preview.2, )",
+          "Anthropic": "[12.50.0, 12.50.0]",
           "Microsoft.Extensions.AI.OpenAI": "[10.10.0, 10.10.0]",
           "Microsoft.Extensions.DependencyInjection": "[10.0.12, 10.0.12]"
         }

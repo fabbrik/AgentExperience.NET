@@ -35,6 +35,7 @@ public static class LiveReuseReport
         {
             schema = "agentexperience-live-reuse-results@1",
             scripted = IsScripted(result),
+            exploratory = result.Exploratory,
             provider = result.Descriptor.Provider,
             endpointHost = result.Descriptor.EndpointHost,
             requestedModel = result.Descriptor.RequestedModel,
@@ -49,7 +50,7 @@ public static class LiveReuseReport
                 amendmentsAfterResults = design.AmendmentsAfterResults,
             },
             taskSetVersion = result.TaskSetVersion,
-            settings = new { temperature = design.Temperature, seed = design.Seed, seedSent = result.Descriptor.SeedSent, design.LearningAttemptLimit, design.EvaluationAttemptLimit, design.ToolCallsPerAttempt },
+            settings = new { temperature = design.Temperature, seed = design.Seed, seedSent = result.Descriptor.SeedSent, maxOutputTokens = result.Descriptor.MaxOutputTokens, design.LearningAttemptLimit, design.EvaluationAttemptLimit, design.ToolCallsPerAttempt },
             budget = result.Budget,
             complete = result.Complete,
             stopReason = result.StopReason,
@@ -91,6 +92,14 @@ public static class LiveReuseReport
             Line();
         }
 
+        if (result.Exploratory)
+        {
+            Line($"> **EXPLORATORY RUN.** `{d.Provider}` / `{d.RequestedModel}` is not a provider and model the pre-registration registers");
+            Line("> (`registeredModels` in `preregistration.json`), and its rule is that \"a run of any other model is exploratory and says so\".");
+            Line("> The design, the gate and the verdict are exactly the pre-registered ones, but this run is not a candidate for the confirmatory result.");
+            Line();
+        }
+
         Line($"**Overall conclusion under the pre-registered rule: {result.Conclusion}.** {ConclusionSentence(result)}");
         Line();
         Line("Story 4.4's reuse methodology run against a real model: the model first works two learning tickets per service with memory");
@@ -107,14 +116,16 @@ public static class LiveReuseReport
         Line("| --- | --- |");
         Line($"| Provider | {d.Provider}, host `{d.EndpointHost}` (the endpoint's host only) |");
         Line($"| Model requested | `{d.RequestedModel}` |");
+        Line($"| Registration | {Registration(result)} |");
         Line($"| Model identities the provider reported | {(result.ModelIds.Count == 0 ? "none reported" : string.Join(", ", result.ModelIds.Select(id => "`" + Safe(id) + "`")))} |");
-        Line($"| Settings | temperature {Number(design.Temperature)}, seed {(d.SeedSent ? $"{design.Seed} (requested on every call; honouring the seed is the provider's)" : $"{design.Seed} not sent: this provider rejects the field (amendment 1)")} |");
+        Line($"| Settings | temperature {Number(design.Temperature)}, seed {(d.SeedSent ? $"{design.Seed} (requested on every call; honouring the seed is the provider's)" : $"{design.Seed} not sent: this provider does not accept a seed{SeedAmendment(d)}")}"
+            + (d.MaxOutputTokens is { } cap ? $", max output tokens {cap.ToString(CultureInfo.InvariantCulture)} per call (the provider requires a cap)" : string.Empty) + " |");
         Line($"| Pre-registration | `preregistration.json` at git blob `{design.GitBlobId}` ({design.ByteCount} bytes), registered on {design.RegisteredOn} against commit `{design.RegisteredAgainstCommit}`; check with `git hash-object experiments/AgentExperience.LiveReuse/preregistration.json` |");
         Line($"| Amendments | {(design.Amendments.Count == 0 ? "none: the design is exactly as first registered" : $"{design.Amendments.Count} recorded, {design.AmendmentsAfterResults} made after results existed (listed below)")} |");
         Line($"| Task set | `{result.TaskSetVersion}`, {design.Instances} instances, hidden-assignment digest `{design.HiddenAssignmentSha256}` |");
         Line($"| Attempt limits | learning {design.LearningAttemptLimit}, evaluation {design.EvaluationAttemptLimit}; at most {design.ToolCallsPerAttempt} tool calls per attempt |");
         Line($"| Budget cap | {result.Budget.MaxModelCalls} model calls, {result.Budget.MaxTotalTokens} tokens; used {result.Total.ModelCalls} calls, {result.Total.TotalTokens} tokens |");
-        Line($"| Earlier runs | {(result.EarlierLedgerEntries is { } earlier ? $"{earlier} earlier ledger entr{(earlier == 1 ? "y" : "ies")} for this provider and model in `results/ledger.tsv`; the pre-registered confirmatory run is the first complete one" : "not recorded (no ledger for this run)")} |");
+        Line($"| Earlier runs | {(result.EarlierLedgerEntries is { } earlier ? $"{earlier} earlier ledger entr{(earlier == 1 ? "y" : "ies")} for this provider and model in `results/ledger.tsv`; {(result.Exploratory ? "this model is not registered, so no run of it is a candidate for the confirmatory result" : "the pre-registered confirmatory run is the first complete one")}" : "not recorded (no ledger for this run)")} |");
         Line($"| Run status | {(result.Complete ? "complete: every learning run and every trial ran" : "STOPPED: " + result.StopReason + ". No verdict is evaluated for a partial run.")} |");
         Line($"| Started (UTC) | {result.StartedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)} |");
         Line();
@@ -177,7 +188,7 @@ public static class LiveReuseReport
         Line("| ---: | ---: | --- | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: |");
         foreach (var run in result.Learning)
         {
-            Line($"| {run.Sequence} | {run.Instance} | {run.Service} | {run.Condition} | {run.AcceptedStrategy} | {Status(run)} | {YesNo(run.Verified)} | {Dash(run.FailedAttempts)} | {Tried(run)} | {run.StoredStrategy ?? "-"} | {run.Usage.ModelCalls} | {run.Usage.InputTokens} | {run.Usage.OutputTokens} |");
+            Line($"| {run.Sequence} | {run.Instance} | {run.Service} | {run.Condition} | {run.AcceptedStrategy} | {Status(run)} | {YesNo(run.Verified)} | {Dash(run.FailedAttempts)} | {Tried(run)} | {LiveReuseExperiment.Sequence(run.StoredStrategies, "-")} | {run.Usage.ModelCalls} | {run.Usage.InputTokens} | {run.Usage.OutputTokens} |");
         }
 
         Line();
@@ -191,7 +202,7 @@ public static class LiveReuseReport
         foreach (var trial in result.Trials)
         {
             Line($"| {trial.Sequence} | {trial.Instance} | {trial.Service} | {trial.Condition} | {trial.AcceptedStrategy} | {Status(trial)} | {YesNo(trial.Verified)} | {Dash(trial.FailedAttempts)} | {Tried(trial)} | "
-                + $"{trial.BlockStrategy ?? "-"} | {YesNo(trial.FollowedBlock)} | {trial.ToolCalls} | {trial.UnauthorizedRequests} | {trial.Usage.ModelCalls} | {trial.Usage.InputTokens} | {trial.Usage.OutputTokens} | {trial.LatencyMilliseconds.ToString("0", CultureInfo.InvariantCulture)} |");
+                + $"{LiveReuseExperiment.Sequence(trial.BlockStrategies, "-")} | {YesNo(trial.FollowedBlock)} | {trial.ToolCalls} | {trial.UnauthorizedRequests} | {trial.Usage.ModelCalls} | {trial.Usage.InputTokens} | {trial.Usage.OutputTokens} | {trial.LatencyMilliseconds.ToString("0", CultureInfo.InvariantCulture)} |");
         }
 
         Line();
@@ -273,11 +284,12 @@ public static class LiveReuseReport
 
         yield return result.Descriptor.SeedSent
             ? "One model, one provider, one run. Temperature 0 and a fixed seed are requested, but neither provider guarantees determinism, and a model version change can change every number. Re-run before relying on a result."
-            : "One model, one provider, one run. Temperature 0 is requested and no seed is sent (this provider rejects the field; amendment 1), so nothing asks for determinism beyond temperature, and a model version change can change every number. Re-run before relying on a result.";
+            : $"One model, one provider, one run. Temperature 0 is requested and no seed is sent (this provider does not accept one{(result.Descriptor.Provider == "gemini" ? "; amendment 1" : string.Empty)}), so nothing asks for determinism beyond temperature, and a model version change can change every number. Re-run before relying on a result.";
         yield return $"{result.Design.Instances} instances. The sign test can detect only a large, consistent effect; NoDemonstratedBenefit here is not evidence that there is no smaller effect.";
         yield return "The sign test treats the instance pairs as independent. Each hidden strategy is the answer for two services, and a near-deterministic model with a fixed search order will tend to score both alike, so the effective sample is smaller than the instance count and the p-value is optimistic. The inference is over this fixed, pre-committed assignment, not over tasks in general.";
         yield return "A synthetic task family: a simulated database whose accepted rollout strategy is a stand-in for tacit, environment-specific knowledge. Real tasks usually leave the answer partly inferable, which would shrink the gap between the conditions.";
         yield return "The working strategy reaches the block verbatim, on the Approach: line, through the story 6.2 ApproachArguments allowlist. This measures whether a model acts on a Historical Reference labelled as untrusted reference material, not whether it can generalize from vaguer lessons.";
+        yield return "The Approach: line lists every call of the stored run's final attempt, in order, and does not mark which one succeeded (tool results are never injected). A redundant extra call a model makes after the migration went live therefore appears on the line after the working strategy; the harness records the full sequence (`Stored record names`, `Block named`, joined with \" > \"), checks the block against it, and scores `Followed` against the first strategy on the line.";
         yield return "Retrieval is not under test: records are scoped per service and each scope holds one record, so a memory-enabled trial always retrieves its own service's record. Retrieval quality over a crowded store is a separate question.";
         yield return "The negative control's record is stale (verified against a database that has since changed), not irrelevant; an irrelevant record is a different control and was not run.";
         yield return "Tokens are as the provider reports them; whether thinking tokens are included in the output count is the provider's accounting. Cost is an estimate from list prices. Latency includes the network and is never gated.";
@@ -296,6 +308,14 @@ public static class LiveReuseReport
     }
 
     private static bool IsScripted(LiveExperimentResult result) => result.Descriptor.Provider == "scripted";
+
+    /// <summary>Amendment 1 is the record of Gemini rejecting the field; other providers without a seed never had one to drop.</summary>
+    private static string SeedAmendment(RunDescriptor descriptor) => descriptor.Provider == "gemini" ? " (amendment 1)" : string.Empty;
+
+    private static string Registration(LiveExperimentResult result) =>
+        IsScripted(result) ? "scripted: not a model run"
+        : result.Exploratory ? "**EXPLORATORY**: this provider and model are not in the pre-registration's `registeredModels`; reported, never confirmatory"
+        : "registered: this provider and model are in the pre-registration's `registeredModels`";
 
     internal static double? Cost(RunDescriptor descriptor, UsageTotals usage) =>
         descriptor.InputUsdPerMillionTokens is { } input && descriptor.OutputUsdPerMillionTokens is { } output

@@ -47,6 +47,7 @@ public sealed class HostAndReportTests : IDisposable
     [Theory]
     [InlineData("gemini")]
     [InlineData("azure")]
+    [InlineData("anthropic")]
     public async Task A_run_writes_the_report_and_raw_results_with_no_key_and_only_the_endpoint_host(string provider)
     {
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -56,6 +57,7 @@ public sealed class HostAndReportTests : IDisposable
             ["AZURE_OPENAI_ENDPOINT"] = "https://contoso-private-resource.openai.azure.com/openai/v1/",
             ["AZURE_OPENAI_API_KEY"] = FakeKey,
             ["AZURE_OPENAI_DEPLOYMENT"] = "gpt-4.1-mini",
+            ["ANTHROPIC_API_KEY"] = FakeKey,
             ["AGENTEXPERIENCE_LIVE_RESULTS_DIR"] = _directory,
         };
         var output = new StringWriter();
@@ -65,7 +67,7 @@ public sealed class HostAndReportTests : IDisposable
 
         Assert.Equal(LiveReuseHost.ExitSuccess, exit);
         var files = Directory.GetFiles(_directory).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList();
-        var model = provider == "gemini" ? "gemini-3.1-flash-lite" : "gpt-4.1-mini";
+        var model = provider switch { "gemini" => "gemini-3.1-flash-lite", "azure" => "gpt-4.1-mini", _ => "claude-haiku-4-5" };
         Assert.Equal([$"{provider}-{model}-2026-09-26.json", $"{provider}-{model}-2026-09-26.md", "ledger.tsv"], files);
 
         var everything = string.Join("\n", Directory.GetFiles(_directory).Select(File.ReadAllText)) + output + error;
@@ -73,7 +75,8 @@ public sealed class HostAndReportTests : IDisposable
         Assert.DoesNotContain("/openai/v1", everything, StringComparison.Ordinal);
         Assert.DoesNotContain("/v1beta/openai", everything, StringComparison.Ordinal);
         // Gemini's host is public; an Azure host is the resource name, so only its domain is published.
-        Assert.Contains(provider == "gemini" ? "generativelanguage.googleapis.com" : "<resource>.openai.azure.com", everything, StringComparison.Ordinal);
+        var host = provider switch { "gemini" => "generativelanguage.googleapis.com", "azure" => "<resource>.openai.azure.com", _ => "api.anthropic.com" };
+        Assert.Contains(host, everything, StringComparison.Ordinal);
         Assert.DoesNotContain("contoso-private-resource", everything, StringComparison.Ordinal);
 
         // A second run the same day never overwrites the first, and the ledger records both, the second as a replication.
@@ -84,6 +87,61 @@ public sealed class HostAndReportTests : IDisposable
         Assert.Contains("\tstarted\t", ledger[1], StringComparison.Ordinal);
         Assert.Contains("\tcomplete: ", ledger[2], StringComparison.Ordinal);
         Assert.Contains("1 earlier ledger entry", File.ReadAllText(Directory.GetFiles(_directory, "*-run2.md").Single()), StringComparison.Ordinal);
+
+        // Gemini's default model and any Azure deployment are registered; Anthropic is not, so its run says it is exploratory.
+        var exploratory = provider == "anthropic";
+        var report = File.ReadAllText(Path.Combine(_directory, $"{provider}-{model}-2026-09-26.md"));
+        Assert.Equal(exploratory, report.Contains("EXPLORATORY RUN", StringComparison.Ordinal));
+        Assert.Contains($"\"exploratory\": {(exploratory ? "true" : "false")}", File.ReadAllText(Path.Combine(_directory, $"{provider}-{model}-2026-09-26.json")), StringComparison.Ordinal);
+        Assert.Equal(exploratory, output.ToString().Contains("exploratory", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("gemini", "gemini-3.1-flash-lite", false)]
+    [InlineData("gemini", "gemini-3.5-flash", true)]
+    [InlineData("azure", "gpt-4.1-mini", false)]
+    [InlineData("anthropic", "claude-haiku-4-5", true)]
+    public async Task A_run_of_a_model_the_pre_registration_does_not_register_is_labelled_exploratory(string provider, string model, bool exploratory)
+    {
+        var result = await LiveReuseExperiment.RunAsync(new LiveExperimentOptions
+        {
+            Model = new ScriptedOperatorModel(),
+            Descriptor = new RunDescriptor(provider, model, "example.invalid", null, null, "none") { SeedSent = false },
+            Clock = new SteppingClock(),
+        }) with { EarlierLedgerEntries = 0 };
+
+        Assert.Equal(exploratory, result.Exploratory);
+
+        var markdown = LiveReuseReport.Markdown(result);
+        var head = string.Join("\n", markdown.Split('\n').Take(8));
+        Assert.Equal(exploratory, head.Contains("> **EXPLORATORY RUN.**", StringComparison.Ordinal));
+        Assert.Contains(exploratory ? "| Registration | **EXPLORATORY**" : "| Registration | registered:", markdown, StringComparison.Ordinal);
+        Assert.Equal(!exploratory, markdown.Contains("the pre-registered confirmatory run is the first complete one", StringComparison.Ordinal));
+        Assert.Equal(exploratory, markdown.Contains("no run of it is a candidate for the confirmatory result", StringComparison.Ordinal));
+
+        var json = System.Text.Json.JsonDocument.Parse(LiveReuseReport.Json(result));
+        Assert.Equal(exploratory, json.RootElement.GetProperty("exploratory").GetBoolean());
+    }
+
+    [Fact]
+    public async Task A_scripted_run_is_labelled_scripted_not_exploratory()
+    {
+        var result = await TestSupport.RunScriptedAsync(new ScriptedOperatorModel());
+        Assert.False(result.Exploratory);
+        Assert.DoesNotContain("EXPLORATORY", LiveReuseReport.Markdown(result), StringComparison.Ordinal);
+        Assert.Contains("| Registration | scripted:", LiveReuseReport.Markdown(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_registered_models_are_read_from_the_pre_registration()
+    {
+        var design = LivePreregistration.ReadEmbedded();
+        Assert.Equal(["azure", "gemini"], design.RegisteredModels.Keys.Order(StringComparer.Ordinal));
+        Assert.True(design.IsRegistered("gemini", "gemini-3.1-flash-lite"));
+        Assert.False(design.IsRegistered("gemini", "gemini-3.5-flash"));
+        Assert.True(design.IsRegistered("azure", "any-deployment"));
+        Assert.False(design.IsRegistered("anthropic", "claude-haiku-4-5"));
+        Assert.False(design.IsRegistered("confirmatoryRunRule", "x"));
     }
 
     [Fact]

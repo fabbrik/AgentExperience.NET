@@ -115,6 +115,10 @@ public static class LiveReuseHost
 
         var budget = configuration.Budget ?? new LiveBudget(design.DefaultMaxModelCalls, design.DefaultMaxTotalTokens);
         await output.WriteLineAsync($"Live reuse experiment: {configuration}; budget {budget.MaxModelCalls} calls / {budget.MaxTotalTokens} tokens.").ConfigureAwait(false);
+        if (!design.IsRegistered(descriptor.Provider, descriptor.RequestedModel))
+        {
+            await output.WriteLineAsync("This provider and model are not registered in preregistration.json, so this run is exploratory and its report says so.").ConfigureAwait(false);
+        }
 
         // The ledger is written BEFORE the first model call, and every run -- complete, stopped, refused -- adds a line.
         // Only the first complete run per provider and model is the pre-registered confirmatory result, so a run that

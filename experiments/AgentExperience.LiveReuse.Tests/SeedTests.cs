@@ -7,7 +7,7 @@ namespace AgentExperience.LiveReuse.Tests;
 public sealed class SeedTests
 {
     [Fact]
-    public void Gemini_does_not_send_the_seed_and_azure_does()
+    public void Gemini_and_anthropic_do_not_send_the_seed_and_azure_does()
     {
         var gemini = LiveConfiguration.Read(name => name == "GEMINI_API_KEY" ? "fake-key" : null, 600, 2_000_000).Configuration!;
         var azure = LiveConfiguration.Read(
@@ -21,8 +21,16 @@ public sealed class SeedTests
             600,
             2_000_000).Configuration!;
 
+        var anthropic = LiveConfiguration.Read(name => name == "ANTHROPIC_API_KEY" ? "fake-key" : null, 600, 2_000_000).Configuration!;
+
         Assert.False(gemini.Describe().SeedSent);
         Assert.True(azure.Describe().SeedSent);
+        Assert.False(anthropic.Describe().SeedSent);
+
+        // Only Anthropic is sent an output cap: its Messages API requires max_tokens. The others' requests are unchanged.
+        Assert.Null(gemini.Describe().MaxOutputTokens);
+        Assert.Null(azure.Describe().MaxOutputTokens);
+        Assert.Equal(4096, anthropic.Describe().MaxOutputTokens);
     }
 
     [Theory]
