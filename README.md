@@ -62,9 +62,9 @@ The terms are defined in the [glossary](docs/guide/README.md#glossary).
 
 ## Install
 
-Six packages, all published on nuget.org as `0.1.0-preview.3` (`AgentExperience.Storage.InMemory` is new in this
-preview, and is for development and tests only). `0.1.0-preview.3` targets `net8.0`, `net9.0` and `net10.0`; from the
-next preview on, each targets `net10.0` only.
+Six packages, all published on nuget.org as `0.1.0-preview.4` (`AgentExperience.Storage.InMemory` is for development
+and tests only). Each targets `net10.0` only; `0.1.0-preview.3` is the last preview that also targets `net8.0` and
+`net9.0`.
 
 | Package | What it is for |
 | --- | --- |
@@ -90,7 +90,7 @@ stores; it is for development and tests only, and keeps nothing across a restart
 
 This wires steps 1 to 6 for one MAF agent: apply the schema, register the services, inject past lessons before each
 run, and capture, verify and store each run after it (step 7 is in [Reuse feedback](docs/guide/reuse-feedback.md)).
-It compiles against `0.1.0-preview.3`. Before you run it, create the two database roles it names (a few lines of SQL,
+It compiles against `0.1.0-preview.4`. Before you run it, create the two database roles it names (a few lines of SQL,
 in [Deployment](docs/guide/deployment.md#creating-the-roles)); for a throwaway local database with a single role,
 skip the `ApplyApplicationRolePrivilegesAsync` call, which refuses the role running it. You supply four things:
 `chatClient` (any `Microsoft.Extensions.AI` `IChatClient`), two connection strings, and `EvidenceFor`, which turns
@@ -194,7 +194,7 @@ credentials, see [the sample](#run-the-sample).
 
 ## Status: a preview, not production ready
 
-`0.1.0-preview.3` is a preview. It claims no production readiness, and public APIs may change between previews (each
+`0.1.0-preview.4` is a preview. It claims no production readiness, and public APIs may change between previews (each
 change is a reviewed diff against a checked-in baseline). Use it to evaluate the approach, not to hold data you
 cannot afford to lose.
 
@@ -211,7 +211,7 @@ cannot afford to lose.
   Read [Known limits and documented boundaries](docs/known-limits.md) for the exact statement of each, and
   [Limits history](docs/limits-history.md) for what earlier previews fixed.
 - **Supported:** .NET 10 (`net10.0` only); PostgreSQL 15 to 18 (not 14); `Microsoft.Agents.AI` 1.22.0 and any later
-  1.x. `net8.0` and `net9.0` are dropped from the next preview on, ahead of .NET 8 and 9 leaving support on
+  1.x. `net8.0` and `net9.0` were dropped in `0.1.0-preview.4`, ahead of .NET 8 and 9 leaving support on
   10 November 2026; a host on .NET 8 or 9 stays on `0.1.0-preview.3`. See
   [Compatibility evidence](docs/compatibility-evidence.md).
 - **Evidence of benefit:** the end-to-end sample and the reuse baseline use deterministic fixtures and scripted models,

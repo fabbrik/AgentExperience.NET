@@ -6,7 +6,7 @@ project is and a quick start; come here when you need the exact behaviour, the o
 AgentExperience.NET is a **preview**. Read [Known limits and documented boundaries](../known-limits.md) before you
 rely on any guarantee described here.
 
-These pages describe the `main` branch, which the published `0.1.0-preview.3` packages match; anything added to
+These pages describe the `main` branch, which the published `0.1.0-preview.4` packages match; anything added to
 `main` after that release is listed in the [changelog's Unreleased section](../../CHANGELOG.md#unreleased). Code snippets use
 placeholder variables (`authorization`, `scope`, `hostScope`, `sanitizationOptions`, `captureLimits`, `logger`, …)
 for values you build as in the [quick start](../../README.md#quick-start).
