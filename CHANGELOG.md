@@ -6,6 +6,13 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.4
+
+The .NET 10 release: every package now targets `net10.0` only. Nothing else changes for a host already on .NET 10;
+a host on .NET 8 or 9 stays on `0.1.0-preview.3`.
+
 ### Breaking: .NET 10 only
 
 - **All six packages now target `net10.0` only.** `net8.0` and `net9.0` are gone from every package, and every test
