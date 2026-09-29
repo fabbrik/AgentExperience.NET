@@ -12,8 +12,8 @@ text search (`IExperienceCandidateSource`), sharing grants and their access log 
 journaled schema migrator, deletion and retention, and opt-in crypto-shredding.
 
 Requires `Npgsql` **10.0.3**, `dbup-postgresql` **7.0.1**, `dbup-core` **6.1.1**, and
-`Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12**, or any later release in the same major; on
-`net8.0` only, also `System.Text.Json` **10.0.12** or later. Targets `net8.0`, `net9.0` and `net10.0`. Tested against
+`Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12**, or any later release in the same major. Targets
+`net10.0`. Tested against
 **PostgreSQL 15, 16, 17 and 18**; PostgreSQL 14 is not supported, because `0005_create_experience_grants` uses
 PostgreSQL 15 syntax. No EF Core, Dapper, Pgvector, or pgvector extension: vectors are the separate
 `AgentExperience.Storage.Postgres.Vectors` package.

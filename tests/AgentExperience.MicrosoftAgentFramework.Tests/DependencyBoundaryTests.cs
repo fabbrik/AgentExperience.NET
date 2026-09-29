@@ -14,8 +14,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Tests;
 /// <para>
 /// This file exists because story 4.1 gave the adapter an <c>ActivitySource</c> and a <c>Meter</c>,
 /// and the obvious way to do that would have been to reach for the OpenTelemetry SDK. Both types
-/// ship in the shared framework instead (on <c>net9.0</c>, MAF's own graph may also bring a newer
-/// <c>System.Diagnostics.DiagnosticSource</c> package, which is still not one this adapter declares), so the adapter's declared package set is
+/// ship in the shared framework instead, so the adapter's declared package set is
 /// unchanged -- and this test is what keeps it that way when the next story adds an exporter-shaped
 /// temptation.
 /// </para>

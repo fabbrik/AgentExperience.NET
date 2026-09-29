@@ -161,8 +161,8 @@ Documented boundaries table. The Known limits table is now empty.
   (a PostgreSQL 14 database upgraded in place would keep it for life); PostgreSQL 14 itself reaches end of life on
   12 November 2026. The row left the table because what remains is not a limit of this library but an upstream
   end-of-life date, and a major bound on a dependency that has no next major yet; neither restricts a host on a
-  supported PostgreSQL or any MAF release that exists. `net8.0` and `net9.0` also leave support on 10 November 2026,
-  and the first preview published after that date drops them. See
+  supported PostgreSQL or any MAF release that exists. `net8.0` and `net9.0` also leave support on 10 November 2026;
+  the first preview after `0.1.0-preview.3` drops them, ahead of that date (see the [changelog](../CHANGELOG.md)). See
   [Compatibility evidence](compatibility-evidence.md#supported-matrix).
 - **KL-14** (exact pins blocking a newer MAF) is resolved by moving the supported pin to `Microsoft.Agents.AI`
   1.22.0, with `Microsoft.Extensions.DependencyInjection.Abstractions` `[10.0.12]` in Core and both stores and

@@ -32,16 +32,12 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
-      # The pinned SDK builds every target framework; the 8.0 and 9.0 SDKs are installed beside it, for their runtimes,
-      # so the net8.0 and net9.0 test runs have a runtime to run on. The SDK in use is still exactly global.json's
-      # (asserted below).
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime every project targets, so nothing
+      # else is installed.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -59,9 +55,8 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
-      # Every test project runs once per target framework it builds (net8.0, net9.0 and net10.0; the sample, its
-      # tests and the reuse baseline are net10.0 only), against the default PostgreSQL major. The postgres
-      # job below repeats the storage suites on every supported major.
+      # Every test project runs on the one target framework, net10.0, against the default PostgreSQL major. The
+      # postgres job below repeats the storage suites on every supported major.
       - name: Test
         run: dotnet test --no-build --configuration Release
 
@@ -114,16 +109,12 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
-      # The pinned SDK builds every target framework; the 8.0 and 9.0 SDKs are installed beside it, for their runtimes,
-      # so the net8.0 and net9.0 test runs have a runtime to run on. The SDK in use is still exactly global.json's
-      # (asserted below).
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime every project targets, so nothing
+      # else is installed.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -155,9 +146,9 @@ jobs:
           retention-days: 14
 
   # The PostgreSQL matrix (story 6.3, KL-13): the storage suites, the pgvector proof and the sample's PostgreSQL
-  # mode, on every supported major (every target framework; the sample tests are net10.0 only). One variable picks both the pgvector image and
-  # the stock one, and each suite asserts the server it reached reports that major, so a leg cannot quietly
-  # run the default. The list must equal PostgresTestImage.SupportedMajors; a release test checks it.
+  # mode, on every supported major. One variable picks both the pgvector image and the stock one, and each suite
+  # asserts the server it reached reports that major, so a leg cannot quietly run the default. The list must equal
+  # PostgresTestImage.SupportedMajors; a release test checks it.
   postgres:
     runs-on: ubuntu-latest
     strategy:
@@ -179,16 +170,12 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
-      # The pinned SDK builds every target framework; the 8.0 and 9.0 SDKs are installed beside it, for their runtimes,
-      # so the net8.0 and net9.0 test runs have a runtime to run on. The SDK in use is still exactly global.json's
-      # (asserted below).
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime every project targets, so nothing
+      # else is installed.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -258,16 +245,12 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
-      # The pinned SDK builds every target framework; the 8.0 and 9.0 SDKs are installed beside it, for their runtimes,
-      # so the net8.0 and net9.0 test runs have a runtime to run on. The SDK in use is still exactly global.json's
-      # (asserted below).
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime every project targets, so nothing
+      # else is installed.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
@@ -308,16 +291,12 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
-      # The pinned SDK builds every target framework; the 8.0 and 9.0 SDKs are installed beside it, for their runtimes,
-      # so the net8.0 and net9.0 test runs have a runtime to run on. The SDK in use is still exactly global.json's
-      # (asserted below).
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime every project targets, so nothing
+      # else is installed.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 

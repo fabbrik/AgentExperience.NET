@@ -18,8 +18,8 @@ storage ports: the Experience Record store with its audited lifecycle (`InMemory
 `IExperienceReuseFeedbackStore`). All three are thread-safe.
 
 Requires `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12** and
-`Microsoft.Extensions.Hosting.Abstractions` **10.0.3**, or any later release in the same major. Targets `net8.0`,
-`net9.0` and `net10.0`. No dependency on Core, Npgsql or MAF.
+`Microsoft.Extensions.Hosting.Abstractions` **10.0.3**, or any later release in the same major. Targets
+`net10.0`. No dependency on Core, Npgsql or MAF.
 
 ## Registering it
 
@@ -59,7 +59,7 @@ var feedback = new InMemoryExperienceReuseFeedbackStore();
 ## What it guarantees
 
 It passes the same [store conformance suite](https://github.com/fabbrik/AgentExperience.NET/tree/main/tests/AgentExperience.Storage.Conformance)
-as the PostgreSQL store, on every target framework: create-only records with IDs unique across every scope;
+as the PostgreSQL store: create-only records with IDs unique across every scope;
 exact-scope reads that reveal nothing about another scope; idempotent lifecycle commits keyed on the event ID; the
 optimistic revision, prior-status and supersession guards, under concurrency too; ordered, paged history; and feedback
 idempotency. It validates every request with the PostgreSQL store's own rules, compiled from the same source file, so

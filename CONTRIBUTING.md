@@ -20,14 +20,13 @@ design feedback on open issues, and focused pull requests.
 
 ## Development
 
-Requires the .NET SDK pinned in `global.json` (10.0.302, or a later feature band) and the .NET 8 and .NET 9 runtimes,
-because every test project that exercises the packages runs on `net8.0`, `net9.0` and `net10.0`.
+Requires the .NET SDK pinned in `global.json` (10.0.302, or a later feature band). Every project targets `net10.0`
+only, so no other runtime is needed.
 
 ```bash
 dotnet restore
 dotnet build
 dotnet test                                    # everything; the storage tests need Docker
-dotnet test --framework net10.0                # only the net10.0 part
 ```
 
 **Docker.** The storage suites, the pgvector compatibility proof (`PostgresVectorProof`) and the sample's PostgreSQL

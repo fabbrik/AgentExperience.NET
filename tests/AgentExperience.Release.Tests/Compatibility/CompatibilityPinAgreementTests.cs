@@ -186,11 +186,10 @@ public sealed class CompatibilityPinAgreementTests
         foreach (var project in ShippingProjects())
         {
             var declared = DeclaredReferences(project);
-            var only = DeclaredFrameworkConditions(project);
             foreach (var (framework, packages) in ResolvedPackages(project))
             {
                 foreach (var (package, version) in declared
-                    .Where(d => (BareVersion.IsMatch(d.Value) || MajorBoundedRange.IsMatch(d.Value)) && AppliesTo(only, d.Key, framework))
+                    .Where(d => BareVersion.IsMatch(d.Value) || MajorBoundedRange.IsMatch(d.Value))
                     .Select(d => (d.Key, LowerBound(d.Value))))
                 {
                     checkedFloors++;
@@ -226,19 +225,6 @@ public sealed class CompatibilityPinAgreementTests
             .GroupBy(reference => reference.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => LowerBound(group.First().Value), StringComparer.OrdinalIgnoreCase);
 
-        // A floor declared for one framework only (the net8.0 System.Text.Json and Microsoft.Bcl.Memory) is a
-        // claim about that framework only; elsewhere the package is the shared framework's, or a dependency's.
-        // A package some shipping project declares unconditionally is a floor on every framework, whatever another
-        // project conditions; only a package every declaring project conditions is limited to those frameworks.
-        var unconditional = ShippingProjects()
-            .SelectMany(project => DeclaredReferences(project).Keys.Where(package => !DeclaredFrameworkConditions(project).ContainsKey(package)))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var only = ShippingProjects()
-            .SelectMany(project => DeclaredFrameworkConditions(project))
-            .Where(reference => !unconditional.Contains(reference.Key))
-            .GroupBy(reference => reference.Key, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.SelectMany(reference => reference.Value).ToHashSet(StringComparer.Ordinal), StringComparer.OrdinalIgnoreCase);
-
         var lockFiles = new[] { "tests", "samples", "experiments" }
             .SelectMany(root => Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, root)))
             .Select(directory => Path.Combine(directory, "packages.lock.json"))
@@ -256,7 +242,7 @@ public sealed class CompatibilityPinAgreementTests
             {
                 foreach (var (package, floor) in floors)
                 {
-                    if (!AppliesTo(only, package, framework) || !packages.TryGetValue(package, out var resolved))
+                    if (!packages.TryGetValue(package, out var resolved))
                     {
                         continue;
                     }
@@ -288,56 +274,32 @@ public sealed class CompatibilityPinAgreementTests
     }
 
     /// <summary>
-    /// Story 7.2 (KL-13): a shipping reference may be conditioned on one target framework (the net8.0-only
-    /// packages that supply APIs the .NET 8 shared framework lacks), but only in the one shape the floor checks
-    /// above understand, naming a framework the build targets. Anything else would make a floor apply, or not
-    /// apply, somewhere these tests do not look. And such a reference must be a direct reference in exactly its
-    /// framework's section of the lock file, and in no other.
+    /// No shipping reference is conditional: every package targets the same frameworks, and every floor applies to
+    /// all of them, so a floor is never limited to somewhere the checks above do not look. The last conditional ones,
+    /// the net8.0-only System.Text.Json and Microsoft.Bcl.Memory, went when the packages became net10.0 only. A
+    /// condition on the reference, its ItemGroup or anything further up (a Choose/When) counts.
     /// </summary>
     [Fact]
-    public void Every_conditional_shipping_reference_names_one_target_framework_and_resolves_only_there()
+    public void No_shipping_reference_is_conditional()
     {
         var wrong = new List<string>();
-        var conditional = 0;
+        var checkedReferences = 0;
 
         foreach (var project in ShippingProjects())
         {
             var document = XDocument.Load(Path.Combine(ProjectDirectory(project), project + ".csproj"));
             foreach (var reference in document.Descendants("PackageReference"))
             {
-                var condition = ConditionOf(reference);
-                if (condition is null)
+                checkedReferences++;
+                if (ConditionOf(reference) is { } condition)
                 {
-                    continue;
-                }
-
-                conditional++;
-                var package = reference.Attribute("Include")!.Value;
-                var match = FrameworkCondition.Match(condition);
-                if (!match.Success || !ShippedFrameworks().Contains(match.Groups["framework"].Value))
-                {
-                    wrong.Add($"{project}: {package} has the condition \"{condition}\"; only '$(TargetFramework)' == '<a target framework>' is understood");
-                    continue;
-                }
-
-                var only = match.Groups["framework"].Value;
-                foreach (var (framework, packages) in ResolvedPackages(project))
-                {
-                    var direct = packages.TryGetValue(package, out var resolved) && resolved.Direct;
-                    if (framework == only && !direct)
-                    {
-                        wrong.Add($"{project} ({framework}): {package} is declared for {framework}, but is not a direct reference there");
-                    }
-                    else if (framework != only && direct)
-                    {
-                        wrong.Add($"{project} ({framework}): {package} is declared for {only} only, but is a direct reference in {framework}");
-                    }
+                    wrong.Add($"{project}: {reference.Attribute("Include")!.Value} has the condition \"{condition}\"");
                 }
             }
         }
 
         Assert.True(wrong.Count == 0, string.Join(Environment.NewLine, wrong));
-        Assert.True(conditional >= 3, $"Only {conditional} conditional references were found; Core and the store declare three net8.0-only floors between them.");
+        Assert.True(checkedReferences > 0, "No shipping references were checked.");
     }
 
     [Fact]
@@ -376,11 +338,10 @@ public sealed class CompatibilityPinAgreementTests
                 element => element.Attribute("Version")!.Value,
                 StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Regex FrameworkCondition = new(@"^\s*'\$\(TargetFramework\)'\s*==\s*'(?<framework>net[0-9]+\.[0-9]+)'\s*$", RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// The one condition on a reference, on it or its ItemGroup. A condition anywhere further up (a Choose/When, a
-    /// conditioned ancestor) is reported as a shape the checks do not understand, rather than silently ignored.
+    /// Every condition on a reference: on it, its ItemGroup, or anything further up (a Choose/When, a conditioned
+    /// ancestor), joined; <see langword="null"/> when there is none.
     /// </summary>
     private static string? ConditionOf(XElement packageReference)
     {
@@ -388,34 +349,8 @@ public sealed class CompatibilityPinAgreementTests
             .Select(element => element.Name.LocalName is "When" ? element.Attribute("Condition")?.Value ?? "When" : element.Attribute("Condition")?.Value)
             .Where(condition => condition is not null)
             .ToList();
-        var own = (packageReference.Attribute("Condition") ?? packageReference.Parent?.Attribute("Condition"))?.Value;
-        return conditions.Count switch
-        {
-            0 => null,
-            1 when own is not null => own,
-            _ => string.Join(" AND ", conditions),
-        };
+        return conditions.Count == 0 ? null : string.Join(" AND ", conditions);
     }
-
-    /// <summary>
-    /// The shipping references declared for one target framework only, to that framework. A condition in any
-    /// other shape maps to an empty string, which applies nowhere, and
-    /// <see cref="Every_conditional_shipping_reference_names_one_target_framework_and_resolves_only_there"/> fails.
-    /// </summary>
-    private static Dictionary<string, HashSet<string>> DeclaredFrameworkConditions(string project) =>
-        XDocument.Load(Path.Combine(ProjectDirectory(project), project + ".csproj"))
-            .Descendants("PackageReference")
-            .Where(element => ConditionOf(element) is not null)
-            .GroupBy(element => element.Attribute("Include")!.Value, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group
-                    .Select(element => FrameworkCondition.Match(ConditionOf(element)!) is { Success: true } match ? match.Groups["framework"].Value : string.Empty)
-                    .ToHashSet(StringComparer.Ordinal),
-                StringComparer.OrdinalIgnoreCase);
-
-    private static bool AppliesTo(Dictionary<string, HashSet<string>> only, string package, string framework) =>
-        !only.TryGetValue(package, out var frameworks) || frameworks.Contains(framework);
 
     /// <summary>Framework, then package, to the resolved version and whether the reference is direct.</summary>
     private static Dictionary<string, Dictionary<string, (string Version, bool Direct)>> ResolvedPackages(string project) =>

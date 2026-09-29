@@ -6,7 +6,20 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Breaking: .NET 10 only
+
+- **All six packages now target `net10.0` only.** `net8.0` and `net9.0` are gone from every package, and every test
+  project, the sample and the experiments build and run on `net10.0` alone. This lands ahead of the date announced
+  with `0.1.0-preview.3` (the first preview after .NET 8 and 9 leave support on 10 November 2026), by the
+  maintainer's decision. **A host on .NET 8 or 9 stays on `0.1.0-preview.3`**, the last release that targets them.
+- **The `net8.0`-only dependencies are gone.** Core no longer references `System.Text.Json` or `Microsoft.Bcl.Memory`,
+  and `AgentExperience.Storage.Postgres` no longer references `System.Text.Json`; the `net10.0` shared framework
+  supplies every API they did. Every other dependency and floor is unchanged, and the public API is identical.
+- **Code that existed only for older runtimes is removed:** the `#if NET9_0_OR_GREATER` fallback in
+  `ExperienceIndex.ComputeContentHash` (the hash is unchanged), and the retry in the MAF adapter's open-run registry
+  that worked around a `ConcurrentDictionary` bug in the .NET 8.0.0–8.0.10 runtimes (the fix listed under
+  `0.1.0-preview.3`), which a `net10.0` assembly can never run on. See
+  [Target frameworks](docs/compatibility-evidence.md#target-frameworks).
 
 ## 0.1.0-preview.3
 

@@ -63,7 +63,8 @@ The terms are defined in the [glossary](docs/guide/README.md#glossary).
 ## Install
 
 Six packages, all published on nuget.org as `0.1.0-preview.3` (`AgentExperience.Storage.InMemory` is new in this
-preview, and is for development and tests only). Each targets `net8.0`, `net9.0` and `net10.0`.
+preview, and is for development and tests only). `0.1.0-preview.3` targets `net8.0`, `net9.0` and `net10.0`; from the
+next preview on, each targets `net10.0` only.
 
 | Package | What it is for |
 | --- | --- |
@@ -209,9 +210,10 @@ cannot afford to lose.
 
   Read [Known limits and documented boundaries](docs/known-limits.md) for the exact statement of each, and
   [Limits history](docs/limits-history.md) for what earlier previews fixed.
-- **Supported:** .NET 8, 9 and 10; PostgreSQL 15 to 18 (not 14); `Microsoft.Agents.AI` 1.22.0 and any later 1.x.
-  .NET 8 and 9 leave support on 10 November 2026; the first preview published after that date drops `net8.0` and
-  `net9.0`. See [Compatibility evidence](docs/compatibility-evidence.md).
+- **Supported:** .NET 10 (`net10.0` only); PostgreSQL 15 to 18 (not 14); `Microsoft.Agents.AI` 1.22.0 and any later
+  1.x. `net8.0` and `net9.0` are dropped from the next preview on, ahead of .NET 8 and 9 leaving support on
+  10 November 2026; a host on .NET 8 or 9 stays on `0.1.0-preview.3`. See
+  [Compatibility evidence](docs/compatibility-evidence.md).
 - **Evidence of benefit:** the end-to-end sample and the reuse baseline use deterministic fixtures and scripted models,
   so they show the loop works, not that it helps a real model. A pre-registered live-model experiment
   ([`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md)) runs the same method
@@ -260,9 +262,8 @@ is the original research that started the project. It is kept for history and do
 
 ## Build and test
 
-Requires the [.NET SDK 10.0.302](https://dotnet.microsoft.com/) or a later feature band (see `global.json`), plus
-the .NET 8 and .NET 9 runtimes, because every test project that exercises the packages runs on all three target
-frameworks. `dotnet test --framework net10.0` runs only the `net10.0` part.
+Requires the [.NET SDK 10.0.302](https://dotnet.microsoft.com/) or a later feature band (see `global.json`). Every
+project targets `net10.0` only, so no other runtime is needed.
 
 ```bash
 dotnet restore

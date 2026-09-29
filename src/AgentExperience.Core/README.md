@@ -11,10 +11,8 @@ similar work comes up. It does not talk to a database or a model itself: storage
 `AgentExperience.Storage.Postgres`, and agent integration from `AgentExperience.MicrosoftAgentFramework`.
 
 **Dependencies:** `AgentExperience.Abstractions`, `Microsoft.Extensions.Compliance.Redaction`, and
-`Microsoft.Extensions.DependencyInjection.Abstractions` (abstractions only — no container, no hosting); on `net8.0`
-only, also `System.Text.Json` and `Microsoft.Bcl.Memory` 10.0.12 or later, which supply APIs the .NET 8 shared
-framework lacks. No Microsoft Agent Framework, EF Core, Npgsql, DbUp, OpenTelemetry SDK, or model-provider package.
-Targets `net8.0`, `net9.0` and `net10.0`.
+`Microsoft.Extensions.DependencyInjection.Abstractions` (abstractions only — no container, no hosting). No Microsoft
+Agent Framework, EF Core, Npgsql, DbUp, OpenTelemetry SDK, or model-provider package. Targets `net10.0`.
 
 ## What is in it
 
