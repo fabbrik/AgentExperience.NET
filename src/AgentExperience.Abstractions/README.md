@@ -11,7 +11,7 @@ indexing, and sanitization adapter implements.
 
 **Dependencies: the BCL only.** No Microsoft Agent Framework, EF Core, Npgsql, DbUp, OpenTelemetry, or
 model-provider package. Dependency-boundary tests enforce this on every build, and release verification re-checks it
-from the built package. Targets `net8.0`, `net9.0` and `net10.0`.
+from the built package. Targets `net10.0`.
 
 ## Do you need it directly?
 

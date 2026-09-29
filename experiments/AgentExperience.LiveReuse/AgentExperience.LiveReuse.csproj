@@ -3,7 +3,7 @@
   <!-- Story 9.1: the live-model reuse experiment. A console app, not a test project, so `dotnet test` over the
        solution never runs it and never spends money: it runs only when someone types
        the explicit `dotnet run` command in README.md, and it skips with a message when no provider
-       variables are set. It sits outside src/ and tests/, so Directory.Build.props gives it net10.0 only. Its
+       variables are set. Directory.Build.props gives it net10.0, like every project. Its
        harness is proven offline by experiments/AgentExperience.LiveReuse.Tests, which IS part of the normal suite. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

@@ -67,14 +67,13 @@ public sealed class SupportMatrixTests
     }
 
     /// <summary>
-    /// The net8.0 and net9.0 builds of the packages are only ever executed by the test projects' runs on those frameworks, so every
-    /// test project must record every supported framework, except the three demonstrations that are
-    /// deliberately single-target (Directory.Build.props says why).
+    /// A package build is only ever executed by the test projects' runs on its framework, so every test project,
+    /// the demonstrations included, must record exactly the supported frameworks: no fewer, or a shipped build goes
+    /// untested, and no more, or a framework the packages dropped lingers in the test runs.
     /// </summary>
     [Fact]
-    public void Every_test_project_except_the_demonstrations_runs_on_every_supported_framework()
+    public void Every_test_project_runs_on_exactly_the_supported_frameworks()
     {
-        string[] singleTarget = ["AgentExperience.ReuseBaseline", "AgentExperience.Sample.EndToEnd.Tests"];
         var projects = Directory.GetDirectories(Path.Combine(Root, "tests"))
             .Where(path => File.Exists(Path.Combine(path, Path.GetFileName(path) + ".csproj")))
             .ToList();
@@ -82,11 +81,10 @@ public sealed class SupportMatrixTests
 
         foreach (var project in projects)
         {
-            var name = Path.GetFileName(project)!;
             using var lockFile = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(project, "packages.lock.json")));
             var recorded = lockFile.RootElement.GetProperty("dependencies").EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToList();
 
-            Assert.Equal(singleTarget.Contains(name) ? ["net10.0"] : TargetFrameworks(), recorded);
+            Assert.Equal(TargetFrameworks(), recorded);
         }
     }
 

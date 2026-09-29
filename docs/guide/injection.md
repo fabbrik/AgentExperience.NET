@@ -190,7 +190,7 @@ What this does not strip: default-ignorable code points that Unicode classes as 
 selectors (U+FE00–U+FE0F, U+E0100–U+E01EF), the combining grapheme joiner, Hangul fillers — pass through, in names
 exactly as in argument values; and strong right-to-left letters in a name still take part in ordinary bidirectional
 display. Which code points are unassigned is the running .NET's Unicode data, so a code point assigned in a newer
-Unicode version can render differently on `net8.0` than on `net10.0`. This stripping of tool names is new on `main`
+Unicode version can render differently on a later .NET than on the one a host runs today. This stripping of tool names is new on `main`
 since `0.1.0-preview.2`, which let TAG characters, controls and private-use code points in a tool name reach the
 block as they were, and removed format characters in the Basic Multilingual Plane rather than turning them into
 spaces; see the [changelog](../../CHANGELOG.md#unreleased). A name that holds none of these characters renders byte

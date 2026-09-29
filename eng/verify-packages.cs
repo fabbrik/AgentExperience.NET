@@ -15,9 +15,8 @@
 //   * the dependency set is EXACTLY the expected one, id and version range, in the dependency group of EVERY
 //     supported target framework -- so Abstractions and Core can never gain an adapter dependency (MAF,
 //     Npgsql, DbUp, Pgvector, a model provider, OpenTelemetry) without this list being edited in review --
-//     plus, in one framework's group only, the framework-only dependencies listed for it (story 7.2: the
-//     net8.0 System.Text.Json and Microsoft.Bcl.Memory floors), and nothing else; the same forbidden-dependency guard
-//     covers the development-only in-memory store (story 11.2), which must also never depend on Core
+//     and nothing else; the same forbidden-dependency guard covers the development-only in-memory store
+//     (story 11.2), which must also never depend on Core
 //   * lib/ holds exactly the supported target frameworks (story 6.3), and each one below is checked on its own
 //   * all six packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
 //   * per framework, the .snupkg holds a portable PDB whose id matches the assembly's CodeView debug entry, every
@@ -43,10 +42,10 @@ if (args.Length != 1 || !Directory.Exists(args[0]))
 const string RepositoryUrl = "https://github.com/fabbrik/AgentExperience.NET";
 var versionPattern = new Regex(@"^0\.1\.0-preview\.[1-9][0-9]*$", RegexOptions.CultureInvariant);
 
-// The supported target frameworks: AgentExperienceTargetFrameworks in Directory.Build.props. Kept as a literal
-// here so the check reads what shipped against what was intended, rather than against the same build input;
-// a release test fails if the two lists ever disagree.
-string[] frameworks = ["net8.0", "net9.0", "net10.0"];
+// The supported target frameworks, net10.0 only: AgentExperienceTargetFrameworks in Directory.Build.props. Kept as
+// a literal here so the check reads what shipped against what was intended, rather than against the same build
+// input; a release test fails if the two lists ever disagree.
+string[] frameworks = ["net10.0"];
 
 // The exact dependency set each package may declare. Editing this is a deliberate, reviewed act; a
 // forbidden adapter dependency showing up in Abstractions or Core fails here, from the built nuspec.
@@ -94,23 +93,6 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     ],
 };
 
-// Dependencies declared for one target framework only, added to that framework's group (and only that one) on top
-// of the set above. Story 7.2 (KL-13): the .NET 8 shared framework lacks System.Text.Json APIs (JsonElement.DeepEquals,
-// RespectNullableAnnotations, RespectRequiredConstructorParameters) and Base64Url, so net8.0 takes them from the
-// .NET 10 train's packages, floors like every other reference. net9.0 and net10.0 get them from the shared framework.
-var frameworkOnly = new Dictionary<(string Package, string Framework), string[]>
-{
-    [("AgentExperience.Core", "net8.0")] =
-    [
-        "Microsoft.Bcl.Memory 10.0.12",
-        "System.Text.Json 10.0.12",
-    ],
-    [("AgentExperience.Storage.Postgres", "net8.0")] =
-    [
-        "System.Text.Json 10.0.12",
-    ],
-};
-
 // Belt and braces for the adapter-independent packages (Abstractions, Core, and the in-memory store): even if
 // someone edits the table above, these substrings may never appear in their dependency ids.
 string[] forbiddenInCore =
@@ -121,18 +103,6 @@ string[] forbiddenInCore =
 
 var failures = new List<string>();
 void Fail(string package, string message) => failures.Add($"{package}: {message}");
-
-foreach (var ((package, framework), _) in frameworkOnly)
-{
-    if (!expected.ContainsKey(package) || !frameworks.Contains(framework))
-    {
-        failures.Add($"the framework-only dependency list names {package} ({framework}), which is not a shipped package and framework");
-    }
-    else if (frameworkOnly[(package, framework)].Select(d => d.Split(' ')[0]).Intersect(expected[package].Select(d => d.Split(' ')[0]), StringComparer.Ordinal).Any())
-    {
-        failures.Add($"the framework-only dependency list for {package} ({framework}) repeats a dependency every framework already has");
-    }
-}
 
 var directory = Path.GetFullPath(args[0]);
 var nupkgs = Directory.GetFiles(directory, "*.nupkg").Order(StringComparer.Ordinal).ToArray();
@@ -274,13 +244,9 @@ foreach (var nupkgPath in nupkgs)
         declared.AddRange(inGroup);
 
         var groupFramework = group.Attribute("targetFramework")?.Value ?? "(none)";
-        var wantedHere = wanted
-            .Concat(frameworkOnly.GetValueOrDefault((id, groupFramework)) ?? [])
-            .Order(StringComparer.Ordinal)
-            .ToList();
-        if (!inGroup.SequenceEqual(wantedHere, StringComparer.Ordinal))
+        if (!inGroup.SequenceEqual(wanted, StringComparer.Ordinal))
         {
-            Fail(id, $"{groupFramework} dependencies are [{string.Join(", ", inGroup)}], expected [{string.Join(", ", wantedHere)}]");
+            Fail(id, $"{groupFramework} dependencies are [{string.Join(", ", inGroup)}], expected [{string.Join(", ", wanted)}]");
         }
     }
 

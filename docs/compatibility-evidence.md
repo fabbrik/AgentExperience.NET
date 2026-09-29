@@ -9,8 +9,8 @@ not match), and the executable test that proves this repository works against it
 It is the successor to the Story 1.7 research digest, which lived in a directory excluded from git. Anything a
 reader needs to check a pin is here.
 
-**Last verified: 2026-09-28** (the `0.1.0-preview.3` release checks), against nuget.org's registration API and a full local run of the suite on all three target
-frameworks and all four PostgreSQL majors, plus the floating-dependency leg and both MAF probe legs. Re-verify — and update the date — whenever
+**Last verified: 2026-09-28** (the `0.1.0-preview.3` release checks), against nuget.org's registration API and a full local run of the suite on the three target
+frameworks it then had and all four PostgreSQL majors, plus the floating-dependency leg and both MAF probe legs. Re-verify — and update the date — whenever
 a pin or a floor moves.
 
 ## Supported matrix
@@ -20,7 +20,7 @@ each "everything else" cell says why the line is where it is.
 
 | Dimension | Supported | Everything else |
 | --- | --- | --- |
-| Target framework | `net8.0`, `net9.0` and `net10.0`. All six packages multi-target all three, and every test project that exercises them runs on all three (the sample, its tests and the reuse baseline, which are demonstrations, run on `net10.0` only). On `net8.0` only, Core and the store take `System.Text.Json` 10.0.12+ and Core `Microsoft.Bcl.Memory` 10.0.12+, for APIs the .NET 8 shared framework lacks (see [Target frameworks](#target-frameworks)) | .NET Framework and `netstandard2.0` are ruled out by `Npgsql` 10, which ships `net8.0`+ only, and `Microsoft.Extensions.Compliance.Redaction`, which ships no `netstandard2.0` build. `net8.0` and `net9.0` both leave support on 10 November 2026; the first preview after that date drops them |
+| Target framework | `net10.0` only. All six packages target it, and every project in the repository (tests, the sample, the reuse baseline, the experiments) builds and runs on it (see [Target frameworks](#target-frameworks)) | `net8.0` and `net9.0` were targeted up to `0.1.0-preview.3`, and dropped after it, by the maintainer's decision, ahead of both leaving support on 10 November 2026; a host on .NET 8 or 9 stays on `0.1.0-preview.3`. .NET Framework and `netstandard2.0` are ruled out by `Npgsql` 10, which ships `net8.0`+ only, and `Microsoft.Extensions.Compliance.Redaction`, which ships no `netstandard2.0` build |
 | .NET SDK | `10.0.302` for a release build (see below) | Development may roll forward to a later feature band; a release may not |
 | Microsoft Agent Framework | `Microsoft.Agents.AI` **1.22.0 or any later 1.x**, declared `[1.22.0, 2.0.0)`. CI tests the floor and the newest 1.x on every change, and both gate pushes and the weekly schedule (see [the MAF matrix](#the-maf-compatibility-matrix)) | 2.0 and later are outside the range: a host on one gets NuGet's NU1608 warning about this adapter. MAF states no SemVer promise and changed caller-visible behaviour five times between 1.15 and 1.22, so its next major is where a break is expected; [the version policy](#the-version-policy-floors-and-one-bounded-range) says why the bound sits there and nowhere lower |
 | Everything else the packages reference | The floor in each row below, **or any later release in the same major** (the same minor for the 0.x `Pgvector`) | A later major restores (the packages declare no upper bound, so it is never a restore conflict) but is untested until a floor moves. See [the version policy](#the-version-policy-floors-and-one-bounded-range) |
@@ -36,7 +36,7 @@ to the next major. Now:
 
 | Kind | Declared as | What CI proves | Which packages |
 | --- | --- | --- | --- |
-| **Floor** | `Version="x.y.z"` — NuGet's `>= x.y.z`, with no upper bound | The floor itself, on every run: the committed lock files resolve exactly the floor, and `CompatibilityPinAgreementTests` fails if they ever resolve anything else. **And** the newest release in the same major (the same minor for a 0.x package), on every run, in the `floating-dependencies` job | `Microsoft.Extensions.DependencyInjection.Abstractions`, `Microsoft.Extensions.Hosting.Abstractions`, `Microsoft.Extensions.Compliance.Redaction`, `Microsoft.Extensions.AI.Abstractions`, `Npgsql`, `dbup-postgresql`, `dbup-core`, `Pgvector`; and, on `net8.0` only, `System.Text.Json` and `Microsoft.Bcl.Memory` |
+| **Floor** | `Version="x.y.z"` — NuGet's `>= x.y.z`, with no upper bound | The floor itself, on every run: the committed lock files resolve exactly the floor, and `CompatibilityPinAgreementTests` fails if they ever resolve anything else. **And** the newest release in the same major (the same minor for a 0.x package), on every run, in the `floating-dependencies` job | `Microsoft.Extensions.DependencyInjection.Abstractions`, `Microsoft.Extensions.Hosting.Abstractions`, `Microsoft.Extensions.Compliance.Redaction`, `Microsoft.Extensions.AI.Abstractions`, `Npgsql`, `dbup-postgresql`, `dbup-core`, `Pgvector` |
 | **Range to the next major** | `Version="[x.y.z, N.0.0)"`, where N is x + 1 | Exactly what a floor gets: the lower bound on every run (the lock files resolve it), and the newest release below the bound on every run, in the `floating-dependencies` job **and** in the `maf-compatibility (latest)` leg | `Microsoft.Agents.AI` only |
 | **Exact** | `Version="[x.y.z]"` | — | None since story 7.2. `CompatibilityPinAgreementTests` refuses one in a shipping project: it is a restore failure for any host on a newer version |
 
@@ -108,18 +108,15 @@ MAF that raises a shared `Microsoft.Extensions.*` floor restores beside Core and
 
 **How it is enforced.** `CompatibilityPinAgreementTests` fails if a shipping reference is anything but a bare floor
 (or, for MAF, `[x.y.z, (x+1).0.0)`), and so refuses an exact pin; if a floor or range's lower bound is not exactly
-what the committed lock files resolve, in every target framework it applies to; if a reference is conditioned on
-anything but one target framework the build produces, or is a direct reference in another framework's section of the
-lock file; if two
-shipping projects declare different versions of one package; or if the compatibility proof stops pinning each proven
-package exactly at the shipping floor. The dependency-boundary tests pin each package's declared set, conditions
-included, and `eng/verify-packages.cs` checks the built nuspecs declare exactly those versions in every framework's
-dependency group, and the `net8.0`-only ones in the `net8.0` group and nowhere else.
+what the committed lock files resolve; if a reference carries any condition (every floor applies to every target
+framework); if two shipping projects declare different versions of one package; or if the compatibility proof stops
+pinning each proven package exactly at the shipping floor. The dependency-boundary tests pin each package's declared
+set, conditions included, and `eng/verify-packages.cs` checks the built nuspecs declare exactly those versions in
+every framework's dependency group.
 
 ## The pins
 
-Hashes are NuGet's SHA-512 `contentHash`, exactly as recorded in the lock files (identical in every target
-framework's section that has the package, since it is one package). "Published" is nuget.org's registration timestamp
+Hashes are NuGet's SHA-512 `contentHash`, exactly as recorded in the lock files. "Published" is nuget.org's registration timestamp
 for that version. A bold `x.y.z+` is a floor and a bold `[x.y.z, N.0.0)` a range to the next major; either way the row
 is the evidence for the lower bound itself — the newest release below the bound is proven by
 [the floating-dependency leg](#the-floating-dependency-leg) (and, for MAF, [the MAF probe](#the-maf-compatibility-matrix)).
@@ -184,25 +181,11 @@ Facts from MAF's own source that shaped the adapter, re-checked at tag `dotnet-1
 | `Microsoft.Extensions.Hosting.Abstractions` **10.0.3+** | `Storage.InMemory` | 2026-02-10 | `GdMpC10Jf6poxSvUJ4lgYpJ5F/kJeaAoJmrPufjBoPYyCTKKY5Dyl0rZA+LBNvFqTq1cZa/lhlptlUhNvU6xrg==` | <https://www.nuget.org/packages/Microsoft.Extensions.Hosting.Abstractions/10.0.3>. Supplies `IHostEnvironment` and `IsProduction()`, all the in-memory store's production guard reads; its own dependencies are the 10.0.3 `Microsoft.Extensions.*` abstractions, and its `DependencyInjection.Abstractions` ≥ 10.0.3 is met by the 10.0.12 floor above. The floor is 10.0.3 because that is the version the repository already resolves (the live experiment's lock file, through `System.ClientModel`), so every lock file that holds the package runs the floor | `InMemoryStorageRegistrationTests` (Production refused, the explicit override, Development and Staging allowed, no `IHostEnvironment` allowed) on every target framework. Added in story 11.2; the floating leg's result below predates it |
 | `Microsoft.Extensions.Compliance.Redaction` **10.10.0+** | `Core` | 2026-09-09 | `RW0HuSIl5CH/SSLa31MIKc6LPmy3DjtJmf/5LjTTKMmwBeNex6ZnF1Q46vzklAPSQ2BDu/MHL/6G5CBoyWLQAA==` | <https://www.nuget.org/packages/Microsoft.Extensions.Compliance.Redaction/10.10.0> | `DefaultSanitizerTests`, `SanitizerConformanceTests`, `CompatibilityProof/EvaluationRedactionProof`. It was the floor `10.9.0` until story 5.1, then exact, then the floor `10.10.0` again since story 6.3 — this time with CI proving both ends of the range. 10.10.0 rather than 10.9.0 is a preference, not a requirement: Core does not reference MAF. But a host with Core and the MAF adapter resolves `Microsoft.Extensions.Compliance.Abstractions` 10.10.0 through MAF 1.22.0 either way, and Redaction 10.10.0 is the release built against that version, the same train as every other floor here. A host that needs a newer Redaction now simply gets it |
 
-### `net8.0` only
-
-These two exist only in the `net8.0` dependency group, declared under `Condition="'$(TargetFramework)' == 'net8.0'"`.
-The .NET 8 shared framework lacks APIs Core and the store compile against (see [Target frameworks](#target-frameworks));
-`net9.0` and `net10.0` take them from the shared framework and reference nothing. Both are the .NET 10 train's
-out-of-band packages at the servicing release the DI abstractions floor is at, and `Microsoft.Agents.AI` 1.22.0 and
-`Microsoft.Extensions.AI.Abstractions` 10.10.0 already require `System.Text.Json` ≥ 10.0.12 on `net8.0`, so a host with
-the adapter or the vectors package resolves that version whatever Core asks.
-
-| Pin | Declared in | Published | Content hash | Source | Executable evidence |
-| --- | --- | --- | --- | --- | --- |
-| `System.Text.Json` **10.0.12+** (`net8.0` only) | `Core`, `Storage.Postgres` | 2026-09-08 | `AHlVpUiY96eC6Oar1Gf0YbafU7E2NUU9D80O2Xk5v7ryL3kpSsbI0EusJBE8kQfwPuDdUDoKUItArzXQHxomCg==` | <https://www.nuget.org/packages/System.Text.Json/10.0.12>. Supplies `JsonElement.DeepEquals` (Core's capture merge), and `JsonSerializerOptions.RespectNullableAnnotations` and `RespectRequiredConstructorParameters` (the store's strict payload decoder), all added in .NET 9. 9.0.0 would compile, but the floor is 10.0.12 so it never sits below what the adapter and vectors package already bring, and so the test lock files, which resolve 10.0.12 through them, run the floor | The whole `net8.0` run: `InMemoryExperienceCaptureServiceTests` (capture merge), the `ExperiencePayload` decoder's refusal tests and every container-backed store test in `AgentExperience.Storage.Postgres.Tests`, on the same assertions as the other frameworks |
-| `Microsoft.Bcl.Memory` **10.0.12+** (`net8.0` only) | `Core` | 2026-09-08 | `nFYTvCdZYqQnSKzhw3V1wWjESFrN8sYk1WAXYQSAkC0vDoHYySouF569g/hx9RzUXiZjTWxZR7gr7zDodG+Ufg==` | <https://www.nuget.org/packages/Microsoft.Bcl.Memory/10.0.12>. Supplies `System.Buffers.Text.Base64Url`, added to the shared framework in .NET 9, which the assessment tokens of story 6.6 encode and strictly decode with. The package is the same source as the shared framework's type, and has no dependency on `net8.0` | `AssessmentTokenTests` and every verified-independence test in `AgentExperience.Core.Tests` and `AgentExperience.Storage.Postgres.Tests`, on `net8.0`: forged, non-canonical, expired and replayed tokens are refused exactly as on the other frameworks |
-
 ### Telemetry
 
 | Pin | Declared in | Source | Executable evidence |
 | --- | --- | --- | --- |
-| **No telemetry package.** `ActivitySource` and `Meter` from `System.Diagnostics.DiagnosticSource`, which ships in the shared framework of `net8.0`, `net9.0` and `net10.0`. On `net8.0` and `net9.0` a dependency may raise it to a newer `System.Diagnostics.DiagnosticSource` package transitively (MAF 1.22.0 brings 10.0.12); that is the dependency's reference, not one this library declares | Nothing to declare: it is part of the target framework the SDK pin selects | <https://learn.microsoft.com/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs>, <https://learn.microsoft.com/dotnet/core/diagnostics/metrics-instrumentation> | `ExperienceTelemetryTests`, `TelemetrySourceScanTests`, `InjectionTelemetryTests`, `DiagnosticsAgreementTests` subscribe with the BCL's own `ActivityListener` and `MeterListener`, exactly as an OpenTelemetry exporter would. The dependency-boundary tests forbid `OpenTelemetry` in Abstractions and Core, and `eng/verify-packages.cs` forbids it in their built nuspecs |
+| **No telemetry package.** `ActivitySource` and `Meter` from `System.Diagnostics.DiagnosticSource`, which ships in the `net10.0` shared framework | Nothing to declare: it is part of the target framework the SDK pin selects | <https://learn.microsoft.com/dotnet/core/diagnostics/distributed-tracing-instrumentation-walkthroughs>, <https://learn.microsoft.com/dotnet/core/diagnostics/metrics-instrumentation> | `ExperienceTelemetryTests`, `TelemetrySourceScanTests`, `InjectionTelemetryTests`, `DiagnosticsAgreementTests` subscribe with the BCL's own `ActivityListener` and `MeterListener`, exactly as an OpenTelemetry exporter would. The dependency-boundary tests forbid `OpenTelemetry` in Abstractions and Core, and `eng/verify-packages.cs` forbids it in their built nuspecs |
 
 A host exports with OpenTelemetry's `AddSource("AgentExperience.*")` and `AddMeter("AgentExperience.*")`; which
 OpenTelemetry version it uses is the host's choice, because this library references none.
@@ -227,53 +210,29 @@ direct references together with the shipping ones. A package the proof only gets
 
 ## Target frameworks
 
-`net8.0`, `net9.0` and `net10.0`, set once as `AgentExperienceTargetFrameworks` in `Directory.Build.props`. Every
-shipping package carries `lib/net8.0`, `lib/net9.0` and `lib/net10.0` and a dependency group for each, and
-`eng/verify-packages.cs` checks all three, and only those, in every package and symbol package. The public API
-baseline is **one file per assembly for every framework**: `AgentExperience.Release.Tests` runs once per framework and
-compares each against the same baseline, so the gate also asserts the public surface is identical on all three.
-Warnings stay errors on all three.
+`net10.0` only, set once as `AgentExperienceTargetFrameworks` in `Directory.Build.props`, for every project in the
+repository. Every shipping package carries `lib/net10.0` and one dependency group, and `eng/verify-packages.cs`
+checks exactly that, in every package and symbol package. The public API baseline is **one file per assembly**.
+Warnings are errors.
 
-**How `net8.0` builds (story 7.2).** Every dependency ships a `net8.0` build, but the .NET 8 shared framework lacks
-four APIs the library uses, all added in .NET 9. Adding `net8.0` on 2026-09-25 failed with exactly these:
-
-- `src/AgentExperience.Core/Capture/InMemoryExperienceCaptureService.cs`: `JsonElement.DeepEquals`.
-- `src/AgentExperience.Storage.Postgres/ExperiencePayload.cs`: `JsonSerializerOptions.RespectNullableAnnotations` and
-  `RespectRequiredConstructorParameters`. They make the stored-payload decoder refuse a `null` where the type says
-  non-null and a missing required constructor parameter — the strictness the store's payload reading depends on.
-- `src/AgentExperience.Core/Confidence/AssessmentTokens.cs` (story 6.6): `System.Buffers.Text.Base64Url`.
-- `src/AgentExperience.Abstractions/ExperienceIndex.cs`: `Convert.ToHexStringLower`.
-
-(The MAF adapter and the vectors package failed only because they reference those.) The first three are supplied on
-`net8.0` by the .NET 10 train's own packages, `System.Text.Json` and `Microsoft.Bcl.Memory` 10.0.12, referenced
-under a `net8.0` condition in Core and the store and nowhere else — the same thing `Microsoft.Extensions.AI` and MAF
-do for their own `net8.0` builds. The fourth is one line behind `#if NET9_0_OR_GREATER`:
-`Convert.ToHexString(...).ToLowerInvariant()`, which gives the identical 64 lowercase hexadecimal characters, so
-Abstractions keeps no package dependency at all.
-
-The alternative, a `net8.0`-only rewrite, was rejected as the larger and less safe option: the strict decoder would
-need a hand-written null-and-required-member validator for every payload type, and assessment-token decoding a
-hand-written base64url codec on the one framework — security-relevant code that exists only where fewer people run
-it. The packages are Microsoft's own implementations of exactly the APIs the other frameworks use, so every
-framework runs the same decoder and the same codec, under the same tests. The cost is two conditional references in
-Core's dependency boundary (AD-1), which `DependencyBoundaryTests` and `eng/verify-packages.cs` pin, condition
-included; neither is a forbidden adapter dependency.
-
-.NET 8 (LTS) and .NET 9 (STS; STS releases now get 24 months) both leave support on 10 November 2026. The first
-preview after that date drops `net8.0` and `net9.0`, and the matrix is then `net10.0` again until .NET 11 ships.
-
-**Planned removal.** The first preview published after 2026-11-10 removes `net8.0` and `net9.0` from
-`AgentExperienceTargetFrameworks`, and with them everything that exists only for them: the `net8.0`-only references
-to `System.Text.Json` and `Microsoft.Bcl.Memory` in Core and the store (and their rows in the dependency tables above),
-the `#if NET9_0_OR_GREATER` branch, and the `net8.0` and `net9.0` runs of every test project. That preview's
-CHANGELOG entry says so under its breaking changes. Until then both stay targeted, built, packed and tested exactly as
-now; nothing is removed early. PostgreSQL 14 is not affected by this: it is already outside the matrix (see
-[Why not 14](#why-not-14)), and stays out when it reaches end of life upstream on 12 November 2026.
+**History.** Story 6.3 added `net9.0` beside `net10.0`, and story 7.2 added `net8.0`. The .NET 8 shared framework
+lacks four APIs the library uses, all added in .NET 9, so on `net8.0` only Core and the store referenced the .NET 10
+train's `System.Text.Json` 10.0.12 (`JsonElement.DeepEquals`; `RespectNullableAnnotations` and
+`RespectRequiredConstructorParameters`, which the store's strict payload decoder sets) and Core `Microsoft.Bcl.Memory`
+10.0.12 (`System.Buffers.Text.Base64Url`, for the assessment tokens), and `ExperienceIndex.ComputeContentHash` took
+`Convert.ToHexStringLower` behind `#if NET9_0_OR_GREATER`. `0.1.0-preview.3` is the last release built that way.
+.NET 8 (LTS) and .NET 9 (STS) both leave support on 10 November 2026; the maintainer decided to drop them in the
+first preview after `0.1.0-preview.3`, ahead of that date, and with them everything that existed only for them: the
+two `net8.0`-only references, the `#if` branch, a retry in the MAF adapter's open-run registry that only worked around
+a `ConcurrentDictionary` bug in the .NET 8.0.0–8.0.10 runtimes, and the `net8.0` and `net9.0` runs of every test
+project. The matrix is `net10.0` alone until .NET 11 ships. PostgreSQL 14 is not affected by this: it is already
+outside the matrix (see [Why not 14](#why-not-14)), and stays out when it reaches end of life upstream on
+12 November 2026.
 
 ## The PostgreSQL matrix
 
 CI's `postgres` job runs `AgentExperience.Storage.Postgres.Tests`, `…Vectors.Tests`, `AgentExperience.CompatibilityProof`
-and `AgentExperience.Sample.EndToEnd.Tests` once per supported major (on every target framework, except the sample tests, which are `net10.0` only), with
+and `AgentExperience.Sample.EndToEnd.Tests` once per supported major, with
 `AGENTEXPERIENCE_POSTGRES_MAJOR` set to the leg's major. `WorkflowTests` fails if the job's list and
 `PostgresTestImage.SupportedMajors` ever differ. The default `build-and-test` job runs everything against 16.
 
@@ -342,14 +301,14 @@ passed on all three frameworks. What the floats resolved to:
 | `dbup-core` | 6.1.1 | `6.*` | 6.1.1 |
 | `dbup-postgresql` | 7.0.1 | `7.*` | 7.0.1 |
 | `Microsoft.Agents.AI` | 1.22.0 | `1.*` | 1.22.0 |
-| `Microsoft.Bcl.Memory` (`net8.0`) | 10.0.12 | `10.*` | 10.0.12 |
+| `Microsoft.Bcl.Memory` (`net8.0` only; no longer referenced) | 10.0.12 | `10.*` | 10.0.12 |
 | `Microsoft.Extensions.AI.Abstractions` | 10.10.0 | `10.*` | **10.10.1** |
 | `Microsoft.Extensions.Compliance.Redaction` | 10.10.0 | `10.*` | 10.10.0 |
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | 10.0.12 | `10.*` | 10.0.12 |
 | `Microsoft.Extensions.Hosting.Abstractions` (added 2026-09-28) | 10.0.3 | `10.*` | **10.0.12** |
 | `Npgsql` | 10.0.3 | `10.*` | 10.0.3 |
 | `Pgvector` | 0.3.2 | `0.3.*` | 0.3.2 |
-| `System.Text.Json` (`net8.0`) | 10.0.12 | `10.*` | 10.0.12 |
+| `System.Text.Json` (`net8.0` only; no longer referenced) | 10.0.12 | `10.*` | 10.0.12 |
 
 Nine of the ten floors are the newest release in their range today, so on the day it landed this leg mostly
 re-proves the floors; its value is every later day.
@@ -361,7 +320,7 @@ nuget.org serves.
 
 ## The MAF compatibility matrix
 
-CI's `maf-compatibility` job runs the MAF adapter's tests and the MAF proofs twice, on every target framework:
+CI's `maf-compatibility` job runs the MAF adapter's tests and the MAF proofs twice:
 
 | Leg | Microsoft.Agents.AI | Gates the build? |
 | --- | --- | --- |

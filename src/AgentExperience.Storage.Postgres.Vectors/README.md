@@ -20,8 +20,8 @@ Leave it out and everything still works, text-only: retrieval reports `TextOnly`
 | `Microsoft.Extensions.AI.Abstractions` | `10.10.0` or later, within 10.x |
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | `10.0.12` or later, within 10.x |
 
-Each is a floor; CI tests the floor and the newest release in the range on every change. Targets `net8.0`, `net9.0`
-and `net10.0`; tested against PostgreSQL 15, 16, 17 and 18 with pgvector. It is a separate package so that a
+Each is a floor; CI tests the floor and the newest release in the range on every change. Targets `net10.0`;
+tested against PostgreSQL 15, 16, 17 and 18 with pgvector. It is a separate package so that a
 text-only host never takes a vector or model-provider dependency.
 
 ## Setting it up

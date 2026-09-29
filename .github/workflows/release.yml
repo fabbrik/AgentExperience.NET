@@ -128,15 +128,11 @@ jobs:
           sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
           grep -q '"rollForward": "disable"' global.json
 
-      # As ci.yml: the 8.0 and 9.0 SDKs are installed for their runtimes, so the net8.0 and net9.0 test runs have a
-      # runtime to run on.
+      # As ci.yml: exactly global.json's SDK, which carries the net10.0 runtime every project targets.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
 
       - name: Assert the exact pinned SDK
         id: sdk
@@ -154,7 +150,7 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild=true
 
-      # RELEASING.md step 3: the full suite, every target framework, against the default PostgreSQL major. Docker is
+      # RELEASING.md step 3: the full suite, on net10.0, against the default PostgreSQL major. Docker is
       # available on the runner for Testcontainers, as in ci.yml.
       - name: Test
         run: dotnet test --no-build --configuration Release

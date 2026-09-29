@@ -47,7 +47,7 @@ public class DependencyBoundaryTests
 
     [Fact]
     [Trait("Category", "DeclaredPins")]
-    public void Storage_Postgres_csproj_declares_only_the_Npgsql_DbUp_DI_abstractions_and_net8_System_Text_Json_floors()
+    public void Storage_Postgres_csproj_declares_only_the_Npgsql_DbUp_and_DI_abstractions_floors()
     {
         var csprojPath = GetCsprojPath();
         Assert.True(File.Exists(csprojPath), $"Could not locate AgentExperience.Storage.Postgres.csproj at '{csprojPath}'.");
@@ -64,7 +64,6 @@ public class DependencyBoundaryTests
             [
                 "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
                 "Npgsql 10.0.3",
-                "System.Text.Json 10.0.12 when '$(TargetFramework)' == 'net8.0'",
                 "dbup-core 6.1.1",
                 "dbup-postgresql 7.0.1",
             ],
@@ -72,9 +71,8 @@ public class DependencyBoundaryTests
     }
 
     /// <summary>
-    /// Story 7.2 (KL-13): the net8.0-only System.Text.Json floor (the .NET 10 train's package, for the strict
-    /// payload decoder's options the .NET 8 shared framework lacks) is pinned with its condition, so it can
-    /// never quietly apply to every framework.
+    /// A reference's condition is part of the pinned set, so a new conditional reference is a reviewed change
+    /// too. There are none: the package targets net10.0 only, and the shared framework supplies every API it uses.
     /// </summary>
     private static string Condition(XElement packageReference) =>
         (packageReference.Attribute("Condition") ?? packageReference.Parent?.Attribute("Condition"))?.Value is { } condition

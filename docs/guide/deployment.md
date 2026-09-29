@@ -7,9 +7,9 @@ supported deployment, and it is what makes the append-only guards and the single
 own credentials. Every call checks the host's `AuthorizationContext` before touching the database, and scope matching
 is exact.
 
-Supported: .NET 8, 9 and 10 (`net8.0`, `net9.0`, `net10.0`); PostgreSQL 15, 16, 17 and 18; `Microsoft.Agents.AI`
-`[1.22.0, 2.0.0)`. `net8.0` and `net9.0` leave support on 10 November 2026, and the first preview published after that
-date drops them. See [Compatibility evidence](../compatibility-evidence.md#supported-matrix).
+Supported: .NET 10 (`net10.0` only); PostgreSQL 15, 16, 17 and 18; `Microsoft.Agents.AI` `[1.22.0, 2.0.0)`. A host
+on .NET 8 or 9 stays on `0.1.0-preview.3`, the last release that targets `net8.0` and `net9.0`. See
+[Compatibility evidence](../compatibility-evidence.md#supported-matrix).
 
 ## Wiring it all together
 

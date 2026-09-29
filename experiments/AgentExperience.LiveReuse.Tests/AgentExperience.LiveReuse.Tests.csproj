@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Story 9.1: the live experiment's harness, proven offline with scripted IChatClients before any money is spent.
-       Part of the normal `dotnet test` run; it never touches the network and reads no provider variable. Outside
-       src/ and tests/, so net10.0 only (the experiment it tests is net10.0 only). -->
+       Part of the normal `dotnet test` run; it never touches the network and reads no provider variable. net10.0,
+       like every project (Directory.Build.props). -->
   <PropertyGroup>
     <RootNamespace>AgentExperience.LiveReuse.Tests</RootNamespace>
     <IsPackable>false</IsPackable>

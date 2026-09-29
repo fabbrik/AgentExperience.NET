@@ -101,18 +101,15 @@ public class DependencyBoundaryTests
         // leg by its trait, because that leg rewrites these versions on purpose.
         Assert.Equal(
             [
-                "Microsoft.Bcl.Memory 10.0.12 when '$(TargetFramework)' == 'net8.0'",
                 "Microsoft.Extensions.Compliance.Redaction 10.10.0",
                 "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
-                "System.Text.Json 10.0.12 when '$(TargetFramework)' == 'net8.0'",
             ],
             declared);
     }
 
     /// <summary>
-    /// Story 7.2 (KL-13): the two net8.0-only references (the .NET 10 train's System.Text.Json and
-    /// Microsoft.Bcl.Memory, supplying APIs the .NET 8 shared framework lacks) are part of the pinned set, with
-    /// their condition, so one quietly applying to every framework, or a new conditional one, is a reviewed change.
+    /// A reference's condition is part of the pinned set, so a new conditional reference is a reviewed change
+    /// too. There are none: the package targets net10.0 only, and the shared framework supplies every API it uses.
     /// </summary>
     private static string Condition(XElement packageReference) =>
         (packageReference.Attribute("Condition") ?? packageReference.Parent?.Attribute("Condition"))?.Value is { } condition

@@ -73,8 +73,6 @@ decision means moving the three rows back and restoring the old count; nothing e
 - Docker running: the storage tests start PostgreSQL containers (16 by default; step 3 runs every supported major).
   If Testcontainers' Ryuk container fails under your Docker setup (Rancher Desktop, for example),
   `export TESTCONTAINERS_RYUK_DISABLED=true` first.
-- The .NET 8 and .NET 9 runtimes installed beside the pinned SDK: the packages target `net8.0`, `net9.0` and
-  `net10.0`, and every test project that exercises them runs on all three.
 - Network access to nuget.org (restore, and the probes in step 6).
 
 ```bash
@@ -109,8 +107,7 @@ dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild
 ### 3. The full test suite
 
 Core, PostgreSQL, the MAF adapter, the end-to-end sample, the reuse baseline, the compatibility proofs, and the
-release gates, on every supported target framework (`net8.0`, `net9.0` and `net10.0`; the sample, its tests and the reuse
-baseline run on `net10.0` only), against PostgreSQL 16. This is also the security suite: every test in
+release gates, on `net10.0` (the one target framework), against PostgreSQL 16. This is also the security suite: every test in
 [`docs/security-suite.md`](docs/security-suite.md) runs here, and there is no separate, weaker security build.
 
 ```bash
@@ -176,9 +173,9 @@ regenerates it, and the resulting `git diff` is what gets reviewed and committed
 ### 5. Every pin has source-backed evidence
 
 [`docs/compatibility-evidence.md`](docs/compatibility-evidence.md) carries one row per SDK, MAF, storage, and
-telemetry pin — MAF's range and every floor, including the `net8.0`-only ones: where it is declared, its nuget.org
-source, the content hash NuGet restored, and the test that proves it. These two loops check that the document and the committed lock files describe
-the same packages, byte for byte, in every target framework's section.
+telemetry pin — MAF's range and every floor: where it is declared, its nuget.org source, the content hash NuGet
+restored, and the test that proves it. These two loops check that the document and the committed lock files describe
+the same packages, byte for byte.
 
 ```bash
 (
@@ -229,9 +226,8 @@ eng/probe-floating-dependencies.sh   # must print "... PASSED" and exit 0; recor
 
 Assertions are made against the built `.nupkg` and `.snupkg` files, not the csproj files: twelve artifacts (six packages, six symbol packages) at
 `0.1.0-preview.N`; license, readme, tags, and repository metadata with the SourceLink commit; "Preview" in the
-description, release notes, and readme; exactly the `net8.0`, `net9.0` and `net10.0` builds under `lib/`, and the
-**exact** dependency set — ids and version ranges — in each framework's dependency group (the `net8.0` group also
-carrying the `net8.0`-only floors, and no other group carrying them), so Abstractions, Core and the in-memory store
+description, release notes, and readme; exactly the `net10.0` build under `lib/`, and the **exact** dependency
+set — ids and version ranges — in its dependency group, so Abstractions, Core and the in-memory store
 carry no MAF, Npgsql, DbUp, Pgvector, model-provider or OpenTelemetry dependency (and the in-memory store no Core);
 one repository commit across all six packages,
 equal to `git rev-parse HEAD`; and, per framework, in each symbol package, a PDB whose id matches its assembly's

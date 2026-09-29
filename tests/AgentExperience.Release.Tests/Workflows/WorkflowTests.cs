@@ -320,6 +320,8 @@ public sealed class WorkflowTests
     [InlineData("--api-key \"$NUGET_API_KEY\"", "--api-key \"${{ steps.login.outputs.NUGET_API_KEY }}\"")]
     [InlineData("if gh release view", "if false && gh release view")]
     [InlineData("dotnet restore --locked-mode", "dotnet restore")]
+    [InlineData("          global-json-file: global.json\n", "          global-json-file: global.json\n          dotnet-version: 9.0.x\n")]
+    [InlineData("          global-json-file: global.json\n", "          dotnet-version: 10.0.x\n")]
     [InlineData("awk '/^## / { section = ($0 == \"## Known limits\") } section' docs/known-limits.md | grep -cE", "grep -cE")]
     [InlineData("table { exit }' docs/known-limits.md; }", "table { exit }' README.md; }")]
     [InlineData("dotnet run eng/verify-packages.cs -- artifacts/packages", "echo skipped")]
@@ -455,8 +457,7 @@ public sealed class WorkflowTests
             ("table { exit }' docs/known-limits.md; }", "quote both tables of docs/known-limits.md in the release notes"),
             ("\"rollForward\": \"disable\"", "pin the SDK exactly"),
             ("test \"$actual\" = \"$pinned\"", "assert the pinned SDK"),
-            ("8.0.x", "install the 8.0 runtime"),
-            ("9.0.x", "install the 9.0 runtime"),
+            ("global-json-file: global.json", "install the SDK global.json pins"),
             ("run: dotnet restore --locked-mode\n", "restore in locked mode"),
             ("run: dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild=true\n", "build as a release build"),
             ("run: dotnet test --no-build --configuration Release\n", "run the full test suite"),
@@ -466,6 +467,10 @@ public sealed class WorkflowTests
         {
             Require(verify.Contains(text, StringComparison.Ordinal), $"The verify job must {rule} (`{text}`).");
         }
+
+        // net10.0 is the only target framework, and the pinned SDK carries its runtime: another SDK or runtime installed
+        // beside it would be one nothing needs (SupportMatrixTests requires one again for any framework added later).
+        Require(!verify.Contains("dotnet-version:", StringComparison.Ordinal), "The verify job must install only the SDK global.json pins, with no dotnet-version beside it.");
 
         var verifiedAt = verify.IndexOf("dotnet run eng/verify-packages.cs", StringComparison.Ordinal);
         var uploadAt = verify.IndexOf("actions/upload-artifact", StringComparison.Ordinal);

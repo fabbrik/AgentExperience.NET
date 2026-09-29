@@ -14,9 +14,9 @@ It does two independent things; use either, or both:
 - **Injection.** `ExperienceContextProvider` retrieves applicable past experience before each invocation and adds it
   as one delimited, labeled **Historical Reference** message.
 
-Requires `Microsoft.Agents.AI` **1.22.0 or any later 1.x** (declared `[1.22.0, 2.0.0)`), for `net8.0`, `net9.0` and
-`net10.0`. CI tests the floor and the newest 1.x on every change and on a weekly schedule. MAF 2.0 and later are
-outside the range, and NuGet warns (NU1608) when a host resolves one. Brings in `AgentExperience.Core`.
+Requires `Microsoft.Agents.AI` **1.22.0 or any later 1.x** (declared `[1.22.0, 2.0.0)`). Targets `net10.0`. CI
+tests the floor and the newest 1.x on every change and on a weekly schedule. MAF 2.0 and later are outside the range,
+and NuGet warns (NU1608) when a host resolves one. Brings in `AgentExperience.Core`.
 
 ## Capture
 
