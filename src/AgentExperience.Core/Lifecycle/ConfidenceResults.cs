@@ -204,7 +204,9 @@ public enum ConfidenceEvidenceFilter
     /// counters of a record finalization wrote: host-trusted evidence, evidence with no recorded admission (stored
     /// before admission was recorded, or written by something other than Core), and the initial counters of a
     /// record written by hand (<see cref="ExperienceRecordOrigin.HostWritten"/>, whose writer chose them) are all
-    /// left out.
+    /// left out. With provenance signing configured, so are the initial counters of a record marked finalized whose
+    /// signature does not vouch for it, and of one that does, everything above finalization's own initial
+    /// validation (the counters are not signed claims).
     /// </summary>
     VerifiedOnly,
 }

@@ -39,6 +39,10 @@ services.AddSingleton(new ExperienceIndependenceOptions         // optional: the
 {                                                               //    which human evidence is refused; or the
     AssessmentTokenKey = secrets.AssessmentTokenKey,            //    TrustHostSuppliedIdentifiers opt-out
 });
+services.AddSingleton(new ExperienceProvenanceSigningOptions(   // optional: finalization signs what it vouches
+    secrets.ProvenanceSigningKeys,                              //    for, and verification refuses records written
+    currentKeyId: "prov-2026-09"));                             //    or edited outside it; keys from your secret
+                                                                //    store, never the database (confidence guide)
 services.AddAgentExperienceIndexing();                          // ExperienceIndexingService, and finalization's
                                                                 //    post-commit hook, in either registration order
 services.AddAgentExperienceRetrieval();                         // ExperienceRetrievalService

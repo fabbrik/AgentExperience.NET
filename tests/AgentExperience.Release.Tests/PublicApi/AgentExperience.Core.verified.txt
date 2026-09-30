@@ -143,6 +143,26 @@ namespace AgentExperience.Core.Confidence
         public System.TimeProvider TimeProvider { get; init; }
         public AgentExperience.Core.Confidence.IndependenceVerification Verification { get; init; }
     }
+    public static class ExperienceProvenanceSigningCutover
+    {
+        public static System.Threading.Tasks.Task<AgentExperience.Core.Confidence.ExperienceUnsignedRecordInventory> ListUnsignedFinalizedRecordIdsAsync(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Abstractions.AuthorizationContext authorization, System.Collections.Generic.IEnumerable<AgentExperience.Abstractions.Scope> scopes, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ExperienceProvenanceSigningOptions
+    {
+        public const int MaximumKeyIdLength = 64;
+        public const int MinimumKeyBytes = 32;
+        public ExperienceProvenanceSigningOptions(System.Collections.Generic.IReadOnlyDictionary<string, byte[]> keys, string currentKeyId) { }
+        public string CurrentKeyId { get; }
+        public System.Collections.Generic.IReadOnlyList<string> KeyIds { get; }
+        public System.Collections.Generic.IReadOnlySet<System.Guid> TrustUnsignedRecordIds { get; init; }
+        public override string ToString() { }
+    }
+    public sealed class ExperienceUnsignedRecordInventory : System.IEquatable<AgentExperience.Core.Confidence.ExperienceUnsignedRecordInventory>
+    {
+        public ExperienceUnsignedRecordInventory(System.Collections.Generic.IReadOnlySet<System.Guid> RecordIds, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Scope> IncompleteScopes) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Scope> IncompleteScopes { get; init; }
+        public System.Collections.Generic.IReadOnlySet<System.Guid> RecordIds { get; init; }
+    }
     public interface IExperienceConfidenceEngine
     {
         string RuleId { get; }
@@ -237,6 +257,7 @@ namespace AgentExperience.Core.Finalization
         public static readonly System.TimeSpan DefaultIndexingTimeout;
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout = default) { }
+        public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning) { }
         public System.TimeSpan IndexingTimeout { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Finalization.FinalizeExperienceResult> FinalizeAsync(AgentExperience.Core.Finalization.FinalizeExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public static System.Guid ExperienceIdFor(System.Guid runId, AgentExperience.Abstractions.Scope scope) { }
@@ -557,6 +578,7 @@ namespace AgentExperience.Core.Lifecycle
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? deindexingTimeout = default) { }
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, AgentExperience.Core.Confidence.ExperienceIndependenceOptions independence, AgentExperience.Core.Capture.IExperienceCaptureService? captureService = null, System.TimeSpan? deindexingTimeout = default) { }
         public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, AgentExperience.Core.Confidence.ExperienceIndependenceOptions independence, AgentExperience.Core.Capture.IExperienceCaptureService? captureService, System.TimeSpan? deindexingTimeout, AgentExperience.Core.Confidence.IExperienceConfidenceEngine? confidenceEngine) { }
+        public ExperienceLifecycleService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, AgentExperience.Core.Confidence.ExperienceIndependenceOptions independence, AgentExperience.Core.Capture.IExperienceCaptureService? captureService, System.TimeSpan? deindexingTimeout, AgentExperience.Core.Confidence.IExperienceConfidenceEngine? confidenceEngine, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning) { }
         public System.TimeSpan DeindexingTimeout { get; }
         public AgentExperience.Core.Confidence.IndependenceVerification IndependenceVerification { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceResult> ApplyEvidenceAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Core.Lifecycle.ApplyConfidenceEvidenceRequest request, System.Threading.CancellationToken cancellationToken) { }

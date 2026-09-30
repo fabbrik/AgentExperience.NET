@@ -491,7 +491,10 @@ and changes nothing that is shown on upgrade:
 - Exposure-bound evidence itself needs no schema: a run's exposures and a record's origin travel in the payload as
   `provenance.exposedTo` and `origin`, written only when set. The payload version stays `1`; an older reader ignores
   both. A record written before exposure-bound evidence existed has neither, so it reads back `HostWritten` and exposed to nothing, and
-  evidence about its run is refused unless the host opts out.
+  evidence about its run is refused unless the host opts out. The
+  [provenance signature](confidence.md#signing-provenance) needs no schema either: it travels in the payload as
+  `provenanceSignature` (key ID, algorithm, base64 value), written only when finalization signed the record, and is
+  sealed with the rest in crypto-shredding mode.
 
 **The base package's schema excludes the embedding table, and that is deliberate.** The `vector` extension and the
 `experience_embeddings` table belong to `AgentExperience.Storage.Postgres.Vectors` and are applied by *its* migrator.

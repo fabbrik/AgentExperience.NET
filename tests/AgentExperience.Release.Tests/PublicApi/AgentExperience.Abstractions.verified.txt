@@ -428,6 +428,16 @@
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
         public long Revision { get; init; }
     }
+    public sealed class ExperienceProvenanceSignature : System.IEquatable<AgentExperience.Abstractions.ExperienceProvenanceSignature>
+    {
+        public const string HmacSha256 = "HMAC-SHA256";
+        public ExperienceProvenanceSignature(string KeyId, string Algorithm, System.ReadOnlyMemory<byte> Value) { }
+        public string Algorithm { get; init; }
+        public string KeyId { get; init; }
+        public System.ReadOnlyMemory<byte> Value { get; init; }
+        public bool Equals(AgentExperience.Abstractions.ExperienceProvenanceSignature? other) { }
+        public override int GetHashCode() { }
+    }
     public sealed class ExperienceReadOptions : System.IEquatable<AgentExperience.Abstractions.ExperienceReadOptions>
     {
         public ExperienceReadOptions(AgentExperience.Abstractions.ExperienceReadPurpose Purpose = 0, string? CorrelationId = null) { }
@@ -470,6 +480,7 @@
         public AgentExperience.Abstractions.ExperienceRecordOrigin Origin { get; init; }
         public AgentExperience.Abstractions.Outcome Outcome { get; init; }
         public AgentExperience.Abstractions.Provenance Provenance { get; init; }
+        public AgentExperience.Abstractions.ExperienceProvenanceSignature? ProvenanceSignature { get; init; }
         public AgentExperience.Abstractions.Reflection? Reflection { get; init; }
         public double ReuseConfidence { get; init; }
         public long Revision { get; init; }

@@ -251,6 +251,18 @@ public sealed class ExperienceReuseFeedbackService
             validation.Degrading.AddRange(
                 await VerifyAttributionAsync(authorization, feedback, cancellationToken).ConfigureAwait(false));
         }
+        else if (validation.Degrading.Count == 0
+            && feedback is { HumanAssessment: not null } or { ComparativeEvaluation: not null }
+            && await _lifecycleService.Independence
+                .HasTamperedSignatureAsync(authorization, feedback.Scope, feedback.RunId, cancellationToken)
+                .ConfigureAwait(false))
+        {
+            // The opt-out trusts the host's identifiers, not a record the library signed and someone then changed:
+            // the same check the confidence path applies under the opt-out, applied before the ledger.
+            validation.Degrading.Add(new(
+                nameof(feedback.RunId),
+                $"must not be a run whose finalized record was changed after it was signed; {ProvenanceSigner.RefusalText}."));
+        }
 
         // An attribution that failed its evidence requirements is dropped, not fatal: the exposure is
         // still a fact about the run, and losing it to protect a score nothing was going to move is the
@@ -1031,7 +1043,9 @@ public sealed class ExperienceReuseFeedbackService
             errors.Add(new(
                 nameof(feedback.RunId),
                 run.HostWrittenOnly
-                    ? "must be a run the library knows in the feedback's scope for an attribution to count; it is known only through a record written without finalization, which vouches for nothing."
+                    ? run.SignatureRefusal is not null
+                        ? $"must be a run the library knows in the feedback's scope for an attribution to count; it is known only through a record marked finalized whose {ProvenanceSigner.RefusalText}, which vouches for nothing."
+                        : "must be a run the library knows in the feedback's scope for an attribution to count; it is known only through a record written without finalization, which vouches for nothing."
                     : "must be a run the library knows in the feedback's scope (finalized there, or held by the capture service) for an attribution to count."));
             return errors;
         }

@@ -18,17 +18,40 @@ internal sealed class IndependenceVerifier
     private readonly IExperienceRecordStore _store;
     private readonly IExperienceCaptureService? _captureService;
     private readonly AssessmentTokenCodec? _codec;
+    private readonly ProvenanceSigner? _signer;
 
     internal IndependenceVerifier(
         IExperienceRecordStore store,
         IExperienceCaptureService? captureService,
-        ExperienceIndependenceOptions options)
+        ExperienceIndependenceOptions options,
+        ExperienceProvenanceSigningOptions? provenanceSigning = null)
     {
         _store = store;
         _captureService = captureService;
         Mode = options.Verification;
         _codec = AssessmentTokenCodec.Create(options);
+        _signer = ProvenanceSigner.Create(provenanceSigning);
+        if (_signer is not null)
+        {
+            EnsureNotAssessmentKey(_signer, nameof(provenanceSigning));
+        }
     }
+
+    /// <summary>
+    /// Refuses a provenance signing ring that holds the assessment token key: whoever could mint tokens could then
+    /// sign provenance, and the reverse. Compared in constant time; the message names neither key.
+    /// </summary>
+    internal void EnsureNotAssessmentKey(ProvenanceSigner signer, string parameterName)
+    {
+        if (_codec is not null && _codec.SharesKeyWith(signer))
+        {
+            throw new ArgumentException(
+                "A provenance signing key must not be the assessment token key; give each purpose its own secret.", parameterName);
+        }
+    }
+
+    /// <summary>The provenance signer, when signing is configured; finalization signs with the same one by default.</summary>
+    internal ProvenanceSigner? Signer => _signer;
 
     internal IndependenceVerification Mode { get; }
 
@@ -46,6 +69,10 @@ internal sealed class IndependenceVerifier
     /// (<see cref="ExperienceRecordOrigin.Finalized"/>). A record under that ID that a host wrote by hand is
     /// its writer's statement and vouches for nothing; it is reported as <see cref="RunKnowledge.HostWrittenOnly"/>
     /// when the capture service does not hold the run either. No port lists records by run.
+    /// With provenance signing configured, a record marked finalized also has to carry a signature over its
+    /// finalization claims that verifies under a key in the ring (or carry no signature at all and be listed in
+    /// the configured cutover set); otherwise it is treated exactly as a hand-written one, and
+    /// <see cref="RunKnowledge.SignatureRefusal"/> says why.
     /// </remarks>
     internal async Task<RunKnowledge> LookUpRunAsync(
         AuthorizationContext authorization,
@@ -58,13 +85,22 @@ internal sealed class IndependenceVerifier
             .ConfigureAwait(false);
 
         var hostWritten = false;
+        ProvenanceSignatureCheck? signatureRefusal = null;
         if (read is { Outcome: ExperienceStoreOutcome.Found, SharedByGrant: false, Record: { } record }
             && record.SourceRunId == runId
             && record.Scope == scope)
         {
             if (record.Origin == ExperienceRecordOrigin.Finalized)
             {
-                return new(Known: true, Finalized: true, record.ClosedRoundId, ExposuresOf(record.Provenance));
+                var check = _signer?.Verify(record) ?? ProvenanceSignatureCheck.Valid;
+                if (check is ProvenanceSignatureCheck.Valid or ProvenanceSignatureCheck.TrustedUnsigned)
+                {
+                    return new(Known: true, Finalized: true, record.ClosedRoundId, ExposuresOf(record.Provenance));
+                }
+
+                // Claims to be finalized, but the library cannot confirm it wrote those claims: it is the
+                // statement of whoever wrote it, exactly like a record marked HostWritten.
+                signatureRefusal = check;
             }
 
             hostWritten = true;
@@ -78,7 +114,40 @@ internal sealed class IndependenceVerifier
             return new(Known: true, Finalized: false, ClosedRoundId: null, ExposuresOf(run.Provenance));
         }
 
-        return new(Known: false, Finalized: false, ClosedRoundId: null, NoExposures) { HostWrittenOnly = hostWritten };
+        return new(Known: false, Finalized: false, ClosedRoundId: null, NoExposures)
+        {
+            HostWrittenOnly = hostWritten,
+            SignatureRefusal = signatureRefusal,
+        };
+    }
+
+    /// <summary>
+    /// Under the opt-out, with provenance signing configured: whether the record finalization would have written
+    /// for <paramref name="runId"/> in <paramref name="scope"/> -- read exactly as the verified path reads it, in this
+    /// scope, marked finalized -- carries a signature that is present, under a key in the ring, and does not verify.
+    /// The opt-out trusts the host's identifiers, so a record with no signature or under an unknown key is accepted
+    /// there as host-trusted; what it does not accept is a record the library signed and someone then changed.
+    /// </summary>
+    internal async Task<bool> HasTamperedSignatureAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        Guid runId,
+        CancellationToken cancellationToken)
+    {
+        if (_signer is null)
+        {
+            return false;
+        }
+
+        var read = await _store
+            .GetAsync(authorization, scope, ExperienceFinalizationService.ExperienceIdFor(runId, scope), ScopeCheckRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        return read is { Outcome: ExperienceStoreOutcome.Found, SharedByGrant: false, Record: { ProvenanceSignature: not null } record }
+            && record.SourceRunId == runId
+            && record.Scope == scope
+            && record.Origin == ExperienceRecordOrigin.Finalized
+            && _signer.Verify(record) == ProvenanceSignatureCheck.Invalid;
     }
 
     /// <summary>
@@ -173,7 +242,11 @@ internal sealed class IndependenceVerifier
 
         if (!Verifies)
         {
-            return IndependenceCheck.Passed(assessmentId: null, ConfidenceEvidenceAdmission.HostTrusted);
+            return await HasTamperedSignatureAsync(authorization, scope, runId, cancellationToken).ConfigureAwait(false)
+                ? IndependenceCheck.Refused(
+                    IndependenceRefusal.HostWrittenRun,
+                    $"The run is known here only through a record marked finalized whose {ProvenanceSigner.RefusalText}, so it vouches for nothing, even under the opt-out.")
+                : IndependenceCheck.Passed(assessmentId: null, ConfidenceEvidenceAdmission.HostTrusted);
         }
 
         // Settled before any read when it can be: a human submission with no way to check its token fails
@@ -191,7 +264,9 @@ internal sealed class IndependenceVerifier
             return run.HostWrittenOnly
                 ? IndependenceCheck.Refused(
                     IndependenceRefusal.HostWrittenRun,
-                    "The run is known here only through a record written without finalization, which vouches for nothing, and the capture service does not hold it.")
+                    run.SignatureRefusal is not null
+                        ? $"The run is known here only through a record marked finalized whose {ProvenanceSigner.RefusalText}, so it is treated as written without finalization and vouches for nothing, and the capture service does not hold it."
+                        : "The run is known here only through a record written without finalization, which vouches for nothing, and the capture service does not hold it.")
                 : IndependenceCheck.Refused(
                     IndependenceRefusal.UnknownRun,
                     "The run is not one the library knows in this scope: no record was finalized from it here and the capture service does not hold it here.");
@@ -289,6 +364,12 @@ internal readonly record struct RunKnowledge(bool Known, bool Finalized, Guid? C
     /// only when <see cref="Known"/> is <see langword="false"/>.
     /// </summary>
     public bool HostWrittenOnly { get; init; }
+
+    /// <summary>
+    /// When <see cref="HostWrittenOnly"/> is set because a record marked finalized failed the provenance
+    /// signature check: why it failed. <see langword="null"/> otherwise.
+    /// </summary>
+    public ProvenanceSignatureCheck? SignatureRefusal { get; init; }
 }
 
 /// <summary>The outcome of one independence check.</summary>

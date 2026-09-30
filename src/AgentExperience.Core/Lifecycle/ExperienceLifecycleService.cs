@@ -207,12 +207,51 @@ public sealed class ExperienceLifecycleService
         IExperienceCaptureService? captureService,
         TimeSpan? deindexingTimeout,
         IExperienceConfidenceEngine? confidenceEngine)
+        : this(store, indexingService, independence, captureService, deindexingTimeout, confidenceEngine, provenanceSigning: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a lifecycle service with an optional post-commit de-indexing hook, explicit independence
+    /// verification, an optional host confidence engine, and optional provenance signing.
+    /// </summary>
+    /// <remarks>
+    /// With <paramref name="provenanceSigning"/>, a run is known through its finalized record only when that
+    /// record's provenance signature verifies under a key in the ring (or, unsigned, its ID is in
+    /// <see cref="ExperienceProvenanceSigningOptions.TrustUnsignedRecordIds"/>); anything else is refused as
+    /// <see cref="IndependenceRefusal.HostWrittenRun"/>, and <see cref="ReadConfidenceAsync"/> treats such a record's
+    /// initial counters as unverified -- and, for one that does vouch, counts as verified no more than finalization's
+    /// own initial validation. Under the <see cref="IndependenceVerification.TrustHostSuppliedIdentifiers"/> opt-out,
+    /// a record with no signature or under an unknown key is host-trusted like any other; only a finalized record whose
+    /// signature is present, under a key in the ring, and does not verify is still refused. A provenance key equal to
+    /// <see cref="ExperienceIndependenceOptions.AssessmentTokenKey"/> is refused. An
+    /// <see cref="Finalization.ExperienceFinalizationService"/> built over this service signs with the same options unless it
+    /// is given its own. <see langword="null"/> signs and checks nothing, exactly as the other constructors.
+    /// </remarks>
+    /// <param name="store">The port that persists events and projections atomically.</param>
+    /// <param name="indexingService">Optional. Removes the record's stored vector once it leaves eligibility.</param>
+    /// <param name="independence">How independence is verified, and the assessment token key.</param>
+    /// <param name="captureService">Optional. The capture service whose runs count as known.</param>
+    /// <param name="deindexingTimeout">How long the de-indexing hook may take. Must be strictly positive. <see langword="null"/> means <see cref="DefaultDeindexingTimeout"/>.</param>
+    /// <param name="confidenceEngine">Scores evidence. <see langword="null"/> means <see cref="ReuseConfidenceHeuristicEngine"/>.</param>
+    /// <param name="provenanceSigning">Optional. The key ring finalized records' provenance signatures are checked against.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="store"/> or <paramref name="independence"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="independence"/> is invalid; or <paramref name="confidenceEngine"/>'s <see cref="IExperienceConfidenceEngine.RuleId"/> or <see cref="IExperienceConfidenceEngine.RuleVersion"/> is not 1 to 64 characters from <c>[A-Za-z0-9._-]</c>, or its rule ID is <see cref="ReuseConfidenceHeuristicEngine.HeuristicRuleId"/>; or a key in <paramref name="provenanceSigning"/> is the assessment token key.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="deindexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceLifecycleService(
+        IExperienceRecordStore store,
+        ExperienceIndexingService? indexingService,
+        ExperienceIndependenceOptions independence,
+        IExperienceCaptureService? captureService,
+        TimeSpan? deindexingTimeout,
+        IExperienceConfidenceEngine? confidenceEngine,
+        ExperienceProvenanceSigningOptions? provenanceSigning)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(independence);
         _store = store;
         _indexingService = indexingService;
-        _independence = new IndependenceVerifier(store, captureService, independence);
+        _independence = new IndependenceVerifier(store, captureService, independence, provenanceSigning);
         _confidence = ConfidenceEngineRule.For(confidenceEngine, nameof(confidenceEngine));
         DeindexingTimeout = deindexingTimeout ?? DefaultDeindexingTimeout;
 
@@ -1149,18 +1188,40 @@ public sealed class ExperienceLifecycleService
         // for a finalized record, whatever its writer chose for a hand-written one.
         var initialSupporting = Math.Max(0, record.SupportingValidations - verifiedSupporting - trustedSupporting - unrecordedSupporting);
         var initialContradicting = Math.Max(0, record.Contradictions - verifiedContradicting - trustedContradicting - unrecordedContradicting);
-        var initialUnverified = record.Origin != ExperienceRecordOrigin.Finalized;
+        // With provenance signing configured, a record marked finalized counts as finalized here only when its
+        // signature verifies (or it is unsigned and listed in the cutover set), exactly as it must to vouch for a run.
+        var initialUnverified = record.Origin != ExperienceRecordOrigin.Finalized
+            || _independence.Signer?.Verify(record) is ProvenanceSignatureCheck.Missing or ProvenanceSignatureCheck.UnknownKey or ProvenanceSignatureCheck.Invalid;
+
+        // What is excluded of the initial counters under VerifiedOnly. The counters are not signed claims, so with
+        // signing configured a vouched-for record's verified share is capped at what finalization itself sets (one
+        // supporting validation, no contradiction); anything above that is its writer's statement.
+        int unverifiedInitialSupporting;
+        int unverifiedInitialContradicting;
+        if (initialUnverified)
+        {
+            (unverifiedInitialSupporting, unverifiedInitialContradicting) = (initialSupporting, initialContradicting);
+        }
+        else if (_independence.Signer is not null)
+        {
+            unverifiedInitialSupporting = Math.Max(0, initialSupporting - Finalization.ExperienceFinalizationService.InitialSupportingValidations);
+            unverifiedInitialContradicting = initialContradicting;
+        }
+        else
+        {
+            (unverifiedInitialSupporting, unverifiedInitialContradicting) = (0, 0);
+        }
 
         var excludedSupporting = filter switch
         {
             ConfidenceEvidenceFilter.ExcludeHostTrusted => trustedSupporting,
-            ConfidenceEvidenceFilter.VerifiedOnly => trustedSupporting + unrecordedSupporting + (initialUnverified ? initialSupporting : 0),
+            ConfidenceEvidenceFilter.VerifiedOnly => trustedSupporting + unrecordedSupporting + unverifiedInitialSupporting,
             _ => 0,
         };
         var excludedContradicting = filter switch
         {
             ConfidenceEvidenceFilter.ExcludeHostTrusted => trustedContradicting,
-            ConfidenceEvidenceFilter.VerifiedOnly => trustedContradicting + unrecordedContradicting + (initialUnverified ? initialContradicting : 0),
+            ConfidenceEvidenceFilter.VerifiedOnly => trustedContradicting + unrecordedContradicting + unverifiedInitialContradicting,
             _ => 0,
         };
 

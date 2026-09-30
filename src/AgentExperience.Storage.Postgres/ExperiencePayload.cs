@@ -112,7 +112,10 @@ internal static class ExperiencePayload
                 ? exposedTo.Select(exposure => new RunExposureV1(exposure.ExperienceId, exposure.Revision)).ToList()
                 : null),
         record.ClosedRoundId,
-        record.Origin == ExperienceRecordOrigin.HostWritten ? null : record.Origin);
+        record.Origin == ExperienceRecordOrigin.HostWritten ? null : record.Origin,
+        record.ProvenanceSignature is { } signature
+            ? new ProvenanceSignatureV1(signature.KeyId, signature.Algorithm, signature.Value.ToArray())
+            : null);
 
     /// <summary>Maps a stored payload plus its column values back to the domain record.</summary>
     public static ExperienceRecord ToRecord(
@@ -207,6 +210,9 @@ internal static class ExperiencePayload
         {
             ClosedRoundId = payload.ClosedRoundId,
             Origin = payload.Origin ?? ExperienceRecordOrigin.HostWritten,
+            ProvenanceSignature = payload.ProvenanceSignature is { } signature
+                ? new ExperienceProvenanceSignature(signature.KeyId, signature.Algorithm, signature.Value)
+                : null,
         };
 
     private static DateTimeOffset Utc(DateTimeOffset value) => value.ToUniversalTime();
@@ -252,6 +258,9 @@ internal static class ExperiencePayload
     /// absent. Both are identifiers only, and in crypto-shredding mode they are sealed with the rest of the
     /// payload, so the application role -- which cannot <c>UPDATE payload</c> -- cannot rewrite them either way, except
     /// through <c>0016</c>'s sealing function while the host grants <c>AllowSealing</c>.
+    /// <c>ProvenanceSignature</c> was added the same way (story 13.1): written only when finalization signed the
+    /// record, read back as none when absent, its value base64. It is sealed with the rest in crypto-shredding
+    /// mode, and needs no migration.
     /// </remarks>
     internal sealed record PayloadV1(
         string? TaskSummary,
@@ -262,7 +271,10 @@ internal static class ExperiencePayload
         EnvironmentV1 Environment,
         ProvenanceV1 Provenance,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ClosedRoundId = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExperienceRecordOrigin? Origin = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExperienceRecordOrigin? Origin = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProvenanceSignatureV1? ProvenanceSignature = null);
+
+    internal sealed record ProvenanceSignatureV1(string KeyId, string Algorithm, byte[] Value);
 
     internal sealed record AttemptV1(
         Guid AttemptId,

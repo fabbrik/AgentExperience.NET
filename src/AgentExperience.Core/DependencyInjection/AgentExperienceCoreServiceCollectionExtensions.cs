@@ -10,6 +10,7 @@ using AgentExperience.Core.Retrieval;
 using AgentExperience.Core.Sanitization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace AgentExperience.Core.DependencyInjection;
 
@@ -58,6 +59,14 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// records a person's decision, not in a container agent-driven components resolve from.
     /// </para>
     /// <para>
+    /// <b>Provenance signing.</b> Register an <see cref="ExperienceProvenanceSigningOptions"/> singleton, before or
+    /// after this call -- directly (<c>services.AddSingleton(options)</c>) or through the options pattern
+    /// (<c>IOptions&lt;ExperienceProvenanceSigningOptions&gt;</c>, for example
+    /// <c>services.AddSingleton(Options.Create(options))</c>); a direct registration wins when both exist. The lifecycle
+    /// service then checks every run's finalized record against it, and finalization signs with the same ring. Without
+    /// one, nothing is signed or checked.
+    /// </para>
+    /// <para>
     /// <b>Confidence engine.</b> A host that registers an <see cref="IExperienceConfidenceEngine"/>, in any
     /// order relative to this call, has it score confidence evidence; otherwise
     /// <see cref="ReuseConfidenceHeuristicEngine"/> does. It is resolved once, from the root provider, so
@@ -99,7 +108,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetService<ExperienceIndependenceOptions>() ?? new ExperienceIndependenceOptions(),
             provider.GetRequiredService<IExperienceCaptureService>(),
             deindexingTimeout: null,
-            provider.GetService<IExperienceConfidenceEngine>()));
+            provider.GetService<IExperienceConfidenceEngine>(),
+            ProvenanceSigningFrom(provider, services)));
 
         // The indexing hook is resolved optionally, not required: a host that never registered
         // AddAgentExperienceIndexing gets finalization with no hook at all, which is exactly the
@@ -110,10 +120,27 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<IExperienceReflector>(),
             provider.GetRequiredService<IExperienceRecordStore>(),
             provider.GetRequiredService<ExperienceLifecycleService>(),
-            provider.GetService<ExperienceIndexingService>()));
+            provider.GetService<ExperienceIndexingService>(),
+            indexingTimeout: null,
+            provenanceSigning: null));
 
         return services;
     }
+
+    /// <summary>
+    /// The registered provenance signing options, directly or through an explicitly registered
+    /// <see cref="IOptions{TOptions}"/>, or <see langword="null"/> when neither is registered.
+    /// </summary>
+    /// <remarks>
+    /// <c>IOptions&lt;T&gt;</c> is resolved only when the collection names it explicitly: <c>AddOptions</c> registers it
+    /// as an open generic whose manager needs a parameterless constructor, which these options deliberately lack (they
+    /// are validated at construction), so resolving it blindly would throw for a host that signs nothing.
+    /// </remarks>
+    private static ExperienceProvenanceSigningOptions? ProvenanceSigningFrom(IServiceProvider provider, IServiceCollection services) =>
+        provider.GetService<ExperienceProvenanceSigningOptions>()
+        ?? (services.Any(descriptor => descriptor.ServiceType == typeof(IOptions<ExperienceProvenanceSigningOptions>))
+            ? provider.GetService<IOptions<ExperienceProvenanceSigningOptions>>()?.Value
+            : null);
 
     /// <summary>
     /// Registers <see cref="ExperienceReuseFeedbackService"/> as a singleton, so a host can record what

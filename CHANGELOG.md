@@ -6,6 +6,61 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Signed provenance (story 13.1)
+
+- **Finalization can sign what it vouches for** (KL-11, narrowed). Register an `ExperienceProvenanceSigningOptions`
+  and `ExperienceFinalizationService` signs every record it creates. The options hold a key ring of keys of at least
+  32 bytes (only `KeyIds` is public; keys are copied and never returned), a `CurrentKeyId`, and an optional
+  `TrustUnsignedRecordIds` cutover set. The signature is HMAC-SHA256 over a canonical encoding (`aexp-prov:v1`) of the
+  record's finalization claims:
+  - the record ID;
+  - all six scope fields, as strict UTF-8;
+  - the source run, the closed round and the origin;
+  - the exposures, sorted by big-endian record ID then revision.
+
+  It is stored with the record, in the same create, as the new `ExperienceRecord.ProvenanceSignature`
+  (`ExperienceProvenanceSignature`: key ID, algorithm, value). Content fields and counters are not signed.
+- **Verification refuses a record finalization did not sign.** With the options registered, a run known through a
+  record whose signature is missing, names a key not in the ring, or does not verify (constant-time comparison) is
+  refused as `IndependenceRefusal.HostWrittenRun`. The reason is one generic sentence for all three cases and names
+  no key material. So a record written through `CreateAsync` claiming `Finalized`, or a payload edited outside the
+  library, can no longer pass as finalized.
+- **Initial counters are capped.** `ConfidenceEvidenceFilter.VerifiedOnly` leaves out a refused record's initial
+  counters. For a record that vouches, it counts at most finalization's own initial validation as verified.
+- **The cutover is a list of record IDs, not a date.** `ExperienceProvenanceSigningCutover.ListUnsignedFinalizedRecordIdsAsync`
+  lists the unsigned finalized records in given scopes. Run it once when switching signing on and configure the
+  result as `TrustUnsignedRecordIds`. A record created later can never join the set, so backdating a forged record
+  gains nothing.
+- **Under the `TrustHostSuppliedIdentifiers` opt-out**, a record with no signature or under an unknown key stays
+  host-trusted. Only a finalized record whose signature is present, under a key in the ring, and invalid is refused,
+  in the confidence path and in feedback attribution alike.
+- **Misconfiguration fails at construction.** A ring holding the assessment token key is refused. Finalization's own
+  options are refused unless the lifecycle service it is built over checks their current key.
+- **A retry does not replay a record that does not vouch.** With signing on, finalizing a run whose stored record
+  lacks a valid signature ends `Failed` at the create stage, saying so, instead of `AlreadyFinalized`. A run whose
+  scope cannot be encoded (a lone surrogate) ends `Failed` with nothing stored.
+- **Rotation:** add a key, switch `CurrentKeyId`. Older signatures verify while their key stays in the ring.
+- **No key ring, no change.** Without the options nothing is signed or checked, and every existing test passes
+  unmodified. `AddAgentExperienceCore` picks the options up in either registration order, directly or as an explicitly
+  registered `IOptions<ExperienceProvenanceSigningOptions>`. Hosts that build services by hand use the new
+  `ExperienceLifecycleService` and `ExperienceFinalizationService` constructor overloads that take
+  `provenanceSigning`; a finalization service built over a lifecycle service with signing options signs with them by
+  default.
+- **Storage.** Both stores persist the signature. The PostgreSQL store writes it as an optional version-1 payload
+  field, `provenanceSignature`, only when set, so it needs no migration and is sealed with the rest of the payload in
+  crypto-shredding mode. Both stores refuse, as `Invalid`:
+  - a malformed signature: a key ID or algorithm outside `[A-Za-z0-9._-]{1,64}`, or a value that is empty or longer
+    than 512 bytes;
+  - a scope field that is not well-formed UTF-16.
+
+  The store conformance suite checks the round trip and each malformation.
+- **Store implementers:** an `IExperienceRecordStore` must persist `ExperienceRecord.ProvenanceSignature` as given.
+  One that drops it makes every signed record read back unsigned, and, with signing on, their runs vouch for nothing.
+- Documented in [Signing provenance](docs/guide/confidence.md#signing-provenance), in
+  [Finalization](docs/guide/finalization.md#signing-provenance), in the deployment wiring, in the
+  [security suite](docs/security-suite.md), and in the narrowed KL-11 row of
+  [Known limits and documented boundaries](docs/known-limits.md#documented-boundaries).
+
 ### Benchmarks
 
 - **The hot paths are measured** (story 12.2). `benchmarks/AgentExperience.Benchmarks` is a BenchmarkDotNet console

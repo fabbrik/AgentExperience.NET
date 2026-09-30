@@ -32,6 +32,7 @@ internal static class StoredSnapshots
         Reflection = record.Reflection is { } reflection ? Reflection(reflection) : null,
         Environment = record.Environment with { Metadata = Dictionary(record.Environment.Metadata) },
         Provenance = record.Provenance with { ExposedTo = List(record.Provenance.ExposedTo) },
+        ProvenanceSignature = record.ProvenanceSignature is { } signature ? signature with { Value = signature.Value.ToArray() } : null,
         CreatedAt = Timestamp(record.CreatedAt),
         UpdatedAt = Timestamp(record.UpdatedAt),
     };
