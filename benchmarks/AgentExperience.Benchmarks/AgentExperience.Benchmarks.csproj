@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 12.2: the hot paths, measured. A console app, not a test project, so `dotnet test` over the solution never
+       runs it and CI never times anything: it runs only when someone types the `dotnet run` command in README.md. It is
+       in the solution so the solution build always compiles it. Directory.Build.props gives it net10.0, like every
+       project. Models are never called: every benchmark drives the library's own components, and the one chat client
+       it needs (to construct the agent a context provider is invoked for) throws if anything calls it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AgentExperience.Benchmarks</RootNamespace>
+    <!-- A measurement harness, never a package. -->
+    <IsPackable>false</IsPackable>
+    <!-- Directory.Build.props turns on GenerateDocumentationFile with TreatWarningsAsErrors; BenchmarkDotNet needs its
+         benchmark classes and members public, and documenting each one would add nothing. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Non-shipping tooling, exact-pinned like the experiments' packages: the current stable release when story 12.2
+         was written. Recorded in docs/compatibility-evidence.md ("Test infrastructure (not shipped)"). -->
+    <PackageReference Include="BenchmarkDotNet" Version="[0.15.8]" />
+    <!-- The PostgreSQL container the Postgres variant of each store benchmark runs against. The same version every
+         container-backed test project uses. -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="[4.15.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Linked, not referenced, so no xUnit comes along: the conformance suite's record builders (FullRecord is what
+         every benchmark record is made from) and the PostgreSQL image choice every container-backed test uses. -->
+    <Compile Include="..\..\tests\AgentExperience.Storage.Conformance\ConformanceData.cs" Link="Shared\ConformanceData.cs" />
+    <Compile Include="..\..\tests\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="AgentExperience.Abstractions" />
+  </ItemGroup>
+
+</Project>

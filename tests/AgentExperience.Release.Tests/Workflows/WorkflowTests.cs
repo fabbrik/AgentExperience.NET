@@ -62,6 +62,24 @@ public sealed class WorkflowTests
         Assert.False(ForbiddenIn(text, out var found), $"{workflow} contains '{found}'.");
     }
 
+    /// <summary>
+    /// Story 12.2: the benchmarks are compiled by the solution build and never run by a workflow. A timing taken on a
+    /// shared runner compares with nothing, and a threshold on one would fail on noise.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EveryWorkflow))]
+    public void No_workflow_runs_the_benchmarks(string workflow)
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", workflow));
+
+        Assert.DoesNotContain("benchmarks/", text.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AgentExperience.Benchmarks", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BenchmarkDotNet", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Every workflow, <c>release.yml</c> included.</summary>
+    public static TheoryData<string> EveryWorkflow() => new(AllWorkflows());
+
     [Theory]
     [InlineData("permissions: write-all")]
     [InlineData("permissions:\n  contents: write")]
