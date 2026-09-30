@@ -231,8 +231,9 @@ outside the matrix (see [Why not 14](#why-not-14)), and stays out when it reache
 
 ## The PostgreSQL matrix
 
-CI's `postgres` job runs `AgentExperience.Storage.Postgres.Tests`, `…Vectors.Tests`, `AgentExperience.CompatibilityProof`
-and `AgentExperience.Sample.EndToEnd.Tests` once per supported major, with
+CI's `postgres` job runs `AgentExperience.Storage.Postgres.Tests`, `…Vectors.Tests`, `AgentExperience.CompatibilityProof`,
+`AgentExperience.Sample.EndToEnd.Tests` and `AgentExperience.Upgrade.Tests` (story 12.1; not yet in the result table
+below) once per supported major, with
 `AGENTEXPERIENCE_POSTGRES_MAJOR` set to the leg's major. `WorkflowTests` fails if the job's list and
 `PostgresTestImage.SupportedMajors` ever differ. The default `build-and-test` job runs everything against 16.
 

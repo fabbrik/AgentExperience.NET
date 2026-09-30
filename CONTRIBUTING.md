@@ -29,17 +29,19 @@ dotnet build
 dotnet test                                    # everything; the storage tests need Docker
 ```
 
-**Docker.** The storage suites, the pgvector compatibility proof (`PostgresVectorProof`) and the sample's PostgreSQL
-mode start PostgreSQL (with pgvector) containers through Testcontainers. They run against PostgreSQL 16 unless `AGENTEXPERIENCE_POSTGRES_MAJOR`
+**Docker.** The storage suites, the pgvector compatibility proof (`PostgresVectorProof`), the sample's PostgreSQL
+mode and the upgrade suite start PostgreSQL (with pgvector) containers through Testcontainers. They run against PostgreSQL 16 unless `AGENTEXPERIENCE_POSTGRES_MAJOR`
 names another supported major (15, 16, 17 or 18), which is how CI runs them on each; any other value fails loudly.
-If Testcontainers' Ryuk container fails under your Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. With
+If Testcontainers' Ryuk container fails under your Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. The upgrade
+suite (`tests/AgentExperience.Upgrade.Tests`) also needs nuget.org the first time: it builds its seeders, which restore
+the published previews' packages, into a temporary directory (see its [README](tests/AgentExperience.Upgrade.Tests/README.md)). With
 `AGENTEXPERIENCE_TEST_ENCRYPTION=on`, the two storage test projects run again, unmodified, in crypto-shredding mode;
 CI runs them both ways.
 
 **Without Docker**, skip the container-backed classes:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~PostgresVectorProof&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresApplicationRoleTests&FullyQualifiedName!~PostgresBatchReadTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~CryptoShredding&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~PostgresGrantAccessAuditTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresRetentionReachTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresServerVersionTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresVerifiedIndependenceTests&FullyQualifiedName!~ApplicationRoleVectorsTests&FullyQualifiedName!~HybridRetrievalIntegrationTests&FullyQualifiedName!~PostgresDeindexingTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~ErasureTelemetryTests&FullyQualifiedName!~BatchReReadPostgresEquivalenceTests&FullyQualifiedName!~SamplePostgres&FullyQualifiedName!~Postgres.Tests.Conformance"
+dotnet test --filter "FullyQualifiedName!~PostgresVectorProof&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresApplicationRoleTests&FullyQualifiedName!~PostgresBatchReadTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~CryptoShredding&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~PostgresGrantAccessAuditTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresRetentionReachTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresServerVersionTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresVerifiedIndependenceTests&FullyQualifiedName!~ApplicationRoleVectorsTests&FullyQualifiedName!~HybridRetrievalIntegrationTests&FullyQualifiedName!~PostgresDeindexingTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~ErasureTelemetryTests&FullyQualifiedName!~BatchReReadPostgresEquivalenceTests&FullyQualifiedName!~SamplePostgres&FullyQualifiedName!~Postgres.Tests.Conformance&FullyQualifiedName!~UpgradeFromPublishedPreviewsTests"
 ```
 
 No test anywhere needs model credentials: every model and embedding in the suite is a deterministic in-test fake.
@@ -69,6 +71,8 @@ tests/
   AgentExperience.Sample.EndToEnd.Tests/    the sample's seven stages, its determinism, and what it does not claim
   AgentExperience.ReuseBaseline/            the controlled reuse experiment and its golden reports
   AgentExperience.Release.Tests/            release gates: the public API baseline, pin agreement, the security-suite map, workflow guards, documentation links
+  AgentExperience.Upgrade.Tests/            upgrades databases the published previews created to today's schema, against a pgvector container, and reads everything back
+  AgentExperience.Upgrade.Seeders/          one console program per published preview that ships a migration, pinning that preview's packages from nuget.org; built and run by the upgrade tests, not in the solution
 samples/
   AgentExperience.Sample.EndToEnd/          one runnable command: capture, verify, reflect, persist, retrieve, inject, record reuse
 experiments/

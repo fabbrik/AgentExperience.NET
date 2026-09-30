@@ -34,6 +34,10 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 9: 9.2 → 9.1.
 - Epic 10: 10.1 → 10.2 → 10.3 → 10.4.
 - Epic 11: 11.1 → 11.2.
+- Epic 12: 12.1 → 12.2.
+- Epic 13: 13.1.
+- Epic 14: 14.1 → 14.2.
+- Epic 15: 15.1.
 
 Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
 
@@ -141,6 +145,18 @@ Agents get the experience that fits their environment and capabilities best, ran
 
 ### Epic 11: Try It Without PostgreSQL
 Developers can run the whole learning loop in memory for tests, demos and quick starts, with a store proven to behave like PostgreSQL and guarded against production use.
+
+### Epic 12: Upgrade Safely
+Operators can upgrade a database created by any published preview and keep every record, with performance measured.
+
+### Epic 13: Sign What Finalization Vouches For
+Operators can detect records whose finalization claims were forged outside the library.
+
+### Epic 14: Reflect With a Model, Safely
+Developers can opt into a model-written lesson that is screened and bound to its evidence exactly like the deterministic one.
+
+### Epic 15: Isolate Tenants in the Database Too
+Operators can add PostgreSQL row-level security as a second isolation layer behind the application role.
 
 ## Epic 1: Capture and Explain Agent Experience
 
@@ -1547,3 +1563,105 @@ So that I can run capture, finalization, retrieval, injection and feedback witho
 **Given** the release checks
 **When** the package is added
 **Then** the solution, package verification, public API baselines, pin agreement, README install table, guide package table, CONTRIBUTING layout and RELEASING are updated, and the first publish of the new package id through Trusted Publishing is verified or documented.
+
+## Epic 12: Upgrade Safely
+
+Planned on 2026-09-30 from the architecture's release-readiness items. Existing upgrade tests simulate old schemas by running a prefix of the scripts; none starts from a database a published preview created.
+
+### Story 12.1: Upgrade From Databases the Published Previews Created
+
+**Traces:** NFR6, NFR8 · **Depends on:** 2.1, 4.5
+
+As an operator,
+I want proof that a database created and filled by each published preview upgrades to the current schema and reads back intact,
+So that upgrading never loses or corrupts experience.
+
+**Acceptance Criteria:**
+
+**Given** seeder programs that reference the published `AgentExperience.Storage.Postgres` `0.1.0-preview.1` and `0.1.0-preview.2` packages from nuget.org
+**When** each creates a database with its own migrator and writes records, lifecycle events, grants and feedback through its own stores
+**Then** the current migrator upgrades it under the journal, and the current stores read every record, event, grant and feedback row back with identical content, and continue the lifecycle.
+
+**Given** CI
+**When** the upgrade suite runs
+**Then** it runs on every supported PostgreSQL major, and a failure names the preview and the object that did not survive.
+
+### Story 12.2: Measure the Hot Paths
+
+**Traces:** NFR5 · **Depends on:** 11.2
+
+As a maintainer,
+I want a BenchmarkDotNet suite for retrieval, injection and finalization on both stores,
+So that performance regressions are visible and published numbers are reproducible.
+
+**Acceptance Criteria:**
+
+**Given** the benchmark project
+**When** it runs locally
+**Then** it reports the hot paths with recorded environment details, a baseline result is committed, and the project never runs in CI's test step.
+
+## Epic 13: Sign What Finalization Vouches For
+
+### Story 13.1: Sign Finalized Provenance and Verify It Before Counting Evidence
+
+**Traces:** FR10, KL-11 · **Depends on:** 6.6, 7.3
+
+As an operator,
+I want the claims finalization makes about a record (origin, exposures, source run, closed round) signed with a host key and verified before confidence evidence counts,
+So that a record written or edited outside the library cannot pass as a finalized one.
+
+**Acceptance Criteria:**
+
+**Given** a host-configured signing key ring (key id plus key, at least 32 bytes)
+**When** finalization stores a record
+**Then** the payload carries a signature over those claims and the key id; with no key configured, behaviour is unchanged.
+
+**Given** confidence evidence or attributed feedback about a record
+**When** a key ring is configured
+**Then** a record whose signature is missing, unknown-key or invalid is treated as host-written and refused as such; rotation keeps old key ids verifiable; KL-11's documented boundary is narrowed and restated.
+
+## Epic 14: Reflect With a Model, Safely
+
+### Story 14.1: Screen Reflector Output Before It Is Stored
+
+**Traces:** FR5, FR9, NFR2 · **Depends on:** 1.4, 5.5
+
+As a platform engineer,
+I want every reflector's free text sanitized and bounded before finalization stores it,
+So that a host or model reflector cannot put secrets or unbounded text into a record.
+
+**Acceptance Criteria:**
+
+**Given** any `IExperienceReflector`
+**When** finalization receives its reflection
+**Then** its free-text fields pass through the configured sanitizer and length bounds, a rejection quarantines the record with a `Reflect` failure, and the default reflector's output is unchanged.
+
+### Story 14.2: Offer an Optional Model-Backed Reflector
+
+**Traces:** FR5 · **Depends on:** 14.1
+
+As a platform engineer,
+I want an optional reflector that asks an `IChatClient` for the lesson and guidance,
+So that lessons can be richer than templates without weakening evidence binding.
+
+**Acceptance Criteria:**
+
+**Given** `ChatClientExperienceReflector` in the MAF package
+**When** it reflects a verified run
+**Then** it requests structured output, fills only the free-text fields, copies every bound field from the request, names the model in `Producer`, never asks for or stores reasoning, and any malformed or failed answer quarantines the record; the deterministic reflector stays the default.
+
+## Epic 15: Isolate Tenants in the Database Too
+
+### Story 15.1: Opt-In Row-Level Security Behind the Application Role
+
+**Traces:** NFR1 · **Depends on:** 6.1, 3.1
+
+As an operator,
+I want PostgreSQL row-level security policies that confine the application role to the authorized scope,
+So that a SQL-level mistake cannot read or write another tenant's rows.
+
+**Acceptance Criteria:**
+
+**Given** RLS enabled through the application-role privilege step
+**When** the stores run as the application role
+**Then** every store sets the authorized scope for its transaction, policies confine reads and writes to it (grant-shared reads included), a query without the scope sees nothing, SECURITY DEFINER purges keep working, and the whole store suite passes with RLS on; with RLS off, nothing changes.

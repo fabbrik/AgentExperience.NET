@@ -146,12 +146,18 @@ public sealed class WorkflowTests
             "tests/AgentExperience.Storage.Postgres.Vectors.Tests",
             "tests/AgentExperience.CompatibilityProof",
             "tests/AgentExperience.Sample.EndToEnd.Tests",
+            // Story 12.1: upgrades from databases the published previews created, on every major.
+            "tests/AgentExperience.Upgrade.Tests",
         })
         {
             Assert.Contains(project, tokens);
         }
 
         Assert.Contains("dotnet test \"$project\" --no-build --configuration Release", job, StringComparison.Ordinal);
+
+        // Story 12.1: the upgrade suite's seeders are restored, locked, before the tests, so the test step needs no network.
+        Assert.Contains("for seeder in tests/AgentExperience.Upgrade.Seeders/Preview*/; do", job, StringComparison.Ordinal);
+        Assert.Contains("dotnet restore \"$seeder\" --locked-mode", job, StringComparison.Ordinal);
         Assert.DoesNotContain("continue-on-error", job, StringComparison.Ordinal);
 
         // Story 6.4 (KL-2): the store and vector suites run a second time, in crypto-shredding mode, on every leg.

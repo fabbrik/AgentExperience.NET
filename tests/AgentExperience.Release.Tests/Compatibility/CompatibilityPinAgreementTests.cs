@@ -46,6 +46,19 @@ public sealed class CompatibilityPinAgreementTests
         ["Microsoft.Agents.AI"] = "no stated SemVer promise and caller-visible behaviour changes between minors, so the next major is where a break is expected",
     };
 
+    /// <summary>
+    /// The one directory under <c>tests/</c> the floor rule below does not apply to, and why: story 12.1's seeders
+    /// (<c>tests/AgentExperience.Upgrade.Seeders/Preview1</c>, <c>Preview2</c>, ...) each exact-pin a <em>published</em>
+    /// preview's packages, so their lock files resolve what that preview shipped with (<c>0.1.0-preview.1</c> pinned
+    /// <c>Microsoft.Extensions.DependencyInjection.Abstractions</c> 10.0.11, for example, below today's floor). That is the
+    /// point of them: they recreate a database the way an old release wrote it, and never run today's code. No other
+    /// project may be excluded. Their lock files sit one level further down, so the scan below would not reach them
+    /// anyway; the name is excluded explicitly so that stays a stated decision rather than an accident of depth. What the
+    /// seeders must pin instead is checked positively, by
+    /// <see cref="The_upgrade_seeders_pin_exactly_the_published_previews_the_upgrade_suite_covers"/>.
+    /// </summary>
+    private const string DeliberatelyOldPins = "AgentExperience.Upgrade.Seeders";
+
     private static readonly Regex BareVersion = new(@"^[0-9]+\.[0-9]+\.[0-9]+$", RegexOptions.CultureInvariant);
 
     /// <summary><c>[x.y.z, N.0.0)</c>: inclusive floor, exclusive upper bound at a major.</summary>
@@ -214,7 +227,8 @@ public sealed class CompatibilityPinAgreementTests
     /// (Testcontainers, a newer DI container) could lift a floored package above its floor there, and the
     /// default run would then test a version the floor does not name. So every lock file under
     /// <c>tests/</c>, <c>samples/</c> and <c>experiments/</c> must resolve each floored package, where it appears at all, to the
-    /// floor itself, in every framework it records.
+    /// floor itself, in every framework it records. The one exception is <see cref="DeliberatelyOldPins"/>, whose
+    /// seeders pin published previews on purpose.
     /// </summary>
     [Fact]
     public void Every_test_and_sample_lock_file_resolves_each_floored_package_to_the_floor()
@@ -227,6 +241,7 @@ public sealed class CompatibilityPinAgreementTests
 
         var lockFiles = new[] { "tests", "samples", "experiments" }
             .SelectMany(root => Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, root)))
+            .Where(directory => !string.Equals(Path.GetFileName(directory), DeliberatelyOldPins, StringComparison.Ordinal))
             .Select(directory => Path.Combine(directory, "packages.lock.json"))
             .Where(File.Exists)
             .Order(StringComparer.Ordinal)
@@ -258,6 +273,81 @@ public sealed class CompatibilityPinAgreementTests
 
         Assert.True(wrong.Count == 0, string.Join(Environment.NewLine, wrong));
         Assert.True(lockFiles.Count >= 5 && checkedEntries > 0, $"Only {lockFiles.Count} lock files and {checkedEntries} floored entries were checked, so this proves little.");
+    }
+
+    /// <summary>
+    /// Story 12.1: the seeders are exempt from the floor rule, so what they pin is held to its own rule. The
+    /// <see cref="DeliberatelyOldPins"/> directory holds only <c>PreviewN</c> projects (plus their shared source and the
+    /// nuget.config); each exact-pins the four packages it seeds with at <c>[0.1.0-preview.N]</c>; its lock file resolves
+    /// every AgentExperience package to exactly that version; and the set of previews equals the one the upgrade suite's
+    /// <c>PublishedPreview</c> list covers, so a seeder can neither drift to another version nor exist untested.
+    /// </summary>
+    [Fact]
+    public void The_upgrade_seeders_pin_exactly_the_published_previews_the_upgrade_suite_covers()
+    {
+        var root = Path.Combine(RepositoryRoot.Path, "tests", DeliberatelyOldPins);
+        string[] packages = ["AgentExperience.Abstractions", "AgentExperience.Core", "AgentExperience.Storage.Postgres", "AgentExperience.Storage.Postgres.Vectors"];
+        var wrong = new List<string>();
+        var seeded = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var directory in Directory.GetDirectories(root).Select(path => Path.GetFileName(path)!).Where(name => name is not ("bin" or "obj")))
+        {
+            if (directory == "Shared")
+            {
+                continue;
+            }
+
+            var match = Regex.Match(directory, @"^Preview(?<n>[1-9][0-9]*)$", RegexOptions.CultureInvariant);
+            if (!match.Success)
+            {
+                wrong.Add($"{directory}: only PreviewN seeder projects (and Shared) belong in {DeliberatelyOldPins}");
+                continue;
+            }
+
+            var version = $"0.1.0-preview.{match.Groups["n"].Value}";
+            seeded.Add(version);
+            var project = Path.Combine(root, directory, $"{DeliberatelyOldPins}.{directory}.csproj");
+            if (!File.Exists(project))
+            {
+                wrong.Add($"{directory}: no {Path.GetFileName(project)}");
+                continue;
+            }
+
+            var declared = XDocument.Load(project).Descendants("PackageReference")
+                .ToDictionary(element => element.Attribute("Include")!.Value, element => element.Attribute("Version")!.Value, StringComparer.Ordinal);
+            if (!declared.Keys.Order(StringComparer.Ordinal).SequenceEqual(packages) || declared.Values.Any(v => v != $"[{version}]"))
+            {
+                wrong.Add($"{directory}: must reference exactly {string.Join(", ", packages)} at [{version}]; it references {string.Join(", ", declared.Select(d => $"{d.Key} {d.Value}"))}");
+            }
+
+            foreach (var (framework, resolved) in ReadLockFile(Path.Combine(root, directory, "packages.lock.json")))
+            {
+                foreach (var (package, entry) in resolved.Where(p => p.Key.StartsWith("AgentExperience.", StringComparison.Ordinal)))
+                {
+                    if (entry.Version != version)
+                    {
+                        wrong.Add($"{directory} ({framework}): {package} resolves {entry.Version}, not {version}");
+                    }
+                }
+
+                var direct = resolved.Where(p => p.Value.Direct).Select(p => p.Key).Order(StringComparer.Ordinal);
+                if (!direct.SequenceEqual(packages))
+                {
+                    wrong.Add($"{directory} ({framework}): the lock file's direct packages are {string.Join(", ", direct)}");
+                }
+            }
+        }
+
+        var covered = Regex.Matches(
+                File.ReadAllText(Path.Combine(RepositoryRoot.Path, "tests", "AgentExperience.Upgrade.Tests", "PublishedPreview.cs")),
+                @"new\(\s*""(?<version>0\.1\.0-preview\.[0-9]+)"",\s*""Preview[0-9]+""",
+                RegexOptions.CultureInvariant)
+            .Select(m => m.Groups["version"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.True(wrong.Count == 0, string.Join(Environment.NewLine, wrong));
+        Assert.True(seeded.Count >= 2, $"Only {seeded.Count} seeders were found under tests/{DeliberatelyOldPins}.");
+        Assert.True(covered.SetEquals(seeded), $"The seeders pin [{string.Join(", ", seeded)}], but PublishedPreview covers [{string.Join(", ", covered.Order(StringComparer.Ordinal))}].");
     }
 
     [Fact]
