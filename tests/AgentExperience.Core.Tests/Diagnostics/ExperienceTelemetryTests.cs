@@ -88,6 +88,7 @@ public class ExperienceTelemetryTests
         "agentexperience.feedback_id",
         "agentexperience.confidence.admission",
         "agentexperience.independence.refusal",
+        "agentexperience.reflection.screening_refusal",
     ];
 
     /// <summary>
@@ -429,6 +430,14 @@ public class ExperienceTelemetryTests
             probe.LibraryActivities,
             span => span.GetTagItem("agentexperience.event_id") as string == trustedEvent.ToString("D")
                 && span.GetTagItem("agentexperience.confidence.admission") as string == nameof(ConfidenceEvidenceAdmission.HostTrusted));
+
+        // Plus one finalization whose reflection screening refused (story 14.1), so the screening refusal
+        // attribute has been written too.
+        var screened = await ScreeningHarness.WithRunAsync(new RewritingReflector(reflection => reflection with { Lesson = new string('l', 4_001) }));
+        Assert.Equal(FinalizationOutcome.Quarantined, (await screened.FinalizeAsync()).Outcome);
+        Assert.Contains(
+            probe.LibraryActivities,
+            span => span.GetTagItem("agentexperience.reflection.screening_refusal") as string == nameof(ReflectionScreeningRefusal.OverLimit));
 
         // Plus one thrown operation, so error.type and error.class have been written by the time the
         // keys are collected and the exact set below is not an accident of the happy path.

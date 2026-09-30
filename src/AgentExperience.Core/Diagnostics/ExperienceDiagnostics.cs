@@ -131,6 +131,9 @@ internal static class ExperienceDiagnostics
     /// <summary>Which independence check refused confidence evidence: an <c>IndependenceRefusal</c> member name. A closed set.</summary>
     internal const string RefusalAttribute = "agentexperience.independence.refusal";
 
+    /// <summary>Why finalization's screening refused a reflection: a <c>ReflectionScreeningRefusal</c> member name. A closed set.</summary>
+    internal const string ScreeningRefusalAttribute = "agentexperience.reflection.screening_refusal";
+
     /// <summary>The <c>outcome</c> value every faulted path reports, so a thrown operation is still counted and timed alongside the ones that returned.</summary>
     internal const string FaultedOutcome = "Faulted";
 

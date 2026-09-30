@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Text.Json;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Reflections;
 using Microsoft.Extensions.Compliance.Redaction;
 
 namespace AgentExperience.Core.Sanitization;
@@ -100,7 +101,13 @@ public sealed class DefaultSanitizer : ISanitizer
         {
             if (!_options.Policies.TryGetValue(payload.Kind, out var policy))
             {
-                throw new SanitizationFailureException(payload.Kind, SanitizationFailureReason.NoPolicyConfigured);
+                // The one kind with a built-in policy: finalization screens every reflection through the
+                // registered sanitizer, and that must not quarantine every record for a host that never
+                // heard of the kind. The built-in policy changes nothing; a configured one replaces it.
+                // Every other unconfigured kind is still rejected.
+                policy = string.Equals(payload.Kind, ReflectionScreening.PayloadKind, StringComparison.Ordinal)
+                    ? ReflectionScreening.DefaultSanitizationPolicy
+                    : throw new SanitizationFailureException(payload.Kind, SanitizationFailureReason.NoPolicyConfigured);
             }
 
             var redactedPaths = new List<string>();

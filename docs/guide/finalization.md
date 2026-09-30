@@ -49,7 +49,7 @@ else
 | Outcome | When | What was written |
 | --- | --- | --- |
 | `Validated` | Verified, reflection succeeded, storage permitted | The record (reuse confidence 2/3, one supporting validation, no contradictions), created as `Candidate`, plus the initial event that moved it to `Validated` |
-| `Quarantined` | Storage permitted, but verification did not pass, or the reflector threw, returned nothing, or returned a reflection that does not match its request | The record, with **no** reflection, created as `Candidate`, plus the initial event that moved it to `Quarantined`. `Failure` names the stage that decided it |
+| `Quarantined` | Storage permitted, but verification did not pass, or the reflector threw, returned nothing, returned a reflection that does not match its request, or returned one [screening](#screening-reflections) refused | The record, with **no** reflection, created as `Candidate`, plus the initial event that moved it to `Quarantined`. `Failure` names the stage that decided it |
 | `AlreadyFinalized` | This run's record already exists *and* is already confirmed | Nothing. The result reports the stored record, status, and revision. (A record left unconfirmed by an earlier call is resumed instead: the retry commits its initial event and returns `Validated`/`Quarantined`.) |
 | `StorageDenied` | The host's `StorageDecision` denied | Nothing at all, and no record ID is issued |
 | `NotAuthorized` | The run's scope lies outside the authorization | Nothing; denied before any store call |
@@ -64,9 +64,10 @@ reflection ID, and the initial event ID are all derived from the run ID (and the
 second call cannot create a second record or a second initial confirmation. And the initial event's fields are a pure
 function of the stored record, so a retry re-derives exactly the event the store already deduplicates on.
 
-Finalization never sanitizes — capture already rejected anything unsafe (see
-[Sanitization happens at capture](capture.md#sanitization-happens-at-capture)) — and never decides storage or risk
-policy on the host's behalf: `StorageDecision` travels in the request and Core simply obeys it.
+Finalization never re-sanitizes captured content — capture already rejected anything unsafe (see
+[Sanitization happens at capture](capture.md#sanitization-happens-at-capture)) — but it does screen the new text a
+reflector wrote ([below](#screening-reflections)). It never decides storage or risk policy on the host's behalf:
+`StorageDecision` travels in the request and Core simply obeys it.
 
 A record whose run was later erased can never be finalized again: the derived ID collides with the tombstone (see
 [Deletion and retention](deletion-and-retention.md#a-record-whose-run-was-erased-can-never-be-finalized-again)).
@@ -122,6 +123,105 @@ only through one is refused as `IndependenceRefusal.HostWrittenRun`. So a direct
 vouches for no run, round or exposure unless the host marks it `Finalized` itself — which is then the host's
 statement, and part of what the KL-11 boundary says. See [Confidence and independence](confidence.md). With
 [provenance signing](#signing-provenance) on, marking it is no longer enough.
+
+## Screening reflections
+
+Captured content is sanitized at capture, but a reflection is new text: a host reflector, or a future model-backed
+one, can write anything into a lesson, the approaches, the preconditions, the warnings and the reuse guidance, and
+that text later reaches other agents through injection. So after a reflection passes the binding check, and before
+the record is created, finalization screens those six free-text fields, and `Producer`, in two layers. Both run for
+every reflector, the default one included.
+
+1. **Built-in hygiene.**
+   - Limits, from `ReflectionLimits`: 4,000 characters for the lesson (and for the reuse guidance), 1,000 for each
+     list item, 32 items per list, and 200 for `Producer`. Lengths are UTF-16 code units, counted after invisible
+     characters are removed; list counts are counted as the reflector returned them. Over-limit text is refused,
+     never truncated: cutting a lesson short silently changes what it says.
+   - Invisible characters are removed: control, format, private-use and unassigned code points, lone surrogates,
+     variation selectors, the combining grapheme joiner, Hangul fillers and the blank braille pattern. A whitespace
+     one, and the line and paragraph separators, become a space. A run of more than four combining marks is cut to
+     four. It is the same rule the Historical Reference writer applies to tool names, and a test holds the two to it
+     code point by code point.
+   - A field that is empty or blank afterwards counts as absent: the list item is dropped, the reuse guidance becomes
+     `null`, and a reflection with no lesson or no producer left is refused.
+2. **Your sanitizer.** The six fields go through the registered `ISanitizer` as one payload of kind
+   `ExperienceReflection` (`ReflectionScreening.PayloadKind`): `Lesson` and `ReuseGuidance` as strings, the four
+   lists as lists of strings, within `ReflectionLimits.SanitizerTimeout` (5 s by default). A rejection, a timeout, a
+   throw, a cancellation of its own, a result that is neither an allowed payload of text nor a rejection, or an
+   omitted field or item (listed in `OmittedFieldPaths`, or missing from `Fields`) refuses the reflection: nothing is
+   ever stored silently empty. What it returns goes through the hygiene layer again, so a redaction cannot push a
+   field over its limit. Extra keys it adds are ignored.
+
+A refused reflection quarantines the record with a `FinalizationFailure` at stage `Reflect`, exactly as a binding
+mismatch does, and `FinalizationFailure.ScreeningRefusal` says why as a closed set (`ReflectionScreeningRefusal`:
+`OverLimit`, `MissingLesson`, `MissingProducer`, `MissingField`, `Unreadable`, `SanitizerRejected`,
+`SanitizerFailed`, `SanitizerTimedOut`, `FieldOmitted`), which the `finalize` span also carries as
+`agentexperience.reflection.screening_refusal`. The reason names the field, the reflector's own index and the limit,
+never the text, and never repeats your sanitizer's reason (which may quote what it rejected). A sanitizer or a
+reflector list that throws is recorded by type only, in `FinalizationFailure.ExceptionType`; the exception itself is
+withheld, since its message may quote the reflection. The caller's own cancellation still propagates.
+
+Redactions are kept, and `FinalizeExperienceResult.ReflectionRedactedFieldPaths` lists the redacted fields' paths as
+indexes into the stored lists (`Lesson`, `Warnings[1]`), never their values. A redacted item that was then blank and
+dropped is not listed, and a path your sanitizer reports that does not name a screened field is dropped rather than
+reported, since it could carry the value. The bound fields — the identifiers, the verdict, the score, the rule
+version, the evidence IDs and `CreatedAt` — are never rewritten. No reflection text reaches telemetry.
+
+**Adding the kind to your sanitizer.** A host `ISanitizer` must allow the `ExperienceReflection` kind, or every
+reflection is refused (`SanitizerRejected`) and every record quarantined. With `DefaultSanitizer`, nothing is needed:
+an unconfigured `ExperienceReflection` kind gets `ReflectionScreening.DefaultSanitizationPolicy`, which allows exactly
+the six fields, bounded by the default limits, and changes nothing. To redact, configure a policy for the kind; with
+your own sanitizer, handle the kind and return the fields you were given:
+
+```csharp
+// DefaultSanitizer: redact the whole reuse guidance, starting from the built-in policy.
+policies[ReflectionScreening.PayloadKind] = ReflectionScreening.DefaultSanitizationPolicy with
+{
+    SecretFieldNames = new HashSet<string>(StringComparer.Ordinal) { "ReuseGuidance" },
+};
+
+// Your own ISanitizer: allow the kind, applying your pattern rules to its strings.
+if (payload.Kind == ReflectionScreening.PayloadKind)
+{
+    return Task.FromResult(RedactPatternsIn(payload)); // same keys back; list fields as lists of strings
+}
+
+// Different limits, anywhere before the finalization service is first resolved.
+services.AddSingleton(new ExperienceFinalizationOptions
+{
+    ReflectionLimits = ReflectionLimits.Default with { MaxListItems = 48, SanitizerTimeout = TimeSpan.FromSeconds(2) },
+});
+```
+
+Pitfalls:
+
+- **Raised limits need a matching policy.** The built-in policy is bounded by the *default* limits. If you raise
+  `ReflectionLimits` and screen through a `DefaultSanitizer`, configure
+  `ReflectionScreening.SanitizationPolicyFor(yourLimits)` for the kind, or reflections the raised limits allow are
+  rejected. (A finalization service built without a sanitizer does this for you.)
+- **`MaxDepth` below 2 rejects every reflection**, because the lists are one level down.
+- **A whole-value redaction of `Lesson` by the default `ErasingRedactor` quarantines everything**: it leaves an empty
+  lesson, which counts as absent. Redact the lesson with a `Redactor` that leaves a marker, or with pattern rules. A
+  list redacted whole comes back as one string, which is stored as a one-item list (or none, if it is empty).
+- **Your pattern rules see text that is not Unicode-normalized.** Screening removes invisible characters before your
+  sanitizer runs, but full-width letters, compatibility forms and confusables are left as written. Fold inside your
+  sanitizer (for example NFKC plus confusable folding) before matching secrets or markers.
+
+`AddAgentExperienceCore` passes the registered `ISanitizer` and any registered `ExperienceFinalizationOptions`; a
+service built by hand takes both through the constructor overload with `reflectionSanitizer` and `options`, and every
+other overload screens through a `DefaultSanitizer` bounded by the service's own limits. A retry reflects and screens
+again before the store's conflict shows the record already exists; the redacted paths are reported, never persisted,
+so a replay reports none.
+
+The default reflector bounds its own output to `ReflectionLimits.Default` so a large run still validates: it quotes
+at most 500 characters of any captured text, cuts the lesson, the reuse guidance and each list item to their limits,
+and keeps a list to 32 items with the last saying how many more are not listed. Each cut ends in an ellipsis and never
+falls inside a surrogate pair. A host that lowers the limits below the defaults can see its output refused. Its output
+otherwise passes unchanged, except that an invisible character captured into a quoted error or an environment value
+is removed like any other.
+
+What screening cannot do: it detects neither prompt injection nor an arbitrary secret in free text. The hygiene layer
+removes what a reader cannot see and bounds what it can; anything beyond that is your sanitizer's policy.
 
 ## Signing provenance
 
