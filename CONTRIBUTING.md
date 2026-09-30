@@ -78,8 +78,10 @@ samples/
 experiments/
   AgentExperience.LiveReuse/                opt-in, pre-registered reuse experiment against a real model; never run by CI
   AgentExperience.LiveReuse.Tests/          that experiment's harness, proven offline against scripted models
+benchmarks/
+  AgentExperience.Benchmarks/               BenchmarkDotNet over the hot paths, on the in-memory store and PostgreSQL; run by hand, never by CI (docs/benchmarks.md)
 eng/                                        release tooling: package verification and the dependency probes
-docs/                                       the guide, known limits, telemetry contract, security-suite map, compatibility evidence, original research
+docs/                                       the guide, known limits, telemetry contract, security-suite map, compatibility evidence, benchmark baseline, original research
 _sdlc/                                      product brief, PRD, architecture, epics, and specs
 ```
 

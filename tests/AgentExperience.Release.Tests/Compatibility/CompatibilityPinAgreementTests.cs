@@ -226,9 +226,10 @@ public sealed class CompatibilityPinAgreementTests
     /// The tests run from the test projects' lock files, not the shipping ones. A test-only dependency
     /// (Testcontainers, a newer DI container) could lift a floored package above its floor there, and the
     /// default run would then test a version the floor does not name. So every lock file under
-    /// <c>tests/</c>, <c>samples/</c> and <c>experiments/</c> must resolve each floored package, where it appears at all, to the
-    /// floor itself, in every framework it records. The one exception is <see cref="DeliberatelyOldPins"/>, whose
-    /// seeders pin published previews on purpose.
+    /// <c>tests/</c>, <c>samples/</c>, <c>experiments/</c> and <c>benchmarks/</c> must resolve each floored package, where it
+    /// appears at all, to the floor itself, in every framework it records (story 12.2 added <c>benchmarks/</c>: numbers
+    /// measured on a lifted dependency would describe a graph no host at the floor gets). The one exception is
+    /// <see cref="DeliberatelyOldPins"/>, whose seeders pin published previews on purpose.
     /// </summary>
     [Fact]
     public void Every_test_and_sample_lock_file_resolves_each_floored_package_to_the_floor()
@@ -239,7 +240,7 @@ public sealed class CompatibilityPinAgreementTests
             .GroupBy(reference => reference.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => LowerBound(group.First().Value), StringComparer.OrdinalIgnoreCase);
 
-        var lockFiles = new[] { "tests", "samples", "experiments" }
+        var lockFiles = new[] { "tests", "samples", "experiments", "benchmarks" }
             .SelectMany(root => Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, root)))
             .Where(directory => !string.Equals(Path.GetFileName(directory), DeliberatelyOldPins, StringComparison.Ordinal))
             .Select(directory => Path.Combine(directory, "packages.lock.json"))
@@ -273,6 +274,7 @@ public sealed class CompatibilityPinAgreementTests
 
         Assert.True(wrong.Count == 0, string.Join(Environment.NewLine, wrong));
         Assert.True(lockFiles.Count >= 5 && checkedEntries > 0, $"Only {lockFiles.Count} lock files and {checkedEntries} floored entries were checked, so this proves little.");
+        Assert.Contains(lockFiles, lockFile => Path.GetFileName(Path.GetDirectoryName(lockFile)) == "AgentExperience.Benchmarks");
     }
 
     /// <summary>

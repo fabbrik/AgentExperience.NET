@@ -6,6 +6,21 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Benchmarks
+
+- **The hot paths are measured** (story 12.2). `benchmarks/AgentExperience.Benchmarks` is a BenchmarkDotNet console
+  project, in the solution so every build compiles it, never packed and never run by CI (a release test checks that no
+  workflow names it). It times retrieval over 1k and 10k records (text-only, with a preferred environment, and with a
+  confidence decay policy), the MAF context provider producing an 8-record Historical Reference block with and without
+  session tracking, finalization of a captured run with tool calls, and applying confidence evidence, each on the
+  in-memory store and on PostgreSQL, with allocations. PostgreSQL runs in one Testcontainers pgvector container,
+  started and seeded once; without Docker those cases are skipped with a message. No model is ever called.
+- [docs/benchmarks.md](docs/benchmarks.md) says how to run it and holds one committed baseline with the machine, OS,
+  runtime and PostgreSQL version it ran on. The numbers compare only with another run on the same machine.
+- `BenchmarkDotNet` 0.15.8 and `Testcontainers.PostgreSql` 4.15.0 are exact-pinned in that project only, and recorded
+  in the [compatibility evidence](docs/compatibility-evidence.md#test-infrastructure-not-shipped). No shipping package
+  or `src/` file changed.
+
 ### Tests: upgrades from published previews
 
 - **A database a published preview created now upgrades under test** (story 12.1). The new

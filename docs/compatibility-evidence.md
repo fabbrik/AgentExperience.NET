@@ -194,9 +194,10 @@ OpenTelemetry version it uses is the host's choice, because this library referen
 
 | Pin | Where | Why it matters |
 | --- | --- | --- |
-| `Testcontainers.PostgreSql` 4.15.0 | Postgres, vectors, sample and proof test projects | Starts the PostgreSQL containers every storage claim above rests on |
-| `pgvector/pgvector:pg{N}`, `postgres:{N}` for N in 15–18 | `tests/Shared/PostgresTestImage.cs`, linked into every container-backed test project | One variable, `AGENTEXPERIENCE_POSTGRES_MAJOR`, picks the major for both images (16 when unset; anything outside 15–18 fails loudly). Each suite asserts the server it reached reports that major |
+| `Testcontainers.PostgreSql` 4.15.0 | Postgres, vectors, sample and proof test projects; exact-pinned in `benchmarks/AgentExperience.Benchmarks` | Starts the PostgreSQL containers every storage claim above rests on |
+| `pgvector/pgvector:pg{N}`, `postgres:{N}` for N in 15–18 | `tests/Shared/PostgresTestImage.cs`, linked into every container-backed test project and the benchmarks | One variable, `AGENTEXPERIENCE_POSTGRES_MAJOR`, picks the major for both images (16 when unset; anything outside 15–18 fails loudly). Each suite asserts the server it reached reports that major |
 | `PublicApiGenerator` 11.5.4, `Verify.Xunit` 31.12.5 | `AgentExperience.Release.Tests` only | The public API baseline. No shipping project references either |
+| `BenchmarkDotNet` 0.15.8, exact | `benchmarks/AgentExperience.Benchmarks` only | The hot-path measurements in [benchmarks.md](benchmarks.md). Never run by CI; its lock file resolves every shipping floor at the floor, which `CompatibilityPinAgreementTests` checks like any test project's |
 
 ## The compatibility proof must resolve what ships
 

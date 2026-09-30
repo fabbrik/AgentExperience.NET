@@ -23,6 +23,7 @@ appsettings.Local.json
 !.env.example
 
 # Coverage and generated reports
+BenchmarkDotNet.Artifacts/
 coverage/
 coverage*.json
 *.coverage
