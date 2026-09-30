@@ -6,6 +6,41 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Model-backed reflector (story 14.2)
+
+- **An optional `ChatClientExperienceReflector` in `AgentExperience.MicrosoftAgentFramework`.** It implements
+  `IExperienceReflector` over a host-supplied `IChatClient` and asks the model, through structured output, only for the
+  free text: `lesson`, `successfulApproaches`, `failedApproaches`, `preconditions`, `warnings` and `reuseGuidance`.
+  Every bound field is copied from the `ReflectionRequest`, so story 5.5's binding check and story 14.1's screening
+  apply unchanged; extra members the model returns, and any reasoning content, are ignored and never stored. The
+  answer is parsed strictly (no duplicate properties, comments or trailing commas; a code fence only as the whole
+  answer). `Producer` is `AgentExperience.ChatClientExperienceReflector/1.0.0 (<model>)`, the model restricted to
+  `[A-Za-z0-9._:/@+-]` and cut to fit 200 characters.
+- **Off by default, and never evicts silently.** `AddAgentExperienceChatClientReflector(configure,
+  chatClientServiceKey, replaceExisting)` replaces the default reflector; any other registered reflector needs
+  `replaceExisting: true`. It resolves a registered, optionally keyed (no fallback) `IChatClient`, and refuses a scoped
+  one. `DefaultExperienceReflector` stays the default and is unchanged.
+- **Privacy: it sends sanitized captured run content to the host's model provider**: the task text (or task ID),
+  each attempt's sequence number and ordered tool names, each tool call's and attempt's result and error clipped to
+  `MaxQuotedLength` (500), and the verification status, check IDs and evidence IDs. Every captured string, tool
+  names included, is escaped before it is clipped, so none can create structure. The message is capped at
+  `MaxPromptLength` (16,000) by bounding the header's lists and dropping the oldest attempts first; when not even the
+  smallest header fits, nothing is sent. The system prompt is the public constant
+  `ChatClientExperienceReflector.SystemPrompt`, and `BuildPrompt` returns the data message.
+- **No tools, bounded output.** Every call offers no tools, re-asserted after `ConfigureChatOptions`; a client whose
+  pipeline contains a `FunctionInvokingChatClient` is refused at construction; a response carrying a function call
+  fails. `MaxOutputTokens` (2,048) is set on every call, and a text answer over `MaxAnswerBytes` (64 KB) is refused
+  unread.
+- **Failure quarantines.** The new `ReflectionFailedException` (`ReflectionFailureKind`: `ModelCallFailed`,
+  `TimedOut`, `Unparseable`, `EmptyLesson`, `ToolCallAttempted`, `OutputTooLarge`, `PromptTooLarge`,
+  `ChatOptionsCallbackFailed`) carries no model text and no inner exception, only the cause's type name. The timeout
+  is enforced even on a client that ignores its token; the caller's cancellation still propagates.
+- **Options:** `ChatClientExperienceReflectorOptions` with `ModelName`, `Timeout`, `MaxQuotedLength`,
+  `MaxPromptLength`, `MaxOutputTokens`, `Temperature` (0 by default) and `ConfigureChatOptions`, all validated and
+  copied when the reflector is built.
+- Documented in the finalization guide's new "Model-backed reflection" section (with its limits: captured tool
+  output can steer a model-authored lesson, which the new open deferred-work item records) and the MAF README.
+
 ### Reflection screening (story 14.1)
 
 - **Finalization screens what a reflector wrote before the record is created.** After the binding check, the six
