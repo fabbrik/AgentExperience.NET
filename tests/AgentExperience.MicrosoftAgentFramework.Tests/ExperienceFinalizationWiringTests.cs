@@ -260,12 +260,12 @@ public class ExperienceFinalizationWiringTests
         Assert.Contains(harness.Failures, failure => failure.Reason.Contains("still open at its", StringComparison.Ordinal));
     }
 
-    private sealed class Harness
+    internal sealed class Harness
     {
         private readonly List<ExperienceCaptureFailure> _failures = [];
         private readonly List<FinalizeExperienceResult> _finalized = [];
 
-        public Harness()
+        public Harness(IExperienceReflector? reflector = null)
         {
             Service = new RecordingCaptureService(new InMemoryExperienceCaptureService(
                 new DefaultSanitizer(Sanitization),
@@ -273,7 +273,7 @@ public class ExperienceFinalizationWiringTests
             Store = new InMemoryRecordStore();
             Finalization = new ExperienceFinalizationService(
                 Service,
-                new DefaultExperienceReflector(),
+                reflector ?? new DefaultExperienceReflector(),
                 Store,
                 new ExperienceLifecycleService(Store));
         }
@@ -372,7 +372,7 @@ public class ExperienceFinalizationWiringTests
     /// adapter wiring to be exercised end to end without a database. Query and history are not part of
     /// finalization and fail loudly if they are ever called.
     /// </summary>
-    private sealed class InMemoryRecordStore : IExperienceRecordStore
+    internal sealed class InMemoryRecordStore : IExperienceRecordStore
     {
         private readonly Dictionary<Guid, ExperienceRecord> _records = [];
         private readonly HashSet<Guid> _events = [];
