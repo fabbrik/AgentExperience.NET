@@ -140,7 +140,8 @@ fails:
   otherwise). Retrieval is exact-scope and a grant never confers writing, so no run in another scope could have been
   exposed to a record that accepts evidence. It is never the record's own `SourceRunId` (`OwnRun`, refused in every
   mode). A record under the derived ID counts only if finalization wrote it (`ExperienceRecordOrigin.Finalized`); one
-  written by hand through `CreateAsync` vouches for nothing (`HostWrittenRun`).
+  written by hand through `CreateAsync` vouches for nothing (`HostWrittenRun`). With
+  [provenance signing](#signing-provenance) configured, a record marked `Finalized` also needs a valid signature.
 - **Exposure.** The run must have been *given* the record: its provenance (`Provenance.ExposedTo`, on the finalized
   record or on the run the capture service holds) must name the record at a revision at or before the one the
   evidence is computed against, or the submission is refused as `NotExposed`. The MAF adapter records this for you —
@@ -192,8 +193,9 @@ than trimmed.
 Read this before relying on it. Verification proves a run is *real, in scope, and was given the record* — not that
 the record mattered to it: every run the library delivered a lesson into is one key, whatever the lesson did there.
 Exposure is what the library recorded delivering, and the library believes a host that calls `RecordExposure`
-itself, or that writes a record through `CreateAsync` marked `ExperienceRecordOrigin.Finalized`: the store port
-cannot tell the library's writes from the host's. The round is the one the host closed at finalization. Real runs
+itself. Without [provenance signing](#signing-provenance) it also believes a host that writes a record through
+`CreateAsync` marked `ExperienceRecordOrigin.Finalized`, because the store port cannot tell the library's writes from
+the host's; with signing on, it believes whoever holds a signing key. The round is the one the host closed at finalization. Real runs
 are easy to name: every record in the scope carries its `SourceRunId` and `ClosedRoundId`, a run's round vouches
 whatever its own verification concluded (a failed or quarantined run's round vouches too), and a run the capture
 service holds stays known while it is held. The token is only as secret as the key and as guarded as the code that
@@ -209,7 +211,92 @@ taking `RunId` from your own run bookkeeping (the adapter's session state), neve
 cannot adopt verification yet — one that captures and retrieves in different scopes, finalizes nothing, or must
 accept evidence about runs finalized before verification existed: every identifier is trusted as given (only the
 own-run rule stays, and no exposure is checked), and a host that lets agent output populate them hands the agent a
-fresh key per call. That is part of the KL-11 boundary.
+fresh key per call. That is part of the KL-11 boundary. With provenance signing configured, the opt-out still
+accepts, as host-trusted, a run whose record carries no signature or one under a key that is not in the ring. The one
+thing it refuses is a record marked `Finalized` whose signature is present, under a key in the ring, and does not
+verify: a record the library signed that someone then changed. Evidence about that run is refused as `HostWrittenRun`,
+and attributed feedback about it is degraded before the ledger.
+
+## Signing provenance
+
+Verification relies on what a run's finalized record says about itself: that finalization wrote it (`Origin`), the
+round it closed (`ClosedRoundId`), and what the run was given (`Provenance.ExposedTo`). By default those are plain
+fields, so a host that writes a record through `CreateAsync` with the right values, or an application role holding
+`AllowSealing` that replaces a payload, is believed. Signing, which is opt-in, closes that gap:
+
+```csharp
+services.AddSingleton(new ExperienceProvenanceSigningOptions(
+    new Dictionary<string, byte[]> { ["prov-2026-09"] = secrets.ProvenanceSigningKey },   // 32+ random bytes
+    currentKeyId: "prov-2026-09")
+{
+    // Optional: the records finalized before signing was switched on (see "Turning it on" below).
+    TrustUnsignedRecordIds = config.LegacyUnsignedRecordIds,
+});
+```
+
+**Registering it.** `AddAgentExperienceCore` picks the options up in either registration order, registered directly
+(`services.AddSingleton(options)`, as above) or as an explicitly registered `IOptions<ExperienceProvenanceSigningOptions>`
+(`services.AddSingleton(Options.Create(options))`). A direct registration wins when both exist. `services.Configure<…>`
+does not apply, because the options have no parameterless constructor: they are validated when they are built. The
+lifecycle service checks every run's record against them, and finalization signs with the same ring. Hosts that
+construct services by hand pass the options to the `ExperienceLifecycleService` constructor that takes
+`provenanceSigning`. An `ExperienceFinalizationService` built over that lifecycle service signs with the same options.
+Given options of its own, it signs with those instead, and its constructor refuses them unless the lifecycle service's
+ring holds their current key under the same ID, because a record signed under a key the checker lacks would vouch
+for nothing.
+
+- **What is signed.** Finalization signs a canonical encoding of the record's finalization claims, tagged
+  `aexp-prov:v1`, with HMAC-SHA256 under `CurrentKeyId`:
+  - its `ExperienceId`;
+  - all six `Scope` fields, as strict UTF-8 (a null field and an empty one encode differently, and a lone surrogate
+    is refused, never replaced);
+  - its `SourceRunId`, `ClosedRoundId` and `Origin`;
+  - its `Provenance.ExposedTo`, sorted by the record ID's big-endian (RFC 4122) bytes compared as unsigned bytes, then
+    by revision ascending.
+
+  The signature is stored with the record as `ExperienceRecord.ProvenanceSignature` (key ID, algorithm and value) in
+  the same create. Nothing else is signed. Content, status, counters and timestamps change through the lifecycle and
+  are not claims about the run. Both stores refuse a scope field that is not well-formed UTF-16.
+- **What is checked.** Wherever verification relies on a run's finalized record, the signature must verify under a key
+  in the ring, compared in constant time. A record whose signature is missing, names a key that is not in the ring,
+  or does not verify is treated as written outside finalization, and the evidence is refused as `HostWrittenRun`.
+  The reason is the same sentence in all three cases ("its provenance signature does not vouch for it"), so a caller
+  learns nothing about which check failed, and it names no key material. A run the capture service still holds stays
+  known through the capture service, as it would for any hand-written record, so it has no round to vouch for.
+- **Counters are not claims.** `ConfidenceEvidenceFilter.VerifiedOnly` leaves out the initial counters of a record
+  whose signature does not vouch for it. For one that does, it counts as verified at most what finalization itself
+  sets (one supporting validation, no contradiction); anything above that is its writer's statement.
+- **Turning it on.** Records finalized before signing was configured carry no signature, so their runs stop vouching
+  for evidence. `TrustUnsignedRecordIds` is the explicit cutover: the IDs of those records, which verification accepts
+  unsigned. Capture it once, when you switch signing on, with
+  `ExperienceProvenanceSigningCutover.ListUnsignedFinalizedRecordIdsAsync(store, authorization, scopes)`. It lists every
+  record marked `Finalized` with no signature in each scope, and names any scope with a status too large for one query
+  in `IncompleteScopes`. Review the list, store it in your configuration, and pass it in. A record created afterwards
+  can never join the set: its ID would have to be one that already exists, and a store refuses to create over an
+  existing ID or a tombstone. So a record forged later is not believed, however far back its `CreatedAt` claims to
+  go. A listed record whose signature is present but invalid is refused anyway.
+- **A retry does not replay a record that does not vouch.** If finalizing a run collides with a stored record at its
+  derived ID whose signature does not vouch for it, `FinalizeAsync` reports `Failed` at the create stage, saying the
+  stored record does not carry a valid provenance signature, instead of `AlreadyFinalized`.
+- **Keys.** Each key must follow these rules:
+  - Generate it as at least 32 bytes from a cryptographic random source, and hold it in your secret store.
+  - Never store it in the database, in configuration an agent can read, or next to agent tooling.
+  - Never reuse the assessment token key: a ring that holds it is refused.
+  - Never share a ring between environments. Staging and production each have their own keys, so a record signed in
+    one never vouches in the other.
+
+  Key IDs are 1 to 64 characters from `[A-Za-z0-9._-]`. The options are validated and the keys copied when they are
+  constructed, and copied again when a service is built. Nothing public returns a key (`KeyIds` lists the IDs), and
+  `ToString` redacts them. Only the key ID is stored with a record. The signature never appears in telemetry, logs,
+  errors or the Historical Reference block, and its own `ToString` prints its length, not its bytes.
+- **Rotation.** Add the new key to the ring and switch `CurrentKeyId` to it. Records signed under the old key keep
+  verifying while it stays in the ring. Removing a key makes every record it signed vouch for nothing, as an unsigned
+  record does. The cutover set does not bring them back, because it covers unsigned records only.
+- **What it does not change.** Anyone who holds a signing key can sign any claims, so the key is exactly as trusted as
+  the code that can read it. `RecordExposure` is still the host's statement: finalization signs the exposures the
+  capture service holds, whoever recorded them. A store persists the signature and never checks it, because it holds
+  no key. Both shipped stores keep it in the record's payload. The PostgreSQL store seals it with the rest in
+  crypto-shredding mode and needs no migration for it.
 
 ## What the opt-out admitted is kept visible
 
@@ -246,7 +333,7 @@ back as unrecorded, which `ExcludeHostTrusted` keeps.
 | Two submissions computed from one revision | Exactly one `Applied`; the other `StaleRevision` with the revision to retry against |
 | Against a `Candidate`, `Quarantined`, `Stale`, `Superseded`, or `Revoked` record | `Ineligible` — refused before anything is written |
 | An unknown or own run, a round finalization did not close, or a missing, invalid, expired, other-record or spent assessment token | `Unverified`, with `Refusal` naming which — nothing written (checked after `Ineligible`) |
-| A real run that was never given the record, or given it only at a later revision; or a run known only through a hand-written record | `Unverified`, `Refusal: NotExposed` or `HostWrittenRun` — nothing written, and a token it presented is not spent |
+| A real run that was never given the record, or given it only at a later revision; or a run known only through a hand-written record (with signing on, also one whose record's signature is missing, under an unknown key, or invalid) | `Unverified`, `Refusal: NotExposed` or `HostWrittenRun` — nothing written, and a token it presented is not spent |
 | Against an erased record | `Deleted`, with no ledger row: an erased record's ID must not go back into a table the erasure emptied |
 
 **A record cannot be created claiming evidence it does not have.** `CreateAsync` refuses a record whose
@@ -300,7 +387,8 @@ them and derives none. The `RuleVersion` that produced the score travels on the 
   `exposedTo` (record IDs and revisions only, written by finalization from what the capture service recorded) at a
   revision no later than the record's current one, and it must carry `"origin": "Finalized"`. A record written
   without finalization reads back as `ExperienceRecordOrigin.HostWritten` and vouches for no run. Like
-  `closedRoundId`, both are optional version-1 payload fields, written only when set, needing no column; in
+  `closedRoundId`, both are optional version-1 payload fields, written only when set, needing no column (so is
+  `provenanceSignature`, the [provenance signature](#signing-provenance), with its value in base64); in
   crypto-shredding mode they are sealed with the rest of the payload, and the application role cannot rewrite them
   either way, because it has no `UPDATE` on `payload` — except through `0016`'s sealing function while
   `AllowSealing` is granted, which replaces a plaintext payload with whatever sealed envelope the application

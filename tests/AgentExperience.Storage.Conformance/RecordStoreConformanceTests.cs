@@ -52,6 +52,27 @@ public abstract class RecordStoreConformanceTests
     }
 
     [Fact]
+    public async Task A_provenance_signature_reads_back_byte_for_byte_and_a_record_without_one_reads_back_without_one()
+    {
+        var tenant = NewTenant();
+        var signed = FullRecord(Scope(tenant));
+        var unsigned = Record(Scope(tenant));
+
+        await CreateAsync(tenant, signed);
+        await CreateAsync(tenant, unsigned);
+        var readSigned = (await Store.GetAsync(Authorize(tenant), signed.Scope, signed.ExperienceId, CancellationToken.None)).Record!;
+        var readUnsigned = (await Store.GetAsync(Authorize(tenant), unsigned.Scope, unsigned.ExperienceId, CancellationToken.None)).Record!;
+
+        Assert.NotNull(readSigned.ProvenanceSignature);
+        Assert.Equal(signed.ProvenanceSignature!.KeyId, readSigned.ProvenanceSignature!.KeyId);
+        Assert.Equal(signed.ProvenanceSignature.Algorithm, readSigned.ProvenanceSignature.Algorithm);
+        Assert.Equal(signed.ProvenanceSignature.Value.ToArray(), readSigned.ProvenanceSignature.Value.ToArray());
+        Assert.Equal(signed.ProvenanceSignature, readSigned.ProvenanceSignature);
+        Assert.Equal(ExperienceRecordOrigin.Finalized, readSigned.Origin);
+        Assert.Null(readUnsigned.ProvenanceSignature);
+    }
+
+    [Fact]
     public async Task Create_is_create_only_and_a_duplicate_id_in_the_same_scope_is_Conflict_with_the_stored_record_unchanged()
     {
         var tenant = NewTenant();
@@ -184,7 +205,9 @@ public abstract class RecordStoreConformanceTests
             (await Store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None)).Outcome);
     }
 
-    public static TheoryData<string> MalformedRecords => ["empty-id", "blank-task", "blank-application", "confidence-above-one", "negative-supporting", "negative-contradictions", "negative-revision"];
+    public static TheoryData<string> MalformedRecords => ["empty-id", "blank-task", "blank-application", "confidence-above-one", "negative-supporting", "negative-contradictions", "negative-revision",
+        "signature-empty-value", "signature-oversized-value", "signature-bad-key-id", "signature-bad-algorithm",
+        "scope-lone-surrogate"];
 
     [Theory]
     [MemberData(nameof(MalformedRecords))]
@@ -200,6 +223,11 @@ public abstract class RecordStoreConformanceTests
             "confidence-above-one" => valid with { ReuseConfidence = 1.5 },
             "negative-supporting" => valid with { SupportingValidations = -1 },
             "negative-contradictions" => valid with { Contradictions = -1 },
+            "signature-empty-value" => valid with { ProvenanceSignature = Signature() with { Value = ReadOnlyMemory<byte>.Empty } },
+            "signature-oversized-value" => valid with { ProvenanceSignature = Signature() with { Value = new byte[513] } },
+            "signature-bad-key-id" => valid with { ProvenanceSignature = Signature() with { KeyId = "key id/1" } },
+            "signature-bad-algorithm" => valid with { ProvenanceSignature = Signature() with { Algorithm = " " } },
+            "scope-lone-surrogate" => valid with { Scope = valid.Scope with { TeamId = "team-\uD800" } },
             _ => valid with { Revision = -1 },
         };
 
@@ -214,6 +242,10 @@ public abstract class RecordStoreConformanceTests
                 (await Store.GetAsync(Authorize(tenant), valid.Scope, record.ExperienceId, CancellationToken.None)).Outcome);
         }
     }
+
+    /// <summary>A well-formed provenance signature, for the malformations above to break one part of.</summary>
+    private static ExperienceProvenanceSignature Signature() =>
+        new("conformance-key-1", ExperienceProvenanceSignature.HmacSha256, new byte[32]);
 
     [Fact]
     public async Task A_read_of_an_empty_id_is_Invalid()

@@ -61,6 +61,11 @@ internal static partial class ExperienceRecordValidator
         ValidateEnvironment(record.Environment, errors);
         ValidateProvenance(record.Provenance, errors);
         RequireDefined(record.Origin, "Origin", errors);
+
+        if (record.ProvenanceSignature is { } signature)
+        {
+            ValidateProvenanceSignature(signature, errors);
+        }
         RequireDefined(record.Status, "Status", errors);
         RequireUnitInterval(record.ReuseConfidence, "ReuseConfidence", errors);
 
@@ -748,6 +753,36 @@ internal static partial class ExperienceRecordValidator
         RequireNullOrNotBlank(scope.TeamId, $"{path}.TeamId", errors);
         RequireNullOrNotBlank(scope.AgentId, $"{path}.AgentId", errors);
         RequireNullOrNotBlank(scope.UserId, $"{path}.UserId", errors);
+
+        // A scope field is a signed provenance claim, encoded as UTF-8: a lone surrogate has no UTF-8 form, so it
+        // is refused here rather than signed or stored as something else.
+        RequireWellFormedUtf16(scope.TenantId, $"{path}.TenantId", errors);
+        RequireWellFormedUtf16(scope.ApplicationId, $"{path}.ApplicationId", errors);
+        RequireWellFormedUtf16(scope.ProjectId, $"{path}.ProjectId", errors);
+        RequireWellFormedUtf16(scope.TeamId, $"{path}.TeamId", errors);
+        RequireWellFormedUtf16(scope.AgentId, $"{path}.AgentId", errors);
+        RequireWellFormedUtf16(scope.UserId, $"{path}.UserId", errors);
+    }
+
+    private static void RequireWellFormedUtf16(string? value, string path, List<StoreValidationError> errors)
+    {
+        if (value is null)
+        {
+            return;
+        }
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+            {
+                i++;
+            }
+            else if (char.IsSurrogate(value[i]))
+            {
+                errors.Add(new(path, "must be well-formed UTF-16: a lone surrogate has no UTF-8 encoding."));
+                return;
+            }
+        }
     }
 
     private static void ValidateAttempts(IReadOnlyList<Attempt>? attempts, List<StoreValidationError> errors)
@@ -860,6 +895,36 @@ internal static partial class ExperienceRecordValidator
         if (environment.Metadata.Values.Any(value => value is null))
         {
             errors.Add(new("Environment.Metadata", "must not contain null values."));
+        }
+    }
+
+    /// <summary>The longest provenance signature a store accepts: far above HMAC-SHA256's 32 bytes, so it only bounds the row.</summary>
+    private const int MaxProvenanceSignatureBytes = 512;
+
+    /// <summary>
+    /// A provenance signature's shape only. A store holds no key, so whether it verifies is never decided here;
+    /// what is refused is what could not be a signature at all.
+    /// </summary>
+    private static void ValidateProvenanceSignature(ExperienceProvenanceSignature signature, List<StoreValidationError> errors)
+    {
+        var keyId = signature.KeyId;
+        if (string.IsNullOrEmpty(keyId)
+            || keyId.Length > 64
+            || !keyId.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
+        {
+            errors.Add(new("ProvenanceSignature.KeyId", "must be 1 to 64 characters from [A-Za-z0-9._-]."));
+        }
+
+        if (string.IsNullOrEmpty(signature.Algorithm)
+            || signature.Algorithm.Length > 64
+            || !signature.Algorithm.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
+        {
+            errors.Add(new("ProvenanceSignature.Algorithm", "must be 1 to 64 characters from [A-Za-z0-9._-]."));
+        }
+
+        if (signature.Value.Length is 0 or > MaxProvenanceSignatureBytes)
+        {
+            errors.Add(new("ProvenanceSignature.Value", $"must be 1 to {MaxProvenanceSignatureBytes} bytes."));
         }
     }
 

@@ -120,7 +120,50 @@ That path does not reach confidence independence by default. Finalization marks 
 `ExperienceRecordOrigin.Finalized`; a record written any other way is `HostWritten` (the default), and a run known
 only through one is refused as `IndependenceRefusal.HostWrittenRun`. So a direct aggregator result stored by hand
 vouches for no run, round or exposure unless the host marks it `Finalized` itself — which is then the host's
-statement, and part of what the KL-11 boundary says. See [Confidence and independence](confidence.md).
+statement, and part of what the KL-11 boundary says. See [Confidence and independence](confidence.md). With
+[provenance signing](#signing-provenance) on, marking it is no longer enough.
+
+## Signing provenance
+
+Signing is opt-in. With an `ExperienceProvenanceSigningOptions` registered (or passed to the lifecycle service
+finalization is built over), every record `FinalizeAsync` creates carries
+`ExperienceRecord.ProvenanceSignature`: an HMAC-SHA256, under the ring's `CurrentKeyId`, over the record's
+finalization claims (its ID, scope, source run, closed round, origin and exposures), written in the same create as the
+record. Confidence verification then refuses a run whose record is unsigned, signed under a key that is not in the
+ring, or changed in any signed claim after it was signed. So a record written through `CreateAsync`, or a payload
+edited outside the library, cannot pass as finalized. Without the options, nothing is signed and nothing changes.
+
+Finalization signs with the lifecycle service's ring by default. Options passed to finalization's own constructor take
+precedence, and are refused (`ArgumentException`) unless the lifecycle service it is built over checks their current
+key under the same ID: a record signed under a key the checker lacks would vouch for nothing. With signing on, a retry
+whose run already has a stored record that does not carry a valid signature ends `Failed` at the create stage,
+saying so, instead of replaying it as `AlreadyFinalized`. A run whose scope has no strict UTF-8 encoding (a lone
+surrogate) cannot be signed and also ends `Failed`, with nothing stored.
+
+```csharp
+services.AddSingleton(new ExperienceProvenanceSigningOptions(
+    new Dictionary<string, byte[]> { ["prov-2026-09"] = secrets.ProvenanceSigningKey },
+    currentKeyId: "prov-2026-09"));
+```
+
+Key management:
+
+- **Generate** each key as at least 32 random bytes (for example `RandomNumberGenerator.GetBytes(32)`), once, and keep
+  it in your secret store. Never store it in the database the records live in, never in configuration an agent can
+  read, and never where agent tooling runs. The record stores only the key ID.
+- **One purpose, one environment.** A provenance key is never the assessment token key (a ring holding it is refused),
+  and staging and production never share a ring.
+- **Rotate** by adding the new key to the ring and switching `CurrentKeyId` to it. Keep the old key in the ring for as
+  long as records it signed should keep vouching. Removing a key makes those records read as signed by an unknown
+  key, so they vouch for nothing.
+- **Switch on** by listing, once, the records finalized before signing with
+  `ExperienceProvenanceSigningCutover.ListUnsignedFinalizedRecordIdsAsync`, storing the IDs in your configuration, and
+  passing them as `TrustUnsignedRecordIds`, if those records must keep vouching. The set accepts only records with no
+  signature, and no record created later can join it, whatever creation time it claims.
+- **Know what it proves.** A valid signature proves the claims are the ones finalization signed under your key. It
+  does not prove the host's own bookkeeping (the round it closed, the exposures it recorded) was honest, and anyone
+  holding a key can sign. See [Signing provenance](confidence.md#signing-provenance) for the verification side and
+  the KL-11 boundary in [Known limits and documented boundaries](../known-limits.md#documented-boundaries).
 
 ## Finalizing from the MAF adapter
 

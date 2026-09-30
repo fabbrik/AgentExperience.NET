@@ -142,6 +142,10 @@ public static class ConformanceData
             UpdatedAt: Time)
         {
             ClosedRoundId = Guid.NewGuid(),
+            Origin = ExperienceRecordOrigin.Finalized,
+            // A store persists a provenance signature as given and never checks it: it holds no key.
+            ProvenanceSignature = new ExperienceProvenanceSignature(
+                "conformance-key-1", ExperienceProvenanceSignature.HmacSha256, Enumerable.Range(0, 32).Select(i => (byte)(i * 11)).ToArray()),
         };
     }
 

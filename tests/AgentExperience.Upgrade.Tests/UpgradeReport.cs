@@ -34,6 +34,7 @@ internal sealed class UpgradeReport(string subject, int major)
         ["closedRoundId"] = "ExperienceRecord, 0.1.0-preview.2 (story 6.6): the round finalization closed; absent before",
         ["origin"] = "ExperienceRecord, 0.1.0-preview.2 (story 7.3): HostWritten when absent",
         ["exposedTo"] = "Provenance, 0.1.0-preview.2 (story 7.3): empty when absent",
+        ["provenanceSignature"] = "ExperienceRecord, unreleased (story 13.1): finalization's opt-in signature; null when absent",
         ["assessmentId"] = "ConfidenceUpdate, 0.1.0-preview.2 (story 6.6): human evidence only",
         ["admission"] = "ConfidenceUpdate, 0.1.0-preview.2 (0018): not recorded before",
         ["disclosure"] = "ExperienceGrant, ExperienceGrantEvent and ExperienceGrantAccess, 0.1.0-preview.2 (0011)",

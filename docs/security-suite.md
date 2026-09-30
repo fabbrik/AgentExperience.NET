@@ -221,6 +221,22 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.A_later_run_in_the_same_session_is_not_credited_with_what_earlier_turns_delivered` | Unauthenticated session state is never turned into exposure: a later run in a reused session is credited only with what it is given itself |
 | MicrosoftAgentFramework.Tests | `ExposureBoundEvidenceTests.A_capture_service_that_does_not_record_exposure_is_reported_once_and_the_injection_still_happens` | A capture service that cannot record exposure is reported, and its runs are exposed to nothing |
 | Core.Tests | `VerifiedIndependenceTests.A_replay_of_evidence_stored_before_admission_was_recorded_reports_none_and_tags_none` | A replay never borrows the resubmitting call's admission, in its result or on its span |
+| Core.Tests | `SignedProvenanceTests.A_forged_CreateAsync_record_claiming_Finalized_is_refused_when_signing_is_on_and_believed_when_it_is_off` | KL-11 (13.1): with provenance signing on, a record written through `CreateAsync` claiming `Finalized` vouches for no run |
+| Core.Tests | `SignedProvenanceTests.Changing_any_signed_claim_after_signing_makes_the_run_host_written` | Changing any signed claim (record ID, each scope field, null versus empty, source run, round, origin, each exposure) after signing makes the run host-written |
+| Core.Tests | `SignedProvenanceTests.A_signature_under_a_key_not_in_the_ring_is_refused` | A signature under a key the host does not hold vouches for nothing |
+| Core.Tests | `SignedProvenanceTests.A_tampered_value_or_algorithm_is_refused_and_content_fields_are_not_claims` | A flipped, truncated or empty signature, or another algorithm, is refused |
+| Core.Tests | `SignedProvenanceTests.The_cutover_trusts_only_listed_unsigned_records_whatever_a_record_says_about_its_age` | A forged record backdated by years is not trusted by the cutover, nor is a signed record with its signature stripped; only the listed legacy IDs are |
+| Core.Tests | `SignedProvenanceTests.The_three_ways_a_signature_fails_are_reported_with_one_identical_reason` | The refusal reason is no oracle for which signature check failed |
+| Core.Tests | `SignedProvenanceTests.Verified_only_counts_at_most_finalizations_own_initial_validation_of_a_signed_or_listed_record` | Counters are not signed claims: inflated initial counters on a validly signed record do not count as verified |
+| Core.Tests | `SignedProvenanceTests.The_opt_out_still_refuses_a_present_but_invalid_signature_and_nothing_else` | The trust-the-host opt-out still refuses a record the library signed that someone then changed |
+| Core.Tests | `SignedProvenanceTests.The_opt_out_checks_only_a_record_the_verified_path_would_read_and_so_does_feedback` | Feedback attribution under the opt-out applies the same tamper check before the ledger |
+| Core.Tests | `SignedProvenanceTests.A_provenance_key_that_is_the_assessment_token_key_is_refused` | One secret never serves both purposes: a ring holding the assessment token key is refused at construction |
+| Core.Tests | `SignedProvenanceTests.Finalizations_own_ring_must_be_one_the_lifecycle_service_checks_and_then_takes_precedence` | Signing under a key the checker does not hold is refused at construction, never discovered as silently refused evidence |
+| Core.Tests | `SignedProvenanceTests.A_retry_that_collides_with_a_record_whose_signature_does_not_vouch_is_reported_not_replayed` | A retry never reports as finalized a stored record whose signature does not vouch for it |
+| Core.Tests | `SignedProvenanceTests.Nothing_public_on_the_options_returns_key_bytes_and_it_prints_none` | No public member returns key bytes, and `ToString` redacts them |
+| Core.Tests | `SignedProvenanceTests.The_signature_is_compared_in_constant_time` | The signature comparison is `CryptographicOperations.FixedTimeEquals` |
+| Storage.Postgres.Tests | `PostgresSignedProvenanceTests.A_payload_whose_signed_claim_was_changed_in_the_database_is_refused_as_host_written` | A closed round rewritten in place in the payload, by a role that can, makes the run vouch for nothing **(DB)** |
+| Storage.Postgres.Tests | `PostgresSignedProvenanceTests.A_record_forged_through_CreateAsync_with_a_copied_signature_or_none_is_refused_in_either_mode` | A genuine signature copied onto a forged record, or none, vouches for nothing, in plaintext and crypto-shredding mode **(DB)** |
 
 ## What this suite does not prove
 

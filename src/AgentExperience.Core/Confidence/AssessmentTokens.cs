@@ -67,7 +67,8 @@ public enum IndependenceRefusal
     /// The run is known only through a record written by hand (<c>ExperienceRecordOrigin.HostWritten</c>)
     /// rather than by finalization, and the capture service does not hold it. What such a record says about
     /// its source run -- the run, the round, the exposures -- is its writer's statement, so it vouches for
-    /// nothing.
+    /// nothing. With <see cref="ExperienceProvenanceSigningOptions"/> configured, a record marked finalized whose
+    /// provenance signature is missing, names a key not in the ring, or does not verify is refused the same way.
     /// </summary>
     HostWrittenRun,
 }
@@ -280,6 +281,9 @@ internal sealed class AssessmentTokenCodec
 
         return new AssessmentTokenCodec(key.ToArray(), options.AssessmentTokenLifetime, options.TimeProvider);
     }
+
+    /// <summary>Whether <paramref name="signer"/>'s ring holds this codec's key: one secret must never serve two purposes.</summary>
+    internal bool SharesKeyWith(ProvenanceSigner signer) => signer.HoldsKey(_key);
 
     internal IssuedAssessmentToken Encode(
         Guid assessmentId,

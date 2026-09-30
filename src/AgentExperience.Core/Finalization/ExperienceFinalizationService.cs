@@ -141,6 +141,7 @@ public sealed class ExperienceFinalizationService
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceLifecycleService _lifecycleService;
     private readonly ExperienceIndexingService? _indexingService;
+    private readonly ProvenanceSigner? _signer;
 
     /// <summary>Creates a finalization service over the capture snapshot, the reflector, the record store, and Core's lifecycle owner, with no indexing hook.</summary>
     /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
@@ -181,6 +182,42 @@ public sealed class ExperienceFinalizationService
         ExperienceLifecycleService lifecycleService,
         ExperienceIndexingService? indexingService,
         TimeSpan? indexingTimeout = null)
+        : this(captureService, reflector, store, lifecycleService, indexingService, indexingTimeout, provenanceSigning: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a finalization service with an optional post-commit indexing hook and optional provenance signing.
+    /// </summary>
+    /// <remarks>
+    /// With signing, every record this service creates carries, in the same create, a signature over its
+    /// finalization claims (<see cref="ExperienceRecord.ProvenanceSignature"/>) under
+    /// <see cref="ExperienceProvenanceSigningOptions.CurrentKeyId"/>. With <paramref name="provenanceSigning"/>
+    /// <see langword="null"/>, this service signs with the options <paramref name="lifecycleService"/> was built
+    /// with, if any -- so the key ring configured once, where records are checked, is also where they are
+    /// signed -- and otherwise signs nothing, exactly as the other constructors. Options of its own take precedence,
+    /// but must be checkable: <paramref name="lifecycleService"/> must have been built with a ring holding this
+    /// ring's current key under the same ID, and no key may be the assessment token key. With signing on, a retry
+    /// that finds this run's record stored without a signature that vouches for it fails rather than replaying it.
+    /// </remarks>
+    /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
+    /// <param name="reflector">Turns the evaluated run into an auditable reflection.</param>
+    /// <param name="store">The durable Experience Record store.</param>
+    /// <param name="lifecycleService">Core's lifecycle owner, which stamps and commits the initial event.</param>
+    /// <param name="indexingService">Optional. Embeds the committed record's sanitized retrieval summary after the fact.</param>
+    /// <param name="indexingTimeout">How long that hook may take before it is abandoned and reported as retryable. Must be strictly positive. <see langword="null"/> means <see cref="DefaultIndexingTimeout"/>.</param>
+    /// <param name="provenanceSigning">Optional. The key ring new records are signed under.</param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="provenanceSigning"/> is set and <paramref name="lifecycleService"/> does not check its current key, or one of its keys is the assessment token key.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="indexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceFinalizationService(
+        IExperienceCaptureService captureService,
+        IExperienceReflector reflector,
+        IExperienceRecordStore store,
+        ExperienceLifecycleService lifecycleService,
+        ExperienceIndexingService? indexingService,
+        TimeSpan? indexingTimeout,
+        ExperienceProvenanceSigningOptions? provenanceSigning)
     {
         ArgumentNullException.ThrowIfNull(captureService);
         ArgumentNullException.ThrowIfNull(reflector);
@@ -192,6 +229,24 @@ public sealed class ExperienceFinalizationService
         _store = store;
         _lifecycleService = lifecycleService;
         _indexingService = indexingService;
+        var verifier = lifecycleService.Independence.Signer;
+        var own = ProvenanceSigner.Create(provenanceSigning);
+        if (own is not null)
+        {
+            // Signing records nothing checks, or under a key the checker does not hold, is a misconfiguration that
+            // would only surface as every new run failing to vouch: refused here, at wiring time.
+            if (verifier is null || !verifier.HoldsCurrentKeyOf(own))
+            {
+                throw new ArgumentException(
+                    "Finalization's provenance signing options must be checked by the lifecycle service it is built over: " +
+                    "that service must be configured with provenance signing whose ring holds finalization's current key under the same ID.",
+                    nameof(provenanceSigning));
+            }
+
+            lifecycleService.Independence.EnsureNotAssessmentKey(own, nameof(provenanceSigning));
+        }
+
+        _signer = own ?? verifier;
         IndexingTimeout = indexingTimeout ?? DefaultIndexingTimeout;
 
         if (IndexingTimeout <= TimeSpan.Zero)
@@ -565,6 +620,32 @@ public sealed class ExperienceFinalizationService
             Origin = ExperienceRecordOrigin.Finalized,
         };
 
+        if (_signer is not null)
+        {
+            ExperienceProvenanceSignature signature;
+            try
+            {
+                signature = _signer.Sign(record);
+            }
+            catch (ArgumentException ex)
+            {
+                return Ended(
+                    FinalizationOutcome.Failed,
+                    FinalizationStage.CreateRecord,
+                    "The record's provenance claims have no canonical encoding, so it could not be signed; nothing was stored.",
+                    new FinalizationFailure(
+                        FinalizationStage.CreateRecord,
+                        "Signing the record's provenance claims failed: a claim is missing or not well-formed UTF-16.",
+                        NoErrors,
+                        ex),
+                    evaluation);
+            }
+
+            // Signed last, over the claims exactly as they will be stored, and created in the same write: a
+            // record this service creates is never stored without its signature.
+            record = record with { ProvenanceSignature = signature };
+        }
+
         ExperienceRecordCreateResult created;
         try
         {
@@ -685,6 +766,24 @@ public sealed class ExperienceFinalizationService
                     FinalizationStage.CreateRecord,
                     $"CreateAsync conflicted and the stored record is not readable in this scope ({stored.Outcome}).",
                     stored.Errors,
+                    Exception: null),
+                evaluation);
+        }
+
+        if (_lifecycleService.Independence.Signer?.Verify(stored.Record)
+            is ProvenanceSignatureCheck.Missing or ProvenanceSignatureCheck.UnknownKey or ProvenanceSignatureCheck.Invalid)
+        {
+            // The derived ID is taken, in this scope, by a record whose provenance signature does not vouch for it:
+            // written before signing without being listed in the cutover set, written outside finalization, or
+            // changed after it was signed. Replaying it would report as finalized a record verification refuses.
+            return Ended(
+                FinalizationOutcome.Failed,
+                FinalizationStage.CreateRecord,
+                "This run's Experience Record already exists, but the stored record does not carry a valid provenance signature, so it vouches for nothing and was not replayed; nothing was stored.",
+                new FinalizationFailure(
+                    FinalizationStage.CreateRecord,
+                    "CreateAsync conflicted with a stored record whose provenance signature does not vouch for it.",
+                    NoErrors,
                     Exception: null),
                 evaluation);
         }
