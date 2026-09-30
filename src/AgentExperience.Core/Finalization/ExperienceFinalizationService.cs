@@ -45,7 +45,8 @@ namespace AgentExperience.Core.Finalization;
 /// permitting storage decision produces a <see cref="ExperienceStatus.Validated"/> record with reuse
 /// confidence <c>2/3</c>, one supporting validation and no contradictions. A permitted record whose
 /// verification is not <see cref="TaskVerificationStatus.Verified"/>, or whose reflection threw or did
-/// not match its request (<see cref="ReflectionRequest.EnsureMatches"/>), is
+/// not match its request (<see cref="ReflectionRequest.EnsureMatches"/>), or was refused by screening
+/// (<see cref="ReflectionScreening"/>), is
 /// <see cref="ExperienceStatus.Quarantined"/> instead, carrying no reflection at all and safe failure
 /// metadata on the result. Reflection is not even attempted for an unverified run, so an unreflected
 /// lesson can never reach a quarantined record. Confidence is never computed from evidence counts
@@ -71,8 +72,13 @@ namespace AgentExperience.Core.Finalization;
 /// (the record is still at revision 0), a retry finishes that commit rather than starting over.
 /// </para>
 /// <para>
-/// <b>Sanitization.</b> Finalization never sanitizes: capture already rejected anything unsafe before
-/// storing an attempt, so the run's attempts are copied onto the record unchanged.
+/// <b>Sanitization.</b> Finalization never re-sanitizes captured content: capture already rejected
+/// anything unsafe before storing an attempt, so the run's attempts are copied onto the record unchanged.
+/// What a reflector wrote is different -- it is new free text -- so every bound reflection is screened
+/// before the record is created (<see cref="ReflectionScreening"/>): held to
+/// <see cref="ExperienceFinalizationOptions.ReflectionLimits"/>, cleared of invisible characters, and put
+/// through the host's <see cref="ISanitizer"/>. A reflection screening refuses quarantines the record
+/// exactly as a binding mismatch does.
 /// </para>
 /// <para>
 /// <b>Failures.</b> Every stage failure comes back as a structured
@@ -142,6 +148,7 @@ public sealed class ExperienceFinalizationService
     private readonly ExperienceLifecycleService _lifecycleService;
     private readonly ExperienceIndexingService? _indexingService;
     private readonly ProvenanceSigner? _signer;
+    private readonly ISanitizer _reflectionSanitizer;
 
     /// <summary>Creates a finalization service over the capture snapshot, the reflector, the record store, and Core's lifecycle owner, with no indexing hook.</summary>
     /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
@@ -218,6 +225,44 @@ public sealed class ExperienceFinalizationService
         ExperienceIndexingService? indexingService,
         TimeSpan? indexingTimeout,
         ExperienceProvenanceSigningOptions? provenanceSigning)
+        : this(captureService, reflector, store, lifecycleService, indexingService, indexingTimeout, provenanceSigning, reflectionSanitizer: null, options: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a finalization service with every optional collaborator: the indexing hook, provenance
+    /// signing, the sanitizer reflections are screened through, and the finalization options.
+    /// </summary>
+    /// <remarks>
+    /// Every reflection is screened before its record is created (see <see cref="ReflectionScreening"/>).
+    /// With <paramref name="reflectionSanitizer"/> <see langword="null"/>, the second layer is a
+    /// <see cref="Sanitization.DefaultSanitizer"/> whose one policy is
+    /// <see cref="ReflectionScreening.SanitizationPolicyFor"/> this service's limits, which changes nothing --
+    /// which is also what every other constructor does. <c>AddAgentExperienceCore</c> passes the registered
+    /// <see cref="ISanitizer"/>.
+    /// </remarks>
+    /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
+    /// <param name="reflector">Turns the evaluated run into an auditable reflection.</param>
+    /// <param name="store">The durable Experience Record store.</param>
+    /// <param name="lifecycleService">Core's lifecycle owner, which stamps and commits the initial event.</param>
+    /// <param name="indexingService">Optional. Embeds the committed record's sanitized retrieval summary after the fact.</param>
+    /// <param name="indexingTimeout">How long that hook may take before it is abandoned and reported as retryable. Must be strictly positive. <see langword="null"/> means <see cref="DefaultIndexingTimeout"/>.</param>
+    /// <param name="provenanceSigning">Optional. The key ring new records are signed under.</param>
+    /// <param name="reflectionSanitizer">Optional. The host sanitizer every reflection's free text goes through, as a <see cref="ReflectionScreening.PayloadKind"/> payload.</param>
+    /// <param name="options">Optional. The finalization options, including the <see cref="ReflectionLimits"/>. <see langword="null"/> means <see cref="ExperienceFinalizationOptions.Default"/>.</param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="provenanceSigning"/> is set and <paramref name="lifecycleService"/> does not check its current key, or one of its keys is the assessment token key.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="indexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceFinalizationService(
+        IExperienceCaptureService captureService,
+        IExperienceReflector reflector,
+        IExperienceRecordStore store,
+        ExperienceLifecycleService lifecycleService,
+        ExperienceIndexingService? indexingService,
+        TimeSpan? indexingTimeout,
+        ExperienceProvenanceSigningOptions? provenanceSigning,
+        ISanitizer? reflectionSanitizer,
+        ExperienceFinalizationOptions? options)
     {
         ArgumentNullException.ThrowIfNull(captureService);
         ArgumentNullException.ThrowIfNull(reflector);
@@ -247,6 +292,12 @@ public sealed class ExperienceFinalizationService
         }
 
         _signer = own ?? verifier;
+        Options = options ?? ExperienceFinalizationOptions.Default;
+        _reflectionSanitizer = reflectionSanitizer ?? new Sanitization.DefaultSanitizer(new Sanitization.SanitizationOptions(
+            new Dictionary<string, Sanitization.SanitizationPolicy>(StringComparer.Ordinal)
+            {
+                [ReflectionScreening.PayloadKind] = ReflectionScreening.SanitizationPolicyFor(Options.ReflectionLimits),
+            }));
         IndexingTimeout = indexingTimeout ?? DefaultIndexingTimeout;
 
         if (IndexingTimeout <= TimeSpan.Zero)
@@ -260,6 +311,9 @@ public sealed class ExperienceFinalizationService
 
     /// <summary>The budget this service gives the post-commit indexing hook.</summary>
     public TimeSpan IndexingTimeout { get; }
+
+    /// <summary>The options this service finalizes under, including the limits every reflection is screened against.</summary>
+    public ExperienceFinalizationOptions Options { get; }
 
     /// <summary>
     /// The <see cref="ExperienceRecord.ExperienceId"/> finalizing <paramref name="runId"/> in
@@ -367,6 +421,10 @@ public sealed class ExperienceFinalizationService
         // finalization stopped at Authorize rather than at CommitInitialEvent is the whole point of
         // the stage, and it is a bounded enum, so it costs no cardinality on the span.
         ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.StageAttribute, result.Stage.ToString());
+
+        // A closed set, and only on a record screening quarantined: an operator can see "the host sanitizer
+        // rejects the kind" without reading a reason.
+        ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ScreeningRefusalAttribute, result.Failure?.ScreeningRefusal?.ToString());
 
         ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Finalize, result.Outcome.ToString());
         return result;
@@ -516,6 +574,7 @@ public sealed class ExperienceFinalizationService
         // unreflected lesson, so an unverified run is not reflected on at all.
         Reflection? reflection = null;
         FinalizationFailure? failure = null;
+        IReadOnlyList<string> redactedPaths = [];
 
         if (evaluation.Outcome.Status == TaskVerificationStatus.Verified)
         {
@@ -555,6 +614,13 @@ public sealed class ExperienceFinalizationService
                             $"The reflector returned a reflection whose {ex.MismatchedField} does not match its request; the record is quarantined without an eligible lesson.",
                             NoErrors,
                             ex);
+                    }
+
+                    if (reflection is { } bound)
+                    {
+                        // Only a bound reflection is screened, and only its free text: the binding check
+                        // above already owns every other field.
+                        (reflection, failure, redactedPaths) = await ScreenAsync(bound, cancellationToken).ConfigureAwait(false);
                     }
                 }
             }
@@ -705,7 +771,58 @@ public sealed class ExperienceFinalizationService
         cursor.Stage = FinalizationStage.CommitInitialEvent;
 
         // Stage 6 -- Commit the record's initial lifecycle event, which performs the real transition.
-        return await CommitInitialEventAsync(request, run, record, evaluation, failure, cancellationToken).ConfigureAwait(false);
+        return await CommitInitialEventAsync(request, run, record, evaluation, failure, cancellationToken, redactedPaths).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Screens a bound reflection's free text (see <see cref="ReflectionScreening"/>): the screened
+    /// reflection and the paths the host sanitizer redacted, or no reflection and the content-free
+    /// reason it was refused -- handled exactly like a binding mismatch.
+    /// </summary>
+    private async Task<(Reflection? Reflection, FinalizationFailure? Failure, IReadOnlyList<string> RedactedPaths)> ScreenAsync(
+        Reflection reflection,
+        CancellationToken cancellationToken)
+    {
+        ReflectionScreeningResult screened;
+        try
+        {
+            screened = await ReflectionScreening
+                .ScreenAsync(reflection, _reflectionSanitizer, Options.ReflectionLimits, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Screening catches what a host seam can throw; this is the backstop. The exception is withheld,
+            // because its message may quote the reflection; only its type is kept, off the reason.
+            return (null, new FinalizationFailure(
+                FinalizationStage.Reflect,
+                "Screening the reflection threw; the record is quarantined without an eligible lesson.",
+                NoErrors,
+                Exception: null)
+            {
+                ScreeningRefusal = ReflectionScreeningRefusal.Unreadable,
+                ExceptionType = ex.GetType().FullName,
+            }, []);
+        }
+
+        if (screened.Reflection is { } accepted)
+        {
+            return (accepted, null, screened.RedactedFieldPaths);
+        }
+
+        return (null, new FinalizationFailure(
+            FinalizationStage.Reflect,
+            $"Screening refused the reflection ({screened.Refusal}): {screened.RefusalReason}; the record is quarantined without an eligible lesson.",
+            NoErrors,
+            Exception: null)
+        {
+            ScreeningRefusal = screened.Refusal,
+            ExceptionType = screened.ExceptionType,
+        }, []);
     }
 
     /// <summary>
@@ -812,7 +929,8 @@ public sealed class ExperienceFinalizationService
         ExperienceRecord record,
         VerificationResult evaluation,
         FinalizationFailure? failure,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? redactedPaths = null)
     {
         // Every field is a pure function of the stored record and the run, so a retry re-derives the
         // identical event and the store deduplicates it instead of appending a second one. This is a
@@ -888,7 +1006,10 @@ public sealed class ExperienceFinalizationService
                     $"Committing the record's initial lifecycle event returned {commit.Outcome}.{(commit.Reason is null ? string.Empty : " " + commit.Reason)}",
                     commit.Errors,
                     Exception: null),
-                $"The Experience Record's initial lifecycle event returned {commit.Outcome}, so the record is still a {record.Status} and finalization is not durable; the captured run is still available for a retry.");
+                $"The Experience Record's initial lifecycle event returned {commit.Outcome}, so the record is still a {record.Status} and finalization is not durable; the captured run is still available for a retry.")
+            {
+                ReflectionRedactedFieldPaths = redactedPaths ?? [],
+            };
         }
 
         // Mirror the projection the store just applied, so the returned record is the record as it now
@@ -916,7 +1037,10 @@ public sealed class ExperienceFinalizationService
             committed.Reflection,
             failure,
             Reason: null,
-            indexing);
+            indexing)
+        {
+            ReflectionRedactedFieldPaths = redactedPaths ?? [],
+        };
     }
 
     /// <summary>

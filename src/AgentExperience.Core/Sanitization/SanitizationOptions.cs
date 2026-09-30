@@ -68,7 +68,11 @@ public sealed record SanitizationPolicy(
 /// own doc comment: "a sanitizer can apply payload-specific policy". A <c>Kind</c> with no entry
 /// here is not a gap to fall back on some shared/global policy for -- <see cref="DefaultSanitizer"/>
 /// fail-closed rejects it outright, since accepting an unconfigured payload shape by default would
-/// be the opposite of fail-closed.
+/// be the opposite of fail-closed. The one exception is
+/// <see cref="AgentExperience.Core.Reflections.ReflectionScreening.PayloadKind"/>, which finalization
+/// screens every reflection as: left unconfigured, it gets
+/// <see cref="AgentExperience.Core.Reflections.ReflectionScreening.DefaultSanitizationPolicy"/>, which
+/// changes nothing.
 /// </summary>
 /// <param name="Policies">The configured policy for each recognized <c>Kind</c>, keyed by that exact <c>Kind</c> string.</param>
 public sealed record SanitizationOptions(IReadOnlyDictionary<string, SanitizationPolicy> Policies)

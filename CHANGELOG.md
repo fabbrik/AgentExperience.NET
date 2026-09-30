@@ -6,6 +6,47 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Reflection screening (story 14.1)
+
+- **Finalization screens what a reflector wrote before the record is created.** After the binding check, the six
+  free-text fields (`Lesson`, `SuccessfulApproaches`, `FailedApproaches`, `Preconditions`, `Warnings`,
+  `ReuseGuidance`) and `Producer` pass two layers, for every reflector, the default one included:
+  - **built-in hygiene:** the new `ReflectionLimits` (4,000 characters of lesson and of reuse guidance, 1,000 per list
+    item, 32 items per list, 200 characters of `Producer`, and a 5-second `SanitizerTimeout`); invisible characters
+    removed; a field empty afterwards counts as absent, and a missing lesson or producer refuses the reflection;
+  - **the host's `ISanitizer`,** as a payload of the new kind `ExperienceReflection`
+    (`ReflectionScreening.PayloadKind`), bounded by `SanitizerTimeout`.
+- **Over-limit text is refused, never truncated.** A refused reflection quarantines the record with a
+  `FinalizationFailure` at stage `Reflect` and a content-free reason, exactly as a binding mismatch does. The new
+  `FinalizationFailure.ScreeningRefusal` (`ReflectionScreeningRefusal`: `OverLimit`, `MissingLesson`,
+  `MissingProducer`, `MissingField`, `Unreadable`, `SanitizerRejected`, `SanitizerFailed`, `SanitizerTimedOut`,
+  `FieldOmitted`) says why, and the `finalize` span carries it as `agentexperience.reflection.screening_refusal`.
+  A sanitizer that times out, throws, cancels on its own, omits a field or item, or returns something other than an
+  allowed payload of text or a rejection quarantines too; the caller's cancellation still propagates. An exception
+  behind a refusal is withheld; only its type is kept, in the new `FinalizationFailure.ExceptionType`.
+- **Redactions are kept and reported by path.** The new `FinalizeExperienceResult.ReflectionRedactedFieldPaths` lists
+  the redacted fields' paths as indexes into the stored lists, never their values. No reflection text reaches
+  telemetry, logs or failure reasons.
+- **One invisible-character rule, shared with the Historical Reference writer.** Story 8.2's rule now also removes
+  variation selectors, the combining grapheme joiner, Hangul fillers and the blank braille pattern, turns the line
+  and paragraph separators into spaces, and cuts a run of combining marks to four, in the writer and in screening
+  alike; a cross-check test holds the two to it code point by code point.
+- **`DefaultSanitizer` has a built-in policy for the one new kind.** `ReflectionScreening.DefaultSanitizationPolicy`
+  (`SanitizationPolicyFor(ReflectionLimits.Default)`) applies when the options configure none for
+  `ExperienceReflection`; it allows exactly the six fields, bounded by the default limits, and changes nothing. A
+  configured policy replaces it. Every other unconfigured kind is still rejected.
+- **The default reflector bounds its own output** to `ReflectionLimits.Default`: at most 500 characters of any quoted
+  captured text, each field and item cut to its limit with an ellipsis, and a list kept to 32 items, the last saying
+  how many more are not listed. Its output for the sample is unchanged, pinned byte for byte, and the golden
+  transcript is unchanged. A captured invisible character it quotes is now removed from the stored reflection.
+- **Wiring.** `AddAgentExperienceCore` passes the registered `ISanitizer` and an optional registered
+  `ExperienceFinalizationOptions` (new, holding `ReflectionLimits`). Hosts that build services by hand use the new
+  `ExperienceFinalizationService` constructor overload with `reflectionSanitizer` and `options`; the existing
+  overloads screen through a `DefaultSanitizer` bounded by the service's limits. **A host `ISanitizer` must allow the
+  `ExperienceReflection` kind**, or every record is quarantined as `SanitizerRejected`.
+- Documented in [Screening reflections](docs/guide/finalization.md#screening-reflections), in the telemetry reference,
+  and in the `IExperienceReflector` remarks.
+
 ### Signed provenance (story 13.1)
 
 - **Finalization can sign what it vouches for** (KL-11, narrowed). Register an `ExperienceProvenanceSigningOptions`

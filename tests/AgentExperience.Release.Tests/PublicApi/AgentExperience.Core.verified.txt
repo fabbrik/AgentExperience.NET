@@ -248,6 +248,12 @@ namespace AgentExperience.Core.Feedback
 }
 namespace AgentExperience.Core.Finalization
 {
+    public sealed class ExperienceFinalizationOptions : System.IEquatable<AgentExperience.Core.Finalization.ExperienceFinalizationOptions>
+    {
+        public ExperienceFinalizationOptions() { }
+        public AgentExperience.Core.Reflections.ReflectionLimits ReflectionLimits { get; init; }
+        public static AgentExperience.Core.Finalization.ExperienceFinalizationOptions Default { get; }
+    }
     public sealed class ExperienceFinalizationService
     {
         public const AgentExperience.Abstractions.ExperienceStatus CreatedStatus = 0;
@@ -258,7 +264,9 @@ namespace AgentExperience.Core.Finalization
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout = default) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning) { }
+        public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning, AgentExperience.Abstractions.ISanitizer? reflectionSanitizer, AgentExperience.Core.Finalization.ExperienceFinalizationOptions? options) { }
         public System.TimeSpan IndexingTimeout { get; }
+        public AgentExperience.Core.Finalization.ExperienceFinalizationOptions Options { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Finalization.FinalizeExperienceResult> FinalizeAsync(AgentExperience.Core.Finalization.FinalizeExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public static System.Guid ExperienceIdFor(System.Guid runId, AgentExperience.Abstractions.Scope scope) { }
         public static System.Guid InitialEventIdFor(System.Guid runId) { }
@@ -269,7 +277,9 @@ namespace AgentExperience.Core.Finalization
         public FinalizationFailure(AgentExperience.Core.Finalization.FinalizationStage Stage, string Reason, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, System.Exception? Exception) { }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public System.Exception? Exception { get; init; }
+        public string? ExceptionType { get; init; }
         public string Reason { get; init; }
+        public AgentExperience.Core.Reflections.ReflectionScreeningRefusal? ScreeningRefusal { get; init; }
         public AgentExperience.Core.Finalization.FinalizationStage Stage { get; init; }
     }
     public enum FinalizationOutcome
@@ -317,6 +327,7 @@ namespace AgentExperience.Core.Finalization
         public string? Reason { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord? Record { get; init; }
         public AgentExperience.Abstractions.Reflection? Reflection { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string> ReflectionRedactedFieldPaths { get; init; }
         public long Revision { get; init; }
         public AgentExperience.Core.Finalization.FinalizationStage Stage { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus? Status { get; }
@@ -623,6 +634,21 @@ namespace AgentExperience.Core.Reflections
         public string? MismatchedField { get; }
         public System.Guid RunId { get; }
     }
+    public sealed class ReflectionLimits : System.IEquatable<AgentExperience.Core.Reflections.ReflectionLimits>
+    {
+        public const int DefaultMaxLessonLength = 4000;
+        public const int DefaultMaxListItemLength = 1000;
+        public const int DefaultMaxListItems = 32;
+        public const int DefaultMaxProducerLength = 200;
+        public static readonly System.TimeSpan DefaultSanitizerTimeout;
+        public ReflectionLimits(int MaxLessonLength = 4000, int MaxListItemLength = 1000, int MaxListItems = 32, int MaxProducerLength = 200) { }
+        public int MaxLessonLength { get; init; }
+        public int MaxListItemLength { get; init; }
+        public int MaxListItems { get; init; }
+        public int MaxProducerLength { get; init; }
+        public System.TimeSpan SanitizerTimeout { get; init; }
+        public static AgentExperience.Core.Reflections.ReflectionLimits Default { get; }
+    }
     public sealed class ReflectionRequest : System.IEquatable<AgentExperience.Core.Reflections.ReflectionRequest>
     {
         public ReflectionRequest(AgentExperience.Abstractions.ExperienceRun Run, AgentExperience.Core.Verification.VerificationResult Evaluation, System.Guid ReflectionId, System.DateTimeOffset CreatedAt) { }
@@ -631,6 +657,26 @@ namespace AgentExperience.Core.Reflections
         public System.Guid ReflectionId { get; init; }
         public AgentExperience.Abstractions.ExperienceRun Run { get; }
         public void EnsureMatches(AgentExperience.Abstractions.Reflection reflection) { }
+    }
+    public static class ReflectionScreening
+    {
+        public const int MaxConsecutiveCombiningMarks = 4;
+        public const string PayloadKind = "ExperienceReflection";
+        public static AgentExperience.Core.Sanitization.SanitizationPolicy DefaultSanitizationPolicy { get; }
+        public static System.Collections.Generic.IReadOnlyList<string> ScreenedFieldNames { get; }
+        public static AgentExperience.Core.Sanitization.SanitizationPolicy SanitizationPolicyFor(AgentExperience.Core.Reflections.ReflectionLimits limits) { }
+    }
+    public enum ReflectionScreeningRefusal
+    {
+        OverLimit = 0,
+        MissingLesson = 1,
+        MissingProducer = 2,
+        MissingField = 3,
+        Unreadable = 4,
+        SanitizerRejected = 5,
+        SanitizerFailed = 6,
+        SanitizerTimedOut = 7,
+        FieldOmitted = 8,
     }
 }
 namespace AgentExperience.Core.Retrieval

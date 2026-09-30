@@ -1149,8 +1149,11 @@ public static class HistoricalReferenceWriter
     /// Characters are classified by Unicode scalar value, not by UTF-16 unit, so a character outside
     /// the Basic Multilingual Plane is seen for what it is. A control, format, private-use or
     /// unassigned character -- an escape sequence's introducer, a bidirectional override, a zero-width
-    /// joiner, a TAG character that can smuggle invisible ASCII to a model -- and a lone surrogate are
-    /// each treated as whitespace before anything else.
+    /// joiner, a TAG character that can smuggle invisible ASCII to a model -- a lone surrogate, and a
+    /// code point that renders as nothing or as blank space (a variation selector, the combining grapheme
+    /// joiner, a Hangul filler, the blank braille pattern) are each treated as whitespace before anything
+    /// else, as are the line and paragraph separators; a run of more than four combining marks is cut to
+    /// four (see <see cref="Visible"/>).
     /// </para>
     /// <para>
     /// The line's own syntax is then taken out of the value rather than escaped, because the reader is
@@ -1184,18 +1187,31 @@ public static class HistoricalReferenceWriter
     /// characters are gone, which <see cref="Name"/> checks for markers.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Invisible also covers, since story 14.1, a variation selector (U+FE00-FE0F, U+E0100-E01EF), the
+    /// combining grapheme joiner (U+034F), a Hangul filler (U+115F, U+1160, U+3164, U+FFA0) and the blank
+    /// braille pattern (U+2800); the line and paragraph separators (U+2028, U+2029) always become spaces; and
+    /// a run of more than four combining marks is cut to four, the rest removed. This is the rule Core's
+    /// reflection screening applies (<c>ReflectionScreening.Neutralize</c>), which is this routine's removal
+    /// mode without the quote look-alikes, and a cross-check test holds the two to it code point by code
+    /// point: change one, change both.
+    /// </para>
+    /// <para>
     /// The one routine both an argument value (<see cref="Quoted"/>) and a tool name (<see cref="Name"/>)
     /// go through, so the two are classified identically. A space rather than nothing by default, because a
     /// removed character would join the text on either side of it into a word neither side spelled.
+    /// </para>
     /// </remarks>
     private static string Visible(string value, bool quoteLookAlikes, bool remove = false)
     {
         StringBuilder? mapped = null;
+        var marks = 0;
         var index = 0;
         while (index < value.Length)
         {
             var start = index;
             char? replacement;
+            var isMark = false;
             if (Rune.DecodeFromUtf16(value.AsSpan(index), out var rune, out var consumed) != System.Buffers.OperationStatus.Done)
             {
                 // A lone surrogate: not a character.
@@ -1205,10 +1221,31 @@ public static class HistoricalReferenceWriter
             else
             {
                 index += consumed;
-                replacement = Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
-                        or UnicodeCategory.PrivateUse or UnicodeCategory.OtherNotAssigned or UnicodeCategory.Surrogate
-                    ? remove && !Rune.IsWhiteSpace(rune) ? Removed : ' '
-                    : quoteLookAlikes && QuoteLookAlikes.Contains(rune.Value) ? '\'' : null;
+                var category = Rune.GetUnicodeCategory(rune);
+                if (category is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator)
+                {
+                    replacement = ' ';
+                }
+                else if (category is UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.PrivateUse
+                    or UnicodeCategory.OtherNotAssigned or UnicodeCategory.Surrogate || IsBlankIgnorable(rune.Value))
+                {
+                    replacement = remove && !Rune.IsWhiteSpace(rune) ? Removed : ' ';
+                }
+                else if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)
+                {
+                    isMark = marks < MaxConsecutiveCombiningMarks;
+                    replacement = isMark ? null : Removed;
+                }
+                else
+                {
+                    replacement = quoteLookAlikes && QuoteLookAlikes.Contains(rune.Value) ? '\'' : null;
+                }
+            }
+
+            // A removed character is invisible, so it neither ends nor extends a run of marks.
+            if (replacement != Removed)
+            {
+                marks = isMark ? marks + 1 : 0;
             }
 
             if (replacement is { } character)
@@ -1230,6 +1267,13 @@ public static class HistoricalReferenceWriter
 
     /// <summary>What <see cref="Visible"/> uses internally to mean "append nothing".</summary>
     private const char Removed = '\0';
+
+    /// <summary>The most combining marks in a row <see cref="Visible"/> keeps; the rest of the run is removed.</summary>
+    private const int MaxConsecutiveCombiningMarks = 4;
+
+    /// <summary>Code points that are letters, marks or symbols by category but render as nothing or as blank space.</summary>
+    private static bool IsBlankIgnorable(int value) =>
+        value is (>= 0xFE00 and <= 0xFE0F) or (>= 0xE0100 and <= 0xE01EF) or 0x034F or 0x115F or 0x1160 or 0x3164 or 0xFFA0 or 0x2800;
 
     /// <summary>
     /// Code points a reader could take for the double quote that delimits an argument value: the
@@ -1272,10 +1316,11 @@ public static class HistoricalReferenceWriter
     /// goes through -- so a bidirectional override or isolate, a zero-width character, a TAG character
     /// or any other control, format, private-use or unassigned code point, and a lone surrogate, becomes a
     /// space: a name can then neither use a bidirectional control to reorder the rest of the line when it
-    /// is displayed nor carry text in a code point of those categories. (Other default-ignorable code points
-    /// -- variation selectors, the combining grapheme joiner, Hangul fillers -- are letters or marks and are
-    /// left alone, exactly as in an argument value.) A name that holds none of them renders exactly as it did
-    /// before story 8.2.
+    /// is displayed nor carry text in a code point of those categories. Since story 14.1 the same goes for
+    /// the code points that are letters, marks or symbols by category but render as nothing or as blank
+    /// space -- variation selectors, the combining grapheme joiner, Hangul fillers, the blank braille pattern
+    /// -- and a run of more than four combining marks is cut to four, exactly as in an argument value. A
+    /// name that holds none of them renders exactly as it did before story 8.2.
     /// </para>
     /// <para>
     /// <b>A marker split by an invisible character is still a marker.</b> Turning an invisible character into

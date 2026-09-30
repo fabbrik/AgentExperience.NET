@@ -42,7 +42,8 @@ public enum FinalizationOutcome
     Validated,
 
     /// <summary>
-    /// The host permitted storage but the run did not verify, or reflection failed: the record was
+    /// The host permitted storage but the run did not verify, or reflection failed or was refused by
+    /// screening: the record was
     /// created as <see cref="ExperienceStatus.Candidate"/>, carrying no reflection, and its initial
     /// lifecycle event moved it to <see cref="ExperienceStatus.Quarantined"/>. <c>Failure</c> names why.
     /// </summary>
@@ -107,7 +108,21 @@ public sealed record FinalizationFailure(
     FinalizationStage Stage,
     string Reason,
     IReadOnlyList<StoreValidationError> Errors,
-    Exception? Exception);
+    Exception? Exception)
+{
+    /// <summary>
+    /// Why screening refused the reflection, when that is what quarantined the record; otherwise
+    /// <see langword="null"/>. See <see cref="AgentExperience.Core.Reflections.ReflectionScreening"/>.
+    /// </summary>
+    public AgentExperience.Core.Reflections.ReflectionScreeningRefusal? ScreeningRefusal { get; init; }
+
+    /// <summary>
+    /// The full name of the exception type behind a screening refusal -- a host sanitizer that threw, or a
+    /// reflector list that threw while it was read -- when there was one. The exception itself is withheld
+    /// (<see cref="Exception"/> is <see langword="null"/>), because its message may quote the reflection.
+    /// </summary>
+    public string? ExceptionType { get; init; }
+}
 
 /// <summary>
 /// The result of one <see cref="ExperienceFinalizationService.FinalizeAsync"/> call.
@@ -147,6 +162,22 @@ public sealed record FinalizeExperienceResult(
     string? Reason,
     ExperienceIndexingResult? Indexing = null)
 {
+    /// <summary>
+    /// The paths of the reflection fields the host sanitizer redacted while this call screened the
+    /// reflection (<c>Lesson</c>, <c>Warnings[2]</c>, ...), never their values. An item's index is its
+    /// index in the stored list; a redacted item that screening then dropped as blank is not listed.
+    /// Empty when nothing was redacted and when no reflection was stored. The paths are reported, never
+    /// persisted: a replay -- <see cref="FinalizationOutcome.AlreadyFinalized"/>, or a retry that finishes an
+    /// earlier call's initial commit -- carries none, even though the retry reflects and screens again,
+    /// through the reflector and the sanitizer, before the store's conflict shows the record already exists. See
+    /// <see cref="AgentExperience.Core.Reflections.ReflectionScreening"/>.
+    /// </summary>
+    public IReadOnlyList<string> ReflectionRedactedFieldPaths
+    {
+        get;
+        init => field = value ?? throw new ArgumentNullException(nameof(ReflectionRedactedFieldPaths));
+    } = [];
+
     /// <summary>The Experience Record's ID, when one exists. No ID is issued when nothing was persisted.</summary>
     public Guid? ExperienceId => Record?.ExperienceId;
 

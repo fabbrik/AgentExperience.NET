@@ -67,6 +67,15 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// one, nothing is signed or checked.
     /// </para>
     /// <para>
+    /// <b>Reflection screening.</b> Finalization screens every reflection through the registered
+    /// <see cref="ISanitizer"/> as a <see cref="ReflectionScreening.PayloadKind"/> payload (see
+    /// <see cref="ReflectionScreening"/>). The default sanitizer allows it unchanged unless the
+    /// <paramref name="sanitizationOptions"/> configure a policy for that kind; a host sanitizer must
+    /// allow it, or every reflection is refused and every record quarantined. Register an
+    /// <see cref="ExperienceFinalizationOptions"/> singleton, before or after this call, to change the
+    /// <see cref="ReflectionLimits"/>.
+    /// </para>
+    /// <para>
     /// <b>Confidence engine.</b> A host that registers an <see cref="IExperienceConfidenceEngine"/>, in any
     /// order relative to this call, has it score confidence evidence; otherwise
     /// <see cref="ReuseConfidenceHeuristicEngine"/> does. It is resolved once, from the root provider, so
@@ -122,7 +131,9 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<ExperienceLifecycleService>(),
             provider.GetService<ExperienceIndexingService>(),
             indexingTimeout: null,
-            provenanceSigning: null));
+            provenanceSigning: null,
+            provider.GetRequiredService<ISanitizer>(),
+            provider.GetService<ExperienceFinalizationOptions>()));
 
         return services;
     }

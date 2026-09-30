@@ -29,6 +29,20 @@ namespace AgentExperience.Core.Reflections;
 /// that fails it is handled exactly like a reflector that threw: the record is kept, quarantined,
 /// with no lesson.
 /// </para>
+/// <para>
+/// <b>Screening.</b> What a reflector writes is not trusted either. After the binding check,
+/// finalization screens the free-text fields -- <see cref="Reflection.Lesson"/>, the four lists and
+/// <see cref="Reflection.ReuseGuidance"/> -- and <see cref="Reflection.Producer"/> before the record is
+/// created, whichever reflector wrote them (see <see cref="ReflectionScreening"/>): each is held to
+/// <see cref="ReflectionLimits"/> and refused, never truncated, when over; invisible characters are
+/// removed, and a text left empty counts as absent (a missing lesson or producer refuses the reflection);
+/// then the six free-text fields go through the host's <see cref="ISanitizer"/> as a
+/// <see cref="ReflectionScreening.PayloadKind"/> payload. A refused reflection is handled like a binding
+/// mismatch, with a <see cref="ReflectionScreeningRefusal"/> saying why. So a reflector should write plain
+/// text within <see cref="ReflectionLimits.Default"/>, as <see cref="DefaultExperienceReflector"/> does:
+/// what it writes past a limit costs the record its lesson, and an invisible character it writes is not
+/// stored.
+/// </para>
 /// </remarks>
 public interface IExperienceReflector
 {

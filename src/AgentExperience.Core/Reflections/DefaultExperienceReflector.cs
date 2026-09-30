@@ -30,6 +30,17 @@ namespace AgentExperience.Core.Reflections;
 /// value is listed as <c>unknown</c> and repeated as a warning. <see cref="EnvironmentFingerprint.HostName"/>
 /// is not a precondition.
 /// </para>
+/// <para>
+/// <b>Bounded output.</b> Finalization screens every reflection against <see cref="ReflectionLimits"/>
+/// and quarantines one over a limit, so this reflector never writes one: a quoted piece of captured text
+/// is cut to 500 characters, the lesson and the reuse guidance to
+/// <see cref="ReflectionLimits.MaxLessonLength"/>, and each list item to
+/// <see cref="ReflectionLimits.MaxListItemLength"/>, each cut ending in an ellipsis (U+2026) and never
+/// falling between a surrogate pair; a list longer than <see cref="ReflectionLimits.MaxListItems"/> keeps
+/// its first items and ends with one saying how many more are not listed. All against
+/// <see cref="ReflectionLimits.Default"/>: a host that lowers the limits below the defaults can see this
+/// reflector's output refused.
+/// </para>
 /// </remarks>
 public sealed class DefaultExperienceReflector : IExperienceReflector
 {
@@ -40,6 +51,12 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
     public const string ProducerIdentity = "AgentExperience.DefaultExperienceReflector/" + TemplateVersion;
 
     private const string UnknownValue = "unknown";
+
+    /// <summary>The most characters of one piece of captured text (an error, a result, an evaluation reason) this reflector quotes.</summary>
+    private const int MaxQuotedLength = 500;
+
+    /// <summary>What ends a text this reflector had to cut short: a single ellipsis character.</summary>
+    private const string ClipMarker = "\u2026";
 
     /// <inheritdoc />
     public Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
@@ -212,15 +229,17 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
                 + (hasUnknownPrecondition ? " Confirm the unknown preconditions before reuse." : string.Empty)
             : Invariant($"Do not reuse as a validated procedure: task verification status is {status}. Treat the listed approaches as observed history only, and verify any approach independently before relying on it.");
 
+        // Bounded last, so the output always fits the screening finalization applies to every reflection.
+        var limits = ReflectionLimits.Default;
         return new Reflection(
             ReflectionId: request.ReflectionId,
             ExperienceRunId: run.RunId,
-            Lesson: lesson,
-            SuccessfulApproaches: successfulApproaches.ToArray(),
-            FailedApproaches: failedApproaches.ToArray(),
-            Preconditions: preconditions.ToArray(),
-            Warnings: warnings.ToArray(),
-            ReuseGuidance: reuseGuidance,
+            Lesson: Clip(lesson, limits.MaxLessonLength),
+            SuccessfulApproaches: Bound(successfulApproaches, "successful approaches", limits),
+            FailedApproaches: Bound(failedApproaches, "failed approaches", limits),
+            Preconditions: Bound(preconditions, "preconditions", limits),
+            Warnings: Bound(warnings, "warnings", limits),
+            ReuseGuidance: Clip(reuseGuidance, limits.MaxLessonLength),
             EvidenceIds: evidenceIds.ToArray(),
             VerificationStatus: status,
             CompletionScore: evaluation.CompletionScore,
@@ -304,10 +323,47 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
     /// span is unambiguous. Every other character (including non-ASCII) is kept as-is for readability.
     /// </summary>
     private static string Quote(string text) =>
-        "\"" + text.Replace("\\", "\\\\", StringComparison.Ordinal)
+        "\"" + Clip(text, MaxQuotedLength).Replace("\\", "\\\\", StringComparison.Ordinal)
             .Replace("\"", "\\\"", StringComparison.Ordinal)
             .Replace("\r", "\\r", StringComparison.Ordinal)
             .Replace("\n", "\\n", StringComparison.Ordinal) + "\"";
+
+    /// <summary>
+    /// <paramref name="text"/> cut to at most <paramref name="length"/> characters, the last of them
+    /// <see cref="ClipMarker"/>, never between a surrogate pair. A text that fits is returned as it is.
+    /// </summary>
+    private static string Clip(string text, int length)
+    {
+        if (text.Length <= length)
+        {
+            return text;
+        }
+
+        var cut = length - ClipMarker.Length;
+        if (cut > 0 && char.IsHighSurrogate(text[cut - 1]))
+        {
+            cut--;
+        }
+
+        return string.Concat(text.AsSpan(0, cut), ClipMarker);
+    }
+
+    /// <summary>
+    /// <paramref name="items"/> with each item clipped to <see cref="ReflectionLimits.MaxListItemLength"/> and
+    /// the list cut to <see cref="ReflectionLimits.MaxListItems"/>, its last item then saying how many more
+    /// were left out. A list that fits is copied as it is.
+    /// </summary>
+    private static string[] Bound(List<string> items, string noun, ReflectionLimits limits)
+    {
+        if (items.Count > limits.MaxListItems)
+        {
+            var shown = limits.MaxListItems - 1;
+            var omitted = items.Count - shown;
+            items = [.. items.Take(shown), Invariant($"{omitted} further {noun} are not listed.")];
+        }
+
+        return [.. items.Select(item => Clip(item, limits.MaxListItemLength))];
+    }
 
     private static string QuoteOrMissing(string? text) => text is null ? "none captured" : Quote(text);
 
