@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 12.1: upgrades databases the PUBLISHED previews created, with today's migrator, and reads everything back
+       through today's stores. The old databases come from tests/AgentExperience.Upgrade.Seeders, which this project
+       builds and runs as separate programs (never references: each pins an old preview's packages). See README.md. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Not packed/consumed, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- Ephemeral pgvector/pgvector container (Docker required), at the PostgreSQL major
+         AGENTEXPERIENCE_POSTGRES_MAJOR selects (16 by default). Pin verified 2026-09-15. -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
+         test project references another. -->
+    <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+    <!-- The crypto-shredding key store an encrypted seeder writes, compiled here against today's key-management
+         contracts so the test re-opens what the published preview wrapped. -->
+    <Compile Include="..\AgentExperience.Upgrade.Seeders\Shared\FileWrappedKeyRepository.cs" Link="Shared\FileWrappedKeyRepository.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="AgentExperience.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres.Vectors\AgentExperience.Storage.Postgres.Vectors.csproj" />
+  </ItemGroup>
+
+</Project>

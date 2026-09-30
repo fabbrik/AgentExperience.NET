@@ -52,6 +52,15 @@ jobs:
       - name: Restore
         run: dotnet restore --locked-mode
 
+      # Story 12.1: the upgrade suite's seeders pin the published previews' packages and are not in the solution.
+      # Restoring them here, locked, puts those packages in the cache, so the test step builds them without network.
+      - name: Restore the upgrade seeders
+        run: |
+          set -euo pipefail
+          for seeder in tests/AgentExperience.Upgrade.Seeders/Preview*/; do
+            dotnet restore "$seeder" --locked-mode
+          done
+
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
@@ -145,10 +154,11 @@ jobs:
           path: artifacts/packages/
           retention-days: 14
 
-  # The PostgreSQL matrix (story 6.3, KL-13): the storage suites, the pgvector proof and the sample's PostgreSQL
-  # mode, on every supported major. One variable picks both the pgvector image and the stock one, and each suite
-  # asserts the server it reached reports that major, so a leg cannot quietly run the default. The list must equal
-  # PostgresTestImage.SupportedMajors; a release test checks it.
+  # The PostgreSQL matrix (story 6.3, KL-13): the storage suites, the pgvector proof, the sample's PostgreSQL
+  # mode and the upgrades from the published previews' databases (story 12.1), on every supported major. One
+  # variable picks both the pgvector image and the stock one, and each suite asserts the server it reached reports
+  # that major, so a leg cannot quietly run the default. The list must equal PostgresTestImage.SupportedMajors; a
+  # release test checks it.
   postgres:
     runs-on: ubuntu-latest
     strategy:
@@ -190,6 +200,15 @@ jobs:
       - name: Restore
         run: dotnet restore --locked-mode
 
+      # Story 12.1: the upgrade suite's seeders pin the published previews' packages and are not in the solution.
+      # Restoring them here, locked, puts those packages in the cache, so the test step builds them without network.
+      - name: Restore the upgrade seeders
+        run: |
+          set -euo pipefail
+          for seeder in tests/AgentExperience.Upgrade.Seeders/Preview*/; do
+            dotnet restore "$seeder" --locked-mode
+          done
+
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
@@ -201,7 +220,8 @@ jobs:
             tests/AgentExperience.Storage.Postgres.Tests \
             tests/AgentExperience.Storage.Postgres.Vectors.Tests \
             tests/AgentExperience.CompatibilityProof \
-            tests/AgentExperience.Sample.EndToEnd.Tests; do
+            tests/AgentExperience.Sample.EndToEnd.Tests \
+            tests/AgentExperience.Upgrade.Tests; do
             dotnet test "$project" --no-build --configuration Release || failed=1
           done
           exit "$failed"

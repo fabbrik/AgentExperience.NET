@@ -6,7 +6,28 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Tests: upgrades from published previews
+
+- **A database a published preview created now upgrades under test** (story 12.1). The new
+  `tests/AgentExperience.Upgrade.Tests` suite starts a PostgreSQL container per preview, lets that preview's own
+  packages, restored from nuget.org, create and fill a database, and upgrades it with today's migrators following the
+  [runbook](#upgrade-in-this-order). As the application role it then reads every record, lifecycle event, grant,
+  grant access row, reuse feedback submission, tombstone and embedding back through today's stores (queries, text
+  and vector searches and batch reads included), carries the lifecycle on (a transition, verified and opt-out
+  confidence evidence, an expiring grant's purge, a new grant, an erasure, new feedback, a new embedding), and
+  compares the upgraded schema with a fresh install of today's, catalog object by catalog object. It covers
+  `0.1.0-preview.1` (schema `0001` to `0010`, one role) and `0.1.0-preview.2` (`0001` to `0018`, two roles), in
+  plaintext and in crypto-shredding mode; `0.1.0-preview.2`'s schema is also that of `0.1.0-preview.3` and
+  `0.1.0-preview.4`. It runs in CI's `postgres` matrix on every supported major. Until now every upgrade test built
+  its old database from a prefix of today's scripts, with today's store writing the rows.
+- The databases come from one seeder program per preview, under `tests/AgentExperience.Upgrade.Seeders`, each
+  exact-pinning that preview's packages. They are not in the solution and never packed, and
+  `CompatibilityPinAgreementTests` exempts only that directory from its floor rule, because the pins are deliberately
+  old, and holds it to its own: each seeder resolves exactly the preview it names, and the set matches the suite's.
+  The suite's [README](tests/AgentExperience.Upgrade.Tests/README.md) lists what it checks, the items whose meaning
+  the upgrade changes by design (a `0.1.0-preview.1` grant becomes `LessonOnly`, for example), and how to add a
+  preview.
+- No migration script, store or package changed: both previews upgrade with their data intact.
 
 ## 0.1.0-preview.4
 

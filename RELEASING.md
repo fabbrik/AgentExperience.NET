@@ -73,7 +73,8 @@ decision means moving the three rows back and restoring the old count; nothing e
 - Docker running: the storage tests start PostgreSQL containers (16 by default; step 3 runs every supported major).
   If Testcontainers' Ryuk container fails under your Docker setup (Rancher Desktop, for example),
   `export TESTCONTAINERS_RYUK_DISABLED=true` first.
-- Network access to nuget.org (restore, and the probes in step 6).
+- Network access to nuget.org (restore, the upgrade suite's seeders, which restore the published previews, and the
+  probes in step 6).
 
 ```bash
 ( test -z "$(git status --porcelain)" && echo "Clean tree OK" || echo "FAILED: the working tree is not clean" )
@@ -101,13 +102,18 @@ the test projects too, and the tests that locate checked-in files through `[Call
 
 ```bash
 dotnet restore --locked-mode
+for seeder in tests/AgentExperience.Upgrade.Seeders/Preview*/; do dotnet restore "$seeder" --locked-mode; done
 dotnet build --no-restore --configuration Release -p:AgentExperienceReleaseBuild=true
 ```
 
+The second line restores the upgrade suite's seeders, which are not in the solution: each pins a published preview's
+packages, and step 3's upgrade tests build and run them.
+
 ### 3. The full test suite
 
-Core, PostgreSQL, the MAF adapter, the end-to-end sample, the reuse baseline, the compatibility proofs, and the
-release gates, on `net10.0` (the one target framework), against PostgreSQL 16. This is also the security suite: every test in
+Core, PostgreSQL, the MAF adapter, the end-to-end sample, the reuse baseline, the compatibility proofs, the upgrades
+from databases the published previews created, and the release gates, on `net10.0` (the one target framework), against
+PostgreSQL 16. This is also the security suite: every test in
 [`docs/security-suite.md`](docs/security-suite.md) runs here, and there is no separate, weaker security build.
 
 ```bash
@@ -123,7 +129,8 @@ which a release test holds equal to the list the fixtures accept, so this runs e
   [ -n "$majors" ] || { echo "FAILED: no postgres matrix in .github/workflows/ci.yml"; ok=false; }
   for major in $(echo "$majors"); do   # $(...) splits the list in zsh as well as bash
     for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests \
-                   tests/AgentExperience.CompatibilityProof tests/AgentExperience.Sample.EndToEnd.Tests; do
+                   tests/AgentExperience.CompatibilityProof tests/AgentExperience.Sample.EndToEnd.Tests \
+                   tests/AgentExperience.Upgrade.Tests; do
       AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
         || { echo "FAILED: $project on PostgreSQL $major"; ok=false; }
     done

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 12.1: writes a database the way the PUBLISHED 0.1.0-preview.2 packages do: that preview's own migrator
+       and stores, restored from nuget.org, never this repository's src/. 0.1.0-preview.3 and 0.1.0-preview.4 added no
+       migration, so this schema (0001 to 0018) is theirs too. Not in the solution, never packed:
+       tests/AgentExperience.Upgrade.Tests builds and runs it (see that project's README). The exact pins below are
+       deliberately old, which is why CompatibilityPinAgreementTests excludes this directory from its floor rule. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <!-- A console program nothing consumes; its members carry no XML documentation. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- The dependency graph is frozen on purpose: it is what the published preview shipped with, and the lock file
+         pins it. A vulnerability advisory published later against one of those packages is not something this
+         program can act on (it never runs outside the upgrade tests, against a throwaway container), so it must not
+         turn the seeder's build red under TreatWarningsAsErrors. The shipping projects keep auditing on. -->
+    <NuGetAudit>false</NuGetAudit>
+    <!-- Selects this preview's surface in the shared seeder source. -->
+    <DefineConstants>$(DefineConstants);PREVIEW2</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AgentExperience.Abstractions" Version="[0.1.0-preview.2]" />
+    <PackageReference Include="AgentExperience.Core" Version="[0.1.0-preview.2]" />
+    <PackageReference Include="AgentExperience.Storage.Postgres" Version="[0.1.0-preview.2]" />
+    <PackageReference Include="AgentExperience.Storage.Postgres.Vectors" Version="[0.1.0-preview.2]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
