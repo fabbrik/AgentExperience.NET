@@ -6,6 +6,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.6
+
+Excluding model-authored lessons now happens inside retrieval (story 14.4), so
+`ModelAuthoredLessons = Exclude` returns the top deterministic lessons instead of
+fewer. The release also fixes a flaky test.
+
 Upgrading from `0.1.0-preview.5` applies migration `0021`. Run the migrator before deploying the new build. **It holds
 an `ACCESS EXCLUSIVE` lock on `experience_records`, blocking every read and write of the table, until its backfill
 commits, and it rewrites every row it backfills (recomputing its stored `search_vector`)**: every live record in a

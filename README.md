@@ -62,7 +62,7 @@ The terms are defined in the [glossary](docs/guide/README.md#glossary).
 
 ## Install
 
-Six packages, all published on nuget.org as `0.1.0-preview.5` (`AgentExperience.Storage.InMemory` is for development
+Six packages, all published on nuget.org as `0.1.0-preview.6` (`AgentExperience.Storage.InMemory` is for development
 and tests only). Each targets `net10.0` only; `0.1.0-preview.3` is the last preview that also targets `net8.0` and
 `net9.0`.
 
@@ -90,7 +90,7 @@ stores; it is for development and tests only, and keeps nothing across a restart
 
 This wires steps 1 to 6 for one MAF agent: apply the schema, register the services, inject past lessons before each
 run, and capture, verify and store each run after it (step 7 is in [Reuse feedback](docs/guide/reuse-feedback.md)).
-It compiles against `0.1.0-preview.5`. Before you run it, create the two database roles it names (a few lines of SQL,
+It compiles against `0.1.0-preview.6`. Before you run it, create the two database roles it names (a few lines of SQL,
 in [Deployment](docs/guide/deployment.md#creating-the-roles)); for a throwaway local database with a single role,
 skip the `ApplyApplicationRolePrivilegesAsync` call, which refuses the role running it. You supply four things:
 `chatClient` (any `Microsoft.Extensions.AI` `IChatClient`), two connection strings, and `EvidenceFor`, which turns
@@ -194,7 +194,7 @@ credentials, see [the sample](#run-the-sample).
 
 ## Status: a preview, not production ready
 
-`0.1.0-preview.5` is a preview. It claims no production readiness, and public APIs may change between previews (each
+`0.1.0-preview.6` is a preview. It claims no production readiness, and public APIs may change between previews (each
 change is a reviewed diff against a checked-in baseline). Use it to evaluate the approach, not to hold data you
 cannot afford to lose.
 
