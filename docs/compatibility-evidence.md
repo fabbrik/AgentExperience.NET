@@ -295,6 +295,11 @@ purpose. It gates pushes and the weekly schedule, and reports without blocking o
 [the version policy](#the-version-policy-floors-and-one-bounded-range)). Run it locally
 the same way; it never edits your tree.
 
+**Result on 2026-10-01** (the `0.1.0-preview.5` release checks, `net10.0` only): PASSED. What changed since the table
+below: `Microsoft.Agents.AI` floated to **1.23.0**. `Microsoft.Extensions.AI.Abstractions` still resolved to 10.10.1 and
+`Microsoft.Extensions.Hosting.Abstractions` to 10.0.12; every other floor resolved to itself. The two `net8.0`-only
+rows no longer apply.
+
 **Result on 2026-09-25** (story 7.2, with `net8.0` and the MAF range): PASSED. Every test outside `DeclaredPins`
 passed on all three frameworks. What the floats resolved to:
 
@@ -347,6 +352,11 @@ become floors in the copy, so a newer MAF that raises a shared floor fails the l
 a test-only pin no host has; and the probe fails unless the adapter's tests actually resolved the version it names.
 `MAF_PROBE_INDEX_URL` replaces nuget.org's version list (a `file://` URL works); on 2026-09-25 a list holding
 `2.0.0`, `2.0.0-preview.1` and `10.1.0` beside 1.22.0 made the probe note the out-of-range versions and probe 1.22.0.
+
+**Result on 2026-10-01** (the `0.1.0-preview.5` release checks, `net10.0` only): the newest stable version inside the
+range is now **1.23.0**. Both legs **PASSED**: the floor, 1.22.0, with 669 adapter tests and 6 MAF proofs; 1.23.0 with
+667 adapter tests (the two `DeclaredPins` tests left out, as for any version other than the floor) and 6 MAF proofs.
+The adapter needed no change.
 
 **Result on 2026-09-25:** the newest stable version on nuget.org is still **1.22.0**, the floor, so the two legs
 probe the same version. Both **PASSED**: 406 adapter tests and 6 MAF proofs, on each of `net8.0`, `net9.0` and
