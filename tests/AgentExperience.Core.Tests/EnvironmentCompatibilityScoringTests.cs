@@ -234,6 +234,9 @@ public class EnvironmentCompatibilityScoringTests
         var services = new ServiceCollection();
         services.AddSingleton<IExperienceCandidateSource>(
             new FakeCandidateSource(new ExperienceCandidate(Record(Id(1), metadata: Metadata(("a", "1"))), 0.5)));
+        // A frozen clock, registered before AddAgentExperienceRetrieval (which only TryAdds the system clock), so the
+        // 500 ms retrieval timeout cannot trip while a slow runner JITs the first call.
+        services.AddSingleton<TimeProvider>(new FixedTimeProvider(Now));
         services.AddAgentExperienceRetrieval();
 
         using var provider = services.BuildServiceProvider();
