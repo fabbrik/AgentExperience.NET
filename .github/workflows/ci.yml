@@ -242,6 +242,40 @@ jobs:
           done
           exit "$failed"
 
+      # Story 15.1: the store, vector (with the conformance suites they host), sample and upgrade suites again, with
+      # PostgreSQL row-level security on. The variable sets the internal, test-only
+      # ExperienceApplicationRoleOptions.TestSuiteRowLevelSecurity, so every privileges call the fixtures and the tests
+      # make enables it, and every store runs as the application role behind the policies.
+      - name: Test the storage suites with row-level security on PostgreSQL ${{ matrix.postgres }}
+        env:
+          AGENTEXPERIENCE_TEST_RLS: 'on'
+        run: |
+          set -euo pipefail
+          failed=0
+          for project in \
+            tests/AgentExperience.Storage.Postgres.Tests \
+            tests/AgentExperience.Storage.Postgres.Vectors.Tests \
+            tests/AgentExperience.Sample.EndToEnd.Tests \
+            tests/AgentExperience.Upgrade.Tests; do
+            dotnet test "$project" --no-build --configuration Release || failed=1
+          done
+          exit "$failed"
+
+      # Story 15.1: both modes at once -- row-level security on and every component sealing what it writes.
+      - name: Test the storage suites with row-level security and crypto-shredding on PostgreSQL ${{ matrix.postgres }}
+        env:
+          AGENTEXPERIENCE_TEST_RLS: 'on'
+          AGENTEXPERIENCE_TEST_ENCRYPTION: 'on'
+        run: |
+          set -euo pipefail
+          failed=0
+          for project in \
+            tests/AgentExperience.Storage.Postgres.Tests \
+            tests/AgentExperience.Storage.Postgres.Vectors.Tests; do
+            dotnet test "$project" --no-build --configuration Release || failed=1
+          done
+          exit "$failed"
+
   # The floating-dependency leg (story 6.3, KL-13). Every shipping reference is a floor, which admits every later
   # release in its major (Microsoft.Agents.AI's range stops at its next major, so floating within the major stays
   # inside it). The build-and-test job proves the floors themselves;

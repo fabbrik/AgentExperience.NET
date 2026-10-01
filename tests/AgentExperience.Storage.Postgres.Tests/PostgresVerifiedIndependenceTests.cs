@@ -246,7 +246,7 @@ public sealed class PostgresVerifiedIndependenceTests
             ("Human", null, "someone", Guid.Empty),
         })
         {
-            await using var command = _fixture.DataSource.CreateCommand(
+            await using var command = _fixture.RawDataSource.CreateCommand(
                 "INSERT INTO agent_experience.confidence_evidence (evidence_id, experience_id, event_id, kind, source, " +
                 "run_id, verification_round_id, reviewer_identity, counted, rule_version, recorded_at, applied_revision, " +
                 "applied_status, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
@@ -406,7 +406,7 @@ public sealed class PostgresVerifiedIndependenceTests
         var trusted = await TrustingLifecycle(_store).ApplyEvidenceAsync(
             auth, Machine(scope, lesson.ExperienceId, Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None);
 
-        await using (var insert = _fixture.DataSource.CreateCommand(
+        await using (var insert = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.confidence_evidence (evidence_id, experience_id, event_id, kind, source, " +
             "run_id, verification_round_id, reviewer_identity, counted, rule_version, recorded_at, applied_revision, " +
             "applied_status, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
@@ -423,7 +423,7 @@ public sealed class PostgresVerifiedIndependenceTests
         // Host-trusted evidence cannot be relabelled as verified after the fact, on either ledger.
         foreach (var (table, column, key) in new[] { ("confidence_evidence", "admission", "evidence_id"), ("lifecycle_events", "confidence_admission", "confidence_evidence_id") })
         {
-            await using var relabel = _fixture.DataSource.CreateCommand(
+            await using var relabel = _fixture.RawDataSource.CreateCommand(
                 $"UPDATE agent_experience.{table} SET {column} = 'Verified' WHERE {key} = @id");
             relabel.Parameters.Add(new NpgsqlParameter<Guid>("id", trusted.Update!.EvidenceId));
             var refused = await Assert.ThrowsAsync<PostgresException>(() => relabel.ExecuteNonQueryAsync());
@@ -455,7 +455,7 @@ public sealed class PostgresVerifiedIndependenceTests
 
     private async Task<string?> ReadAdmissionAsync(string table, string column, string key, Guid evidenceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             $"SELECT {column} FROM agent_experience.{table} WHERE {key} = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", evidenceId));
         return await command.ExecuteScalarAsync() as string;
@@ -463,7 +463,7 @@ public sealed class PostgresVerifiedIndependenceTests
 
     private async Task<bool> PayloadTextContainsAsync(Guid experienceId, string text)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT strpos(payload::text, @text) > 0 FROM agent_experience.experience_records WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         command.Parameters.Add(new NpgsqlParameter<string>("text", text));
@@ -596,7 +596,7 @@ public sealed class PostgresVerifiedIndependenceTests
     {
         if (!EncryptionMode.IsOn)
         {
-            await using var command = _fixture.DataSource.CreateCommand(
+            await using var command = _fixture.RawDataSource.CreateCommand(
                 "SELECT payload ? 'closedRoundId' FROM agent_experience.experience_records WHERE experience_id = @id");
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
             return (bool)(await command.ExecuteScalarAsync())!;
@@ -604,7 +604,7 @@ public sealed class PostgresVerifiedIndependenceTests
 
         // Encrypted mode: the payload is sealed, so the stored JSON is the one inside the seal. Opened here with
         // the suite's key store to make the same byte-level assertion about what was written.
-        await using var sealedRead = _fixture.DataSource.CreateCommand(
+        await using var sealedRead = _fixture.RawDataSource.CreateCommand(
             "SELECT payload ->> 'sealed', tenant_id, application_id, project_id, team_id, agent_id, user_id " +
             "FROM agent_experience.experience_records WHERE experience_id = @id");
         sealedRead.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
@@ -625,7 +625,7 @@ public sealed class PostgresVerifiedIndependenceTests
 
     private async Task<Guid?> ReadAssessmentAsync(Guid evidenceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT assessment_id FROM agent_experience.confidence_evidence WHERE evidence_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", evidenceId));
         return await command.ExecuteScalarAsync() is Guid id ? id : null;
@@ -633,7 +633,7 @@ public sealed class PostgresVerifiedIndependenceTests
 
     private async Task<long> CountEvidenceAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.confidence_evidence WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (long)(await command.ExecuteScalarAsync())!;

@@ -15,9 +15,15 @@ internal sealed class TestWorld
 {
     private static readonly DateTimeOffset Stamp = new DateTimeOffset(2026, 9, 21, 10, 0, 0, TimeSpan.Zero).AddTicks(1_234_560);
 
-    private TestWorld(NpgsqlDataSource dataSource, NpgsqlDataSource ownerDataSource, Scope scope, TopicEmbeddingGenerator generator)
+    private TestWorld(
+        NpgsqlDataSource dataSource,
+        NpgsqlDataSource rawDataSource,
+        NpgsqlDataSource ownerDataSource,
+        Scope scope,
+        TopicEmbeddingGenerator generator)
     {
         DataSource = dataSource;
+        RawDataSource = rawDataSource;
         OwnerDataSource = ownerDataSource;
         Scope = scope;
         Generator = generator;
@@ -30,6 +36,13 @@ internal sealed class TestWorld
 
     /// <summary>The application role: every store and index in this world connects as it.</summary>
     public NpgsqlDataSource DataSource { get; }
+
+    /// <summary>
+    /// What this world's own hand-written SQL runs through: the application role itself, or -- in row-level
+    /// security mode -- the fixture's raw role, which has its privileges without the policies. See
+    /// <see cref="VectorsFixture.RawDataSource"/>.
+    /// </summary>
+    public NpgsqlDataSource RawDataSource { get; }
 
     /// <summary>
     /// The owner role, for staging what the application role may not do: rewriting a row in place,
@@ -54,6 +67,7 @@ internal sealed class TestWorld
     public static Task<TestWorld> CreateAsync(VectorsFixture fixture, TopicEmbeddingGenerator? generator = null) =>
         Task.FromResult(new TestWorld(
             fixture.DataSource,
+            fixture.RawDataSource,
             fixture.OwnerDataSource,
             new Scope("tenant-" + Guid.NewGuid().ToString("N"), "app-1", "project-1"),
             generator ?? new TopicEmbeddingGenerator()));
@@ -159,7 +173,7 @@ internal sealed class TestWorld
     /// <summary>The stored embedding row, read straight out of SQL rather than through the port.</summary>
     public async Task<StoredEmbedding> ReadEmbeddingAsync(Guid experienceId)
     {
-        await using var command = DataSource.CreateCommand(
+        await using var command = RawDataSource.CreateCommand(
             "SELECT model_id, dimension, content_hash, source_revision, tenant_id, project_id, updated_at, " +
             "vector_dims(embedding) FROM agent_experience.experience_embeddings WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
@@ -239,7 +253,7 @@ internal sealed class TestWorld
         // under the record's own key -- the only way a sealed payload can change at all.
         using var key = await EncryptionMode.Shared.ForReadAsync(experienceId, Scope, CancellationToken.None);
         string stored;
-        await using (var read = DataSource.CreateCommand(
+        await using (var read = RawDataSource.CreateCommand(
             "SELECT payload ->> 'sealed' FROM agent_experience.experience_records WHERE experience_id = @id"))
         {
             read.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
@@ -288,8 +302,11 @@ internal sealed class TestWorld
     /// </summary>
     public async Task<string> ExplainSearchAsync(ReadOnlyMemory<float> queryVector)
     {
+        // As the application role, with this world's bounds declared exactly as the index declares them: with
+        // row-level security on (story 15.1) the plan asserted is the one the policies leave the search.
         await using var connection = await DataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
+        await ExperienceSessionContext.DeclareAsync(connection, transaction, Authorization, CancellationToken.None);
 
         await using (var setting = new NpgsqlCommand("SET LOCAL enable_seqscan = off", connection, transaction))
         {
@@ -339,7 +356,7 @@ internal sealed class TestWorld
 
     private async Task<T> ScalarAsync<T>(string sql, Guid experienceId)
     {
-        await using var command = DataSource.CreateCommand(sql);
+        await using var command = RawDataSource.CreateCommand(sql);
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (T)(await command.ExecuteScalarAsync())!;
     }

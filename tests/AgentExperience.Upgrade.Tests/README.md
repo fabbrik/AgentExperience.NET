@@ -87,7 +87,7 @@ Then, as the application role, with today's crypto-shredding over the same keys 
   data key destroyed in the encrypted case); new reuse feedback naming an upgraded record; and a new embedding write;
 - **the catalog:** the migration journal lists every current script exactly once; and the schema matches a fresh
   install of today's, created in a second database with the same roles and the same privileges call. The comparison
-  covers relations, columns (type, nullability, default, generation), constraints (and whether each is validated),
+  covers relations (with their row-level security), row-level security policies, columns (type, nullability, default, generation), constraints (and whether each is validated),
   indexes, triggers (and their enabled state), function definitions (`pg_get_functiondef`, with owner, security,
   settings and privileges), sequences, table, column, function and schema privileges, and the installed extensions,
   and names the first difference;
@@ -126,7 +126,12 @@ Docker, and network access to nuget.org for the seeders' first restore:
 ```bash
 dotnet test tests/AgentExperience.Upgrade.Tests --configuration Release
 AGENTEXPERIENCE_POSTGRES_MAJOR=18 dotnet test tests/AgentExperience.Upgrade.Tests --configuration Release
+AGENTEXPERIENCE_TEST_RLS=on dotnet test tests/AgentExperience.Upgrade.Tests --configuration Release
 ```
+
+With `AGENTEXPERIENCE_TEST_RLS=on` (story 15.1) the privileges call, on the upgraded database and on the fresh one it
+is compared with, switches row-level security on, the suite checks that every covered table has it, and everything
+after the upgrade is read and written behind the policies.
 
 The suite builds each seeder once per run, restoring it in locked mode from its committed `packages.lock.json`, into
 a directory of its own under the system's temporary directory (`--artifacts-path`), which it deletes when the run

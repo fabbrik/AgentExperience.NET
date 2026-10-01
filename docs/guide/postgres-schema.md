@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003` and
-`0005`–`0018` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` in
+`0005`–`0019` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -76,7 +76,7 @@ journaled anywhere must never be edited or renamed**: databases that already app
 definition, and a rename would reapply it. Change the schema by adding the next-numbered script instead.
 
 The two packages apply their own scripts but share one journal and one number sequence, so a gap in either
-package's list is expected: `0004` belongs to the vectors package, and `0014` was never shipped.
+package's list is expected: `0004` and `0020` belong to the vectors package, and `0014` was never shipped.
 
 ## The scripts
 
@@ -495,6 +495,44 @@ and changes nothing that is shown on upgrade:
   [provenance signature](confidence.md#signing-provenance) needs no schema either: it travels in the payload as
   `provenanceSignature` (key ID, algorithm, base64 value), written only when finalization signed the record, and is
   sealed with the rest in crypto-shredding mode.
+
+### 0019: row-level security
+
+`0019_row_level_security.sql` creates the policies for the optional second isolation layer (story 15.1). It switches
+nothing on: a policy on a table whose row-level security is disabled has no effect, and
+`ApplyApplicationRolePrivilegesAsync` enables it only when `ExperienceApplicationRoleOptions.EnableRowLevelSecurity`
+is set (see [Enabling row-level security](deployment.md#enabling-row-level-security)).
+
+- **Five helper functions**, none `SECURITY DEFINER`, with `PUBLIC`'s default `EXECUTE`: `rls_bound(field)` and
+  `rls_unbounded(field)` read the transaction-local bounds a store declares (`agent_experience.auth_tenant`,
+  `auth_application`, `auth_project`, `auth_team`, `auth_agent`, `auth_user`, and the marker `auth_set = 'on'`);
+  `rls_scope_admits(...)` decides whether one scope lies inside them; `rls_granted_keys()` returns, once per statement,
+  the identity of every live grant (not revoked, `expires_at` later than `clock_timestamp()`) whose recipient lies
+  inside them; `rls_access_grant_live(...)` says whether a live grant names exactly an access row's grant, record,
+  owner and recipient. The last two answer "nothing" rather than fail when `experience_grants` is missing or unreadable.
+- **Eighteen `rls_*` policies**, one per command, on `experience_records` (tombstones included),
+  `lifecycle_events`, `confidence_evidence`, `experience_grants`, `experience_grant_events`,
+  `experience_grant_access`, `reuse_feedback` and `reuse_feedback_exposures`, exactly the adapter's
+  `RowLevelSecurityPolicies`, which a test holds equal to this script. A row is admitted only while bounds are declared
+  and its scope lies inside them; a record is also admitted for reading when a live grant shares it with the bounds. A
+  grant is read by its owner, and by its recipient only while live; an access row is appended only about a live grant
+  that names it exactly. No policy admits a `DELETE`.
+- **The four `SECURITY DEFINER` functions are redefined** — `purge_experience_record`, `purge_expired_grants`,
+  `purge_grant_access`, `seal_experience_record` — with their bodies exactly as `0010`, `0012` and `0016` wrote them,
+  `0013`'s pinned `search_path`, and their ACLs and owners kept, plus one guard first: while the caller has declared
+  bounds, a scope argument outside them raises `insufficient_privilege`.
+- The bound comparisons are uncorrelated subqueries, `(SELECT agent_experience.rls_bound('tenant'))`, which the
+  planner evaluates once per statement, so a policy's `tenant_id = …` is an ordinary index condition on the existing
+  scope indexes, and the grant branch is a hashed `IN (SELECT agent_experience.rls_granted_keys())`. No index is
+  added and no table is rewritten; each `CREATE POLICY` takes an `ACCESS EXCLUSIVE` lock for an instant.
+
+### 0020: embeddings row-level security (vectors package)
+
+`0020_embeddings_row_level_security.sql` ships in `AgentExperience.Storage.Postgres.Vectors` and is applied by
+`ExperienceVectorSchemaMigrator.MigrateAsync`. It creates `experience_embeddings`' four policies on `0019`'s helpers:
+a read inside the declared bounds or through a live grant over the embedded record, exactly as the record itself is
+admitted, and a write, an upsert's update and a removal inside the bounds only. It needs `0019` and stops with a
+message naming it when the base migration has not run. Like `0019` it switches nothing on.
 
 **The base package's schema excludes the embedding table, and that is deliberate.** The `vector` extension and the
 `experience_embeddings` table belong to `AgentExperience.Storage.Postgres.Vectors` and are applied by *its* migrator.

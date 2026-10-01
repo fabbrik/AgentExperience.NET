@@ -318,10 +318,11 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         try
         {
             // One connection for the write and, if it wrote nothing, for the probe that explains why.
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            var connection = session.Connection;
 
             int written;
-            await using (var command = new NpgsqlCommand(WriteSql, connection))
+            await using (var command = new NpgsqlCommand(WriteSql, connection, session.Transaction))
             {
                 var parameters = command.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", write.ExperienceId));
@@ -338,12 +339,15 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
             if (written > 0)
             {
+                await session.CommitAsync(cancellationToken).ConfigureAwait(false);
                 return new(ExperienceIndexOutcome.Written, 0, NoErrors);
             }
 
             // Nothing was written. Either the record is not in this scope at all, or its revision has
             // moved past the one this write was computed from.
-            var current = await ProbeRevisionAsync(connection, write.Scope, write.ExperienceId, cancellationToken).ConfigureAwait(false);
+            var current = await ProbeRevisionAsync(connection, session.Transaction, write.Scope, write.ExperienceId, cancellationToken)
+                .ConfigureAwait(false);
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
             return current is { } revision
                 ? new(ExperienceIndexOutcome.Stale, revision, NoErrors)
                 : new(ExperienceIndexOutcome.Missing, 0, NoErrors);
@@ -383,7 +387,9 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                 + (scan.StartAfterId is null ? string.Empty : ScanCursorPredicate)
                 + ScanOrderAndLimit;
 
-            await using var command = _dataSource.CreateCommand(sql);
+            // A read: its transaction is only where the bounds are declared, and is rolled back on disposal.
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(sql);
             var parameters = command.Parameters;
             PostgresExperienceRecordStore.AddScopeParameters(parameters, scan.Scope);
             parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text)
@@ -463,16 +469,24 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
+            // Each attempt is its own transaction with the bounds declared: a failed statement aborts the one it
+            // ran in, so the exact-scope retry cannot share it.
             try
             {
-                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, _grants.Available, _encryption, cancellationToken)
-                    .ConfigureAwait(false);
+                (result, disclosures) = await ExperienceSessionContext.RunAsync(
+                    connection,
+                    authorization,
+                    transaction => RunSearchAsync(connection, transaction, query, dimension, statuses, _grants.Available, _encryption, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only.
-                (result, disclosures) = await RunSearchAsync(connection, query, dimension, statuses, readable: false, _encryption, cancellationToken)
-                    .ConfigureAwait(false);
+                (result, disclosures) = await ExperienceSessionContext.RunAsync(
+                    connection,
+                    authorization,
+                    transaction => RunSearchAsync(connection, transaction, query, dimension, statuses, readable: false, _encryption, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
@@ -540,7 +554,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             }
         }
 
-        return await GrantAuditing.RecordAsync(auditing, accesses, cancellationToken).ConfigureAwait(false)
+        return await GrantAuditing.RecordAsync(auditing, authorization, accesses, cancellationToken).ConfigureAwait(false)
             ? result
             : new(ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors);
     }
@@ -571,11 +585,13 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
         try
         {
-            await using var command = _dataSource.CreateCommand(RemoveSql);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(RemoveSql);
             command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
             PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
 
             var removed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             // Never indexed, already removed, or in another scope: one outcome for all three, so a
             // repeated removal is free and a foreign-scope attempt reveals nothing.
@@ -591,6 +607,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     private static async Task<(ExperienceVectorSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> RunSearchAsync(
         NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         ExperienceVectorQuery query,
         int dimension,
         string[] statuses,
@@ -600,7 +617,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     {
         var candidates = new List<ExperienceCandidate>();
         var disclosures = new List<ExperienceGrantDisclosure?>();
-        await using (var command = new NpgsqlCommand(SearchSql(dimension, readable), connection))
+        await using (var command = new NpgsqlCommand(SearchSql(dimension, readable), connection, transaction))
         {
             var parameters = command.Parameters;
             PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
@@ -638,7 +655,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         // comparable" look the same from outside, and a host must be able to tell them apart. The
         // probe sees exactly what the search saw, grants included, so a recipient whose only
         // comparable population arrives through a grant is told which mismatch it hit.
-        var mismatch = await ProbeCompatibilityAsync(connection, query, statuses, readable, cancellationToken).ConfigureAwait(false);
+        var mismatch = await ProbeCompatibilityAsync(connection, transaction, query, statuses, readable, cancellationToken).ConfigureAwait(false);
         return (new(mismatch ?? ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors), disclosures);
     }
 
@@ -703,11 +720,12 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     private static async Task<long?> ProbeRevisionAsync(
         NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         Scope scope,
         Guid experienceId,
         CancellationToken cancellationToken)
     {
-        await using var command = new NpgsqlCommand(ProbeRevisionSql, connection);
+        await using var command = new NpgsqlCommand(ProbeRevisionSql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
         PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
 
@@ -721,12 +739,13 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </summary>
     private static async Task<ExperienceVectorSearchOutcome?> ProbeCompatibilityAsync(
         NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         ExperienceVectorQuery query,
         string[] statuses,
         bool readable,
         CancellationToken cancellationToken)
     {
-        await using var command = new NpgsqlCommand(readable ? CompatibilityProbeSql : CompatibilityProbeExactSql, connection);
+        await using var command = new NpgsqlCommand(readable ? CompatibilityProbeSql : CompatibilityProbeExactSql, connection, transaction);
         var parameters = command.Parameters;
         PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
         parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });

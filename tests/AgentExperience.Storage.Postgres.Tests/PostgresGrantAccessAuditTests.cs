@@ -746,7 +746,7 @@ public sealed class PostgresGrantAccessAuditTests
         var tenant = NewTenant();
         var owner = Scope(tenant, team: "team-a");
 
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, " +
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
             "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
@@ -1446,7 +1446,7 @@ public sealed class PostgresGrantAccessAuditTests
 
         // The other half of the ceiling: it is relative to issued_at, so a bypassing writer could buy an
         // effectively permanent grant simply by dating it a century ahead.
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, " +
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
             "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
@@ -1469,7 +1469,7 @@ public sealed class PostgresGrantAccessAuditTests
     /// <summary>The clock that stamps <c>issued_at</c>, which is the one the lifetime bound measures from.</summary>
     private async Task<DateTimeOffset> DatabaseNowAsync()
     {
-        await using var command = _fixture.DataSource.CreateCommand("SELECT now()");
+        await using var command = _fixture.RawDataSource.CreateCommand("SELECT now()");
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         return reader.GetFieldValue<DateTimeOffset>(0);
@@ -1564,13 +1564,13 @@ public sealed class PostgresGrantAccessAuditTests
 
     private async Task<long> ScalarAsync(string sql, Guid grantId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.RawDataSource.CreateCommand(sql);
         command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
     private Task<IReadOnlyList<AccessRow>> AccessRowsAsync(Guid experienceId) =>
-        AccessRowsAsync(_fixture.DataSource, experienceId);
+        AccessRowsAsync(_fixture.RawDataSource, experienceId);
 
     private static async Task<IReadOnlyList<AccessRow>> AccessRowsAsync(NpgsqlDataSource dataSource, Guid experienceId)
     {

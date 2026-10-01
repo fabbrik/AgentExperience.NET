@@ -107,9 +107,56 @@ internal static class ApplicationRolePrivileges
         }
 
         var violations = new List<string>();
+
+        // Story 15.1: row-level security, declaratively. Enabling first checks everything it depends on; only then
+        // re-creates the canonical policies (so a policy altered by hand since the migration is put back) and switches
+        // tables on. Nothing is switched on while anything above it failed.
+        var rowSecurity = await ReadRowSecurityAsync(connection, transaction, schemaOid, cancellationToken).ConfigureAwait(false);
+        IReadOnlyDictionary<string, PolicyState>? canonical = null;
+        IReadOnlyDictionary<string, FunctionState>? canonicalFunctions = null;
+        if (options.EnableRowLevelSecurity)
+        {
+            CheckPolicyNames(rowSecurity, existing, violations);
+            await CheckRowSecurityPrerequisitesAsync(connection, transaction, role, violations, cancellationToken).ConfigureAwait(false);
+            if (violations.Count == 0)
+            {
+                // The helpers first: the policies call them, and a helper replaced by hand since the migration is put
+                // back before anything is enabled. CREATE OR REPLACE keeps each one's owner and ACL.
+                foreach (var function in RowLevelSecurityPolicies.Functions)
+                {
+                    await ExecuteAsync(connection, transaction, function.Ddl, cancellationToken).ConfigureAwait(false);
+                }
+
+                canonicalFunctions = await ReadHelperFunctionsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+
+                foreach (var policy in RowLevelSecurityPolicies.All.Where(p => existing.Contains(p.Table)))
+                {
+                    await ExecuteAsync(connection, transaction, policy.Ddl, cancellationToken).ConfigureAwait(false);
+                }
+
+                rowSecurity = await ReadRowSecurityAsync(connection, transaction, schemaOid, cancellationToken).ConfigureAwait(false);
+                canonical = rowSecurity.Values.SelectMany(t => t.Policies).ToDictionary(p => p.Table + "." + p.Name, StringComparer.Ordinal);
+            }
+        }
+
+        if (violations.Count == 0)
+        {
+            foreach (var statement in RowLevelSecurityStatements(rowSecurity, existing, options.EnableRowLevelSecurity))
+            {
+                await ExecuteAsync(connection, transaction, statement, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         await VerifySchemaAsync(connection, transaction, role, schemaOid, violations, cancellationToken).ConfigureAwait(false);
         await VerifyRelationsAsync(connection, transaction, role, schemaOid, existing, violations, cancellationToken).ConfigureAwait(false);
         await VerifyFunctionsAsync(connection, transaction, role, schemaOid, purgeOids, violations, cancellationToken).ConfigureAwait(false);
+        await VerifyRowSecurityAsync(
+            connection, transaction, role, schemaOid, existing, options.EnableRowLevelSecurity, canonical, violations, cancellationToken)
+            .ConfigureAwait(false);
+        if (options.EnableRowLevelSecurity && canonicalFunctions is not null)
+        {
+            await VerifyHelperFunctionsAsync(connection, transaction, canonicalFunctions, violations, cancellationToken).ConfigureAwait(false);
+        }
 
         if (violations.Count > 0)
         {
@@ -158,6 +205,322 @@ internal static class ApplicationRolePrivileges
             if (granted(options))
             {
                 yield return $"GRANT EXECUTE ON FUNCTION {signature} TO {role}";
+            }
+        }
+    }
+
+    /// <summary>
+    /// The statements that bring each covered table's row-level security to <paramref name="enable"/>: only for a
+    /// table whose state differs, and <c>NO FORCE</c> for one that was ever forced, since forcing would bind the
+    /// owner's own erasure and sealing functions.
+    /// </summary>
+    internal static IEnumerable<string> RowLevelSecurityStatements(
+        IReadOnlyDictionary<string, RowSecurityState> state,
+        IReadOnlySet<string> existingTables,
+        bool enable)
+    {
+        foreach (var table in Tables.Where(t => existingTables.Contains(t.Name)))
+        {
+            if (!state.TryGetValue(table.Name, out var current))
+            {
+                continue;
+            }
+
+            if (current.Forced)
+            {
+                yield return $"ALTER TABLE {SchemaName}.{table.Name} NO FORCE ROW LEVEL SECURITY";
+            }
+
+            if (current.Enabled != enable)
+            {
+                yield return $"ALTER TABLE {SchemaName}.{table.Name} {(enable ? "ENABLE" : "DISABLE")} ROW LEVEL SECURITY";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refuses to enable row-level security on a table whose policies are not exactly the migrations' set by name:
+    /// missing ones mean a migrator has not run, and an extra one -- permissive or restrictive -- is not ours to keep
+    /// or to drop. What each canonical policy says is then re-created from <see cref="RowLevelSecurityPolicies"/>.
+    /// </summary>
+    private static void CheckPolicyNames(
+        IReadOnlyDictionary<string, RowSecurityState> state,
+        IReadOnlySet<string> existingTables,
+        List<string> violations)
+    {
+        foreach (var table in Tables.Where(t => existingTables.Contains(t.Name)))
+        {
+            var expected = RowLevelSecurityPolicies.NamesFor(table.Name);
+            var present = state.TryGetValue(table.Name, out var current) ? current.Policies.Select(p => p.Name).ToArray() : [];
+            var missing = expected.Except(present, StringComparer.Ordinal).ToArray();
+            var extra = present.Except(expected, StringComparer.Ordinal).ToArray();
+
+            if (missing.Length > 0)
+            {
+                violations.Add(
+                    $"{table.Name}: row-level security cannot be enabled, its policies are missing ({string.Join(", ", missing)}); " +
+                    (table.Name == EmbeddingsTable
+                        ? "run ExperienceVectorSchemaMigrator.MigrateAsync first"
+                        : "run ExperienceSchemaMigrator.MigrateAsync first"));
+            }
+
+            if (extra.Length > 0)
+            {
+                violations.Add(
+                    $"{table.Name}: row-level security cannot be enabled over policies the migrations did not create ({string.Join(", ", extra)})");
+            }
+        }
+    }
+
+    /// <summary>
+    /// What row-level security depends on beyond the policies: the application role reads <c>experience_grants</c>
+    /// (the grant branch of every read policy consults it), and nothing may pre-set the settings the policies read,
+    /// because a default declared for the role or the database would admit rows to a statement that declared nothing.
+    /// </summary>
+    private static async Task CheckRowSecurityPrerequisitesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, RoleFacts role, List<string> violations, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT pg_catalog.to_regclass('agent_experience.experience_grants') IS NOT NULL " +
+            "AND pg_catalog.has_table_privilege(@role, 'agent_experience.experience_grants', 'SELECT'), " +
+            "ARRAY(SELECT DISTINCT c FROM pg_catalog.pg_db_role_setting s, unnest(s.setconfig) c " +
+            "WHERE s.setrole IN (@role, 0) " +
+            "AND s.setdatabase IN ((SELECT d.oid FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()), 0) " +
+            "AND pg_catalog.lower(c) LIKE 'agent\\_experience.auth\\_%' ORDER BY 1)",
+            connection,
+            transaction);
+        command.Parameters.Add(new NpgsqlParameter<uint>("role", NpgsqlTypes.NpgsqlDbType.Oid) { TypedValue = role.Oid });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!reader.GetBoolean(0))
+        {
+            violations.Add("experience_grants: row-level security cannot be enabled unless the table exists and the application role may SELECT it");
+        }
+
+        var defaults = reader.GetFieldValue<string[]>(1);
+        if (defaults.Length > 0)
+        {
+            violations.Add(
+                "row-level security cannot be enabled while a default for its settings is configured for the application role " +
+                $"or the database (ALTER ROLE / ALTER DATABASE ... SET): {string.Join(", ", defaults.Select(d => d.Split('=')[0]))}");
+        }
+    }
+
+    /// <summary>Every covered table's row-level security flags, and every policy on it, one policy per row.</summary>
+    private static async Task<Dictionary<string, RowSecurityState>> ReadRowSecurityAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint schemaOid, CancellationToken cancellationToken)
+    {
+        var state = new Dictionary<string, RowSecurityState>(StringComparer.Ordinal);
+        await using (var tables = new NpgsqlCommand(
+            "SELECT c.relname::text, c.relrowsecurity, c.relforcerowsecurity FROM pg_catalog.pg_class c " +
+            "WHERE c.relnamespace = @schema AND c.relkind IN ('r', 'p')",
+            connection,
+            transaction))
+        {
+            tables.Parameters.Add(new NpgsqlParameter<uint>("schema", NpgsqlTypes.NpgsqlDbType.Oid) { TypedValue = schemaOid });
+            await using var reader = await tables.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                state[reader.GetString(0)] = new RowSecurityState(reader.GetBoolean(1), reader.GetBoolean(2), []);
+            }
+        }
+
+        // Each policy's name travels in the same row as its shape and expressions, so nothing depends on two
+        // separately ordered lists lining up.
+        await using var policies = new NpgsqlCommand(
+            "SELECT c.relname::text, p.polname::text, p.polcmd::text, p.polpermissive, p.polroles = '{0}'::oid[], " +
+            "pg_catalog.pg_get_expr(p.polqual, p.polrelid), pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) " +
+            "FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid " +
+            "WHERE c.relnamespace = @schema ORDER BY 1, 2",
+            connection,
+            transaction);
+        policies.Parameters.Add(new NpgsqlParameter<uint>("schema", NpgsqlTypes.NpgsqlDbType.Oid) { TypedValue = schemaOid });
+        var byTable = new Dictionary<string, List<PolicyState>>(StringComparer.Ordinal);
+        await using (var reader = await policies.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var table = reader.GetString(0);
+                if (!byTable.TryGetValue(table, out var list))
+                {
+                    byTable[table] = list = [];
+                }
+
+                list.Add(new PolicyState(
+                    table,
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetBoolean(3),
+                    reader.GetBoolean(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6)));
+            }
+        }
+
+        foreach (var (table, list) in byTable)
+        {
+            if (state.TryGetValue(table, out var current))
+            {
+                state[table] = current with { Policies = list };
+            }
+        }
+
+        return state;
+    }
+
+    /// <summary>The <c>polcmd</c> letter PostgreSQL stores for a policy's command.</summary>
+    private static string CommandLetter(string command) => command switch
+    {
+        "SELECT" => "r",
+        "INSERT" => "a",
+        "UPDATE" => "w",
+        "DELETE" => "d",
+        _ => "*",
+    };
+
+    /// <summary>
+    /// After the statements: each covered table's row-level security is exactly what the host asked for and never
+    /// forced; and, when it is on, each table carries exactly the canonical policies -- by name, command,
+    /// permissiveness, roles (<c>PUBLIC</c>), and the deparsed <c>USING</c> and <c>WITH CHECK</c> expressions of the
+    /// policies this call re-created -- and nothing the application role can reach bypasses them.
+    /// </summary>
+    private static async Task VerifyRowSecurityAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        RoleFacts role,
+        uint schemaOid,
+        IReadOnlySet<string> existingTables,
+        bool enable,
+        IReadOnlyDictionary<string, PolicyState>? canonical,
+        List<string> violations,
+        CancellationToken cancellationToken)
+    {
+        var state = await ReadRowSecurityAsync(connection, transaction, schemaOid, cancellationToken).ConfigureAwait(false);
+        foreach (var table in Tables.Where(t => existingTables.Contains(t.Name)))
+        {
+            if (!state.TryGetValue(table.Name, out var current))
+            {
+                continue;
+            }
+
+            if (current.Enabled != enable && violations.Count == 0)
+            {
+                violations.Add($"{table.Name}: row-level security is {(current.Enabled ? "enabled" : "disabled")}, not {(enable ? "enabled" : "disabled")}");
+            }
+
+            if (current.Forced)
+            {
+                violations.Add($"{table.Name}: row-level security is forced, which would bind the owner's own erasure and sealing functions");
+            }
+
+            if (!enable || canonical is null)
+            {
+                continue;
+            }
+
+            var expected = RowLevelSecurityPolicies.All.Where(p => p.Table == table.Name).ToDictionary(p => p.Name, StringComparer.Ordinal);
+            foreach (var policy in current.Policies)
+            {
+                if (!expected.TryGetValue(policy.Name, out var definition))
+                {
+                    violations.Add($"{table.Name}: the policy {policy.Name} is not one the migrations create");
+                    continue;
+                }
+
+                if (policy.Command != CommandLetter(definition.Command) || !policy.Permissive || !policy.Public
+                    || (definition.Using is null) != (policy.Using is null) || (definition.Check is null) != (policy.Check is null)
+                    || !canonical.TryGetValue(policy.Table + "." + policy.Name, out var created)
+                    || !string.Equals(created.Using, policy.Using, StringComparison.Ordinal)
+                    || !string.Equals(created.Check, policy.Check, StringComparison.Ordinal))
+                {
+                    violations.Add($"{table.Name}: the policy {policy.Name} is not the canonical definition");
+                }
+            }
+
+            foreach (var name in expected.Keys.Except(current.Policies.Select(p => p.Name), StringComparer.Ordinal))
+            {
+                violations.Add($"{table.Name}: the policy {name} is missing");
+            }
+        }
+
+        if (!enable)
+        {
+            return;
+        }
+
+        // BYPASSRLS is an attribute of the role a session runs as, not a privilege that is inherited, so a role
+        // one SET ROLE away is as good as the application role having it.
+        await using var command = new NpgsqlCommand(
+            ReachCte + "SELECT quote_ident(r.rolname) FROM reach JOIN pg_catalog.pg_roles r ON r.oid = reach.oid WHERE r.rolbypassrls ORDER BY 1",
+            connection,
+            transaction);
+        command.Parameters.Add(new NpgsqlParameter<uint>("role", NpgsqlTypes.NpgsqlDbType.Oid) { TypedValue = role.Oid });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            violations.Add($"{reader.GetString(0)}: the application role is, or can become, a role with BYPASSRLS, which row-level security does not bind");
+        }
+    }
+
+    /// <summary>
+    /// What the catalog says about each helper: security, volatility, settings, whether its owner is the tables' owner,
+    /// and its source and full definition.
+    /// </summary>
+    private static async Task<Dictionary<string, FunctionState>> ReadHelperFunctionsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        var state = new Dictionary<string, FunctionState>(StringComparer.Ordinal);
+        foreach (var function in RowLevelSecurityPolicies.Functions)
+        {
+            await using var command = new NpgsqlCommand(
+                "SELECT p.prosecdef, p.provolatile::text, p.proconfig, " +
+                "p.proowner = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'agent_experience.experience_records'::pg_catalog.regclass), " +
+                "p.prosrc, pg_catalog.pg_get_functiondef(p.oid) " +
+                "FROM pg_catalog.pg_proc p WHERE p.oid = pg_catalog.to_regprocedure(@signature)",
+                connection,
+                transaction);
+            command.Parameters.Add(new NpgsqlParameter<string>("signature", function.Signature));
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                state[function.Signature] = new FunctionState(
+                    reader.GetBoolean(0),
+                    reader.GetString(1)[0],
+                    reader.IsDBNull(2) ? [] : reader.GetFieldValue<string[]>(2),
+                    reader.GetBoolean(3),
+                    reader.GetString(4),
+                    reader.GetString(5));
+            }
+        }
+
+        return state;
+    }
+
+    /// <summary>
+    /// After the statements: each helper is exactly what this call created -- never <c>SECURITY DEFINER</c>, the
+    /// canonical volatility and settings, owned by the tables' owner, and the same source and definition.
+    /// </summary>
+    private static async Task VerifyHelperFunctionsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        IReadOnlyDictionary<string, FunctionState> created,
+        List<string> violations,
+        CancellationToken cancellationToken)
+    {
+        var current = await ReadHelperFunctionsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+        foreach (var function in RowLevelSecurityPolicies.Functions)
+        {
+            string[] config = function.Config is null ? [] : [function.Config];
+            if (!current.TryGetValue(function.Signature, out var now) || !created.TryGetValue(function.Signature, out var made)
+                || now.SecurityDefiner
+                || now.Volatility != function.Volatility
+                || !now.Config.SequenceEqual(config, StringComparer.Ordinal)
+                || !now.OwnedByTableOwner
+                || !string.Equals(now.Source, made.Source, StringComparison.Ordinal)
+                || !string.Equals(now.Definition, made.Definition, StringComparison.Ordinal))
+            {
+                violations.Add($"{function.Signature}: the row-level security helper is not the canonical definition");
             }
         }
     }
@@ -546,4 +909,14 @@ internal static class ApplicationRolePrivileges
         bool Optional = false);
 
     private sealed record RoleFacts(uint Oid, string QuotedName);
+
+    /// <summary>A row-level security helper as the catalog has it.</summary>
+    internal sealed record FunctionState(bool SecurityDefiner, char Volatility, string[] Config, bool OwnedByTableOwner, string Source, string Definition);
+
+    /// <summary>A table's row-level security as the catalog has it.</summary>
+    internal sealed record RowSecurityState(bool Enabled, bool Forced, IReadOnlyList<PolicyState> Policies);
+
+    /// <summary>One policy as the catalog has it: command letter, permissive, <c>PUBLIC</c> alone, and both deparsed expressions.</summary>
+    internal sealed record PolicyState(string Table, string Name, string Command, bool Permissive, bool Public, string? Using, string? Check);
+
 }

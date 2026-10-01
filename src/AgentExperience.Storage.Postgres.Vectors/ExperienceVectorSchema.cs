@@ -23,16 +23,24 @@ public static class ExperienceVectorSchema
     /// <remarks>
     /// The number is this package's place in one sequence the whole family shares, so a reader can
     /// still order the entire schema at a glance even though the two packages apply their scripts
-    /// separately: the base adapter owns <c>0001</c>-<c>0003</c> and <c>0005</c>
-    /// (<c>experience_grants</c>), and this package owns only <c>0004</c>. A gap in either package's
-    /// list is therefore expected, and neither migrator ever applies the other's scripts.
+    /// separately: the base adapter owns <c>0001</c>-<c>0003</c> and <c>0005</c> onwards
+    /// (<c>experience_grants</c> and after), and this package owns <c>0004</c> and <c>0020</c>. A gap in either
+    /// package's list is therefore expected, and neither migrator ever applies the other's scripts.
     /// </remarks>
     public const string EmbeddingsScriptName = "0004_add_experience_embeddings.sql";
+
+    /// <summary>
+    /// The script that creates <c>experience_embeddings</c>' row-level security policies (story 15.1), on the
+    /// helper functions the base adapter's <c>0019_row_level_security.sql</c> creates -- so the base migration must
+    /// run first, and this script stops with a message saying so when it has not. Like <c>0019</c> it switches
+    /// nothing on; <c>ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync</c> does, when the host asks.
+    /// </summary>
+    public const string EmbeddingsRowLevelSecurityScriptName = "0020_embeddings_row_level_security.sql";
 
     internal const string ResourcePrefix = "AgentExperience.Storage.Postgres.Vectors.Migrations.";
 
     /// <summary>Every embedded script name, in the order they must be applied.</summary>
-    public static IReadOnlyList<string> ScriptNames { get; } = [EmbeddingsScriptName];
+    public static IReadOnlyList<string> ScriptNames { get; } = [EmbeddingsScriptName, EmbeddingsRowLevelSecurityScriptName];
 
     /// <summary>Reads an embedded script's SQL text.</summary>
     /// <param name="scriptName">One of <see cref="ScriptNames"/>.</param>

@@ -6,6 +6,49 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Row-level security (story 15.1)
+
+- **An opt-in second isolation layer.** `ExperienceApplicationRoleOptions.EnableRowLevelSecurity` (default `false`)
+  makes `ApplyApplicationRolePrivilegesAsync` re-create the canonical helper functions and policies, enable PostgreSQL row-level security on
+  every table the application role reads or writes by scope, and verify it -- policy names, commands, roles and
+  expressions included -- in the same transaction as the privileges. It is never forced; `false` disables it again,
+  so the setting is declarative. The call refuses missing or extra policies, an unreadable `experience_grants`, a role
+  or database default for the declared settings, and an application role that can reach `BYPASSRLS`. See
+  [Enabling row-level security](docs/guide/deployment.md#enabling-row-level-security).
+- **Migration `0019_row_level_security`**, and the vectors package's **`0020_embeddings_row_level_security`**: the
+  `rls_*` policies and five helper functions (none `SECURITY DEFINER`). They switch nothing on. A row is admitted only
+  inside the authorization bounds the current operation declared, plus, for reading, the records and embeddings a live
+  grant shares with those bounds; a recipient reads only live grants; an access row must describe a live grant that
+  names it exactly; nothing is admitted when nothing was declared. `0019` also redefines the four `SECURITY DEFINER`
+  functions (erasure, grant purge, access purge, sealing), bodies unchanged, with a guard that refuses a scope outside
+  declared bounds and, while row-level security is enabled, an undeclared caller that is neither a member of the
+  tables' owner nor `BYPASSRLS`. Run both migrators before enabling. `PostgresExperienceRecordSchema.RowLevelSecurityScriptName` and
+  `ExperienceVectorSchema.EmbeddingsRowLevelSecurityScriptName` name them.
+- **Every store operation now runs in a transaction and declares its bounds first**, whether or not row-level
+  security is on: the host `AuthorizationContext`'s tenant, application, project, team, agent and user bounds, all
+  seven settings every transaction, transaction-locally, as parameters. Operations that were one autocommitted
+  statement are wrapped in a transaction; the SQL they send is otherwise unchanged. An audited read's access rows are
+  appended under the reader's authorization; `IExperienceGrantAccessLog.RecordAsync` called directly declares the
+  recipient scope its rows name.
+- **Behaviour change, with row-level security on only.** Every role but the owner sees nothing until it declares
+  bounds, so a reporting role or a hand-run script as the application role must declare them too. Presetting the
+  settings (connection-string `-c` options, session-level `SET` on pooled connections) is not supported.
+- **Cost.** About 0.7 ms per operation for the transaction and the declaration, and about 1 ms more per text search
+  with row-level security on, on the benchmark machine. **Text search does not use its GIN index beneath the
+  policies** (`@@` is not leakproof): it scans the declared tenant's live records through the scope index. The vector
+  channel keeps its HNSW index. See [Row-level security](docs/benchmarks.md#row-level-security-story-151).
+- **What it does not do**: bind a compromised application role, which can declare any bounds itself; enforce grant
+  disclosure levels; hide that a colliding ID exists in another tenant; check the record a feedback exposure names.
+  That is [KL-17](docs/known-limits.md#documented-boundaries), a new documented boundary.
+- **Tests.** CI runs the store, vector (with the conformance suites), sample and upgrade suites again on every
+  PostgreSQL major with `AGENTEXPERIENCE_TEST_RLS=on`, and the store and vector suites with both
+  `AGENTEXPERIENCE_TEST_RLS=on` and `AGENTEXPERIENCE_TEST_ENCRYPTION=on`; `RELEASING.md` step 3 does the same. In RLS
+  mode the suites' own hand-written SQL runs through a fixture role that inherits the application role's privileges
+  with `BYPASSRLS`, while every store runs as the application role behind the policies. `PostgresRowLevelSecurityTests`
+  proves the layer in every mode, table by table, including the grant rules, the owner's functions, policy tampering,
+  preset defaults, access-log forgery and transaction locality. The upgrade suite's schema comparison now covers each
+  table's row-level security and every policy.
+
 ### Model-backed reflector (story 14.2)
 
 - **An optional `ChatClientExperienceReflector` in `AgentExperience.MicrosoftAgentFramework`.** It implements

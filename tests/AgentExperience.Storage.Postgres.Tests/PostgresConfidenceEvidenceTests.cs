@@ -99,14 +99,14 @@ public sealed class PostgresConfidenceEvidenceTests
         await AssertConfidenceAsync(auth, scope, record.ExperienceId, 0.9, 2, 0, ExperienceStatus.Validated);
 
         // In the evidence ledger and on the lifecycle event, as the existing free-text columns hold it.
-        await using (var command = _fixture.DataSource.CreateCommand(
+        await using (var command = _fixture.RawDataSource.CreateCommand(
             "SELECT rule_version FROM agent_experience.confidence_evidence WHERE evidence_id = @id"))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", applied.Update!.EvidenceId));
             Assert.Equal("bayes/2.1", (string?)await command.ExecuteScalarAsync());
         }
 
-        await using (var command = _fixture.DataSource.CreateCommand(
+        await using (var command = _fixture.RawDataSource.CreateCommand(
             "SELECT confidence_rule_version FROM agent_experience.lifecycle_events WHERE event_id = @id"))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", applied.Event!.EventId));
@@ -602,7 +602,7 @@ public sealed class PostgresConfidenceEvidenceTests
             ("Human", Guid.NewGuid(), "someone"),
         })
         {
-            await using var command = _fixture.DataSource.CreateCommand(
+            await using var command = _fixture.RawDataSource.CreateCommand(
                 "INSERT INTO agent_experience.confidence_evidence (evidence_id, experience_id, event_id, kind, source, " +
                 "run_id, verification_round_id, reviewer_identity, counted, rule_version, recorded_at, applied_revision, " +
                 "applied_status, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
@@ -712,7 +712,7 @@ public sealed class PostgresConfidenceEvidenceTests
 
     private async Task<(bool Counted, Guid? EventId, long AppliedRevision, string AppliedStatus, int PriorSupporting, int NewSupporting)> ReadLedgerAsync(Guid evidenceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT counted, event_id, applied_revision, applied_status, prior_supporting_validations, " +
             "new_supporting_validations FROM agent_experience.confidence_evidence WHERE evidence_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", evidenceId));
@@ -730,7 +730,7 @@ public sealed class PostgresConfidenceEvidenceTests
 
     private async Task<string?> ReadIndependenceKeyAsync(Guid evidenceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT independence_key FROM agent_experience.confidence_evidence WHERE evidence_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", evidenceId));
         return (string?)await command.ExecuteScalarAsync();
@@ -738,7 +738,7 @@ public sealed class PostgresConfidenceEvidenceTests
 
     private async Task<long> CountEvidenceAsync(Guid experienceId, bool? counted)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.confidence_evidence " +
             "WHERE experience_id = @id AND (@counted::boolean IS NULL OR counted = @counted)");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
@@ -751,7 +751,7 @@ public sealed class PostgresConfidenceEvidenceTests
 
     private async Task<long> CountEventsAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.lifecycle_events WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (long)(await command.ExecuteScalarAsync())!;

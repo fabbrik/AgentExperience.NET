@@ -383,7 +383,7 @@ public sealed class PostgresBatchReadTests(PostgresFixture fixture)
     /// </summary>
     private async Task RawGrantAsync(Guid experienceId, Scope owner, Scope recipient, string issuedAgo, string expiresIn)
     {
-        await using var grant = fixture.DataSource.CreateCommand(
+        await using var grant = fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, tenant_id, application_id, " +
             "project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, reason, " +
@@ -486,7 +486,11 @@ public sealed class PostgresBatchReadTests(PostgresFixture fixture)
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if (activity.Source.Name == "Npgsql" && activity.Kind == ActivityKind.Client && activity.TraceId == trace)
+                // The authorization bounds every operation declares for its transaction (story 15.1) are one fixed
+                // statement per operation, not a store read: counted apart, so these tests still count reads.
+                if (activity.Source.Name == "Npgsql" && activity.Kind == ActivityKind.Client && activity.TraceId == trace
+                    && !activity.TagObjects.Any(tag => tag.Value is string text
+                        && text.Contains(ExperienceSessionContext.MarkerSetting, StringComparison.Ordinal)))
                 {
                     Interlocked.Increment(ref commands);
                 }
@@ -507,7 +511,7 @@ public sealed class PostgresBatchReadTests(PostgresFixture fixture)
 
     private async Task<IReadOnlyList<AccessRow>> AccessRowsAsync(string correlationId)
     {
-        await using var command = fixture.DataSource.CreateCommand(
+        await using var command = fixture.RawDataSource.CreateCommand(
             "SELECT grant_id, experience_id, record_revision, tenant_id, team_id, recipient_tenant_id, recipient_team_id, " +
             "principal_id, disclosure " +
             "FROM agent_experience.experience_grant_access WHERE correlation_id = @correlation_id " +

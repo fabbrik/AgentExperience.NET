@@ -128,7 +128,25 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
     }
 
     /// <inheritdoc />
-    public async Task RecordAsync(IReadOnlyList<ExperienceGrantAccess> accesses, CancellationToken cancellationToken)
+    /// <remarks>
+    /// This port member is handed no <see cref="AuthorizationContext"/>, so with row-level security on (story 15.1) it
+    /// declares, for each group of rows, the recipient scope those rows name. A null field of that scope declares the
+    /// field unrestricted, so the declaration can be wider than the rows themselves; what bounds the append is the insert
+    /// policy, which admits a row only when a live grant names exactly its grant ID, record, owner columns and recipient
+    /// columns. The library's own stores call the internal overload instead, which declares the reader's
+    /// authorization.
+    /// </remarks>
+    public Task RecordAsync(IReadOnlyList<ExperienceGrantAccess> accesses, CancellationToken cancellationToken) =>
+        RecordAsync(authorization: null, accesses, cancellationToken);
+
+    /// <summary>
+    /// The append, under the reader's host-established <paramref name="authorization"/> when there is one: one
+    /// declaration of its bounds for the whole batch. <see langword="null"/> is the port member's behaviour.
+    /// </summary>
+    internal async Task RecordAsync(
+        AuthorizationContext? authorization,
+        IReadOnlyList<ExperienceGrantAccess> accesses,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(accesses);
         if (accesses.Count == 0)
@@ -195,30 +213,71 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
 
         try
         {
-            await using var command = _dataSource.CreateCommand(InsertSql);
-            var parameters = command.Parameters;
-            parameters.Add(Array("access_id", NpgsqlDbType.Uuid, accessIds));
-            parameters.Add(Array("grant_id", NpgsqlDbType.Uuid, grantIds));
-            parameters.Add(Array("experience_id", NpgsqlDbType.Uuid, experienceIds));
-            parameters.Add(Array("record_revision", NpgsqlDbType.Bigint, revisions));
-            parameters.Add(Array("tenant_id", NpgsqlDbType.Text, tenantIds));
-            parameters.Add(Array("application_id", NpgsqlDbType.Text, applicationIds));
-            parameters.Add(Array("project_id", NpgsqlDbType.Text, projectIds));
-            parameters.Add(Array("team_id", NpgsqlDbType.Text, teamIds));
-            parameters.Add(Array("agent_id", NpgsqlDbType.Text, agentIds));
-            parameters.Add(Array("user_id", NpgsqlDbType.Text, userIds));
-            parameters.Add(Array("recipient_tenant_id", NpgsqlDbType.Text, recipientTenantIds));
-            parameters.Add(Array("recipient_application_id", NpgsqlDbType.Text, recipientApplicationIds));
-            parameters.Add(Array("recipient_project_id", NpgsqlDbType.Text, recipientProjectIds));
-            parameters.Add(Array("recipient_team_id", NpgsqlDbType.Text, recipientTeamIds));
-            parameters.Add(Array("recipient_agent_id", NpgsqlDbType.Text, recipientAgentIds));
-            parameters.Add(Array("recipient_user_id", NpgsqlDbType.Text, recipientUserIds));
-            parameters.Add(Array("principal_id", NpgsqlDbType.Text, principalIds));
-            parameters.Add(Array("correlation_id", NpgsqlDbType.Text, correlationIds));
-            parameters.Add(Array("occurred_at", NpgsqlDbType.TimestampTz, occurredAt));
-            parameters.Add(Array("disclosure", NpgsqlDbType.Text, disclosures));
+            // Under the reader's authorization (the library's own stores) the batch is one declaration of its
+            // bounds. Through the port member, which is handed none, what is declared is each row's own recipient
+            // scope (a null field of it unrestricted), and the exact-match live-grant check in the insert policy is
+            // what bounds the rows: a batch naming several recipients is written group by group,
+            // re-declaring before each, in the same one transaction, so the rows still land together or not at all.
+            // Either way the insert policy requires every row to describe a live grant that names it exactly.
+            var groups = new List<(Scope Recipient, List<int> Rows)>();
+            for (var i = 0; i < count; i++)
+            {
+                // Under the reader's authorization the whole batch is one group, declared once.
+                var recipient = authorization is null ? accesses[i].RecipientScope : accesses[0].RecipientScope;
+                var group = groups.FindIndex(g => g.Recipient == recipient);
+                if (group < 0)
+                {
+                    groups.Add((recipient, [i]));
+                }
+                else
+                {
+                    groups[group].Rows.Add(i);
+                }
+            }
 
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await using var session = await AuthorizedTransaction.OpenAsync(
+                _dataSource,
+                authorization is null ? ExperienceSessionContext.Bounds.Of(groups[0].Recipient) : ExperienceSessionContext.Bounds.Of(authorization),
+                cancellationToken).ConfigureAwait(false);
+            for (var g = 0; g < groups.Count; g++)
+            {
+                var rows = groups[g].Rows;
+                if (g > 0)
+                {
+                    await ExperienceSessionContext.DeclareAsync(
+                        session.Connection, session.Transaction, ExperienceSessionContext.Bounds.Of(groups[g].Recipient), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                T[] Pick<T>(T[] all) => rows.Count == count ? all : [.. rows.Select(row => all[row])];
+
+                await using var command = session.CreateCommand(InsertSql);
+                var parameters = command.Parameters;
+                parameters.Add(Array("access_id", NpgsqlDbType.Uuid, Pick(accessIds)));
+                parameters.Add(Array("grant_id", NpgsqlDbType.Uuid, Pick(grantIds)));
+                parameters.Add(Array("experience_id", NpgsqlDbType.Uuid, Pick(experienceIds)));
+                parameters.Add(Array("record_revision", NpgsqlDbType.Bigint, Pick(revisions)));
+                parameters.Add(Array("tenant_id", NpgsqlDbType.Text, Pick(tenantIds)));
+                parameters.Add(Array("application_id", NpgsqlDbType.Text, Pick(applicationIds)));
+                parameters.Add(Array("project_id", NpgsqlDbType.Text, Pick(projectIds)));
+                parameters.Add(Array("team_id", NpgsqlDbType.Text, Pick(teamIds)));
+                parameters.Add(Array("agent_id", NpgsqlDbType.Text, Pick(agentIds)));
+                parameters.Add(Array("user_id", NpgsqlDbType.Text, Pick(userIds)));
+                parameters.Add(Array("recipient_tenant_id", NpgsqlDbType.Text, Pick(recipientTenantIds)));
+                parameters.Add(Array("recipient_application_id", NpgsqlDbType.Text, Pick(recipientApplicationIds)));
+                parameters.Add(Array("recipient_project_id", NpgsqlDbType.Text, Pick(recipientProjectIds)));
+                parameters.Add(Array("recipient_team_id", NpgsqlDbType.Text, Pick(recipientTeamIds)));
+                parameters.Add(Array("recipient_agent_id", NpgsqlDbType.Text, Pick(recipientAgentIds)));
+                parameters.Add(Array("recipient_user_id", NpgsqlDbType.Text, Pick(recipientUserIds)));
+                parameters.Add(Array("principal_id", NpgsqlDbType.Text, Pick(principalIds)));
+                parameters.Add(Array("correlation_id", NpgsqlDbType.Text, Pick(correlationIds)));
+                parameters.Add(Array("occurred_at", NpgsqlDbType.TimestampTz, Pick(occurredAt)));
+                parameters.Add(Array("disclosure", NpgsqlDbType.Text, Pick(disclosures)));
+
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
         {
@@ -250,7 +309,8 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
 
         try
         {
-            await using var command = _dataSource.CreateCommand(QuerySql);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(QuerySql);
             var parameters = command.Parameters;
             PostgresExperienceRecordStore.AddScopeParameters(parameters, query.RecordScope);
             parameters.Add(new NpgsqlParameter("experience_id", NpgsqlDbType.Uuid)
@@ -268,11 +328,15 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
 
             var rows = new List<ExperienceGrantAccess>();
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
-                rows.Add(Read(reader));
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    rows.Add(Read(reader));
+                }
             }
+
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             return new(
                 ExperienceStoreOutcome.Found,
@@ -407,22 +471,30 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
 
         try
         {
-            await using var command = _dataSource.CreateCommand(PurgeSql);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(PurgeSql);
             var parameters = command.Parameters;
             PostgresExperienceRecordStore.AddScopeParameters(parameters, recordScope);
             parameters.Add(new NpgsqlParameter<bool>("subtree", match == ScopeMatch.Subtree));
             parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", PostgresExperienceRecordStore.ToStoredTimestamp(cutoff)));
             parameters.Add(new NpgsqlParameter<int>("limit", batchSize));
 
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            string outcome;
+            long purged;
+            bool moreRemain;
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
-                throw new ExperienceStoreException("The access-log purge function returned no row.");
+                if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    throw new ExperienceStoreException("The access-log purge function returned no row.");
+                }
+
+                outcome = reader.GetString(0);
+                purged = reader.GetInt64(1);
+                moreRemain = reader.GetBoolean(2);
             }
 
-            var outcome = reader.GetString(0);
-            var purged = reader.GetInt64(1);
-            var moreRemain = reader.GetBoolean(2);
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             return outcome switch
             {

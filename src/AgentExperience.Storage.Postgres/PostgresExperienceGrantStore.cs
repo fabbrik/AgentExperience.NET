@@ -307,8 +307,8 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             // Pinned, not inherited, for the same reason the lifecycle commit pins it: the expected
             // conditions here are decided by predicates that matched no row, never by a serialization
             // failure that a stricter level would raise instead.
-            await using var transaction = await connection
-                .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+            await using var transaction = await ExperienceSessionContext
+                .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
 
             ExperienceGrant? grant;
             try
@@ -467,8 +467,8 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            await using var transaction = await connection
-                .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+            await using var transaction = await ExperienceSessionContext
+                .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
 
             // Encrypted mode: the revocation reason is sealed under the key of the record the grant is over,
             // so the grant is looked up first, in the owner scope. A grant that is not there falls through to
@@ -654,8 +654,8 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
         try
         {
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            await using var command = new NpgsqlCommand(PurgeExpiredGrantsSql, connection);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(PurgeExpiredGrantsSql);
             var parameters = command.Parameters;
             PostgresExperienceRecordStore.AddScopeParameters(parameters, recordScope);
 
@@ -670,6 +670,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             var purged = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is long count
                 ? (int)count
                 : 0;
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             // A full batch is the only evidence this call has that more may be waiting: the purge
             // function reports what it removed, and asking a second question would answer about a
@@ -708,7 +709,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
         try
         {
-            await using var command = _dataSource.CreateCommand(ListGrantsSql);
+            // A read: its transaction is only where the bounds are declared, and is rolled back on disposal.
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(ListGrantsSql);
             command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
             PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, recordScope);
             command.Parameters.Add(new NpgsqlParameter<int>("limit", limit));
@@ -781,10 +784,10 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         {
             // One connection, so the grant and its events come from one snapshot. The grant is read
             // first and in the owner scope, so a grant that is not this scope's reveals no events.
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
+            // A read: its transaction is only where the bounds are declared, and is rolled back on disposal.
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             ExperienceGrant? grant;
-            await using (var command = new NpgsqlCommand(SelectGrantSql, connection))
+            await using (var command = session.CreateCommand(SelectGrantSql))
             {
                 command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
                 PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, recordScope);
@@ -812,7 +815,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             grant = Open(grant, key)!;
 
             var events = new List<ExperienceGrantEvent>();
-            await using (var command = new NpgsqlCommand(HistorySql, connection))
+            await using (var command = session.CreateCommand(HistorySql))
             {
                 command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
 

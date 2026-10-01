@@ -734,7 +734,7 @@ public sealed class PostgresReuseFeedbackTests
         Guid[] EvidenceIds, DateTimeOffset? AttributedAt, string MeasureKind, double MeasureValue,
         string? TrialLabel)> ReadSubmissionAsync(Guid feedbackId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT run_outcome, claimed_benefit, benefit, attribution_source, reviewer_identity, evaluator_id, " +
             "verification_round_id, assessment_id, evidence_ids, attributed_at, measure_kind, measure_value, trial_label " +
             "FROM agent_experience.reuse_feedback WHERE feedback_id = @id");
@@ -760,7 +760,7 @@ public sealed class PostgresReuseFeedbackTests
 
     private async Task<List<(Guid ExperienceId, bool Attributed, Guid? EvidenceId)>> ReadExposuresAsync(Guid feedbackId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT experience_id, attributed, evidence_id FROM agent_experience.reuse_feedback_exposures " +
             "WHERE feedback_id = @id ORDER BY ordinal");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", feedbackId));
@@ -786,14 +786,14 @@ public sealed class PostgresReuseFeedbackTests
 
     private async Task<long> CountAsync(string sql, Guid id)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.RawDataSource.CreateCommand(sql);
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", id));
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
     private async Task<string?> ReadIndependenceKeyAsync(Guid evidenceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT independence_key FROM agent_experience.confidence_evidence WHERE evidence_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", evidenceId));
         return (string?)await command.ExecuteScalarAsync();

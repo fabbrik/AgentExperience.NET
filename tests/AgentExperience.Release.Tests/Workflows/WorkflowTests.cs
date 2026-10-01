@@ -183,6 +183,21 @@ public sealed class WorkflowTests
         var encrypted = job[job.IndexOf("AGENTEXPERIENCE_TEST_ENCRYPTION", StringComparison.Ordinal)..];
         Assert.Contains("tests/AgentExperience.Storage.Postgres.Tests", encrypted, StringComparison.Ordinal);
         Assert.Contains("tests/AgentExperience.Storage.Postgres.Vectors.Tests", encrypted, StringComparison.Ordinal);
+
+        // Story 15.1: the store, vector and upgrade suites run a third time, with row-level security on, on every leg.
+        Assert.Contains("AGENTEXPERIENCE_TEST_RLS: 'on'", job, StringComparison.Ordinal);
+        var secured = job[job.IndexOf("AGENTEXPERIENCE_TEST_RLS", StringComparison.Ordinal)..];
+        Assert.Contains("tests/AgentExperience.Storage.Postgres.Tests", secured, StringComparison.Ordinal);
+        Assert.Contains("tests/AgentExperience.Storage.Postgres.Vectors.Tests", secured, StringComparison.Ordinal);
+        Assert.Contains("tests/AgentExperience.Upgrade.Tests", secured, StringComparison.Ordinal);
+        Assert.Contains("tests/AgentExperience.Sample.EndToEnd.Tests", secured, StringComparison.Ordinal);
+
+        // And a fourth time with both switches on: row-level security and crypto-shredding together.
+        var both = job[job.IndexOf("with row-level security and crypto-shredding", StringComparison.Ordinal)..];
+        Assert.Contains("AGENTEXPERIENCE_TEST_RLS: 'on'", both, StringComparison.Ordinal);
+        Assert.Contains("AGENTEXPERIENCE_TEST_ENCRYPTION: 'on'", both, StringComparison.Ordinal);
+        Assert.Contains("tests/AgentExperience.Storage.Postgres.Tests", both, StringComparison.Ordinal);
+        Assert.Contains("tests/AgentExperience.Storage.Postgres.Vectors.Tests", both, StringComparison.Ordinal);
     }
 
     /// <summary>The text of one top-level job in a workflow, from its key to the next job's key.</summary>

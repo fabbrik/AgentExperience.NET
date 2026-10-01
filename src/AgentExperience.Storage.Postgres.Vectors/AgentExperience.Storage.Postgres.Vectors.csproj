@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Migrations\0004_add_experience_embeddings.sql" LogicalName="AgentExperience.Storage.Postgres.Vectors.Migrations.0004_add_experience_embeddings.sql" />
+    <EmbeddedResource Include="Migrations\0020_embeddings_row_level_security.sql" LogicalName="AgentExperience.Storage.Postgres.Vectors.Migrations.0020_embeddings_row_level_security.sql" />
   </ItemGroup>
 
   <ItemGroup>

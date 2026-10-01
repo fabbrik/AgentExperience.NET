@@ -139,6 +139,18 @@ which a release test holds equal to the list the fixtures accept, so this runs e
       AGENTEXPERIENCE_TEST_ENCRYPTION=on AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
         || { echo "FAILED: $project on PostgreSQL $major, crypto-shredding mode"; ok=false; }
     done
+    # And with row-level security on: the store, vector, sample and upgrade suites behind the policies (story 15.1).
+    for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests \
+                   tests/AgentExperience.Sample.EndToEnd.Tests tests/AgentExperience.Upgrade.Tests; do
+      AGENTEXPERIENCE_TEST_RLS=on AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
+        || { echo "FAILED: $project on PostgreSQL $major, row-level security mode"; ok=false; }
+    done
+    # And with both: row-level security and crypto-shredding together.
+    for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests; do
+      AGENTEXPERIENCE_TEST_RLS=on AGENTEXPERIENCE_TEST_ENCRYPTION=on AGENTEXPERIENCE_POSTGRES_MAJOR="$major" \
+        dotnet test "$project" --no-build --configuration Release \
+        || { echo "FAILED: $project on PostgreSQL $major, row-level security and crypto-shredding mode"; ok=false; }
+    done
   done
   $ok && echo "PostgreSQL matrix OK: $majors" )
 ```

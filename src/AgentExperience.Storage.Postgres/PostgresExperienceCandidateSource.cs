@@ -201,14 +201,14 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         {
             try
             {
-                (result, disclosures) = await RunSearchAsync(_grants.Available ? SearchSql : SearchExactSql, query, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(_grants.Available ? SearchSql : SearchExactSql, authorization, query, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "candidate search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only. Falling
                 // back narrows the answer and can never return a record this scope did not own.
-                (result, disclosures) = await RunSearchAsync(SearchExactSql, query, cancellationToken).ConfigureAwait(false);
+                (result, disclosures) = await RunSearchAsync(SearchExactSql, authorization, query, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
@@ -279,17 +279,19 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             }
         }
 
-        return await GrantAuditing.RecordAsync(auditing, accesses, cancellationToken).ConfigureAwait(false)
+        return await GrantAuditing.RecordAsync(auditing, authorization, accesses, cancellationToken).ConfigureAwait(false)
             ? result
             : new(ExperienceStoreOutcome.Found, NoCandidates, NoErrors);
     }
 
     private async Task<(ExperienceCandidateSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> RunSearchAsync(
         string sql,
+        AuthorizationContext authorization,
         ExperienceCandidateQuery query,
         CancellationToken cancellationToken)
     {
-        await using var command = _dataSource.CreateCommand(sql);
+        await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+        await using var command = session.CreateCommand(sql);
         var parameters = command.Parameters;
         PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
         parameters.Add(new NpgsqlParameter<string>("task_text", NpgsqlDbType.Text) { TypedValue = query.TaskText });
@@ -301,24 +303,27 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
         var candidates = new List<ExperienceCandidate>();
         var disclosures = new List<ExperienceGrantDisclosure?>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
-            // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
-            if (await PostgresExperienceRecordStore.ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false)
-                is not { } record)
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                continue;
-            }
+                // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
+                if (await PostgresExperienceRecordStore.ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false)
+                    is not { } record)
+                {
+                    continue;
+                }
 
-            candidates.Add(new ExperienceCandidate(
-                record,
-                ReadRelevance(reader),
-                PostgresExperienceRecordStore.ReadSharedByGrant(reader),
-                PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
-            disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(reader));
+                candidates.Add(new ExperienceCandidate(
+                    record,
+                    ReadRelevance(reader),
+                    PostgresExperienceRecordStore.ReadSharedByGrant(reader),
+                    PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
+                disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(reader));
+            }
         }
 
+        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
         return (new(ExperienceStoreOutcome.Found, candidates, NoErrors), disclosures);
     }
 

@@ -27,9 +27,24 @@ public sealed class VectorsFixture : IAsyncLifetime
     private PostgreSqlContainer? _container;
     private NpgsqlDataSource? _owner;
     private NpgsqlDataSource? _dataSource;
+    private NpgsqlDataSource? _raw;
+
+    /// <summary>
+    /// Row-level security mode only: a login role that inherits exactly the application role's privileges and
+    /// holds <c>BYPASSRLS</c>, for the tests' own hand-written SQL. See <see cref="RawDataSource"/>.
+    /// </summary>
+    public const string RawRoleName = "aen_vectors_raw";
 
     /// <summary>The fixture database, connecting as the application role.</summary>
     public NpgsqlDataSource DataSource => _dataSource ?? throw new InvalidOperationException("Fixture not initialized.");
+
+    /// <summary>
+    /// What the tests' own hand-written SQL runs through. Normally it <em>is</em> <see cref="DataSource"/>; in
+    /// row-level security mode (<see cref="RowLevelSecurityMode"/>) it connects as <see cref="RawRoleName"/>, the
+    /// application role's privileges without the policies, because that SQL declares no bounds. The stores always
+    /// run on <see cref="DataSource"/>.
+    /// </summary>
+    public NpgsqlDataSource RawDataSource => _raw ?? throw new InvalidOperationException("Fixture not initialized.");
 
     /// <summary>The fixture database, connecting as the owner role that ran both migrators.</summary>
     public NpgsqlDataSource OwnerDataSource => _owner ?? throw new InvalidOperationException("Fixture not initialized.");
@@ -41,14 +56,19 @@ public sealed class VectorsFixture : IAsyncLifetime
 
         await using (var superuser = NpgsqlDataSource.Create(_container.GetConnectionString()))
         {
-            foreach (var sql in new[]
-            {
+            string[] setup =
+            [
                 $"CREATE ROLE {OwnerRoleName} LOGIN PASSWORD '{RolePassword}'",
                 $"CREATE ROLE {ApplicationRoleName} LOGIN PASSWORD '{RolePassword}'",
                 $"CREATE DATABASE {StoreDatabase} OWNER {OwnerRoleName}",
                 "GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized " +
                 $"TO {OwnerRoleName}",
-            })
+                .. RowLevelSecurityMode.IsOn
+                    ? [$"CREATE ROLE {RawRoleName} LOGIN BYPASSRLS PASSWORD '{RolePassword}'", $"GRANT {ApplicationRoleName} TO {RawRoleName}"]
+                    : Array.Empty<string>(),
+            ];
+
+            foreach (var sql in setup)
             {
                 await using var command = superuser.CreateCommand(sql);
                 await command.ExecuteNonQueryAsync();
@@ -68,6 +88,7 @@ public sealed class VectorsFixture : IAsyncLifetime
         // depending on the Pgvector type mapping being registered.
         _owner = NpgsqlDataSource.Create(ConnectionString(OwnerRoleName));
         _dataSource = NpgsqlDataSource.Create(ConnectionString(ApplicationRoleName));
+        _raw = RowLevelSecurityMode.IsOn ? NpgsqlDataSource.Create(ConnectionString(RawRoleName)) : _dataSource;
 
         await ExperienceSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
         await ExperienceVectorSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
@@ -77,9 +98,44 @@ public sealed class VectorsFixture : IAsyncLifetime
             CancellationToken.None);
     }
 
-    private string ConnectionString(string? username)
+    /// <summary>
+    /// A fresh database in the same container, owned by a fresh owner role that holds <c>SET</c> on the purge markers,
+    /// with the <c>vector</c> extension created in it, and a fresh application role -- nothing migrated. For the tests
+    /// that need a schema other than the fixture's own (story 15.1's migration-order guards).
+    /// </summary>
+    internal async Task<(NpgsqlDataSource Owner, NpgsqlDataSource App, string AppRole)> CreateDatabaseAsync(string purpose)
     {
-        var builder = new NpgsqlConnectionStringBuilder(_container!.GetConnectionString()) { Database = StoreDatabase };
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var owner = $"aen_{purpose}_o_{suffix}";
+        var app = $"aen_{purpose}_a_{suffix}";
+        var database = $"aen_{purpose}_{suffix}";
+        await using (var superuser = NpgsqlDataSource.Create(_container!.GetConnectionString()))
+        {
+            foreach (var sql in new[]
+            {
+                $"CREATE ROLE {owner} LOGIN PASSWORD '{RolePassword}'",
+                $"CREATE ROLE {app} LOGIN PASSWORD '{RolePassword}'",
+                $"CREATE DATABASE {database} OWNER {owner}",
+                $"GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized TO {owner}",
+            })
+            {
+                await using var command = superuser.CreateCommand(sql);
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        await using (var inDatabase = NpgsqlDataSource.Create(ConnectionString(null, database)))
+        await using (var extension = inDatabase.CreateCommand("CREATE EXTENSION IF NOT EXISTS vector"))
+        {
+            await extension.ExecuteNonQueryAsync();
+        }
+
+        return (NpgsqlDataSource.Create(ConnectionString(owner, database)), NpgsqlDataSource.Create(ConnectionString(app, database)), app);
+    }
+
+    private string ConnectionString(string? username, string database = StoreDatabase)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(_container!.GetConnectionString()) { Database = database };
         if (username is not null)
         {
             builder.Username = username;
@@ -91,6 +147,11 @@ public sealed class VectorsFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_raw is not null && !ReferenceEquals(_raw, _dataSource))
+        {
+            await _raw.DisposeAsync();
+        }
+
         if (_dataSource is not null)
         {
             await _dataSource.DisposeAsync();

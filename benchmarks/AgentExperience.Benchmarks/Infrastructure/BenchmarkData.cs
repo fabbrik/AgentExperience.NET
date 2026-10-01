@@ -135,8 +135,7 @@ internal static class BenchmarkData
         if (dataSource is not null && size > 0)
         {
             // Fresh statistics, so the planner sees the table it will be timed against rather than an empty one.
-            await using var analyze = dataSource.CreateCommand("ANALYZE");
-            await analyze.ExecuteNonQueryAsync().ConfigureAwait(false);
+            await BenchmarkPostgres.Current!.AnalyzeAsync(dataSource).ConfigureAwait(false);
         }
 
         return dataset;

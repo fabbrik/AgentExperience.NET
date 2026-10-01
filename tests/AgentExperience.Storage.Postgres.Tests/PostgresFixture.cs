@@ -25,6 +25,12 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// <summary>The application role: owns nothing, holds exactly the manifest.</summary>
     public const string ApplicationRoleName = "aen_fixture_app";
 
+    /// <summary>
+    /// Row-level security mode only: a login role that inherits exactly the application role's privileges and
+    /// holds <c>BYPASSRLS</c>, for the tests' own hand-written SQL. See <see cref="RawDataSource"/>.
+    /// </summary>
+    public const string RawRoleName = "aen_fixture_raw";
+
     /// <summary>The fixture database.</summary>
     public const string StoreDatabase = "aen_fixture_store";
 
@@ -35,9 +41,20 @@ public sealed class PostgresFixture : IAsyncLifetime
     private NpgsqlDataSource? _superuserInStore;
     private NpgsqlDataSource? _owner;
     private NpgsqlDataSource? _dataSource;
+    private NpgsqlDataSource? _raw;
 
     /// <summary>The fixture database, connecting as the application role.</summary>
     public NpgsqlDataSource DataSource => _dataSource ?? throw new InvalidOperationException("Fixture not initialized.");
+
+    /// <summary>
+    /// What the tests' own hand-written SQL -- arranging rows, reading them back, holding a lock, proving a
+    /// privilege or a trigger -- runs through. Normally it <em>is</em> <see cref="DataSource"/>. In row-level
+    /// security mode (<see cref="RowLevelSecurityMode"/>) it connects as <see cref="RawRoleName"/>: the application
+    /// role's privileges exactly, inherited, but not confined to a declared tenant, because that SQL declares none.
+    /// The stores themselves always run on <see cref="DataSource"/>, behind the policies, so a store operation that
+    /// forgot to declare its bounds still sees nothing.
+    /// </summary>
+    public NpgsqlDataSource RawDataSource => _raw ?? throw new InvalidOperationException("Fixture not initialized.");
 
     /// <summary>The fixture database, connecting as the owner role that ran the migrator.</summary>
     public NpgsqlDataSource OwnerDataSource => _owner ?? throw new InvalidOperationException("Fixture not initialized.");
@@ -66,6 +83,25 @@ public sealed class PostgresFixture : IAsyncLifetime
         _superuserInStore = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, username: null));
         _owner = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, OwnerRoleName));
         _dataSource = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, ApplicationRoleName));
+
+        if (RowLevelSecurityMode.IsOn)
+        {
+            foreach (var sql in new[]
+            {
+                $"CREATE ROLE {RawRoleName} LOGIN BYPASSRLS PASSWORD '{RolePassword}'",
+                $"GRANT {ApplicationRoleName} TO {RawRoleName}",
+            })
+            {
+                await using var command = _superuser.CreateCommand(sql);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            _raw = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, RawRoleName));
+        }
+        else
+        {
+            _raw = _dataSource;
+        }
 
         await ExperienceSchemaMigrator.MigrateAsync(_owner, CancellationToken.None);
         await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
@@ -222,7 +258,7 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        foreach (var source in new[] { _dataSource, _owner, _superuserInStore, _superuser })
+        foreach (var source in new[] { ReferenceEquals(_raw, _dataSource) ? null : _raw, _dataSource, _owner, _superuserInStore, _superuser })
         {
             if (source is not null)
             {
