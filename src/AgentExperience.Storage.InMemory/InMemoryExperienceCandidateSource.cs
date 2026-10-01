@@ -25,9 +25,10 @@ namespace AgentExperience.Storage.InMemory;
 /// of five. It lies in (0, 1] for every match, and is 1 when every term is in all three fields.
 /// </para>
 /// <para>
-/// <b>Order and filters.</b> Only records in exactly the query's scope, in one of its eligible statuses, and at or
-/// above its minimum confidence are considered; they are ranked strongest first, then by ID, as the PostgreSQL
-/// candidate source orders ties, and only then cut to the limit.
+/// <b>Order and filters.</b> Only records in exactly the query's scope, in one of its eligible statuses, at or above
+/// its minimum confidence and, when <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/> is set, not
+/// model-authored are considered; they are ranked strongest first, then by ID, as the PostgreSQL candidate source
+/// orders ties, and only then cut to the limit.
 /// </para>
 /// <para>
 /// <b>Not PostgreSQL-compatible.</b> This is not full-text search: there is no stemming ("invoices" does not match
@@ -94,7 +95,11 @@ public sealed class InMemoryExperienceCandidateSource : IExperienceCandidateSour
 
         var statuses = query.EligibleStatuses.ToHashSet();
         var candidates = _store
-            .Select(query.Scope, record => statuses.Contains(record.Status) && record.ReuseConfidence >= query.MinimumConfidence)
+            .Select(
+                query.Scope,
+                record => statuses.Contains(record.Status)
+                    && record.ReuseConfidence >= query.MinimumConfidence
+                    && !(query.ExcludeModelAuthored && IsModelAuthored(record)))
             .Where(indexed => terms.All(indexed.Text.Contains))
             .Select(indexed => new ExperienceCandidate(indexed.Record, Relevance(indexed.Text, terms)))
             .OrderByDescending(candidate => candidate.Relevance)
@@ -104,6 +109,13 @@ public sealed class InMemoryExperienceCandidateSource : IExperienceCandidateSour
 
         return Task.FromResult(new ExperienceCandidateSearchResult(ExperienceStoreOutcome.Found, candidates, []));
     }
+
+    /// <summary>
+    /// Whether the record's reflection was written by a model: it exists and its authorship is anything but
+    /// <see cref="ReflectionAuthorship.Deterministic"/>, so an undefined value counts. Never inferred from the producer.
+    /// </summary>
+    private static bool IsModelAuthored(ExperienceRecord record) =>
+        record.Reflection is { } reflection && reflection.Authorship != ReflectionAuthorship.Deterministic;
 
     private static double Relevance(RecordSearchText text, IReadOnlyList<string> terms)
     {

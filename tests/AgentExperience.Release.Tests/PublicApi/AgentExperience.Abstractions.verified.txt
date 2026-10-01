@@ -120,6 +120,7 @@
         public ExperienceCandidateQuery(AgentExperience.Abstractions.Scope Scope, string TaskText, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses, double MinimumConfidence, int Limit = 50, string? CorrelationId = null) { }
         public string? CorrelationId { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; init; }
+        public bool ExcludeModelAuthored { get; init; }
         public int Limit { get; init; }
         public double MinimumConfidence { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }
@@ -705,6 +706,7 @@
         public ExperienceVectorQuery(AgentExperience.Abstractions.Scope Scope, string ModelId, System.ReadOnlyMemory<float> Vector, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses, double MinimumConfidence, int Limit = 50, string? CorrelationId = null) { }
         public string? CorrelationId { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; init; }
+        public bool ExcludeModelAuthored { get; init; }
         public int Limit { get; init; }
         public double MinimumConfidence { get; init; }
         public string ModelId { get; init; }

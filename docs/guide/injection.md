@@ -77,7 +77,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Approach:` line may show. See [Showing selected argument values](#showing-selected-argument-values). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. |
 | `ReceivingAgent` | none (off) | The receiving agent's tools and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
-| `ModelAuthoredLessons` (since story 14.3) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted, before the record limit. See [Model-authored lessons](#model-authored-lessons). |
+| `ModelAuthoredLessons` (since story 14.3) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since story 14.4); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
 
@@ -91,7 +91,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | A record revoked, re-scoped, re-scored below the confidence floor, aged past `MaxAge`, environment-mismatched, or unreadable since retrieval | It is absent from the block; the omission is recorded with the rule that dropped it and the stored record is untouched |
 | The host's `DecideInjection` denies a record | Absent whatever its stored confidence or status; the denial is recorded and nothing is written |
 | A record's verified approach calls a tool the receiving agent lacks, or one above its maximum risk class | Absent; recorded as `ToolUnavailable` or `RiskClassExceeded`, naming no tool |
-| A model-authored record | With `ModelAuthoredLessons = Include` (the default), injected with its model-written fields between a fixed `Authored:` line and a fixed `End authored:` line; with `Exclude`, absent, recorded as `ModelAuthored`, and taking no record slot |
+| A model-authored record | With `ModelAuthoredLessons = Include` (the default), injected with its model-written fields between a fixed `Authored:` line and a fixed `End authored:` line; with `Exclude`, left out by retrieval (by its sources before their limits, or by the retrieval service, which lists it in `Excluded` as `ModelAuthored`), taking no record slot |
 | More records, or more bytes, than the limits allow | Whole records are dropped — never cut — and each omission is recorded as `OverRecordLimit` or `OverByteBudget` |
 | A reused session: a revision it already holds, a spent session budget, or a record it was given that has since been withdrawn | Not injected again (`AlreadyDelivered`); nothing more once the budget is spent (`OverSessionBudget`, `SessionBudgetExhausted`); a fixed withdrawal notice ahead of any new record (`Retracted`) |
 
@@ -379,19 +379,36 @@ rely on**, and the approval boundary remains the control for any tool call a les
   `Authored:` or `End authored:` is now neutralized like any other field label.
 - **It fails closed.** Any authorship value that is not `Deterministic`, an undefined or future one read back from a
   store included, is labelled and excluded as model-authored.
-- **It can be kept out.** `ModelAuthoredLessons = ModelAuthoredLessonPolicy.Exclude` omits every model-authored record
-  as `InjectionOmissionReason.ModelAuthored`, with no detail. The check runs on the ranked candidates **before** the
-  `Limits.MaxRecords` cut, so model-authored records take no slot and cannot crowd deterministic ones out, and again
-  on the re-read record (in case it changed) before the capability gate and `DecideInjection`. An excluded record is
-  never shown to the host's decision, rendered, charged to the session budget, tracked as delivered, or recorded as a
-  run exposure, and withdraws nothing. It reads the record's own reflection, never its `Producer`. An undefined policy
-  value is refused when the provider is constructed.
-- **What `Exclude` cannot reach.** It chooses among the candidates retrieval returned. When retrieval's candidate
-  window (`RetrieveExperienceRequest.Limit`, or the policy's candidate limit) is filled by model-authored records,
-  deterministic records outside it are not found: leave `Limit` unset when you exclude. Authorship is what the
-  reflector declared and is not covered by provenance signing (KL-18): a record a model wrote without declaring it,
-  such as one the story 14.2 `ChatClientExperienceReflector` wrote before authorship existed, reads as deterministic
-  and is neither labelled nor excluded; the finalization guide shows how to find those records.
+- **It can be kept out.** `ModelAuthoredLessons = ModelAuthoredLessonPolicy.Exclude` keeps every model-authored record
+  out of the block. Since story 14.4 the provider sets `RetrieveExperienceRequest.ExcludeModelAuthored` on the
+  resolved request (it never clears a host's own `true`), and retrieval passes it to every candidate source (the text
+  channel and the vector channel alike), which applies it **before** its own limit, like the status and confidence
+  filters. So retrieval's window (`RetrieveExperienceRequest.Limit`, or the policy's candidate limit) is filled with
+  the strongest deterministic records: five model-authored records that outrank three deterministic ones no longer
+  keep those three out of a limit of three. Every store honours it (PostgreSQL in SQL, through `0021`'s
+  `reflection_model_authored` column; the in-memory store in its filter), and the store conformance suite checks it.
+  Under the out-of-band HNSW index the vector channel can return fewer than its limit, as it can for its other
+  filters (see [Indexing](indexing.md#the-hnsw-index-is-created-out-of-band)).
+- **Retrieval checks what the sources return.** `ExperienceRetrievalService` then excludes any model-authored record a
+  source still returned, failing closed on authorship and keeping records with no reflection, and lists it in
+  `result.Excluded` (and the injection result's `Excluded`) as `RetrievalExclusionReason.ModelAuthored`. It never
+  reaches the ranked result, so it takes no result slot.
+- **And the provider still checks.** Anything that still reaches it — a record that became model-authored between
+  retrieval and its re-read — is omitted as `InjectionOmissionReason.ModelAuthored`, with no detail, on the ranked
+  candidates **before** the `Limits.MaxRecords` cut, and again on the re-read record before the capability gate and
+  `DecideInjection`. An excluded record is never shown to the host's decision, rendered, charged to the session
+  budget, tracked as delivered, or recorded as a run exposure, and withdraws nothing. It reads the record's own
+  reflection, never its `Producer`. An undefined policy value is refused when the provider is constructed.
+- **What `Exclude` cannot reach.** A PostgreSQL row sealed without its authorship flag has no authorship SQL can
+  read, so its source still returns it and it takes a place in that source's candidate window
+  (`RetrievalPolicy.CandidateLimit`); retrieval then excludes it as above. Such rows are those sealed before migration
+  `0021`, those an instance still running the previous build seals during a rolling deploy — until every instance runs
+  this version, newly sealed rows may be unflagged — and any a writer inserts without the flag. Find them with the
+  query in [0021: reflection authorship](postgres-schema.md#0021-reflection-authorship) and revoke, supersede or erase
+  the model-authored ones. Authorship is what the reflector declared and is not covered by provenance signing (KL-18):
+  a record a model wrote without declaring it, such as one the story 14.2 `ChatClientExperienceReflector` wrote before
+  authorship existed, reads as deterministic and is neither labelled nor excluded; the finalization guide shows how to
+  find those records.
 
 A host that wants to treat model-authored records some other way can read `decision.Current.Reflection?.Authorship`
 in `DecideInjection`. The label is still not a control on the model, and no part of this is a control on tool calls:

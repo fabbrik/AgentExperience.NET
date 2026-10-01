@@ -32,7 +32,7 @@ Apply the schema on every deploy, as the owner role of the [two-role deployment]
 and grant the application role its privileges last, so the embedding table is covered:
 
 ```csharp
-await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0019 (no 0014), the base schema
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003, 0005-0019 and 0021 (no 0014), the base schema
 await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004 and 0020, the embedding table and its policies
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
     ownerDataSource, new ExperienceApplicationRoleOptions("agent_experience_app"), cancellationToken);
@@ -288,5 +288,14 @@ It is **optional**: every search is correct without it (pgvector falls back to a
 deployment wants anyway). It changes latency, and it makes search *approximate* — HNSW may miss a true nearest
 neighbour. Building it over many rows takes minutes and locks the table against writes, so run it from a
 maintenance path, never from request handling. `DropHnswIndexAsync` removes it again.
+
+**Filters and the index.** When the planner uses the HNSW index, pgvector walks it for the nearest `hnsw.ef_search`
+entries (40 by default) and applies the search's other predicates — scope, status, the confidence floor, and the
+authorship exclusion when the request asks for it (story 14.4) — to what that walk found. So the vector channel can
+return *fewer* than its limit when many near neighbours are filtered out, model-authored ones included; the exclusion
+is applied before the `LIMIT`, but not before the index's own candidate list. The text channel is unaffected. A host
+that needs the channel to keep looking can raise `hnsw.ef_search`, or, on pgvector 0.8 or later, set
+`hnsw.iterative_scan` (for example `relaxed_order`) for the application role or the database; the library sets
+neither.
 
 How the vector search itself works is in [Retrieval](retrieval.md#the-vector-channel).

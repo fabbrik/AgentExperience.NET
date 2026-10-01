@@ -122,6 +122,80 @@ public class HybridRetrievalTests
         Assert.Equal(FakeEmbeddingGenerator.VectorFor(TaskText, 4).ToArray(), vectorQuery.Vector.ToArray());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task The_authorship_exclusion_is_passed_to_both_channels_exactly_as_the_request_states_it(bool exclude)
+    {
+        // Story 14.4: each source applies the exclusion before its own limit, so retrieval hands it to both, and
+        // leaves it off when the request does.
+        var index = new FakeEmbeddingIndex();
+        var source = new RecordingCandidateSource([]);
+        var service = new ExperienceRetrievalService(
+            source, RetrievalPolicy.Default, RankingWeights.Default, new FrozenClock(Now), index, new FakeEmbeddingGenerator());
+
+        await service.RetrieveAsync(Request() with { ExcludeModelAuthored = exclude });
+
+        Assert.Equal(exclude, Assert.Single(source.Queries).ExcludeModelAuthored);
+        Assert.Equal(exclude, Assert.Single(index.Queries).ExcludeModelAuthored);
+        Assert.False(Request().ExcludeModelAuthored);
+    }
+
+    [Fact]
+    public async Task An_excluding_source_lets_the_request_limit_fill_with_deterministic_records()
+    {
+        // Five model-authored records outrank three deterministic ones. A source that honours the exclusion before
+        // its limit returns only the three, so a request limit of three returns exactly them; without the exclusion
+        // the same limit returns three model-authored records.
+        var model = Enumerable.Range(1, 5).Select(i => Authored(Record(Id(i)), ReflectionAuthorship.Model)).ToList();
+        var deterministic = Enumerable.Range(6, 3).Select(i => Authored(Record(Id(i)), ReflectionAuthorship.Deterministic)).ToList();
+        var ranked = model.Select((record, i) => Candidate(record, 0.99 - (i * 0.01)))
+            .Concat(deterministic.Select((record, i) => Candidate(record, 0.5 - (i * 0.01))))
+            .ToList();
+        var source = new RecordingCandidateSource((query, _) => Task.FromResult(new ExperienceCandidateSearchResult(
+            ExperienceStoreOutcome.Found,
+            [.. ranked
+                .Where(c => !query.ExcludeModelAuthored || c.Record.Reflection?.Authorship == ReflectionAuthorship.Deterministic)
+                .Take(query.Limit)],
+            [])));
+        var service = new ExperienceRetrievalService(source, RetrievalPolicy.Default, RankingWeights.Default, new FrozenClock(Now));
+
+        var excluding = await service.RetrieveAsync(Request(limit: 3) with { ExcludeModelAuthored = true });
+        var including = await service.RetrieveAsync(Request(limit: 3));
+
+        Assert.Equal(deterministic.Select(r => r.ExperienceId), excluding.Records.Select(r => r.Record.ExperienceId));
+        Assert.Equal(model.Take(3).Select(r => r.ExperienceId), including.Records.Select(r => r.Record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task Core_excludes_a_model_authored_record_a_source_returned_despite_the_request_and_keeps_one_with_no_reflection()
+    {
+        // Story 14.4: neither channel honours the exclusion here. Core still leaves out what is model-authored --
+        // failing closed on an undefined value -- whichever channel found it, and itemizes it; a record with no
+        // reflection, and a deterministic one, are ranked as usual.
+        var textModel = Authored(Record(Id(1)), ReflectionAuthorship.Model);
+        var vectorUndefined = Authored(Record(Id(2)), (ReflectionAuthorship)7);
+        var deterministic = Authored(Record(Id(3)), ReflectionAuthorship.Deterministic);
+        var unreflected = Record(Id(4));
+        var service = Service(
+            text: [Candidate(textModel, 0.9), Candidate(deterministic, 0.5)],
+            vector: [Candidate(vectorUndefined, 0.95), Candidate(unreflected, 0.4)]);
+
+        var excluding = await service.RetrieveAsync(Request() with { ExcludeModelAuthored = true });
+        var including = await service.RetrieveAsync(Request());
+
+        Assert.Equal(new[] { Id(3), Id(4) }.Order(), excluding.Records.Select(r => r.Record.ExperienceId).Order());
+        Assert.Equal(
+            new[]
+            {
+                new ExcludedExperience(Id(1), RetrievalExclusionReason.ModelAuthored),
+                new ExcludedExperience(Id(2), RetrievalExclusionReason.ModelAuthored),
+            },
+            excluding.Excluded);
+        Assert.Equal(4, including.Records.Count);
+        Assert.Empty(including.Excluded);
+    }
+
     [Fact]
     public async Task A_record_the_expiry_or_environment_check_removes_is_excluded_whichever_channel_found_it()
     {
@@ -554,6 +628,14 @@ public class HybridRetrievalTests
         Assert.Single(result.Records).Components.Single(c => c.Kind == RankingComponentKind.Relevance).Value;
 
     private static ExperienceCandidate Candidate(ExperienceRecord record, double relevance) => new(record, relevance);
+
+    /// <summary>The record with a reflection of the given authorship.</summary>
+    private static ExperienceRecord Authored(ExperienceRecord record, ReflectionAuthorship authorship) => record with
+    {
+        Reflection = new Reflection(
+            Guid.NewGuid(), record.SourceRunId, "Check the lock table first.", [], [], [], [], null, [],
+            TaskVerificationStatus.Verified, 1, "v1", "tests", Now) { Authorship = authorship },
+    };
 
     private static ExperienceRetrievalService TextOnlyService() => new(
         new RecordingCandidateSource([Candidate(Record(Id(1)), 0.4)]),

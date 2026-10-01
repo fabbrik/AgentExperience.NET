@@ -6,7 +6,65 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+Upgrading from `0.1.0-preview.5` applies migration `0021`. Run the migrator before deploying the new build. **It holds
+an `ACCESS EXCLUSIVE` lock on `experience_records`, blocking every read and write of the table, until its backfill
+commits, and it rewrites every row it backfills (recomputing its stored `search_vector`)**: every live record in a
+crypto-shredding deployment, usually few in a plaintext one. It runs under the command timeout (30 seconds by
+default). Above about 20,000 rows to rewrite, take the two-step route in
+[0021: reflection authorship](docs/guide/postgres-schema.md#0021-reflection-authorship): the script by hand without its
+backfill, then the backfill in batches. During a rolling deploy, instances still on `0.1.0-preview.5` seal new records
+without the flag; see the residual below.
+
+### Exclusion of model-authored lessons moves into retrieval (story 14.4)
+
+- **The problem it fixes.** With `ModelAuthoredLessons = Exclude`, story 14.3 dropped model-authored records only after
+  retrieval had applied its limit, so when model-authored records filled the candidate window
+  (`RetrieveExperienceRequest.Limit`, or the policy's candidate limit), deterministic records below it were never
+  found and fewer lessons were injected than existed. No model-written text leaked.
+- **Port.** `ExperienceCandidateQuery` and `ExperienceVectorQuery` gain an init property `ExcludeModelAuthored`
+  (default `false`). When set, a source leaves out every record whose reflection authorship is anything but
+  `Deterministic` (fail closed on undefined values; a record with no reflection is kept), **before** its limit, like
+  the status and confidence filters. A source that cannot honour it must answer `Invalid` rather than ignore it. The
+  store conformance suite has a new rule: with model-authored records ranked above deterministic ones and
+  `Limit = N`, an excluding search returns the top N deterministic records; a non-excluding search is unchanged. The
+  in-memory and PostgreSQL stores pass it, and the end-to-end sample's in-memory double honours it too.
+- **Retrieval.** `RetrieveExperienceRequest` gains an init property `ExcludeModelAuthored` (default `false`), which
+  `ExperienceRetrievalService` passes to the text channel and, when hybrid, to the vector channel. It then excludes
+  any model-authored record a source still returned (fail closed; a record with no reflection is kept), listing it in
+  `Excluded` under the new `RetrievalExclusionReason.ModelAuthored`. With the property unset, every query and every
+  result is exactly what it was.
+- **Injection.** `ExperienceContextProvider` sets it on the resolved request when `ModelAuthoredLessons = Exclude`
+  (and never clears a host's own `true`). It keeps its own check before the record limit and after the re-read, and
+  `InjectionOmissionReason.ModelAuthored` for anything it still drops; since retrieval now excludes such records
+  first, they appear in the injection result's `Excluded` instead of `Omitted`.
+- **Migration `0021_reflection_authorship`** (`PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName`): the
+  nullable `experience_records.reflection_model_authored` flag, added with a catalog-only `false` default that is then
+  dropped; `agent_experience.payload_reflection_model_authored(payload, payload_version)`, the one rule (`NULL` for a
+  sealed payload; otherwise `false` when the reflection is null, has no `authorship` member, or one that is null or
+  `Deterministic` in any ASCII case, and `true` for anything else, an unreadable payload of an unknown version
+  included); a backfill of only the live rows that differ from `false` (sealed rows to `NULL`, model-authored
+  plaintext rows to `true`); a `BEFORE INSERT OR UPDATE` trigger that derives it for every live unsealed row on every
+  write and gives every tombstone the fixed `false`; and a `NOT VALID` check that a tombstone carries nothing else. The
+  store writes it from the reflection for a sealed record, and the application role cannot update it. The PostgreSQL
+  text search and the vectors package's search and compatibility probes filter `reflection_model_authored IS NOT TRUE`
+  only when asked. No index, no privilege change; the row-level security policies cover it as they cover every
+  column. Under the out-of-band HNSW index the vector channel applies it after the index walk, as it does its other
+  filters, so it can return fewer than its limit; `hnsw.iterative_scan` (pgvector 0.8+) is the host's lever.
+- **Residual: a sealed row stored without its flag.** A row sealed before `0021` (a migration cannot open it), one an
+  instance still on `0.1.0-preview.5` seals during a rolling deploy, or one any writer inserts without the flag keeps
+  `NULL`, and an excluding search still returns it, so it takes a place in its source's candidate window; the
+  retrieval service opens it and excludes it. Find them with the query in
+  [0021: reflection authorship](docs/guide/postgres-schema.md#0021-reflection-authorship), read each through the
+  store, and revoke, supersede or erase the model-authored ones. In crypto-shredding mode the flag is one bit of
+  plaintext metadata about a sealed lesson, like the status.
+- **Tests.** The conformance rule; Core tests that both channels receive the flag and that Core excludes what a
+  source returns anyway; injection tests over a fake source, the in-memory store, the sample's double and a real
+  PostgreSQL (five model-authored records ranked above three deterministic ones, retrieval limit three); PostgreSQL
+  tests of the write, the trigger (unknown payload versions included), the application role's refusal, sealing,
+  erasure, grant-shared records, the exact-scope fallback, the backfill on a pre-`0021` database (null, case, number,
+  object and unknown values) and the sealed residual; vector-channel and hybrid tests, grant-shared included; and an
+  upgrade-suite check that a test-written plaintext payload saying `Model` in a `0.1.0-preview.2` database is flagged
+  and left out, while every sealed row stays unknown and every tombstone `false`.
 
 ## 0.1.0-preview.5
 

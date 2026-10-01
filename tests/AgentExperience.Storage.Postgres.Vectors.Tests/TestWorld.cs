@@ -95,7 +95,8 @@ internal sealed class TestWorld
         string? lesson,
         ExperienceStatus status = ExperienceStatus.Validated,
         double confidence = 0.8,
-        Scope? scope = null)
+        Scope? scope = null,
+        ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic)
     {
         var id = Guid.NewGuid();
         var record = new ExperienceRecord(
@@ -111,7 +112,7 @@ internal sealed class TestWorld
                 ? null
                 : new Reflection(
                     Guid.NewGuid(), Guid.NewGuid(), lesson, [], [], [], [], null, [],
-                    TaskVerificationStatus.Verified, 1, "v1", "tests", Stamp),
+                    TaskVerificationStatus.Verified, 1, "v1", "tests", Stamp) { Authorship = authorship },
             Environment: new EnvironmentFingerprint("worker-01", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
             Provenance: new Provenance("tests", null, Stamp, null),
             Status: status,

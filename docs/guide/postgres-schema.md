@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
-**In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003` and
-`0005`–`0019` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+**In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
+`0005`–`0019` and `0021` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -539,6 +539,79 @@ message naming it when the base migration has not run. Like `0019` it switches n
 Nothing in the base package creates an extension, and nothing in it reads or writes the embedding table — except the
 erasure, which deletes a record's embedding when the table exists (guarded by `to_regclass`).
 
+### 0021: reflection authorship
+
+`0021_reflection_authorship.sql` keeps each record's reflection authorship beside its payload (story 14.4), so an
+excluding search (`ExperienceCandidateQuery.ExcludeModelAuthored`, which retrieval sets from
+`RetrieveExperienceRequest.ExcludeModelAuthored` and injection sets under `ModelAuthoredLessons = Exclude`) can leave
+model-authored records out in SQL, **before** its `LIMIT`. See
+[Model-authored lessons](injection.md#model-authored-lessons).
+
+- **`experience_records.reflection_model_authored boolean NULL`.** On a live row: `true` when the record has a
+  reflection whose authorship is anything but `Deterministic` (an undefined value counts), `false` when it has a
+  deterministic reflection or none, `NULL` when it is not known. On a tombstone: the fixed `false`, content-free like
+  its zeroed counters. It is plaintext in both modes: in crypto-shredding mode it is one bit of metadata about the
+  sealed lesson, like the status, and backups and dead tuples keep it as they keep the status. It is added with
+  `DEFAULT false` and the default is dropped at once, so existing rows read `false` without being rewritten, and a
+  row a previous build inserts later without the column gets `NULL`.
+- **`agent_experience.payload_reflection_model_authored(payload, payload_version)`**, the one rule. A sealed payload
+  (version 2) gives `NULL`. Any other version is read as version 1, never more leniently than the C# reader: `false`
+  when the reflection is JSON `null`, or has no `authorship` member, or one that is JSON `null`, or a string equal to
+  `Deterministic` ignoring ASCII case; `true` for anything else — an unknown string, a number, an object, a reflection
+  that is not an object, a payload with no `reflection` member, and so any payload of a version the script does not
+  know that is not shaped like version 1.
+- **The backfill** writes only the live rows whose value under the rule is not the `false` they already read: every
+  sealed row (`NULL`), every model-authored or unreadable plaintext row (`true`). Tombstones keep `false`.
+- **A `BEFORE INSERT OR UPDATE` trigger**, `experience_records_authorship` (`ENABLE ALWAYS`), derives the flag of every
+  live unsealed row from its payload on every write, whatever the writer supplied, so the store's plaintext insert is
+  unchanged and no writer can label such a row against its payload. A sealed row keeps what its writer supplied: the
+  store writes it from the record's reflection when it seals a record, and `0016`'s sealing function leaves the
+  plaintext row's flag as it was. Any tombstone gets `false`, so the erasure needs no change, and the `NOT VALID` check
+  `experience_records_authorship_only_when_live` keeps every other value off a tombstone.
+- **The filter** is `reflection_model_authored IS NOT TRUE`, in the text channel's search and the vectors package's
+  search and compatibility probes. It leaves out `true` only. Under the out-of-band HNSW index the vector channel
+  applies it, like its other filters, to the neighbours the index walk produced, so it can return fewer than its limit
+  (see [Indexing](indexing.md#the-hnsw-index-is-created-out-of-band)).
+- **The residual: a sealed row stored without its flag.** That is a row sealed before `0021` (the migration cannot open
+  it), a row an instance still running the previous build seals during a rolling deploy — until every instance runs
+  this version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. An excluding search
+  still returns it, so it takes a place in the source's candidate window (`RetrievalPolicy.CandidateLimit`); the
+  retrieval service opens it, excludes it as `RetrievalExclusionReason.ModelAuthored` when a model wrote it, and the
+  request's own `Limit` still fills. To clear them, find them, read each through the store, and revoke, supersede or
+  erase the model-authored ones:
+
+  ```sql
+  SELECT experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id
+  FROM agent_experience.experience_records
+  WHERE deleted_at IS NULL AND payload_version = 2 AND reflection_model_authored IS NULL;
+  ```
+
+- No index: the flag is a filter on rows the search, scope and HNSW indexes already select. No table, so the
+  application role's manifest is unchanged: its table-level `INSERT` and `SELECT` cover the column, and its
+  column-level `UPDATE` does not name it, so the application role cannot write it. `0019`'s policies are per row and
+  cover it. Both functions are `SECURITY INVOKER`.
+- **Locks and rewrites.** `ADD COLUMN` takes an `ACCESS EXCLUSIVE` lock on `experience_records`, which blocks every read
+  and write of the table, and the migrator runs the whole script in one transaction, so the lock is held until the
+  backfill commits. Every row the backfill updates is rewritten as a new tuple, and PostgreSQL recomputes its stored
+  generated `search_vector`; the old tuples are dead until `VACUUM`. The script runs under the data source's command
+  timeout (30 seconds by default), and a backfill that does not finish inside it rolls the whole script back. In a
+  plaintext deployment the backfill usually rewrites few rows; in a crypto-shredding deployment it rewrites every
+  live record.
+- **The two-step route.** Count the rows the backfill would rewrite (an upper bound):
+
+  ```sql
+  SELECT count(*) FROM agent_experience.experience_records
+  WHERE deleted_at IS NULL AND (payload_version <> 1 OR payload -> 'reflection' ? 'authorship');
+  ```
+
+  Up to about 20,000, let the migrator run the script. Above that, or when the table cannot be locked for as long
+  as the rewrite takes (as a rough guide a few thousand rows a second, slower with long task text), apply the script
+  by hand without its backfill `UPDATE` (an instant's lock, nothing rewritten), run the backfill in batches of
+  1,000–5,000 rows by `experience_id`, each its own transaction, with the statements in the script's header, and then
+  run the migrator, which re-applies the idempotent script, finds nothing to backfill and journals it. Until the
+  batches finish, rows not yet backfilled read `false`: a model-authored plaintext row is not left out by SQL (the
+  retrieval service still excludes it), and an unflagged sealed row is not yet found by the query above.
+
 ## Script comments that were written before the work they point at shipped
 
 Because a journaled script is never edited, a few script *comments* still describe later work as future work, and
@@ -576,6 +649,7 @@ what each one now means. None of them changes what a script does; they are comme
   or a non-empty list.
 - **Search order** is descending `ts_rank_cd` relevance, then `ExperienceId` in PostgreSQL `uuid` byte order. `Limit`
   must be from 1 to 200 (default 50), and `EligibleStatuses` must be non-empty — an empty set is `Invalid` rather
-  than widened to "every status", so a caller can never accidentally ask for records it considers ineligible.
+  than widened to "every status", so a caller can never accidentally ask for records it considers ineligible. With
+  `ExcludeModelAuthored`, `0021`'s flag filters before the limit, like the status list and the confidence floor.
 - PostgreSQL cannot store the NUL character (U+0000) in `text` or `jsonb`, so a record or scope containing it is
   `Invalid` and never reaches the database.

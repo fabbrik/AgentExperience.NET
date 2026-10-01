@@ -1,5 +1,6 @@
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Injection;
+using AgentExperience.Storage.InMemory;
 using Microsoft.Agents.AI;
 
 namespace AgentExperience.MicrosoftAgentFramework.Tests;
@@ -7,9 +8,11 @@ namespace AgentExperience.MicrosoftAgentFramework.Tests;
 /// <summary>
 /// Story 14.3: a model-authored record is labelled in the Historical Reference with one fixed line, a
 /// deterministic one renders byte for byte as before, and <see cref="ModelAuthoredLessonPolicy.Exclude"/> keeps
-/// model-authored records out of the block as <see cref="InjectionOmissionReason.ModelAuthored"/>. Each test
-/// goes through a real <see cref="ChatClientAgent"/> and a real <see cref="ExperienceRetrievalService"/> over the
-/// fake world.
+/// model-authored records out of the block as <see cref="InjectionOmissionReason.ModelAuthored"/>. Story 14.4: with
+/// <c>Exclude</c>, the request asks retrieval to leave them out before its limit, so they cannot fill the candidate
+/// window. Each test goes through a real <see cref="ChatClientAgent"/> and a real <see cref="ExperienceRetrievalService"/>
+/// over the fake world, which by default ignores the request's exclusion so the provider's own check is exercised, or
+/// over the in-memory store.
 /// </summary>
 public class ModelAuthoredInjectionTests
 {
@@ -64,7 +67,11 @@ public class ModelAuthoredInjectionTests
 
         Assert.Equal(1, include.InjectedText()!.Split('\n').Count(line => line == HistoricalReferenceWriter.ModelAuthoredLine));
         Assert.Equal([InjectionRecords.Id(2)], exclude.Last.InjectedExperienceIds);
-        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.ModelAuthored), Assert.Single(exclude.Last.Omitted));
+
+        // Since story 14.4 retrieval itself leaves it out (the fake source ignores the request, so Core does), and
+        // says so; it never reaches the provider's selection.
+        Assert.Equal(new ExcludedExperience(InjectionRecords.Id(1), RetrievalExclusionReason.ModelAuthored), Assert.Single(exclude.Last.Excluded));
+        Assert.Empty(exclude.Last.Omitted);
     }
 
     [Fact]
@@ -89,9 +96,12 @@ public class ModelAuthoredInjectionTests
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
 
         Assert.Equal([InjectionRecords.Id(6), InjectionRecords.Id(7), InjectionRecords.Id(8)], harness.Last.InjectedExperienceIds);
-        Assert.Equal(5, harness.Last.Omitted.Count);
-        Assert.All(harness.Last.Omitted, omission => Assert.Equal(InjectionOmissionReason.ModelAuthored, omission.Reason));
-        Assert.DoesNotContain(harness.Last.Omitted, omission => omission.Reason == InjectionOmissionReason.OverRecordLimit);
+
+        // Since story 14.4 retrieval leaves them out (Core does, as the fake source ignores the request), so none
+        // takes a slot or reaches the provider's selection.
+        Assert.Equal(5, harness.Last.Excluded.Count);
+        Assert.All(harness.Last.Excluded, exclusion => Assert.Equal(RetrievalExclusionReason.ModelAuthored, exclusion.Reason));
+        Assert.Empty(harness.Last.Omitted);
     }
 
     [Fact]
@@ -175,9 +185,10 @@ public class ModelAuthoredInjectionTests
 
         Assert.Equal(InjectionOutcome.Injected, harness.Last.Outcome);
         Assert.Equal([InjectionRecords.Id(2)], harness.Last.InjectedExperienceIds);
-        var omission = Assert.Single(harness.Last.Omitted);
-        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.ModelAuthored), omission);
-        Assert.Null(omission.Detail);
+
+        // Since story 14.4 retrieval leaves it out, and says only which record and why.
+        Assert.Equal(new ExcludedExperience(InjectionRecords.Id(1), RetrievalExclusionReason.ModelAuthored), Assert.Single(harness.Last.Excluded));
+        Assert.Empty(harness.Last.Omitted);
         Assert.DoesNotContain("MODEL-LESSON-MARKER", harness.InjectedText(), StringComparison.Ordinal);
         Assert.DoesNotContain("Authored:", harness.InjectedText(), StringComparison.Ordinal);
         Assert.Equal([InjectionRecords.Id(2)], decided);
@@ -193,7 +204,7 @@ public class ModelAuthoredInjectionTests
 
         Assert.Null(harness.InjectedText());
         Assert.Empty(harness.Last.InjectedExperienceIds);
-        Assert.Equal(InjectionOmissionReason.ModelAuthored, Assert.Single(harness.Last.Omitted).Reason);
+        Assert.Equal(RetrievalExclusionReason.ModelAuthored, Assert.Single(harness.Last.Excluded).Reason);
     }
 
     [Fact]
@@ -238,6 +249,135 @@ public class ModelAuthoredInjectionTests
         Assert.Contains(nameof(ExperienceInjectionOptions.ModelAuthoredLessons), error.ParamName, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(ModelAuthoredLessonPolicy.Include, false, false)]
+    [InlineData(ModelAuthoredLessonPolicy.Exclude, false, true)]
+    [InlineData(ModelAuthoredLessonPolicy.Include, true, true)]
+    [InlineData(ModelAuthoredLessonPolicy.Exclude, true, true)]
+    public async Task Exclude_asks_retrieval_to_leave_model_authored_records_out_and_never_switches_a_host_s_request_off(
+        ModelAuthoredLessonPolicy policy,
+        bool hostExcludes,
+        bool expected)
+    {
+        var harness = new Harness { Policy = policy, HostExcludes = hostExcludes };
+        harness.World.Publish(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic));
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal(expected, harness.World.LastQuery!.ExcludeModelAuthored);
+    }
+
+    [Fact]
+    public async Task Exclude_fills_the_retrieval_window_with_deterministic_records_when_the_source_honours_it()
+    {
+        // Five model-authored records outrank three deterministic ones, and the request's retrieval limit is three.
+        // Before story 14.4 retrieval returned the three strongest model-authored records and injection dropped them,
+        // so nothing was injected. Now the source leaves them out before its limit.
+        var harness = new Harness { Policy = ModelAuthoredLessonPolicy.Exclude, RequestLimit = 3 };
+        harness.World.HonoursAuthorshipExclusion = true;
+        PublishFiveModelAboveThreeDeterministic(harness.World);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([InjectionRecords.Id(6), InjectionRecords.Id(7), InjectionRecords.Id(8)], harness.Last.InjectedExperienceIds);
+        Assert.Empty(harness.Last.Omitted);
+        Assert.DoesNotContain("Authored:", harness.InjectedText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_model_authored_record_a_source_still_returns_is_excluded_by_retrieval_and_the_limit_still_fills()
+    {
+        // A source that keeps model-authored records despite the exclusion -- one that does not honour it, or a
+        // PostgreSQL row sealed without its flag -- returns them within its own window; Core drops them before the
+        // request's limit, so the three deterministic records are still the ones injected.
+        var harness = new Harness { Policy = ModelAuthoredLessonPolicy.Exclude, RequestLimit = 3 };
+        PublishFiveModelAboveThreeDeterministic(harness.World);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.True(harness.World.LastQuery!.ExcludeModelAuthored);
+        Assert.Equal([InjectionRecords.Id(6), InjectionRecords.Id(7), InjectionRecords.Id(8)], harness.Last.InjectedExperienceIds);
+        Assert.Equal(5, harness.Last.Excluded.Count);
+        Assert.All(harness.Last.Excluded, exclusion => Assert.Equal(RetrievalExclusionReason.ModelAuthored, exclusion.Reason));
+        Assert.Empty(harness.Last.Omitted);
+    }
+
+    [Fact]
+    public async Task A_record_that_turns_model_authored_between_retrieval_and_the_re_read_is_omitted_by_the_provider()
+    {
+        // The provider's own check after the re-read: retrieval ranked a deterministic snapshot, the store now holds a
+        // model-authored record under the same ID. It is omitted as ModelAuthored, with no detail, and never rendered.
+        var harness = new Harness { Policy = ModelAuthoredLessonPolicy.Exclude };
+        harness.World.Index(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), relevance: 1d);
+        harness.World.Store(Record(InjectionRecords.Id(1), ReflectionAuthorship.Model, lesson: "MODEL-LESSON-MARKER"));
+        harness.World.Publish(Record(InjectionRecords.Id(2), ReflectionAuthorship.Deterministic), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([InjectionRecords.Id(2)], harness.Last.InjectedExperienceIds);
+        var omission = Assert.Single(harness.Last.Omitted);
+        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.ModelAuthored), omission);
+        Assert.Null(omission.Detail);
+        Assert.DoesNotContain("MODEL-LESSON-MARKER", harness.InjectedText(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Over_the_in_memory_store_retrieval_and_injection_return_exactly_the_top_deterministic_records(bool throughInjection)
+    {
+        var store = new InMemoryExperienceRecordStore(new FrozenTimeProvider(InjectionRecords.Now));
+        var write = new AuthorizationContext("tenant-1", "host", ["experience:write"], DateTimeOffset.UnixEpoch);
+        for (var i = 1; i <= 5; i++)
+        {
+            // Every query term in the task ID too, so each outranks every deterministic record below.
+            var record = Record(InjectionRecords.Id(i), ReflectionAuthorship.Model) with { TaskId = "refund-ticket-stuck-lock" };
+            Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(write, record, CancellationToken.None)).Outcome);
+        }
+
+        for (var i = 6; i <= 8; i++)
+        {
+            Assert.Equal(
+                ExperienceStoreOutcome.Created,
+                (await store.CreateAsync(write, Record(InjectionRecords.Id(i), ReflectionAuthorship.Deterministic), CancellationToken.None)).Outcome);
+        }
+
+        var deterministic = new[] { InjectionRecords.Id(6), InjectionRecords.Id(7), InjectionRecords.Id(8) };
+        var retrieval = new ExperienceRetrievalService(
+            new InMemoryExperienceCandidateSource(store), RetrievalPolicy.Default, RankingWeights.Default, new FrozenTimeProvider(InjectionRecords.Now));
+        var request = new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", Limit: 3);
+
+        if (!throughInjection)
+        {
+            var excluding = await retrieval.RetrieveAsync(request with { ExcludeModelAuthored = true });
+            var including = await retrieval.RetrieveAsync(request);
+
+            Assert.Equal(deterministic, excluding.Records.Select(r => r.Record.ExperienceId));
+            Assert.Equal([InjectionRecords.Id(1), InjectionRecords.Id(2), InjectionRecords.Id(3)], including.Records.Select(r => r.Record.ExperienceId));
+            return;
+        }
+
+        var harness = new Harness { Policy = ModelAuthoredLessonPolicy.Exclude, RequestLimit = 3, Retrieval = retrieval, Store = store };
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal(deterministic, harness.Last.InjectedExperienceIds);
+        Assert.Empty(harness.Last.Omitted);
+    }
+
+    private static void PublishFiveModelAboveThreeDeterministic(FakeExperienceWorld world)
+    {
+        for (var i = 1; i <= 5; i++)
+        {
+            world.Publish(Record(InjectionRecords.Id(i), ReflectionAuthorship.Model), relevance: 1d - (i * 0.01));
+        }
+
+        for (var i = 6; i <= 8; i++)
+        {
+            world.Publish(Record(InjectionRecords.Id(i), ReflectionAuthorship.Deterministic), relevance: 0.5d - (i * 0.01));
+        }
+    }
+
     private static ExperienceRecord Record(Guid id, ReflectionAuthorship authorship, string lesson = "Check the lock table before retrying the refund.")
     {
         var record = InjectionRecords.Record(id, TestScope, lesson: lesson);
@@ -257,6 +397,18 @@ public class ModelAuthoredInjectionTests
         public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
 
         public List<Guid>? Decided { get; set; }
+
+        /// <summary>Whether the host's own request already asks retrieval to exclude model-authored records.</summary>
+        public bool HostExcludes { get; init; }
+
+        /// <summary>The request's retrieval limit; <see langword="null"/> leaves it to the policy.</summary>
+        public int? RequestLimit { get; init; }
+
+        /// <summary>The retrieval service to use; <see langword="null"/> is one over <see cref="World"/>.</summary>
+        public ExperienceRetrievalService? Retrieval { get; init; }
+
+        /// <summary>The store the provider re-reads through; <see langword="null"/> is <see cref="World"/>.</summary>
+        public IExperienceRecordStore? Store { get; init; }
 
         public ExperienceInjectionResult Last
         {
@@ -279,11 +431,14 @@ public class ModelAuthoredInjectionTests
         {
             var clock = new FrozenTimeProvider(InjectionRecords.Now);
             return new(
-                new ExperienceRetrievalService(World, RetrievalPolicy.Default, RankingWeights.Default, clock),
-                World,
+                Retrieval ?? new ExperienceRetrievalService(World, RetrievalPolicy.Default, RankingWeights.Default, clock),
+                Store ?? World,
                 new ExperienceInjectionOptions
                 {
-                    ResolveRequest = _ => new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
+                    ResolveRequest = _ => new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: "corr-1", Limit: RequestLimit)
+                    {
+                        ExcludeModelAuthored = HostExcludes,
+                    },
                     TimeProvider = clock,
                     ModelAuthoredLessons = Policy,
                     Limits = Limits,

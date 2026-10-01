@@ -56,15 +56,17 @@ Nothing is scored before it is known to be reusable.
 | Scope | SQL | Only records in the request's *exact* scope (or readable through an active [sharing grant](sharing.md)); a foreign scope reveals nothing |
 | Status | SQL | Only `Validated` and `Reinforced`. `Candidate`, `Quarantined`, `Contested`, `Stale`, `Superseded`, and `Revoked` are never returned, whatever their text match |
 | Reuse confidence | SQL | Below `RetrievalPolicy.MinimumConfidence` (default 0.5) is excluded |
+| Authorship | SQL, then Core | Only when `RetrieveExperienceRequest.ExcludeModelAuthored` is set (story 14.4): a record whose reflection a model wrote is excluded by each source before its limit, and Core excludes, as `ModelAuthored`, any a source still returned (a PostgreSQL row sealed without its authorship flag). Off by default. See [Model-authored lessons](injection.md#model-authored-lessons) |
 | Text match | SQL | PostgreSQL full-text search over task ID, task summary, and reflection lesson (analyzed up to 100,000 characters) |
 | Vector match | SQL | pgvector cosine distance over the embedding of those same three fields (embedded up to 8,192 characters), filtered to the query's own model and dimension |
 | Expiry | Core | Last lifecycle activity older than `RetrievalPolicy.MaxAge` is excluded. `null` (the default) means no expiry |
 | Environment | Core | Every required attribute must equal the record's `EnvironmentFingerprint.Metadata` entry; a missing key excludes the record. A request with no required attributes sets `EnvironmentUnrestricted` on the result |
 
-Scope, status, and the confidence floor are pushed into **both** channels as the same predicates, so neither can
-return something the other would have filtered out.
+Scope, status, the confidence floor and, when the request asks for it, the authorship exclusion are pushed into
+**both** channels as the same predicates, before each channel's limit, so neither can return something the other
+would have filtered out.
 
-`result.Excluded` itemizes what the **Core** checks removed — expiry and environment — so "nothing matched" is
+`result.Excluded` itemizes what the **Core** checks removed — expiry, environment, and a model-authored record a source returned despite the exclusion — so "nothing matched" is
 distinguishable from "something matched but was not reusable here". It is deliberately not a complete account of
 everything filtered: scope, status, and the confidence floor are applied in SQL, so records they exclude never reach
 Core and are never listed. That split is the point — a foreign-scope or revoked record must not be observable, even

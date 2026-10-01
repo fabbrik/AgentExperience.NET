@@ -14,7 +14,8 @@ namespace AgentExperience.Sample.EndToEnd.Doubles;
 /// record" step, and why the seven stages are identical in both modes.
 /// </para>
 /// <para>
-/// The scope, status, and confidence filters below are the ones the real adapter applies in SQL.
+/// The scope, status, confidence and (when the query asks for it) authorship filters below are the ones the real
+/// adapter applies in SQL, before the limit.
 /// Word overlap is not a text index: the real adapter ranks with PostgreSQL full-text search, so
 /// the relevance numbers -- and therefore the ranked score -- differ between the two modes. Nothing
 /// else does.
@@ -43,7 +44,12 @@ internal sealed class InMemoryCandidateSource(InMemoryRecordStore store) : IExpe
         var candidates = store.Snapshot()
             .Where(record => record.Scope == query.Scope
                 && query.EligibleStatuses.Contains(record.Status)
-                && record.ReuseConfidence >= query.MinimumConfidence)
+                && record.ReuseConfidence >= query.MinimumConfidence
+                // Story 14.4: fail closed, as the port asks -- any authorship but Deterministic is model-authored, and
+                // a record with no reflection is kept.
+                && !(query.ExcludeModelAuthored
+                    && record.Reflection is { } reflection
+                    && reflection.Authorship != ReflectionAuthorship.Deterministic))
             .Select(record => new ExperienceCandidate(record, Relevance(record, wanted)))
             .Where(candidate => candidate.Relevance > 0d)
             .OrderByDescending(candidate => candidate.Relevance)

@@ -17,9 +17,9 @@ namespace AgentExperience.Storage.Postgres;
 /// <para>
 /// <b>What runs in SQL.</b> The scope predicate -- including any active sharing grant, through
 /// <see cref="PostgresExperienceRecordStore.ReadableRecordScopePredicate"/> -- the status filter, the
-/// confidence floor, the text match, and the limit. Nothing else: expiry and environment
-/// compatibility are Core's decisions, made over what comes back, because they depend on policy and
-/// on the request's required attributes rather than on stored state alone.
+/// confidence floor, the authorship exclusion when the query asks for it, the text match, and the limit.
+/// Nothing else: expiry and environment compatibility are Core's decisions, made over what comes back,
+/// because they depend on policy and on the request's required attributes rather than on stored state alone.
 /// </para>
 /// <para>
 /// <b>A granted record is a candidate on the same terms as an owned one.</b> Widening happens in the
@@ -32,6 +32,15 @@ namespace AgentExperience.Storage.Postgres;
 /// normalization flag 32 divides the raw rank by itself plus one, so the reported relevance is
 /// already in [0, 1). It is a within-search measure: two records' relevances are comparable to each
 /// other, not to a relevance from a different query.
+/// </para>
+/// <para>
+/// <b>The authorship exclusion</b> (<see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>, story 14.4) reads
+/// <c>0021</c>'s plaintext flag, so it runs before the limit in both modes. It leaves out records the flag marks
+/// model-authored and keeps those it does not know: a sealed row stored without its flag -- sealed before <c>0021</c>,
+/// whose payload the migration could not open, sealed during a rolling deploy by an instance still on the previous
+/// build, or written by any writer that left the flag out -- is still returned by an excluding search even when a
+/// model wrote it. That is the one documented exception to the port's contract; Core's retrieval service excludes
+/// such a record once it is opened. docs/guide/postgres-schema.md gives the query that finds them.
 /// </para>
 /// <para>
 /// This source reads and never writes. It needs <c>SELECT</c> on
@@ -96,7 +105,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     private const string SearchFromWithGrant =
         $" FROM {PostgresExperienceRecordStore.Table} r {PostgresExperienceRecordStore.PermittingGrantJoin} WHERE ";
 
-    private const string SearchFilters =
+    private const string SearchFilterHead =
         // A tombstone carries no payload, so it is not a candidate: its generated search_vector holds
         // only the deletion placeholder, and a row that matched it would come back with nothing in it.
         //
@@ -109,9 +118,27 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         // trigger clears a sealed record's search_vector_sealed on the same transition.
         $" AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
         "AND status = ANY(@statuses) " +
-        "AND reuse_confidence >= @min_confidence " +
+        "AND reuse_confidence >= @min_confidence ";
+
+    private const string SearchFilterTail =
         $"AND {MatchPredicate} " +
         $"ORDER BY {RelevanceColumn} DESC, experience_id LIMIT @limit";
+
+    private const string SearchFilters = SearchFilterHead + SearchFilterTail;
+
+    /// <summary>
+    /// The authorship exclusion (story 14.4), <c>0021</c>'s flag, applied before the limit like the status filter and
+    /// the confidence floor. It leaves out <c>true</c> only: <c>NULL</c> is a sealed row stored without its flag, whose
+    /// authorship SQL cannot read, and it stays a candidate for the consumer to check once it is opened. It is
+    /// <see cref="ModelAuthoredPredicate"/>, unqualified, which resolves to <c>r</c> here as every column does.
+    /// </summary>
+    private const string ExcludingSearchFilters = SearchFilterHead + "AND " + ModelAuthoredPredicate + " " + SearchFilterTail;
+
+    /// <summary>
+    /// "this record's reflection was not written by a model, as far as the row says": <c>0021</c>'s flag is not
+    /// <c>true</c>. Shared with the vectors package's search, which qualifies the column itself.
+    /// </summary>
+    internal const string ModelAuthoredPredicate = PostgresExperienceRecordStore.ModelAuthoredColumn + " IS NOT TRUE";
 
     private const string SearchSql =
         SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
@@ -129,6 +156,20 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
         + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
         + PostgresExperienceRecordStore.RecordScopePredicate + SearchFilters;
+
+    /// <summary><see cref="SearchSql"/> with the authorship exclusion. Nothing else differs.</summary>
+    private const string ExcludingSearchSql =
+        SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
+        + PostgresExperienceRecordStore.PermittingGrantColumn + ", "
+        + PostgresExperienceRecordStore.PermittingDisclosureColumn + SearchFromWithGrant
+        + PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate + ExcludingSearchFilters;
+
+    /// <summary><see cref="SearchExactSql"/> with the authorship exclusion. Nothing else differs.</summary>
+    private const string ExcludingSearchExactSql =
+        SearchSelect + "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
+        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
+        + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
+        + PostgresExperienceRecordStore.RecordScopePredicate + ExcludingSearchFilters;
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -201,14 +242,14 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         {
             try
             {
-                (result, disclosures) = await RunSearchAsync(_grants.Available ? SearchSql : SearchExactSql, authorization, query, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(_grants.Available ? Readable(query) : Exact(query), authorization, query, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "candidate search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only. Falling
                 // back narrows the answer and can never return a record this scope did not own.
-                (result, disclosures) = await RunSearchAsync(SearchExactSql, authorization, query, cancellationToken).ConfigureAwait(false);
+                (result, disclosures) = await RunSearchAsync(Exact(query), authorization, query, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
@@ -222,6 +263,12 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             ? result
             : await RecordGrantAccessAsync(authorization, query, result, disclosures, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>The grant-aware statement for <paramref name="query"/>, with the authorship exclusion when it asks for one.</summary>
+    private static string Readable(ExperienceCandidateQuery query) => query.ExcludeModelAuthored ? ExcludingSearchSql : SearchSql;
+
+    /// <summary>The exact-scope statement for <paramref name="query"/>, with the authorship exclusion when it asks for one.</summary>
+    private static string Exact(ExperienceCandidateQuery query) => query.ExcludeModelAuthored ? ExcludingSearchExactSql : SearchExactSql;
 
     /// <summary>
     /// Appends one access row per grant-permitted record this search is about to return -- all of them

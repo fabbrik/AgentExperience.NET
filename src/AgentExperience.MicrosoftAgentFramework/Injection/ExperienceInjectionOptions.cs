@@ -356,16 +356,20 @@ public sealed class ExperienceInjectionOptions
     /// reads as deterministic.
     /// </para>
     /// <para>
-    /// With <see cref="ModelAuthoredLessonPolicy.Exclude"/>, a candidate that was model-authored when retrieval ranked
-    /// it is omitted before the <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, so it takes no slot and cannot
-    /// crowd deterministic records out, and the re-read record is checked again before the capability gate and
-    /// <see cref="DecideInjection"/>. An omitted record is never re-read (unless it changed between the two checks),
-    /// shown to the host's decision, rendered, charged to the session budget, or recorded as a run exposure, and it
-    /// withdraws nothing. The selection is made from the candidates retrieval returned: when its candidate window
-    /// (<see cref="RetrieveExperienceRequest.Limit"/>, or the policy's candidate limit) is filled by model-authored
-    /// records, deterministic records outside it are not found. Authorship is read from the stored reflection, never
-    /// inferred from its <see cref="Reflection.Producer"/>. A value that is not a defined
-    /// <see cref="ModelAuthoredLessonPolicy"/> is refused when the provider is constructed.
+    /// With <see cref="ModelAuthoredLessonPolicy.Exclude"/>, the provider sets
+    /// <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/> on the resolved request (story 14.4), so every
+    /// candidate source leaves model-authored records out before its own limit and the candidate window
+    /// (<see cref="RetrieveExperienceRequest.Limit"/>, or the policy's candidate limit) is filled with deterministic
+    /// records. The retrieval service then excludes any model-authored record a source still returned, as
+    /// <see cref="RetrievalExclusionReason.ModelAuthored"/> in the result's <see cref="ExperienceInjectionResult.Excluded"/>:
+    /// a source that does not honour the request, or a PostgreSQL row sealed without its authorship flag (before the
+    /// <c>0021</c> migration, or by an instance on the previous build during a rolling deploy), which takes a place in
+    /// that source's candidate window but never a result slot. The provider still checks every candidate before the
+    /// <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, and the re-read record again before the capability gate
+    /// and <see cref="DecideInjection"/>, and omits a model-authored one as <see cref="InjectionOmissionReason.ModelAuthored"/>:
+    /// an omitted record is never re-read (unless it changed between the two checks), shown to the host's decision,
+    /// rendered, charged to the session budget, or recorded as a run exposure, and it withdraws nothing. Authorship is read from the stored reflection, never inferred from its <see cref="Reflection.Producer"/>. A value
+    /// that is not a defined <see cref="ModelAuthoredLessonPolicy"/> is refused when the provider is constructed.
     /// </para>
     /// </remarks>
     public ModelAuthoredLessonPolicy ModelAuthoredLessons { get; init; } = ModelAuthoredLessonPolicy.Include;

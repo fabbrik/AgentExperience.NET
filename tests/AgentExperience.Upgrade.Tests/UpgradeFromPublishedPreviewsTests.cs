@@ -119,6 +119,32 @@ public sealed class UpgradeFromPublishedPreviewsTests
                 .Concat(ExperienceVectorSchema.ScriptNames.Except(seeded))
                 .ToList();
 
+            // Story 14.4: a plaintext payload with authorship = Model, which no published preview could write (none had a
+            // model-backed reflector that declared it), so the test writes it: a copy of a-validated with that one member
+            // set, and an untouched copy beside it, in a project of their own so no item the manifest lists sees them.
+            // 0021's backfill must flag the first, and only the first. A sealed payload cannot be edited in place, so
+            // the encrypted case has none; its check is that every sealed row stays unknown.
+            if (!encrypted)
+            {
+                await using var inDatabase = NpgsqlDataSource.Create(ConnectionString(container, Database, username: null));
+                var source = Guid.Parse((string)manifest["records"]!.AsArray().Single(r => (string?)r!["name"] == "a-validated")!["experienceId"]!);
+                foreach (var (id, payload) in new[]
+                {
+                    (Verification.AuthorshipModelId, "jsonb_set(payload, '{reflection,authorship}', '\"Model\"')"),
+                    (Verification.AuthorshipTwinId, "payload"),
+                })
+                {
+                    await ExecuteAsync(
+                        inDatabase,
+                        "INSERT INTO agent_experience.experience_records (experience_id, source_run_id, tenant_id, application_id, project_id, " +
+                        "team_id, agent_id, user_id, task_id, status, reuse_confidence, supporting_validations, contradictions, revision, " +
+                        "created_at, updated_at, payload_version, payload) " +
+                        $"SELECT '{id}', source_run_id, tenant_id, application_id, '{Verification.AuthorshipProject}', team_id, agent_id, " +
+                        "user_id, task_id, status, reuse_confidence, supporting_validations, contradictions, revision, created_at, updated_at, " +
+                        $"payload_version, {payload} FROM agent_experience.experience_records WHERE experience_id = '{source}'");
+                }
+            }
+
             // ---- The upgrade: today's migrators as the owner, then the application role's privileges (runbook steps 3-4).
             await using var owner = NpgsqlDataSource.Create(ConnectionString(container, Database, ownerRole));
             var applied = await MigrateAsync(owner, applicationRole);
@@ -259,6 +285,15 @@ internal sealed record UpgradeContext(
 /// </summary>
 internal sealed class Verification
 {
+    /// <summary>The project the authorship copies live in (story 14.4), outside every scope the manifest lists.</summary>
+    internal const string AuthorshipProject = "upgrade-authorship";
+
+    /// <summary>The copy of a-validated whose plaintext payload says a model wrote its reflection.</summary>
+    internal static readonly Guid AuthorshipModelId = Guid.Parse("14040000-0000-0000-0000-000000000001");
+
+    /// <summary>The untouched copy of a-validated beside it.</summary>
+    internal static readonly Guid AuthorshipTwinId = Guid.Parse("14040000-0000-0000-0000-000000000002");
+
     private const string EmbeddingModel = "upgrade-test-model";
 
     private static readonly AuthorizationContext Auth = new("upgrade-tenant", "upgrade-tests", ["experience:write"], DateTimeOffset.UtcNow);
@@ -307,6 +342,7 @@ internal sealed class Verification
             ("the grant access log", AccessLogAsync),
             ("the embeddings", EmbeddingsAsync),
             ("the storage mode", StorageModeAsync),
+            ("the reflection authorship", AuthorshipAsync),
 
             // Writes, as the application role.
             ("a new transition", TransitionAsync),
@@ -611,6 +647,57 @@ internal sealed class Verification
         else
         {
             _report.Check(live > 0 && sealedRows == 0 && sealedSearch == 0 && sealedRationales == 0, "the plaintext records", $"{sealedRows} of {live} live records, {sealedSearch} search vectors and {sealedRationales} rationales are sealed in plaintext mode");
+        }
+    }
+
+    /// <summary>
+    /// Story 14.4: <c>0021</c>'s backfill. Every live seeded row is unknown when the preview sealed it, and
+    /// deterministic otherwise, and every tombstone carries the fixed false. The test-written plaintext copy that says
+    /// <c>Model</c> is flagged and left out of an excluding search, and its untouched twin is not. Every text search the
+    /// manifest lists answers the same with the exclusion on: the seeded records are deterministic, or (sealed) unknown
+    /// and so kept by the source.
+    /// </summary>
+    private async Task AuthorshipAsync()
+    {
+        var (live, unknown, flagged) = await CountsAsync(
+            "SELECT count(*), count(*) FILTER (WHERE reflection_model_authored IS NULL), count(*) FILTER (WHERE reflection_model_authored) " +
+            "FROM agent_experience.experience_records WHERE deleted_at IS NULL");
+        var tombstonesFlagged = await UpgradeFromPublishedPreviewsTests.ScalarAsync<long>(
+            _context.Owner,
+            "SELECT count(*) FROM agent_experience.experience_records WHERE deleted_at IS NOT NULL AND reflection_model_authored IS NOT FALSE");
+        _report.Check(tombstonesFlagged == 0, "the authorship of the tombstones", $"{tombstonesFlagged} tombstones carry something but the fixed false");
+
+        if (_context.Encrypted)
+        {
+            _report.Check(live > 0 && unknown == live && flagged == 0, "the sealed records' authorship", $"{unknown} of {live} live sealed records are unknown and {flagged} flagged; every one must be unknown");
+        }
+        else
+        {
+            _report.Check(live > 0 && unknown == 0 && flagged == 1, "the plaintext records' authorship", $"{unknown} of {live} live plaintext records are unknown and {flagged} flagged; expected none unknown and only the test's copy flagged");
+
+            var scope = Record("a-validated")["scope"].Deserialize<Scope>(UpgradeReport.Json)! with { ProjectId = AuthorshipProject };
+            var text = (string)Items("searches").First()["text"]!;
+            var excluding = await _candidates.SearchAsync(
+                Auth, new ExperienceCandidateQuery(scope, text, Eligible, MinimumConfidence: 0) { ExcludeModelAuthored = true }, CancellationToken.None);
+            var including = await _candidates.SearchAsync(
+                Auth, new ExperienceCandidateQuery(scope, text, Eligible, MinimumConfidence: 0), CancellationToken.None);
+            _report.Check(
+                excluding.Candidates.Select(c => c.Record.ExperienceId).SequenceEqual([AuthorshipTwinId])
+                    && including.Candidates.Select(c => c.Record.ExperienceId).Order().SequenceEqual(new[] { AuthorshipModelId, AuthorshipTwinId }.Order())
+                    && including.Candidates.Single(c => c.Record.ExperienceId == AuthorshipModelId).Record.Reflection?.Authorship == ReflectionAuthorship.Model,
+                "the backfilled authorship",
+                $"an excluding search returned [{string.Join(", ", excluding.Candidates.Select(c => c.Record.ExperienceId))}], expected only the twin; " +
+                $"without the exclusion [{string.Join(", ", including.Candidates.Select(c => c.Record.ExperienceId))}]");
+        }
+
+        foreach (var item in Items("searches"))
+        {
+            var scope = item["scope"].Deserialize<Scope>(UpgradeReport.Json)!;
+            var search = await _candidates.SearchAsync(
+                Auth,
+                new ExperienceCandidateQuery(scope, (string)item["text"]!, Eligible, MinimumConfidence: 0) { ExcludeModelAuthored = true },
+                CancellationToken.None);
+            _report.Compare($"excluding text search {item["name"]}", item["result"], search);
         }
     }
 

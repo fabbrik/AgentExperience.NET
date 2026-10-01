@@ -543,7 +543,29 @@ public sealed record ExperienceVectorQuery(
     IReadOnlyList<ExperienceStatus> EligibleStatuses,
     double MinimumConfidence,
     int Limit = ExperienceCandidateQuery.DefaultLimit,
-    string? CorrelationId = null);
+    string? CorrelationId = null)
+{
+    /// <summary>
+    /// <see langword="true"/> to leave out every model-authored record, before <see cref="Limit"/>, exactly as
+    /// <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/> does for the text channel: a record whose reflection
+    /// exists and whose <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>.
+    /// <see langword="false"/> (the default) leaves the search exactly as it is without this property. An implementation
+    /// that cannot honour it answers <see cref="ExperienceVectorSearchOutcome.Invalid"/> rather than ignoring it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// "Before <see cref="Limit"/>" holds as it does for the status and confidence filters, and no further: an
+    /// implementation over an approximate index may apply all of them to the neighbours its index walk produced (pgvector
+    /// does under an HNSW index, within <c>hnsw.ef_search</c>), so the search can return fewer than
+    /// <see cref="Limit"/> records even though more would pass. It never returns a record the exclusion leaves out.
+    /// </para>
+    /// <para>
+    /// When nothing is left after the exclusion, the search reports <see cref="ExperienceVectorSearchOutcome.Found"/>
+    /// with no candidates; a model or dimension mismatch is reported only from the records the exclusion leaves.
+    /// </para>
+    /// </remarks>
+    public bool ExcludeModelAuthored { get; init; }
+}
 
 /// <summary>What a scoped vector search ended as.</summary>
 public enum ExperienceVectorSearchOutcome

@@ -125,6 +125,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "AND team_id IS NOT DISTINCT FROM @team_id AND agent_id IS NOT DISTINCT FROM @agent_id " +
         "AND user_id IS NOT DISTINCT FROM @user_id";
 
+    /// <summary>
+    /// The column <c>0021</c> adds: whether the record's reflection was written by a model, the flag an excluding
+    /// search filters on in SQL. For a plaintext record <c>0021</c>'s trigger derives it from the payload as the row is
+    /// written, so <see cref="InsertSql"/> does not name it; for a sealed record, whose payload the database cannot
+    /// read, <see cref="InsertSealedSql"/> writes it from the record's reflection. It is in the clear in both modes.
+    /// </summary>
+    internal const string ModelAuthoredColumn = "reflection_model_authored";
+
     private const string InsertSql =
         $"INSERT INTO {Table} ({SelectColumns}) VALUES (@experience_id, @source_run_id, @tenant_id, @application_id, " +
         "@project_id, @team_id, @agent_id, @user_id, @task_id, @status, @reuse_confidence, @supporting_validations, " +
@@ -140,12 +148,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         "to_tsvector('english', left(coalesce(@search_task_id, '') || ' ' || coalesce(@search_summary, '') || ' ' || " +
         "coalesce(@search_lesson, ''), 100000))";
 
-    /// <summary>The insert for a sealed record: the sealed payload, the placeholder task ID, and the derived vector.</summary>
+    /// <summary>
+    /// The insert for a sealed record: the sealed payload, the placeholder task ID, the derived vector, and the
+    /// authorship flag, which stays in the clear so a search can filter on it.
+    /// </summary>
     private const string InsertSealedSql =
-        $"INSERT INTO {Table} ({SelectColumns}, search_vector_sealed) VALUES (@experience_id, @source_run_id, @tenant_id, " +
-        "@application_id, @project_id, @team_id, @agent_id, @user_id, @task_id, @status, @reuse_confidence, " +
-        "@supporting_validations, @contradictions, @revision, @created_at, @updated_at, @payload_version, @payload, " +
-        SealedSearchVectorExpression + ")";
+        $"INSERT INTO {Table} ({SelectColumns}, search_vector_sealed, {ModelAuthoredColumn}) VALUES (@experience_id, " +
+        "@source_run_id, @tenant_id, @application_id, @project_id, @team_id, @agent_id, @user_id, @task_id, @status, " +
+        "@reuse_confidence, @supporting_validations, @contradictions, @revision, @created_at, @updated_at, " +
+        "@payload_version, @payload, " + SealedSearchVectorExpression + ", @reflection_model_authored)";
 
     /// <summary>
     /// The one read that a grant may widen: exactly this scope, or an active grant naming this record
@@ -875,6 +886,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             if (_encryption is not null)
             {
                 AddSealedSearchParameters(parameters, record.TaskId, record.TaskSummary, record.Reflection?.Lesson);
+
+                // The database cannot read a sealed payload, so the store says what 0021's trigger would have derived
+                // from a plaintext one. Fail closed, as the injection provider decides it: a reflection whose
+                // authorship is anything but Deterministic is model-authored; no reflection is not. Never inferred
+                // from the producer.
+                parameters.Add(new NpgsqlParameter<bool>(
+                    "reflection_model_authored",
+                    record.Reflection is { } reflection && reflection.Authorship != ReflectionAuthorship.Deterministic));
             }
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

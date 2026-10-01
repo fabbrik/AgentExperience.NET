@@ -48,6 +48,7 @@
     <EmbeddedResource Include="Migrations\0017_grant_argument_disclosure.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0017_grant_argument_disclosure.sql" />
     <EmbeddedResource Include="Migrations\0018_evidence_admission.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0018_evidence_admission.sql" />
     <EmbeddedResource Include="Migrations\0019_row_level_security.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0019_row_level_security.sql" />
+    <EmbeddedResource Include="Migrations\0021_reflection_authorship.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0021_reflection_authorship.sql" />
   </ItemGroup>
 
   <ItemGroup>
