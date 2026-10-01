@@ -46,15 +46,16 @@ embedding table is covered:
 
 ```csharp
 await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // the base schema
-await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004, this package's schema
+await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004 and 0020, this package's schema
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
     ownerDataSource, new ExperienceApplicationRoleOptions("agent_experience_app"), cancellationToken);
 ```
 
 `0004` begins with `CREATE EXTENSION vector`, and pgvector is not a trusted extension, so that statement ordinarily
 needs a superuser; if your operators create the extension out of band, the call runs as an ordinary role. Run the
-base migration first: `0004` has a foreign key to `experience_records`. No `UseVector()` call is needed on your data
-source.
+base migration first: `0004` has a foreign key to `experience_records`, and `0020` (the embedding table's opt-in
+row-level security policies) uses the helpers the base package's `0019` creates. No `UseVector()` call is needed on
+your data source.
 
 Optionally, create an HNSW index for your model's dimension, from a maintenance path, as the owner:
 

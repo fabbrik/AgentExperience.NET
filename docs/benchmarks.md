@@ -23,6 +23,9 @@ dotnet run -c Release --project benchmarks/AgentExperience.Benchmarks -- --filte
 - **Time.** The baseline run below took 4 minutes 26 seconds, build included. Every case runs in one process with a
   short job (3 warmup and 10 measured iterations of about 250 ms), so the container starts and each dataset is seeded
   once.
+- **Row-level security.** By default the stores connect as the container's superuser, which row-level security does
+  not bind. `AGENTEXPERIENCE_BENCHMARK_RLS=on` (or `off`) makes each dataset the two-role deployment instead, with
+  `EnableRowLevelSecurity` set to that value; see [Row-level security](#row-level-security-story-151) below.
 - **Output.** BenchmarkDotNet writes Markdown, CSV and HTML reports to `BenchmarkDotNet.Artifacts/results/` under the
   directory you ran from. Git ignores that directory.
 
@@ -115,3 +118,52 @@ include what PostgreSQL allocates.
   than the retrieval inside it (compare the 1,000-record rows), including the one `GetManyAsync` round trip.
 - **In memory, the store costs next to nothing**, so those rows are the library's own CPU and allocation cost, and the
   best rows to watch for a regression in Core or the adapter.
+
+## Row-level security (story 15.1)
+
+`RetrievalBenchmarks.TextOnly` on PostgreSQL, four ways, on the baseline machine above on 2026-09-30, each run twice
+with the filter `--filter '*RetrievalBenchmarks.TextOnly*'`:
+
+- **before**: commit `a2778eb`, the parent of story 15.1, the stores connecting as the superuser;
+- **wrapped**: this change, as the superuser. Every operation now runs in a transaction that first declares its
+  authorization bounds, so this is the cost of the wrapping and the declaration alone;
+- **RLS off** and **RLS on**: this change, with `AGENTEXPERIENCE_BENCHMARK_RLS` set to `off` or `on`, which makes each
+  dataset the two-role deployment instead: an owner migrates and analyzes, and the stores connect as an application
+  role given the manifest by `ApplyApplicationRolePrivilegesAsync` with `EnableRowLevelSecurity` set to that value.
+
+| Records | before | wrapped | RLS off | RLS on |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 2,400 / 2,232 μs | 3,005 / 3,286 μs | 3,418 / 3,141 μs | 3,990 / 4,009 μs |
+| 10,000 | 6,635 / 6,636 μs | 7,370 / 7,367 μs | 7,482 / 7,524 μs | 8,507 / 8,676 μs |
+
+Means of the two runs, per retrieval, with the final policies. Allocation is unchanged within 1% in every column (983
+to 989 KB), and the in-memory rows did not move.
+
+- **The transaction and the declaration cost about 0.7 ms per operation** with row-level security off: two more round
+  trips (the `set_config` statement and the `COMMIT`) to a database in a Docker VM. It is paid whether or not
+  row-level security is on. Running as the application role instead of the superuser costs nothing measurable.
+- **Row-level security costs about another 1 ms per text search** on this dataset: 15% on 10,000 records, about 25% on
+  1,000. This dataset's query matches a tenth of one tenant's records, so the search is a sequential scan with or
+  without the policies, and the difference is the policies' quals and planning.
+
+### The plans behind it: text search loses its full-text index
+
+`EXPLAIN (ANALYZE, BUFFERS)` of the exact statements the text and vector channels send, as the application role with
+tenant `t1`'s bounds declared, over 20,000 records (10,000 in each of two tenants), each with an 8-dimension embedding
+and an HNSW index, on PostgreSQL 16. The text query matches 10 of `t1`'s records (and 10 of `t2`'s).
+
+| Search | RLS off | RLS on |
+| --- | --- | --- |
+| Text (`@@`, 10 of 10,000 match) | `BitmapOr` of the two GIN indexes, 20 heap rows; plan 0.4 ms, execution 2.1 ms | `Bitmap Index Scan` on `ix_experience_records_scope` (`tenant_id = $0`), 10,000 heap rows filtered to 10; plan 0.7 ms, execution 5.5 ms |
+| Vector (HNSW, limit 50) | HNSW index scan, 80 rows; plan 0.5 ms, execution 0.8 ms | HNSW index scan, the policy's quals as a filter; plan 2.3 ms, execution 1.0 ms |
+
+**With row-level security on, text search does not use its GIN indexes.** PostgreSQL evaluates a query's own
+conditions after a policy's unless they are *leakproof*, and the full-text match operator (`@@`, `ts_match_vq`) is not
+marked leakproof, so it cannot become an index condition beneath the policy. The planner instead uses the policy's own
+`tenant_id` condition on the existing scope index and applies the match to every live record in the declared tenant:
+the search is linear in the tenant's size rather than in the number of matches. The policy's condition is what keeps it
+to one tenant — without it, the scan would be the whole table. The vector channel keeps its HNSW index; its extra cost
+is planning. This is recorded as part of [KL-17](known-limits.md#documented-boundaries). What bounds it is the policy's
+tenant condition: a text search never reads another tenant's rows. What a deployment with large tenants can do is leave
+row-level security off, or keep it off until it has measured its own tenants. Marking `ts_match_vq` leakproof would
+restore the index, but that is a superuser's decision about a built-in function and not one this library makes.

@@ -24,6 +24,7 @@ namespace AgentExperience.Storage.Postgres
         public bool AllowAccessLogPurge { get; init; }
         public bool AllowErasure { get; init; }
         public bool AllowSealing { get; init; }
+        public bool EnableRowLevelSecurity { get; init; }
         public string RoleName { get; }
     }
     public sealed class ExperienceEncryption
@@ -144,6 +145,7 @@ namespace AgentExperience.Storage.Postgres
         public const string LifecycleEventsScriptName = "0002_create_lifecycle_events.sql";
         public const string ReuseFeedbackScriptName = "0008_reuse_feedback.sql";
         public const string RoleSeparationHardeningScriptName = "0013_role_separation_hardening.sql";
+        public const string RowLevelSecurityScriptName = "0019_row_level_security.sql";
         public const string SchemaName = "agent_experience";
         public const string SearchScriptName = "0003_add_experience_search.sql";
         public const string SupersessionAndAppendOnlyScriptName = "0006_lifecycle_supersession_and_append_only.sql";

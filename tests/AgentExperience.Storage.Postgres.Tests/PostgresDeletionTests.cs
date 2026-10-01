@@ -526,7 +526,7 @@ public sealed class PostgresDeletionTests
 
         // One connection holds an open purge transaction -- the marker is set, the rows are gone, and
         // nothing is committed yet.
-        await using var purging = await _fixture.DataSource.OpenConnectionAsync();
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
         await using var transaction = await purging.BeginTransactionAsync();
         await EncryptionMode.DeclareKeyDestructionAsync(purging, transaction);
 
@@ -629,6 +629,20 @@ public sealed class PostgresDeletionTests
             "GRANT SELECT ON ALL TABLES IN SCHEMA agent_experience TO {role}");
 
         await using var reporter = await reporterSource.OpenConnectionAsync();
+
+        // With row-level security on, a session sees nothing until it declares bounds -- and any session can
+        // declare them (story 15.1), so the reporter does, for the whole session. The premise stands either way.
+        if (RowLevelSecurityMode.IsOn)
+        {
+            await using var declare = new NpgsqlCommand(
+                "SELECT set_config('agent_experience.auth_tenant', '=' || @tenant, false), " +
+                "set_config('agent_experience.auth_application', '', false), set_config('agent_experience.auth_project', '', false), " +
+                "set_config('agent_experience.auth_team', '', false), set_config('agent_experience.auth_agent', '', false), " +
+                "set_config('agent_experience.auth_user', '', false), set_config('agent_experience.auth_set', 'on', false)",
+                reporter);
+            declare.Parameters.Add(new NpgsqlParameter<string>("tenant", NpgsqlDbType.Text) { TypedValue = tenant });
+            await declare.ExecuteNonQueryAsync();
+        }
 
         // It really can read the ID and the scope it would need. That is the whole premise.
         await using (var read = new NpgsqlCommand(
@@ -827,7 +841,7 @@ public sealed class PostgresDeletionTests
         var recipient = Scope(tenant, team: "team-b");
         var record = await ValidatedAsync(auth, owner);
 
-        await using var purging = await _fixture.DataSource.OpenConnectionAsync();
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
         await using var transaction = await purging.BeginTransactionAsync();
         await PurgeInAsync(purging, transaction, record.ExperienceId, tenant, owner.TeamId);
 
@@ -860,7 +874,7 @@ public sealed class PostgresDeletionTests
         var scope = Scope(tenant);
         var record = await ValidatedAsync(auth, scope);
 
-        await using var purging = await _fixture.DataSource.OpenConnectionAsync();
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
         await using var transaction = await purging.BeginTransactionAsync();
         await PurgeInAsync(purging, transaction, record.ExperienceId, tenant, scope.TeamId);
 
@@ -898,7 +912,7 @@ public sealed class PostgresDeletionTests
 
         // Deterministically interleaved: the first purge holds its transaction open across the second's
         // whole run, which is exactly the window the defect lived in.
-        await using (var purging = await _fixture.DataSource.OpenConnectionAsync())
+        await using (var purging = await _fixture.RawDataSource.OpenConnectionAsync())
         {
             await using var transaction = await purging.BeginTransactionAsync();
             await PurgeInAsync(purging, transaction, first.ExperienceId, tenant, scope.TeamId);
@@ -945,7 +959,7 @@ public sealed class PostgresDeletionTests
         var before = await ReadTombstoneAsync(record.ExperienceId);
         var counts = await EveryCountAsync(record.ExperienceId, feedbackId);
 
-        await using (var purging = await _fixture.DataSource.OpenConnectionAsync())
+        await using (var purging = await _fixture.RawDataSource.OpenConnectionAsync())
         {
             await using var transaction = await purging.BeginTransactionAsync();
             await PurgeInAsync(purging, transaction, record.ExperienceId, tenant, owner.TeamId);
@@ -1147,7 +1161,7 @@ public sealed class PostgresDeletionTests
         // Now the interruption. The sweep erases the older of the two and then blocks on the row another
         // connection is holding, which is the moment the caller cancels -- so the count it reports is a
         // fact about irreversible work rather than a number thrown away with the exception.
-        await using var holding = await _fixture.DataSource.OpenConnectionAsync();
+        await using var holding = await _fixture.RawDataSource.OpenConnectionAsync();
         await using var hold = await holding.BeginTransactionAsync();
         await using (var pin = new NpgsqlCommand(
             "SELECT revision FROM agent_experience.experience_records WHERE experience_id = @id FOR UPDATE", holding, hold))
@@ -1220,7 +1234,7 @@ public sealed class PostgresDeletionTests
         // limit" in PostgreSQL, so a bound that lived only in the validator was no bound at all.
         await SeedExpiredGrantsAsync(ours.ExperienceId, mine, PostgresExperienceRecordStore.MaxSweepBatchSize + 1);
 
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT agent_experience.purge_expired_grants(@tenant, 'app-1', 'project-1', @team, NULL, NULL, now(), NULL)");
         command.Parameters.Add(new NpgsqlParameter<string>("tenant", NpgsqlDbType.Text) { TypedValue = tenant });
         command.Parameters.Add(new NpgsqlParameter<string>("team", NpgsqlDbType.Text) { TypedValue = mine.TeamId! });
@@ -1427,7 +1441,7 @@ public sealed class PostgresDeletionTests
             ExperienceReuseFeedbackStoreOutcome.Recorded,
             (await ledger.RecordAsync(auth, Submission(feedback), CancellationToken.None)).Outcome);
 
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT recorded_at, observed_at FROM agent_experience.reuse_feedback WHERE feedback_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", feedback.FeedbackId));
 
@@ -1512,7 +1526,7 @@ public sealed class PostgresDeletionTests
     {
         var grantId = Guid.NewGuid();
 
-        await using var grant = _fixture.DataSource.CreateCommand(
+        await using var grant = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, tenant_id, application_id, " +
             "project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, reason, " +
@@ -1539,7 +1553,7 @@ public sealed class PostgresDeletionTests
     /// </summary>
     private async Task SeedExpiredGrantsAsync(Guid experienceId, Scope owner, int count)
     {
-        await using var grants = _fixture.DataSource.CreateCommand(
+        await using var grants = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, tenant_id, application_id, " +
             "project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, reason, " +
@@ -1564,7 +1578,7 @@ public sealed class PostgresDeletionTests
     /// </summary>
     private async Task RestoreEvidenceAsync(Guid evidenceId, Guid experienceId, Guid eventId, ConfidenceUpdate confidence)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.confidence_evidence (evidence_id, experience_id, event_id, kind, source, " +
             "run_id, verification_round_id, reviewer_identity, counted, actor, rule_version, detail, recorded_at, " +
             "applied_revision, applied_status, prior_reuse_confidence, new_reuse_confidence, " +
@@ -1595,7 +1609,7 @@ public sealed class PostgresDeletionTests
     {
         var grantId = Guid.NewGuid();
 
-        await using (var grant = _fixture.DataSource.CreateCommand(
+        await using (var grant = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, tenant_id, application_id, " +
             "project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, reason, " +
@@ -1613,7 +1627,7 @@ public sealed class PostgresDeletionTests
             Assert.Equal(1, await grant.ExecuteNonQueryAsync());
         }
 
-        await using (var issued = _fixture.DataSource.CreateCommand(
+        await using (var issued = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grant_events (event_id, grant_id, experience_id, action, " +
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, recipient_tenant_id, " +
             "recipient_application_id, recipient_project_id, recipient_team_id, recipient_agent_id, " +
@@ -1690,7 +1704,7 @@ public sealed class PostgresDeletionTests
 
     private async Task<long> CountAsync(string table, Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             $"SELECT count(*) FROM agent_experience.{table} WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (long)(await command.ExecuteScalarAsync())!;
@@ -1710,14 +1724,14 @@ public sealed class PostgresDeletionTests
 
     private async Task<long> ScalarAsync(string sql, Guid id)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.RawDataSource.CreateCommand(sql);
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", id));
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
     private async Task<IReadOnlyList<Guid>> FeedbackIdsAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT feedback_id FROM agent_experience.reuse_feedback_exposures WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
 
@@ -1734,7 +1748,7 @@ public sealed class PostgresDeletionTests
     /// <summary>The stored row, read column by column, because the point is what the columns hold.</summary>
     private async Task<StoredRow> ReadTombstoneAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT source_run_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, task_id, status, " +
             "reuse_confidence, supporting_validations, contradictions, revision, created_at, updated_at, payload::text, " +
             "deleted_at, search_vector::text FROM agent_experience.experience_records WHERE experience_id = @id");

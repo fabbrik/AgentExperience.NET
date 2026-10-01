@@ -264,6 +264,26 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string EvidenceAdmissionScriptName = "0018_evidence_admission.sql";
 
+    /// <summary>
+    /// The script that creates the opt-in row-level security policies (story 15.1): an <c>rls_*</c> policy per
+    /// command on every table the application role reads or writes by scope, and the helper functions they read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It switches nothing on. A policy on a table whose row-level security is disabled has no effect, and
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync"/> enables it only when
+    /// <see cref="ExperienceApplicationRoleOptions.EnableRowLevelSecurity"/> is set. The policies admit a row only
+    /// inside the authorization bounds each store operation declares for its transaction, plus the rows a live
+    /// sharing grant lets that operation read. The embeddings table's policies are the vectors package's own
+    /// script, on these helpers.
+    /// </para>
+    /// <para>
+    /// The helper functions are plain <c>SECURITY INVOKER</c> SQL, executable by <c>PUBLIC</c> as PostgreSQL's
+    /// default leaves them; the manifest is otherwise unchanged.
+    /// </para>
+    /// </remarks>
+    public const string RowLevelSecurityScriptName = "0019_row_level_security.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -291,6 +311,7 @@ public static class PostgresExperienceRecordSchema
         CryptoShreddingScriptName,
         GrantArgumentDisclosureScriptName,
         EvidenceAdmissionScriptName,
+        RowLevelSecurityScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

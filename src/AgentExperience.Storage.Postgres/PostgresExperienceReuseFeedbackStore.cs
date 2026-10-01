@@ -220,8 +220,8 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
             // Pinned, not inherited, for the same reason the lifecycle commit pins it: the expected
             // conditions here are decided by the primary key, never by a serialization failure a
             // stricter level would raise instead.
-            await using var transaction = await connection
-                .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+            await using var transaction = await ExperienceSessionContext
+                .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
 
             var inserted = await InsertSubmissionAsync(connection, transaction, feedback, cancellationToken).ConfigureAwait(false);
             if (!inserted)

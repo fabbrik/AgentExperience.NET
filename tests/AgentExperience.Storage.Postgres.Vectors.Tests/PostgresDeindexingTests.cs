@@ -15,6 +15,8 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
 {
     private NpgsqlDataSource DataSource => fixture.DataSource;
 
+    private NpgsqlDataSource RawDataSource => fixture.RawDataSource;
+
     [Theory]
     [InlineData(ExperienceStatus.Contested)]
     [InlineData(ExperienceStatus.Stale)]
@@ -275,7 +277,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
 
         var id = await world.AddRecordAsync("token-refresh", "Refresh an expired token", "Refresh before expiry.");
 
-        await using var purging = await DataSource.OpenConnectionAsync();
+        await using var purging = await RawDataSource.OpenConnectionAsync();
         await using var transaction = await purging.BeginTransactionAsync();
         await EncryptionMode.DeclareKeyDestructionAsync(purging, transaction);
 

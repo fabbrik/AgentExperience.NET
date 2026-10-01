@@ -251,7 +251,7 @@ cannot afford to lose.
 | [Sharing and grants](docs/guide/sharing.md) | Letting another scope read one record, with an audit trail |
 | [Deletion and retention](docs/guide/deletion-and-retention.md) | Erasure, tombstones, retention sweeps |
 | [Crypto-shredding](docs/guide/crypto-shredding.md) | Erasure that reaches backups, replicas and WAL |
-| [PostgreSQL schema](docs/guide/postgres-schema.md) | Every migration, `0001` to `0018` |
+| [PostgreSQL schema](docs/guide/postgres-schema.md) | Every migration, `0001` to `0020` |
 | [Telemetry contract](docs/telemetry.md) | Every span, metric and attribute |
 | [Security suite](docs/security-suite.md) | The tests behind the security claims: tenant isolation, sanitization, revoked records, untrusted context |
 | [Compatibility evidence](docs/compatibility-evidence.md) | Supported versions and the evidence for each pin |

@@ -519,7 +519,7 @@ public sealed class PostgresExperienceRecordStoreTests
         var record = Full(new Scope(tenant, "app-1", "project-1", "team-1", null, "user-1"));
         await _store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
 
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT tenant_id, team_id, agent_id, status, reuse_confidence, revision, payload_version, payload ? 'attempts' " +
             "FROM agent_experience.experience_records WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
@@ -542,7 +542,7 @@ public sealed class PostgresExperienceRecordStoreTests
     [Fact]
     public async Task Schema_rejects_blank_required_scope_even_when_bypassing_the_store()
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_records (experience_id, source_run_id, tenant_id, application_id, project_id, " +
             "task_id, status, reuse_confidence, supporting_validations, contradictions, revision, created_at, updated_at, payload_version, payload) " +
             "VALUES (gen_random_uuid(), gen_random_uuid(), '  ', 'app', 'proj', 'task', 'Candidate', 0, 0, 0, 0, now(), now(), 1, '{}')");

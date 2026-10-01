@@ -127,6 +127,17 @@ public sealed class UpgradeFromPublishedPreviewsTests
                 "the migration",
                 $"today's migrators applied [{string.Join(", ", applied)}], expected the scripts the preview had not [{string.Join(", ", pending)}]");
 
+            // Story 15.1: the privileges call switched row-level security on every covered table exactly when this run
+            // asked it to -- nine tables, the vectors package's included -- so a green run in that mode really read and
+            // wrote everything below behind the policies.
+            var secured = await ScalarAsync<long>(
+                owner,
+                "SELECT count(*) FROM pg_class WHERE relnamespace = 'agent_experience'::regnamespace AND relrowsecurity AND NOT relforcerowsecurity");
+            report.Check(
+                secured == (RowLevelSecurityMode.IsOn ? 9 : 0),
+                "row-level security",
+                $"{secured} tables have row-level security enabled, expected {(RowLevelSecurityMode.IsOn ? 9 : 0)}");
+
             // ---- After: everything, as the application role.
             await using var application = NpgsqlDataSource.Create(ConnectionString(container, Database, applicationRole));
             var context = new UpgradeContext(preview, encrypted, report, application, owner, manifest, keysPath);
@@ -162,7 +173,7 @@ public sealed class UpgradeFromPublishedPreviewsTests
             .ToList();
         await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
             owner,
-            new ExperienceApplicationRoleOptions(applicationRole) { AllowErasure = true },
+            new ExperienceApplicationRoleOptions(applicationRole) { AllowErasure = true, EnableRowLevelSecurity = RowLevelSecurityMode.IsOn },
             CancellationToken.None);
         return applied;
     }
@@ -553,10 +564,12 @@ internal sealed class Verification
             }
 
             // No API returns a stored vector, so it is read from the table, as the application role, and must be
-            // exactly what the preview wrote.
+            // exactly what the preview wrote. The read declares the record's tenant first, exactly as a store
+            // declares its bounds, so it holds with row-level security on (story 15.1) as well as off.
             var vector = item["vector"].Deserialize<float[]>(UpgradeReport.Json)!;
-            var stored = await UpgradeFromPublishedPreviewsTests.ScalarAsync<float[]>(
+            var stored = await RowLevelSecurityMode.DeclaredScalarAsync<float[]>(
                 _context.Application,
+                scope.TenantId,
                 "SELECT embedding::real[] FROM agent_experience.experience_embeddings WHERE experience_id = @id",
                 new NpgsqlParameter<Guid>("id", id));
             _report.Check(stored.SequenceEqual(vector), $"embedding {name} ({id})", $"the stored vector is [{string.Join(", ", stored)}], expected [{string.Join(", ", vector)}]");

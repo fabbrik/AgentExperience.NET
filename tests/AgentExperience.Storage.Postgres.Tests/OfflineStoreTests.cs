@@ -386,6 +386,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.CryptoShreddingScriptName,
                 PostgresExperienceRecordSchema.GrantArgumentDisclosureScriptName,
                 PostgresExperienceRecordSchema.EvidenceAdmissionScriptName,
+                PostgresExperienceRecordSchema.RowLevelSecurityScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1240,7 +1241,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Evidence_admission_script_is_applied_last_adds_two_append_only_columns_and_touches_no_data()
+    public void Evidence_admission_script_adds_two_append_only_columns_and_touches_no_data()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.EvidenceAdmissionScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -1262,6 +1263,60 @@ public sealed class OfflineStoreTests : IAsyncLifetime
 
         Assert.Equal(
             PostgresExperienceRecordSchema.EvidenceAdmissionScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[15]);
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
+            PostgresExperienceRecordSchema.ScriptNames);
+    }
+
+    [Fact]
+    public void Row_level_security_script_is_applied_last_creates_policies_and_switches_nothing_on()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.RowLevelSecurityScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // Every canonical policy for this package's tables, verbatim -- the DDL the privileges call re-runs -- and none
+        // of the embedding table's, which are the vectors package's own script.
+        foreach (var policy in RowLevelSecurityPolicies.All)
+        {
+            Assert.Equal(policy.Table == ApplicationRolePrivileges.EmbeddingsTable ? 0 : 1, CountOccurrences(statements, policy.Ddl));
+        }
+
+        Assert.Equal(18, CountOccurrences(statements, "CREATE POLICY "));
+        Assert.Equal(18, CountOccurrences(statements, "DROP POLICY IF EXISTS "));
+
+        // It switches nothing on and never forces.
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("FORCE", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATE TABLE", statements, StringComparison.Ordinal);
+
+        // The only SECURITY DEFINER functions are the four existing ones it redefines, each with the bounds guard first.
+        Assert.Equal(4, CountOccurrences(statements, "SECURITY DEFINER"));
+        Assert.Equal(4, CountOccurrences(statements, "IF pg_catalog.current_setting('agent_experience.auth_set', true) = 'on' THEN\n"));
+        Assert.Equal(4, CountOccurrences(statements, "AND NOT pg_catalog.pg_has_role(session_user, c.relowner, 'MEMBER')"));
+
+        // The five helpers, verbatim -- the DDL the privileges call re-runs -- and none SECURITY DEFINER.
+        Assert.Equal(5, RowLevelSecurityPolicies.Functions.Count);
+        foreach (var function in RowLevelSecurityPolicies.Functions)
+        {
+            Assert.Equal(1, CountOccurrences(statements, function.Ddl));
+            Assert.DoesNotContain("SECURITY DEFINER", function.Ddl, StringComparison.Ordinal);
+        }
+        foreach (var signature in ApplicationRolePrivileges.PurgeFunctions.Select(f => f.Signature[..f.Signature.IndexOf('(')]))
+        {
+            Assert.Contains($"CREATE OR REPLACE FUNCTION {signature}(", statements, StringComparison.Ordinal);
+        }
+
+        // The grant rule is the read predicate's own: not revoked, and live on the database's wall clock.
+        Assert.Contains("g.revoked_at IS NULL", statements, StringComparison.Ordinal);
+        Assert.Contains("g.expires_at > pg_catalog.clock_timestamp()", statements, StringComparison.Ordinal);
+
+        // Nothing is admitted without the marker a store sets.
+        Assert.Contains("pg_catalog.current_setting('agent_experience.auth_set', true) = 'on'", statements, StringComparison.Ordinal);
+
+        Assert.Equal(
+            PostgresExperienceRecordSchema.RowLevelSecurityScriptName,
             PostgresExperienceRecordSchema.ScriptNames[^1]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),

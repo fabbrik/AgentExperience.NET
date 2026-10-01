@@ -46,7 +46,57 @@ public sealed class SamplePostgresFixture : IAsyncLifetime
             await command.ExecuteNonQueryAsync();
         }
 
-        return new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = name }.ConnectionString;
+        var superuser = new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = name }.ConnectionString;
+        return RowLevelSecurityOn ? await TwoRoleWithRowLevelSecurityAsync(name, superuser) : superuser;
+    }
+
+    /// <summary>
+    /// <c>AGENTEXPERIENCE_TEST_RLS=on</c> (story 15.1): the sample then runs as an application role behind PostgreSQL
+    /// row-level security instead of as the container's superuser, whom row-level security does not bind.
+    /// </summary>
+    private static bool RowLevelSecurityOn { get; } =
+        string.Equals(Environment.GetEnvironmentVariable("AGENTEXPERIENCE_TEST_RLS"), "on", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The two-role deployment for one database: an owner migrates it and applies the manifest with row-level security
+    /// on, and the returned connection string is the application role's. The sample runs the migrator on startup, as a
+    /// host would; with nothing pending that only reads the journal, so -- in this test mode only, after the manifest
+    /// was verified -- the application role is also let read the journal.
+    /// </summary>
+    private async Task<string> TwoRoleWithRowLevelSecurityAsync(string database, string superuserConnectionString)
+    {
+        const string Password = "aes-role-password";
+        var owner = $"{database}_o";
+        var app = $"{database}_a";
+        await using (var dataSource = NpgsqlDataSource.Create(_container!.GetConnectionString()))
+        {
+            foreach (var sql in new[]
+            {
+                $"CREATE ROLE \"{owner}\" LOGIN PASSWORD '{Password}'",
+                $"CREATE ROLE \"{app}\" LOGIN PASSWORD '{Password}'",
+                $"ALTER DATABASE \"{database}\" OWNER TO \"{owner}\"",
+                $"GRANT SET ON PARAMETER agent_experience.purge_authorized, agent_experience.access_purge_authorized TO \"{owner}\"",
+            })
+            {
+                await using var command = dataSource.CreateCommand(sql);
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        string As(string role) => new NpgsqlConnectionStringBuilder(superuserConnectionString) { Username = role, Password = Password }.ConnectionString;
+
+        await using (var ownerSource = NpgsqlDataSource.Create(As(owner)))
+        {
+            await Storage.Postgres.ExperienceSchemaMigrator.MigrateAsync(ownerSource, CancellationToken.None);
+            await Storage.Postgres.ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+                ownerSource,
+                new Storage.Postgres.ExperienceApplicationRoleOptions(app) { AllowErasure = true, EnableRowLevelSecurity = true },
+                CancellationToken.None);
+            await using var journal = ownerSource.CreateCommand($"GRANT SELECT ON agent_experience.schema_versions TO \"{app}\"");
+            await journal.ExecuteNonQueryAsync();
+        }
+
+        return As(app);
     }
 
     public async Task DisposeAsync()

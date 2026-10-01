@@ -92,7 +92,7 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
         Assert.Equal(replacement.ExperienceId, superseding.Event.ReplacementExperienceId);
 
         // And the column really is on the row, not reconstructed from anywhere else.
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT replacement_experience_id FROM agent_experience.lifecycle_events WHERE event_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", superseding.Event.EventId));
         Assert.Equal(replacement.ExperienceId, (Guid)(await command.ExecuteScalarAsync())!);
@@ -790,7 +790,7 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
 
     private async Task<long> CountSupersedingEventsAsync(params Guid[] experienceIds)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.lifecycle_events " +
             "WHERE experience_id = ANY(@ids) AND replacement_experience_id IS NOT NULL");
         command.Parameters.Add(new NpgsqlParameter<Guid[]>("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid)
@@ -883,7 +883,7 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
 
     private async Task InsertEventAsync(Scope scope, Guid experienceId, string currentStatus, Guid? replacementId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, project_id, " +
             "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision, " +
             "replacement_experience_id) VALUES (gen_random_uuid(), @experience_id, @tenant, @app, @project, 'Validated', " +
@@ -919,7 +919,7 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
 
     private async Task<long> CountEventsAsync()
     {
-        await using var command = _fixture.DataSource.CreateCommand("SELECT count(*) FROM agent_experience.lifecycle_events");
+        await using var command = _fixture.RawDataSource.CreateCommand("SELECT count(*) FROM agent_experience.lifecycle_events");
         return (long)(await command.ExecuteScalarAsync())!;
     }
 }

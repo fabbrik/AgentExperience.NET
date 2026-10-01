@@ -81,6 +81,7 @@ internal static class GrantAuditing
     /// </returns>
     public static async Task<bool> RecordAsync(
         ExperienceGrantAuditing auditing,
+        AuthorizationContext authorization,
         IReadOnlyList<ExperienceGrantAccess> accesses,
         CancellationToken cancellationToken)
     {
@@ -104,7 +105,17 @@ internal static class GrantAuditing
 
         try
         {
-            await auditing.Log.RecordAsync(accesses, cancellationToken).ConfigureAwait(false);
+            // This library's own log is written under the reader's authorization (story 15.1), so with row-level
+            // security on the append is confined to the bounds that read the record; any other log implementation
+            // gets the port's member, exactly as before.
+            if (auditing.Log is PostgresExperienceGrantAccessLog postgres)
+            {
+                await postgres.RecordAsync(authorization, accesses, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await auditing.Log.RecordAsync(accesses, cancellationToken).ConfigureAwait(false);
+            }
             return true;
         }
         catch (Exception ex)

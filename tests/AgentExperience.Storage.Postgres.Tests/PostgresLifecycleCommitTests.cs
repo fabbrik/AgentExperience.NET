@@ -425,7 +425,7 @@ public sealed class PostgresLifecycleCommitTests
 
         // Hold the record's row so the commit's projection update blocks after its event insert, giving
         // the token a real in-flight command to cancel (rather than the pre-flight guard).
-        await using var blocker = await _fixture.DataSource.OpenConnectionAsync();
+        await using var blocker = await _fixture.RawDataSource.OpenConnectionAsync();
         var blocking = await blocker.BeginTransactionAsync();
         await using (var hold = new NpgsqlCommand(
             "SELECT revision FROM agent_experience.experience_records WHERE experience_id = @id FOR UPDATE", blocker, blocking))
@@ -465,7 +465,7 @@ public sealed class PostgresLifecycleCommitTests
         var lifecycleEvent = Event(record.ExperienceId, ExperienceStatus.Candidate, ExperienceStatus.Validated, 0);
         await _store.CommitLifecycleEventAsync(Authorize(tenant), scope, lifecycleEvent, CancellationToken.None);
 
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT tenant_id, team_id, agent_id, user_id, prior_status, current_status, expected_revision, applied_revision, " +
             "occurred_at, recorded_at FROM agent_experience.lifecycle_events WHERE event_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", lifecycleEvent.EventId));
@@ -489,7 +489,7 @@ public sealed class PostgresLifecycleCommitTests
     public async Task The_schema_rejects_an_event_that_bypasses_the_store()
     {
         // The projection and the log can only stay consistent if applied_revision follows expected_revision.
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, project_id, " +
             "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision) " +
             "VALUES (gen_random_uuid(), gen_random_uuid(), 'tenant', 'app', 'proj', NULL, 'Revoked', 'because', 'tests', now(), now(), 3, 7)");
@@ -497,7 +497,7 @@ public sealed class PostgresLifecycleCommitTests
         var ex = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
         Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
 
-        await using var blank = _fixture.DataSource.CreateCommand(
+        await using var blank = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, project_id, " +
             "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision) " +
             "VALUES (gen_random_uuid(), gen_random_uuid(), '  ', 'app', 'proj', NULL, 'Revoked', 'because', 'tests', now(), now(), 0, 1)");
@@ -519,7 +519,7 @@ public sealed class PostgresLifecycleCommitTests
         // takes the owner's own hand: drop the constraint, write the row, put it back NOT VALID (the row
         // just written would fail a validating re-add, which is the point).
         await ExecuteAsync("ALTER TABLE agent_experience.lifecycle_events DROP CONSTRAINT lifecycle_events_current_status_known");
-        await using (var corrupt = _fixture.DataSource.CreateCommand(
+        await using (var corrupt = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.lifecycle_events (event_id, experience_id, tenant_id, application_id, project_id, " +
             "prior_status, current_status, reason, producer, occurred_at, recorded_at, expected_revision, applied_revision) " +
             "VALUES (gen_random_uuid(), @id, @tenant, @app, @project, NULL, 'validated', 'hand-written', 'tests', now(), now(), 0, 1)"))
@@ -668,7 +668,7 @@ public sealed class PostgresLifecycleCommitTests
 
     private async Task<long> CountEventsAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.lifecycle_events WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (long)(await command.ExecuteScalarAsync())!;

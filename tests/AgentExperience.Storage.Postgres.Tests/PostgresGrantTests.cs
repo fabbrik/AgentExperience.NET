@@ -312,7 +312,7 @@ public sealed class PostgresGrantTests
             "UPDATE agent_experience.experience_grants SET approach_arguments = '{\"run_incident_check\":[\"secret\"]}'::jsonb WHERE grant_id = @grant_id";
 
         // The application role holds no UPDATE on the column (6.1's manifest names only the revocation columns).
-        await using (var command = _fixture.DataSource.CreateCommand(Widen))
+        await using (var command = _fixture.RawDataSource.CreateCommand(Widen))
         {
             command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
             var refused = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
@@ -1267,7 +1267,7 @@ public sealed class PostgresGrantTests
 
     private async Task<long> ScalarAsync(string sql, params (string Name, object Value)[] parameters)
     {
-        await using var command = _fixture.DataSource.CreateCommand(sql);
+        await using var command = _fixture.RawDataSource.CreateCommand(sql);
         foreach (var (name, value) in parameters)
         {
             command.Parameters.Add(new NpgsqlParameter { ParameterName = name, Value = value });

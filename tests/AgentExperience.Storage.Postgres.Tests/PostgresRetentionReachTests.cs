@@ -430,7 +430,7 @@ public sealed class PostgresRetentionReachTests
 
         var root = new Scope(tenant, "app-1", "project-1");
         Task<ExperienceRetentionSweepResult>[] sweeps;
-        await using (var holder = await _fixture.DataSource.OpenConnectionAsync())
+        await using (var holder = await _fixture.RawDataSource.OpenConnectionAsync())
         {
             await using var hold = await holder.BeginTransactionAsync();
             await using (var pin = new NpgsqlCommand(
@@ -755,7 +755,7 @@ public sealed class PostgresRetentionReachTests
         Assert.True(await AccessExistsAsync(row));
 
         // The function's own ACL says the same thing, so a later script cannot quietly re-open it.
-        await using var acl = _fixture.DataSource.CreateCommand(
+        await using var acl = _fixture.RawDataSource.CreateCommand(
             "SELECT has_function_privilege('public', 'agent_experience.purge_grant_access(text, text, text, text, text, text, boolean, timestamptz, integer)', 'EXECUTE'), " +
             "p.prosecdef, array_to_string(p.proconfig, ',') " +
             "FROM pg_proc p WHERE p.oid = 'agent_experience.purge_grant_access(text, text, text, text, text, text, boolean, timestamptz, integer)'::regprocedure");
@@ -768,7 +768,7 @@ public sealed class PostgresRetentionReachTests
 
         // The guard that re-checks the floor compares with <= and -, so it pins its own search_path too:
         // a session cannot shadow those operators to walk a hand-marked delete past the floor.
-        await using var guard = _fixture.DataSource.CreateCommand(
+        await using var guard = _fixture.RawDataSource.CreateCommand(
             "SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'agent_experience.reject_event_log_mutation()'::regprocedure");
         Assert.Contains("search_path=pg_catalog, agent_experience", (string)(await guard.ExecuteScalarAsync())!, StringComparison.Ordinal);
     }
@@ -820,7 +820,7 @@ public sealed class PostgresRetentionReachTests
         var scope = new Scope(tenant, "app-1", "project-1", "t1");
         var survivor = await SeedAccessAsync(scope, Guid.NewGuid(), DateTimeOffset.UtcNow.AddDays(-400));
 
-        await using (var many = _fixture.DataSource.CreateCommand(
+        await using (var many = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grant_access (access_id, grant_id, experience_id, record_revision, " +
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, principal_id, correlation_id, " +
@@ -863,13 +863,13 @@ public sealed class PostgresRetentionReachTests
         await transaction.RollbackAsync();
 
         // A NULL cutoff is refused, never read as "no bound".
-        await using var nullCutoff = _fixture.DataSource.CreateCommand(
+        await using var nullCutoff = _fixture.RawDataSource.CreateCommand(
             "SELECT purge_outcome FROM agent_experience.purge_grant_access(@tenant, 'app-1', 'project-1', NULL, NULL, NULL, true, NULL, 10)");
         nullCutoff.Parameters.Add(new NpgsqlParameter<string>("tenant", NpgsqlDbType.Text) { TypedValue = tenant });
         Assert.Equal("CutoffTooRecent", await nullCutoff.ExecuteScalarAsync());
 
         // A NULL required field matches nothing, even as a subtree root.
-        await using var nullTenant = _fixture.DataSource.CreateCommand(
+        await using var nullTenant = _fixture.RawDataSource.CreateCommand(
             "SELECT purged FROM agent_experience.purge_grant_access(NULL, 'app-1', 'project-1', NULL, NULL, NULL, true, now() - interval '100 days', 500)");
         Assert.Equal(0L, await nullTenant.ExecuteScalarAsync());
         Assert.True(await AccessExistsAsync(survivor));
@@ -930,7 +930,7 @@ public sealed class PostgresRetentionReachTests
     private async Task<Guid> SeedAccessAsync(Scope owner, Guid experienceId, DateTimeOffset recordedAt, DateTimeOffset? occurredAt = null)
     {
         var accessId = Guid.NewGuid();
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grant_access (access_id, grant_id, experience_id, record_revision, " +
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, principal_id, correlation_id, " +
@@ -965,7 +965,7 @@ public sealed class PostgresRetentionReachTests
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            await using var command = _fixture.DataSource.CreateCommand(
+            await using var command = _fixture.RawDataSource.CreateCommand(
                 "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%purge_experience_record%'");
             if ((long)(await command.ExecuteScalarAsync())! >= count)
             {
@@ -980,7 +980,7 @@ public sealed class PostgresRetentionReachTests
 
     private async Task<bool> AccessExistsAsync(Guid accessId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.experience_grant_access WHERE access_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", accessId));
         return (long)(await command.ExecuteScalarAsync())! == 1;
@@ -988,7 +988,7 @@ public sealed class PostgresRetentionReachTests
 
     private async Task<bool> IsTombstoneAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT deleted_at IS NOT NULL FROM agent_experience.experience_records WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (bool)(await command.ExecuteScalarAsync())!;
@@ -996,7 +996,7 @@ public sealed class PostgresRetentionReachTests
 
     private async Task<long> RevisionAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT revision FROM agent_experience.experience_records WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (long)(await command.ExecuteScalarAsync())!;

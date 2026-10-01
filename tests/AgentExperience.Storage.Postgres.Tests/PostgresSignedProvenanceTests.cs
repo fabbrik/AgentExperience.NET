@@ -270,7 +270,7 @@ public sealed class PostgresSignedProvenanceTests
 
     private async Task<bool> PayloadTextContainsAsync(Guid experienceId, string text)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT strpos(payload::text, @text) > 0 FROM agent_experience.experience_records WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         command.Parameters.Add(new NpgsqlParameter<string>("text", text));
@@ -282,13 +282,13 @@ public sealed class PostgresSignedProvenanceTests
     {
         if (!EncryptionMode.IsOn)
         {
-            await using var command = _fixture.DataSource.CreateCommand(
+            await using var command = _fixture.RawDataSource.CreateCommand(
                 "SELECT payload::text FROM agent_experience.experience_records WHERE experience_id = @id");
             command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
             return (string)(await command.ExecuteScalarAsync())!;
         }
 
-        await using var sealedRead = _fixture.DataSource.CreateCommand(
+        await using var sealedRead = _fixture.RawDataSource.CreateCommand(
             "SELECT payload ->> 'sealed', tenant_id, application_id, project_id, team_id, agent_id, user_id " +
             "FROM agent_experience.experience_records WHERE experience_id = @id");
         sealedRead.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
@@ -308,7 +308,7 @@ public sealed class PostgresSignedProvenanceTests
 
     private async Task<long> CountEvidenceAsync(Guid experienceId)
     {
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "SELECT count(*) FROM agent_experience.confidence_evidence WHERE experience_id = @id");
         command.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
         return (long)(await command.ExecuteScalarAsync())!;

@@ -84,8 +84,8 @@ Schema comes in two calls, matching that split, and neither store ever migrates 
 
 ```csharp
 // As the owner role, on every deploy. The stores themselves connect as the application role.
-await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0018 (no 0014), always
-await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004, only with the vector channel
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0019 (no 0014), always
+await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004 and 0020, only with the vector channel
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(                     // last, so it covers both
     ownerDataSource,
     new ExperienceApplicationRoleOptions("agent_experience_app") { AllowErasure = true },
@@ -343,6 +343,121 @@ directory is out of reach entirely (see
 **A single-role deployment** — the application role runs the migrator and so owns the tables — still works, and is
 fine for local development and tests. It gets none of the above: the application is the owner, so every guard is
 only as strong as its code. It is not a supported production deployment.
+
+### Enabling row-level security
+
+The two roles keep the application role away from the schema's guards. They do not stop a store statement whose own
+scope predicate is wrong from reading or writing another tenant's rows: that isolation rests on the predicates every
+statement carries. Row-level security is an optional second layer under them (story 15.1). With it on, PostgreSQL
+itself admits the application role only to the rows inside the authorization bounds of the operation it is running,
+so one predicate's mistake is cut back to what the host authorized.
+
+It is off by default. Turn it on in the same privileges call, as the owner, after both migrators:
+
+```csharp
+await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+    owner,
+    new ExperienceApplicationRoleOptions("agent_experience_app")
+    {
+        AllowErasure = true,
+        EnableRowLevelSecurity = true,   // default false; false switches it back off
+    },
+    cancellationToken);
+```
+
+**What the call does.** In the same transaction as the privileges, under the migrator's lock, it:
+
+1. checks what row-level security depends on, and refuses — changing nothing and enabling nothing — when a table's
+   policies are missing (run `MigrateAsync` and, with the vector channel, `ExperienceVectorSchemaMigrator.MigrateAsync`
+   first) or a table carries a policy the migrations did not create; when `experience_grants` is missing or the
+   application role may not read it; or when a default for any `agent_experience.auth_*` setting is configured for the
+   application role or the database (`ALTER ROLE … SET`, `ALTER DATABASE … SET`), which would admit rows to a
+   statement that declared nothing;
+2. re-creates the five helper functions and every canonical policy from the definitions the migrations were written
+   from, so a helper replaced or a policy altered by hand since the migration (`CREATE OR REPLACE FUNCTION …`,
+   `ALTER POLICY … USING (true)`) is put back before anything is enabled;
+3. runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` on every table the application role reads or writes by scope:
+   `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
+   `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`, and
+   `experience_embeddings` when the vectors package created it;
+4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
+   permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
+   volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; no role the application role can reach
+   holding `BYPASSRLS` — and rolls everything back on a difference.
+
+It never uses `FORCE ROW LEVEL SECURITY`, and puts back a table forced by hand. With `EnableRowLevelSecurity = false`
+the same call disables row-level security on those tables, so the setting is declarative. Enabling re-creates the
+policies on every deploy, which takes a brief `ACCESS EXCLUSIVE` lock on each covered table; disabling alters only a
+table whose state differs.
+
+**What the stores declare.** Every store operation runs in a transaction and, first, declares its caller's
+`AuthorizationContext` bounds with `set_config(…, true)`: `agent_experience.auth_tenant`, `auth_application`,
+`auth_project`, `auth_team`, `auth_agent`, `auth_user`, and the marker `agent_experience.auth_set = 'on'` — all seven,
+every transaction, so nothing set earlier on the connection survives into an operation. A bound is `=` followed by
+the value, or the empty string where the context leaves the field unrestricted, exactly as
+`AuthorizationContext.Permits` reads a null bound; a setting that is unset or malformed admits nothing. The values
+travel as parameters. The settings are transaction-local, so they end with the operation's transaction. The stores
+declare whether or not row-level security is on: with it off nothing reads the settings, and the SQL a store sends is
+what it was, inside a transaction. The grant access log, when a store audits a read, appends under the reader's own
+authorization. Called directly through `IExperienceGrantAccessLog.RecordAsync`, which is handed none, it declares each
+row's recipient scope, a null field of it unrestricted; what bounds those rows is the insert policy, which admits one
+only about a live grant naming exactly its grant ID, record, owner and recipient.
+
+**Not supported with row-level security on:** presetting any `agent_experience.auth_*` setting outside a store's own
+transaction — as a connection-string option (`Options=-c agent_experience.auth_set=on`), a role or database default
+(refused, as above), or a session-level `SET` on a pooled connection, especially one with `No Reset On Close`. The
+stores do not rely on such a setting and override every one per transaction, but a statement that is not a store's —
+yours — would run under it. The privileges call inspects role and database defaults only, case-insensitively; it does
+not inspect server-level settings (`postgresql.conf`, `ALTER SYSTEM`) or the defaults of a separate login role that
+`SET ROLE`s to the application role, and both are equally unsupported.
+
+**What the policies admit** (`0019`, and `0020` for the embedding table). A row whose scope lies inside the declared
+bounds. For reading only, also a record or embedding a live sharing grant shares with the declared bounds, by the
+store's own grant rule: not revoked, not yet expired on `clock_timestamp()`, and the grant's owner columns equal to
+the row's. A grant is read by its owner, and by its recipient only while it is live; it is issued and revoked by its
+owner. An access row is read by either side and appended only by a reader inside the bounds, about a live grant whose
+ID, record, owner and recipient are exactly the row's. Evidence rows follow their record, and exposure rows their
+submission. Nothing is admitted while nothing is declared, and no policy admits a `DELETE` except of an embedding.
+The policies are a superset of every store predicate, including the subtree sweeps' and the grant reads', so every
+store statement returns exactly what it did before. The predicates stay in the SQL: this layer is defence in depth,
+not a replacement.
+
+**The owner's functions apply the bounds too.** `purge_experience_record`, `purge_expired_grants`,
+`purge_grant_access` and `seal_experience_record` run as the owner, whom the policies do not bind, so each checks its
+own scope argument first: while the calling transaction has declared bounds, a scope outside them is refused with
+`insufficient_privilege` before anything is read. While row-level security is enabled, a caller that declared nothing
+(or set the marker to anything but `on`) is refused as well, unless its login role is a member of the tables' owner or
+holds `BYPASSRLS` — roles the policies do not bind either. With row-level security disabled, an undeclared caller is
+unaffected, as before.
+
+**What it guards against, and what it does not.** It guards against a mistake in a store's SQL: a predicate dropped,
+mistyped or composed wrong is cut back to the bounds the host authorized, and a write outside them fails. It does
+**not**:
+
+- bind a compromised application role. The settings are ordinary session settings any session may set, so a host
+  able to run arbitrary SQL as the application role can declare any tenant's bounds itself;
+- enforce a grant's disclosure level. A grant admits the whole row; what of a borrowed record is shown (`LessonOnly`
+  and the others) is decided in the library's code;
+- hide that an ID exists in another tenant. Unique indexes span tenants, so a create that collides with another
+  tenant's ID still fails as a collision (`Conflict`), exactly as before;
+- check the record an exposure names. The port lets a feedback submission name a record the store does not hold, and
+  a record outside the bounds is, to a policy, exactly as invisible as one that does not exist, so no policy can tell
+  the two apart. The submission itself must lie inside the bounds.
+
+Those boundaries are [KL-17](../known-limits.md#documented-boundaries). The owner and superusers bypass row-level
+security, as they bypass every privilege.
+
+**What changes for anything else that connects.** The policies apply to every role but the owner, not only to the
+application role. A reporting role, or a script run as the application role, sees nothing until it declares bounds
+the same way, and then only what they admit. Run cross-tenant maintenance as the owner. A hand-made role that may not
+read `experience_grants` still reads its own scope through the stores' exact-scope fallback: the grant branch of a
+policy answers "nothing is granted" when the grant table is missing or unreadable.
+
+**What it costs.** About 0.7 ms per operation for the transaction and the declaration, and about 1 ms more per text
+search with row-level security on, on the benchmark machine. **Text search loses its GIN index under the policies**:
+the full-text match operator is not leakproof, so PostgreSQL applies it after the policy, over every live record in
+the declared tenant, found through the scope index. The vector channel keeps its HNSW index. See
+[Row-level security](../benchmarks.md#row-level-security-story-151) for the plans and numbers.
 
 ### Upgrading an existing single-role database
 

@@ -335,7 +335,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
 
         // Kill the sweep's own backend while it waits on the held row: a real storage failure part-way
         // through the batch, after one record was irreversibly erased.
-        await using (var terminate = _fixture.DataSource.CreateCommand(
+        await using (var terminate = _fixture.RawDataSource.CreateCommand(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity " +
             "WHERE wait_event_type = 'Lock' AND query LIKE '%purge_experience_record%'"))
         {
@@ -673,7 +673,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     /// <summary>Takes the row lock the sweep's erasure of <paramref name="experienceId"/> will wait on, until disposed.</summary>
     private async Task<HeldRow> HoldAsync(Guid experienceId)
     {
-        var connection = await _fixture.DataSource.OpenConnectionAsync();
+        var connection = await _fixture.RawDataSource.OpenConnectionAsync();
         var transaction = await connection.BeginTransactionAsync();
         await using (var pin = new NpgsqlCommand(
             "SELECT revision FROM agent_experience.experience_records WHERE experience_id = @id FOR UPDATE", connection, transaction))
@@ -694,7 +694,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            await using var command = _fixture.DataSource.CreateCommand(
+            await using var command = _fixture.RawDataSource.CreateCommand(
                 "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%purge_experience_record%'");
             if ((long)(await command.ExecuteScalarAsync())! > 0)
             {
@@ -711,7 +711,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     {
         var grantId = Guid.NewGuid();
 
-        await using (var grant = _fixture.DataSource.CreateCommand(
+        await using (var grant = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grants (grant_id, experience_id, tenant_id, application_id, " +
             "project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, reason, " +
@@ -743,7 +743,7 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     private async Task<Guid> SeedAgedAccessAsync(Scope owner, string principal)
     {
         var accessId = Guid.NewGuid();
-        await using var command = _fixture.DataSource.CreateCommand(
+        await using var command = _fixture.RawDataSource.CreateCommand(
             "INSERT INTO agent_experience.experience_grant_access (access_id, grant_id, experience_id, record_revision, " +
             "tenant_id, application_id, project_id, team_id, agent_id, user_id, recipient_tenant_id, recipient_application_id, " +
             "recipient_project_id, recipient_team_id, recipient_agent_id, recipient_user_id, principal_id, correlation_id, " +

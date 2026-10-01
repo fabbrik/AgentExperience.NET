@@ -16,6 +16,7 @@
     }
     public static class ExperienceVectorSchema
     {
+        public const string EmbeddingsRowLevelSecurityScriptName = "0020_embeddings_row_level_security.sql";
         public const string EmbeddingsScriptName = "0004_add_experience_embeddings.sql";
         public static System.Collections.Generic.IReadOnlyList<string> ScriptNames { get; }
         public static string GetScript(string scriptName) { }

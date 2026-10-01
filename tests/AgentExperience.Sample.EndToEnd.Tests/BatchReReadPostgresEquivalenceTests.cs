@@ -122,7 +122,7 @@ public sealed class BatchReReadPostgresEquivalenceTests(SamplePostgresFixture fi
                 .FirstOrDefault(m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true)?
                 .Text;
             var counting = through as CountingStore;
-            return (reported!, block, await AccessRowsAsync(dataSource, correlationId), counting?.Reads ?? -1, counting?.Batches ?? -1);
+            return (reported!, block, await AccessRowsAsync(dataSource, tenant, correlationId), counting?.Reads ?? -1, counting?.Batches ?? -1);
         }
 
         var perRecordStore = new CountingStore(store, batch: false);
@@ -207,11 +207,29 @@ public sealed class BatchReReadPostgresEquivalenceTests(SamplePostgresFixture fi
 
     private static DateTimeOffset Micro(DateTimeOffset value) => new(value.UtcTicks - (value.UtcTicks % 10), TimeSpan.Zero);
 
-    private static async Task<IReadOnlyList<string>> AccessRowsAsync(NpgsqlDataSource dataSource, string correlationId)
+    private static async Task<IReadOnlyList<string>> AccessRowsAsync(NpgsqlDataSource dataSource, string tenant, string correlationId)
     {
-        await using var command = dataSource.CreateCommand(
+        // Read in a transaction that first declares the tenant as its only bound, exactly as the stores declare
+        // theirs, so the read holds with row-level security on (story 15.1) as well as off.
+        await using var connection = await dataSource.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var declare = new NpgsqlCommand(
+            "SELECT set_config('agent_experience.auth_tenant', '=' || @tenant, true), " +
+            "set_config('agent_experience.auth_application', '', true), set_config('agent_experience.auth_project', '', true), " +
+            "set_config('agent_experience.auth_team', '', true), set_config('agent_experience.auth_agent', '', true), " +
+            "set_config('agent_experience.auth_user', '', true), set_config('agent_experience.auth_set', 'on', true)",
+            connection,
+            transaction))
+        {
+            declare.Parameters.Add(new NpgsqlParameter<string>("tenant", tenant));
+            await declare.ExecuteNonQueryAsync();
+        }
+
+        await using var command = new NpgsqlCommand(
             "SELECT grant_id, experience_id, record_revision, team_id, recipient_team_id, principal_id, disclosure " +
-            "FROM agent_experience.experience_grant_access WHERE correlation_id = @correlation_id ORDER BY experience_id");
+            "FROM agent_experience.experience_grant_access WHERE correlation_id = @correlation_id ORDER BY experience_id",
+            connection,
+            transaction);
         command.Parameters.Add(new NpgsqlParameter<string>("correlation_id", correlationId));
 
         var rows = new List<string>();

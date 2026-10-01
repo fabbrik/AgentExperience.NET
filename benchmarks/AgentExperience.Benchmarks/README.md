@@ -30,7 +30,8 @@ Every class runs each case on `Store=InMemory` and `Store=Postgres`, with `[Memo
 - **PostgreSQL once.** `Program.cs` starts one `pgvector/pgvector` container (PostgreSQL 16 unless
   `AGENTEXPERIENCE_POSTGRES_MAJOR` names another supported major) before any benchmark. Each dataset is a database of
   its own in it, migrated by `ExperienceSchemaMigrator` and analyzed after seeding; the stores connect as the
-  container's superuser. **Without Docker**, the program says so and the `Postgres` cases are simply not generated.
+  container's superuser, unless `AGENTEXPERIENCE_BENCHMARK_RLS` is `on` or `off`, which makes each dataset the two-role
+  deployment with row-level security switched that way (story 15.1). **Without Docker**, the program says so and the `Postgres` cases are simply not generated.
   With Rancher Desktop or another non-default socket, set `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`, as for the tests.
 - **Seeded records** are the conformance suite's `ConformanceData.FullRecord` (linked, not referenced), varied by index
   over ten topics, so the task text matches a tenth of the scope: 100 records of the 1k dataset, 1,000 of the 10k one,

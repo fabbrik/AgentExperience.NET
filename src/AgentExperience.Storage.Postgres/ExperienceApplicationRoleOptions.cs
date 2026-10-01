@@ -69,4 +69,38 @@ public sealed class ExperienceApplicationRoleOptions
     /// <see cref="ExperienceSealingResult.MoreRemain"/> is <see langword="false"/> everywhere.
     /// </summary>
     public bool AllowSealing { get; init; }
+
+    /// <summary>
+    /// Switches on PostgreSQL row-level security, the second isolation layer behind the stores' own scope
+    /// predicates (story 15.1). <see langword="false"/> by default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="true"/>, the privileges call runs <c>ALTER TABLE ... ENABLE ROW LEVEL SECURITY</c> on
+    /// every table the application role reads or writes by scope -- including <c>experience_embeddings</c> when
+    /// the vectors package created it -- and verifies it took, in the same transaction as the privileges. It never
+    /// uses <c>FORCE</c>: the owner, and so the <c>SECURITY DEFINER</c> erasure, purge and sealing functions,
+    /// keeps bypassing the policies. The call refuses, changing nothing, when a table's policies are missing
+    /// (run both migrators first) or when the application role can reach a role with <c>BYPASSRLS</c>.
+    /// </para>
+    /// <para>
+    /// When <see langword="false"/>, the same call disables row-level security on those tables, so the setting
+    /// is declarative: what the last call said is what holds.
+    /// </para>
+    /// <para>
+    /// The policies admit only the rows inside the authorization bounds each store operation declares for its
+    /// own transaction, plus the rows a live sharing grant lets it read. They guard against a mistake in a store's
+    /// SQL, not against a compromised application role: any session can declare bounds, so a host that runs
+    /// arbitrary SQL as the application role can declare wide ones. See docs/guide/deployment.md, Enabling
+    /// row-level security.
+    /// </para>
+    /// </remarks>
+    public bool EnableRowLevelSecurity { get; init; } = TestSuiteRowLevelSecurity;
+
+    /// <summary>
+    /// <b>Test-only.</b> What <see cref="EnableRowLevelSecurity"/> starts as, set once by the storage suites'
+    /// module initializers from <c>AGENTEXPERIENCE_TEST_RLS</c>, so the unmodified suites run a second time with
+    /// row-level security on. Never set by the library: the public default is <see langword="false"/>.
+    /// </summary>
+    internal static bool TestSuiteRowLevelSecurity { get; set; }
 }

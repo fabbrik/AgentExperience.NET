@@ -4,7 +4,8 @@ namespace AgentExperience.Upgrade.Tests;
 
 /// <summary>
 /// The <c>agent_experience</c> schema as the catalog describes it, one line per object, so an upgraded database can be
-/// compared with a fresh install of today's schema: relations with their owners and privileges; columns with type,
+/// compared with a fresh install of today's schema: relations with their owners, privileges and row-level security;
+/// row-level security policies, whole; columns with type,
 /// nullability, default, generation and column privileges; constraints (with whether they are validated); indexes;
 /// triggers with their enabled state; function definitions (<c>pg_get_functiondef</c>) with owner, security, settings
 /// and privileges; sequences; the schema's owner and privileges; and the installed extensions. Nothing here reads a
@@ -19,8 +20,15 @@ internal static class SchemaSnapshot
         "SELECT 'schema agent_experience owner=' || pg_get_userbyid(nspowner) || ' acl=' || " + string.Format(Acl, "nspacl") +
         " FROM pg_namespace WHERE nspname = 'agent_experience'",
 
-        "SELECT 'relation ' || c.relname || ' kind=' || c.relkind::text || ' owner=' || pg_get_userbyid(c.relowner) || ' acl=' || " + string.Format(Acl, "c.relacl") +
+        "SELECT 'relation ' || c.relname || ' kind=' || c.relkind::text || ' owner=' || pg_get_userbyid(c.relowner)" +
+        " || ' rowsecurity=' || c.relrowsecurity || ' forcerowsecurity=' || c.relforcerowsecurity || ' acl=' || " + string.Format(Acl, "c.relacl") +
         " FROM pg_class c WHERE c.relnamespace = 'agent_experience'::regnamespace",
+
+        // Story 15.1: every row-level security policy, whole -- command, permissiveness, roles and both expressions.
+        "SELECT 'policy ' || p.polrelid::regclass::text || ' ' || p.polname || ' cmd=' || p.polcmd::text || ' permissive=' || p.polpermissive" +
+        " || ' roles=' || coalesce((SELECT string_agg(CASE WHEN r = 0 THEN 'public' ELSE pg_get_userbyid(r)::text END, ',' ORDER BY 1) FROM unnest(p.polroles) r), '')" +
+        " || ' using=' || coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' check=' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')" +
+        " FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid WHERE c.relnamespace = 'agent_experience'::regnamespace",
 
         "SELECT 'column ' || c.relname || '.' || a.attname || ' type=' || format_type(a.atttypid, a.atttypmod) || ' notnull=' || a.attnotnull" +
         " || ' default=' || coalesce(pg_get_expr(d.adbin, d.adrelid), '') || ' generated=' || a.attgenerated::text || ' identity=' || a.attidentity::text" +

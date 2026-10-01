@@ -18,13 +18,43 @@ public class OfflineVectorsTests
     {
         // The whole point of the split: a host that never enables the vector channel never runs
         // CREATE EXTENSION vector, which needs a superuser.
-        Assert.Equal([ExperienceVectorSchema.EmbeddingsScriptName], ExperienceVectorSchema.ScriptNames);
+        Assert.Equal(
+            [ExperienceVectorSchema.EmbeddingsScriptName, ExperienceVectorSchema.EmbeddingsRowLevelSecurityScriptName],
+            ExperienceVectorSchema.ScriptNames);
         Assert.DoesNotContain(
             ExperienceVectorSchema.EmbeddingsScriptName,
             PostgresExperienceRecordSchema.ScriptNames,
             StringComparer.Ordinal);
+        Assert.DoesNotContain(
+            ExperienceVectorSchema.EmbeddingsRowLevelSecurityScriptName,
+            PostgresExperienceRecordSchema.ScriptNames,
+            StringComparer.Ordinal);
         Assert.Throws<ArgumentException>(() => ExperienceVectorSchema.GetScript("9999_missing.sql"));
         Assert.Throws<ArgumentException>(() => PostgresExperienceRecordSchema.GetScript(ExperienceVectorSchema.EmbeddingsScriptName));
+    }
+
+    [Fact]
+    public void The_embeddings_row_level_security_script_creates_the_policies_the_privileges_step_requires_and_switches_nothing_on()
+    {
+        // Story 15.1: experience_embeddings' policies are this package's, on the base adapter's 0019 helpers.
+        var script = ExperienceVectorSchema.GetScript(ExperienceVectorSchema.EmbeddingsRowLevelSecurityScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        foreach (var policy in RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.EmbeddingsTable))
+        {
+            Assert.Contains(policy.Ddl, statements, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(4, statements.Split("CREATE POLICY ").Length - 1);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("FORCE", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
+
+        // It stops, rather than half-applying, on a database whose base migration has not created the helpers.
+        Assert.Contains("RAISE EXCEPTION", statements, StringComparison.Ordinal);
+        Assert.Contains("agent_experience.rls_granted_keys()", statements, StringComparison.Ordinal);
+        Assert.True(
+            string.CompareOrdinal(PostgresExperienceRecordSchema.RowLevelSecurityScriptName, ExperienceVectorSchema.EmbeddingsRowLevelSecurityScriptName) < 0);
     }
 
     [Fact]

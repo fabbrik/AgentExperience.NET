@@ -856,7 +856,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         try
         {
-            await using var command = _dataSource.CreateCommand(_encryption is null ? InsertSql : InsertSealedSql);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(_encryption is null ? InsertSql : InsertSealedSql);
             var parameters = command.Parameters;
             parameters.Add(new NpgsqlParameter<Guid>("experience_id", record.ExperienceId));
             parameters.Add(new NpgsqlParameter<Guid>("source_run_id", record.SourceRunId));
@@ -877,6 +878,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             }
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceStoreOutcome.Created, NoErrors);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation && !cancellationToken.IsCancellationRequested)
@@ -928,14 +930,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             try
             {
-                result = await ReadOneAsync(_grants.Available ? GetSql : GetExactSql, scope, experienceId, cancellationToken)
+                result = await ReadOneAsync(_grants.Available ? GetSql : GetExactSql, authorization, scope, experienceId, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "get", cancellationToken))
             {
                 // No grant table, or no permission to read it. Falling back narrows the read to the
                 // exact scope; it can never return a record this scope did not already own.
-                result = await ReadOneAsync(GetExactSql, scope, experienceId, cancellationToken).ConfigureAwait(false);
+                result = await ReadOneAsync(GetExactSql, authorization, scope, experienceId, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
@@ -952,21 +954,26 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     private async Task<ExperienceRecordGetResult> ReadOneAsync(
         string sql,
+        AuthorizationContext authorization,
         Scope scope,
         Guid experienceId,
         CancellationToken cancellationToken)
     {
-        await using var command = _dataSource.CreateCommand(sql);
-        command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
-        AddScopeParameters(command.Parameters, scope);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+        ExperienceRecordGetResult result;
+        await using (var command = session.CreateCommand(sql))
         {
-            return new(ExperienceStoreOutcome.NotFound, null, NoErrors);
+            command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+            AddScopeParameters(command.Parameters, scope);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            result = await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+                ? await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false)
+                : new(ExperienceStoreOutcome.NotFound, null, NoErrors);
         }
 
-        return await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false);
+        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return result;
     }
 
     /// <summary>
@@ -1050,7 +1057,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         var access = GrantAuditing.Access(
             auditing, authorization, scope, options.CorrelationId, record, result.PermittingGrantId, result.GrantDisclosure);
 
-        return await GrantAuditing.RecordAsync(auditing, [access], cancellationToken).ConfigureAwait(false)
+        return await GrantAuditing.RecordAsync(auditing, authorization, [access], cancellationToken).ConfigureAwait(false)
             ? result
             : new(ExperienceStoreOutcome.NotFound, null, NoErrors);
     }
@@ -1118,13 +1125,13 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             {
                 try
                 {
-                    found = await ReadManyAsync(_grants.Available ? GetManySql : GetManyExactSql, scope, wanted, cancellationToken)
+                    found = await ReadManyAsync(_grants.Available ? GetManySql : GetManyExactSql, authorization, scope, wanted, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (Exception ex) when (_grants.ShouldFallBack(ex, "get", cancellationToken))
                 {
                     // Exactly the single read's fallback: narrower, never wider.
-                    found = await ReadManyAsync(GetManyExactSql, scope, wanted, cancellationToken).ConfigureAwait(false);
+                    found = await ReadManyAsync(GetManyExactSql, authorization, scope, wanted, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
@@ -1153,22 +1160,27 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     private async Task<Dictionary<Guid, ExperienceRecordGetResult>> ReadManyAsync(
         string sql,
+        AuthorizationContext authorization,
         Scope scope,
         Guid[] experienceIds,
         CancellationToken cancellationToken)
     {
-        await using var command = _dataSource.CreateCommand(sql);
-        command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", experienceIds));
-        AddScopeParameters(command.Parameters, scope);
-
+        await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
         var found = new Dictionary<Guid, ExperienceRecordGetResult>(experienceIds.Length);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using (var command = session.CreateCommand(sql))
         {
-            // experience_id is the primary key, so a row per ID at most; the lateral join is LIMIT 1.
-            found[reader.GetGuid(0)] = await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false);
+            command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", experienceIds));
+            AddScopeParameters(command.Parameters, scope);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                // experience_id is the primary key, so a row per ID at most; the lateral join is LIMIT 1.
+                found[reader.GetGuid(0)] = await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false);
+            }
         }
 
+        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
         return found;
     }
 
@@ -1195,7 +1207,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             }
         }
 
-        if (await GrantAuditing.RecordAsync(auditing, accesses, cancellationToken).ConfigureAwait(false))
+        if (await GrantAuditing.RecordAsync(auditing, authorization, accesses, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -1238,7 +1250,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 ? QuerySql + QueryOrderAndLimit
                 : QuerySql + QueryStatusPredicate + QueryOrderAndLimit;
 
-            await using var command = _dataSource.CreateCommand(sql);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(sql);
             AddScopeParameters(command.Parameters, query.Scope);
             if (query.Statuses is not null)
             {
@@ -1249,16 +1262,19 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             command.Parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
 
             var records = new List<ExperienceRecord>();
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
-                // A sealed record whose key was destroyed is erased, and absent here like a tombstone.
-                if (await ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false) is { } record)
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    records.Add(record);
+                    // A sealed record whose key was destroyed is erased, and absent here like a tombstone.
+                    if (await ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false) is { } record)
+                    {
+                        records.Add(record);
+                    }
                 }
             }
 
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceStoreOutcome.Found, records, NoErrors);
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
@@ -1310,15 +1326,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
             if (_encryption is not null && key is null)
             {
-                return await ShreddedCommitOutcomeAsync(connection, scope, lifecycleEvent.ExperienceRecordId, cancellationToken)
+                return await ShreddedCommitOutcomeAsync(connection, authorization, scope, lifecycleEvent.ExperienceRecordId, cancellationToken)
                     .ConfigureAwait(false);
             }
 
             // Pinned, not inherited: under REPEATABLE READ or SERIALIZABLE the same-revision race would
             // abort with a serialization failure instead of matching no row, turning an expected stale
             // revision into an infrastructure failure.
-            await using var transaction = await connection
-                .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+            await using var transaction = await ExperienceSessionContext
+                .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
 
             // The evidence goes in first, because whether its independence key was free decides whether
             // there is anything else to write at all. An event is append-only once written, so it cannot
@@ -1368,7 +1384,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 // A resubmitted event ID. PostgreSQL has aborted the transaction, so nothing this call
                 // attempted survives; the stored row then decides replay from conflict.
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                return await CompareStoredEventAsync(connection, scope, lifecycleEvent, occurredAt, key, cancellationToken).ConfigureAwait(false);
+                return await ExperienceSessionContext.RunAsync(
+                    connection,
+                    authorization,
+                    reread => CompareStoredEventAsync(connection, reread, scope, lifecycleEvent, occurredAt, key, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (PostgresException ex) when (IsViolationOf(ex, EventRevisionIndex, cancellationToken))
             {
@@ -1376,7 +1396,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 // loser of a same-revision race block here and fail once the winner commits, which is a
                 // stale revision by another name.
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                return await StaleOrMissingAsync(connection, null, scope, lifecycleEvent.ExperienceRecordId, cancellationToken).ConfigureAwait(false);
+                return await ExperienceSessionContext.RunAsync(
+                    connection,
+                    authorization,
+                    reread => StaleOrMissingAsync(connection, reread, scope, lifecycleEvent.ExperienceRecordId, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
             }
 
             // Deliberately after the insert, so a replay never reaches it: retrying a committed
@@ -1424,7 +1448,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 // Another writer got there first. However the server is configured, losing that race is an
                 // expected condition, not an infrastructure failure.
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                return await StaleOrMissingAsync(connection, null, scope, lifecycleEvent.ExperienceRecordId, cancellationToken).ConfigureAwait(false);
+                return await ExperienceSessionContext.RunAsync(
+                    connection,
+                    authorization,
+                    reread => StaleOrMissingAsync(connection, reread, scope, lifecycleEvent.ExperienceRecordId, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
             }
 
             if (updated == 0)
@@ -1490,7 +1518,8 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         try
         {
-            await using var command = _dataSource.CreateCommand(HistorySql);
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using var command = session.CreateCommand(HistorySql);
             var parameters = command.Parameters;
             parameters.Add(new NpgsqlParameter<Guid>("experience_id", query.ExperienceId));
             AddScopeParameters(parameters, query.Scope);
@@ -1588,9 +1617,11 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         try
         {
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            return await ReadSupersessionAsync(connection, null, scope, experienceId, replacementExperienceId, cancellationToken)
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            var check = await ReadSupersessionAsync(session.Connection, session.Transaction, scope, experienceId, replacementExperienceId, cancellationToken)
                 .ConfigureAwait(false);
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return check;
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
@@ -1722,7 +1753,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            var (result, _) = await PurgeAsync(connection, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
+            var (result, _) = await PurgeAsync(connection, authorization, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
             return result;
         }
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
@@ -1906,28 +1937,33 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
             var candidates = new List<(Guid ExperienceId, Scope Scope)>(batchSize + 1);
             var candidatesSql = match == ScopeMatch.Subtree ? SweepSubtreeCandidatesSql : SweepCandidatesSql;
-            await using (var command = new NpgsqlCommand(candidatesSql, connection))
+            await using (var page = await ExperienceSessionContext.BeginAsync(connection, authorization, cancellationToken).ConfigureAwait(false))
             {
-                AddScopeParameters(command.Parameters, scope);
-                command.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", cutoff));
-
-                // One row beyond the batch, so "more remain" is read off the same statement rather than
-                // from a second count that could disagree with it.
-                command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
-
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                await using (var command = new NpgsqlCommand(candidatesSql, connection, page))
                 {
-                    candidates.Add((
-                        reader.GetGuid(0),
-                        new Scope(
-                            reader.GetString(1),
-                            reader.GetString(2),
-                            reader.GetString(3),
-                            reader.IsDBNull(4) ? null : reader.GetString(4),
-                            reader.IsDBNull(5) ? null : reader.GetString(5),
-                            reader.IsDBNull(6) ? null : reader.GetString(6))));
+                    AddScopeParameters(command.Parameters, scope);
+                    command.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", cutoff));
+
+                    // One row beyond the batch, so "more remain" is read off the same statement rather than
+                    // from a second count that could disagree with it.
+                    command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
+
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        candidates.Add((
+                            reader.GetGuid(0),
+                            new Scope(
+                                reader.GetString(1),
+                                reader.GetString(2),
+                                reader.GetString(3),
+                                reader.IsDBNull(4) ? null : reader.GetString(4),
+                                reader.IsDBNull(5) ? null : reader.GetString(5),
+                                reader.IsDBNull(6) ? null : reader.GetString(6))));
+                    }
                 }
+
+                await page.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
             var moreRemain = candidates.Count > batchSize;
@@ -1958,7 +1994,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                     // No expected revision: a sweep deletes a record for its age, not for the version it
                     // happened to be at when the page was read. The candidate's own exact scope, so the
                     // purge function's scope guard is the same exact-match guard DeleteAsync relies on.
-                    var (_, erasedNow) = await PurgeAsync(connection, candidateScope, experienceId, expectedRevision: null, cancellationToken)
+                    var (_, erasedNow) = await PurgeAsync(connection, authorization, candidateScope, experienceId, expectedRevision: null, cancellationToken)
                         .ConfigureAwait(false);
 
                     // Only what this call erased. A record another sweep or delete erased first comes back
@@ -2042,18 +2078,28 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </remarks>
     private async Task<(ExperienceRecordDeleteResult Result, bool ErasedNow)> PurgeAsync(
         NpgsqlConnection connection,
+        AuthorizationContext authorization,
         Scope scope,
         Guid experienceId,
         long? expectedRevision,
         CancellationToken cancellationToken)
     {
+        // The purge function runs as its owner, which row-level security does not bind; the erasure still
+        // declares its bounds like every other operation, so nothing it runs before or around the function can
+        // reach outside them.
+        await using var transaction = await ExperienceSessionContext
+            .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
+
         if (_encryption is null)
         {
-            return await RunPurgeAsync(connection, null, scope, experienceId, expectedRevision, cancellationToken).ConfigureAwait(false);
-        }
+            var plaintext = await RunPurgeAsync(connection, transaction, scope, experienceId, expectedRevision, cancellationToken)
+                .ConfigureAwait(false);
 
-        await using var transaction = await connection
-            .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+            // The purge has run; a late cancellation must not turn its commit into an erasure the caller is told
+            // failed, exactly as the encrypted path below commits past the caller's token.
+            await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+            return plaintext;
+        }
 
         // 0016's guard refuses to tombstone a sealed row unless the erasing transaction says it destroys the key:
         // a process that was not configured for encryption fails loudly instead of leaving the key behind.
@@ -2225,23 +2271,28 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             var candidates = new List<(Guid ExperienceId, Scope Scope)>(batchSize + 1);
-            await using (var command = new NpgsqlCommand(match == ScopeMatch.Subtree ? SealSubtreeCandidatesSql : SealCandidatesSql, connection))
+            await using (var page = await ExperienceSessionContext.BeginAsync(connection, authorization, cancellationToken).ConfigureAwait(false))
             {
-                AddScopeParameters(command.Parameters, scope);
-                command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                await using (var command = new NpgsqlCommand(match == ScopeMatch.Subtree ? SealSubtreeCandidatesSql : SealCandidatesSql, connection, page))
                 {
-                    candidates.Add((
-                        reader.GetGuid(0),
-                        new Scope(
-                            reader.GetString(1),
-                            reader.GetString(2),
-                            reader.GetString(3),
-                            reader.IsDBNull(4) ? null : reader.GetString(4),
-                            reader.IsDBNull(5) ? null : reader.GetString(5),
-                            reader.IsDBNull(6) ? null : reader.GetString(6))));
+                    AddScopeParameters(command.Parameters, scope);
+                    command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        candidates.Add((
+                            reader.GetGuid(0),
+                            new Scope(
+                                reader.GetString(1),
+                                reader.GetString(2),
+                                reader.GetString(3),
+                                reader.IsDBNull(4) ? null : reader.GetString(4),
+                                reader.IsDBNull(5) ? null : reader.GetString(5),
+                                reader.IsDBNull(6) ? null : reader.GetString(6))));
+                    }
                 }
+
+                await page.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
             var sealedCount = 0;
@@ -2256,7 +2307,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                         "A sealing candidate lay outside the requested scope or authorization; the job stopped without sealing it.");
                 }
 
-                if (await SealOneAsync(connection, experienceId, candidateScope, cancellationToken).ConfigureAwait(false))
+                if (await SealOneAsync(connection, authorization, experienceId, candidateScope, cancellationToken).ConfigureAwait(false))
                 {
                     sealedCount++;
                 }
@@ -2271,10 +2322,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <summary>Seals one plaintext record, in its own transaction. <see langword="false"/> when there was nothing to seal.</summary>
-    private async Task<bool> SealOneAsync(NpgsqlConnection connection, Guid experienceId, Scope scope, CancellationToken cancellationToken)
+    private async Task<bool> SealOneAsync(
+        NpgsqlConnection connection,
+        AuthorizationContext authorization,
+        Guid experienceId,
+        Scope scope,
+        CancellationToken cancellationToken)
     {
-        await using var transaction = await connection
-            .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await ExperienceSessionContext
+            .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
 
         long revision;
         string plaintext;
@@ -2302,7 +2358,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             // later page for ever, so the job finishes that delete instead (which needs AllowErasure, and throws
             // loudly without it). It is not counted as sealed.
             await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            await PurgeAsync(connection, scope, experienceId, expectedRevision: null, cancellationToken).ConfigureAwait(false);
+            await PurgeAsync(connection, authorization, scope, experienceId, expectedRevision: null, cancellationToken).ConfigureAwait(false);
             return false;
         }
 
@@ -2478,13 +2534,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </summary>
     private static async Task<ExperienceLifecycleCommitResult> CompareStoredEventAsync(
         NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         Scope scope,
         LifecycleEvent lifecycleEvent,
         DateTimeOffset occurredAt,
         RecordKey? key,
         CancellationToken cancellationToken)
     {
-        await using var command = new NpgsqlCommand(SelectEventSql, connection);
+        await using var command = new NpgsqlCommand(SelectEventSql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter<Guid>("event_id", lifecycleEvent.EventId));
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -2849,11 +2906,16 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// </summary>
     private static async Task<ExperienceLifecycleCommitResult> ShreddedCommitOutcomeAsync(
         NpgsqlConnection connection,
+        AuthorizationContext authorization,
         Scope scope,
         Guid experienceId,
         CancellationToken cancellationToken)
     {
-        var current = await ReadRevisionAndStatusAsync(connection, null, scope, experienceId, cancellationToken).ConfigureAwait(false);
+        var current = await ExperienceSessionContext.RunAsync(
+            connection,
+            authorization,
+            transaction => ReadRevisionAndStatusAsync(connection, transaction, scope, experienceId, cancellationToken),
+            cancellationToken).ConfigureAwait(false);
         return current is { } record
             ? new(ExperienceStoreOutcome.Deleted, record.Revision, null, NoErrors)
             : new(ExperienceStoreOutcome.NotFound, 0, null, NoErrors);

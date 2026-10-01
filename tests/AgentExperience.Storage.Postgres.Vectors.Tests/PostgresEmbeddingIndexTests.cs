@@ -16,6 +16,8 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
 
     private NpgsqlDataSource DataSource => fixture.DataSource;
 
+    private NpgsqlDataSource RawDataSource => fixture.RawDataSource;
+
     // ---------------------------------------------------------------- the schema itself
 
     [Fact]
@@ -617,14 +619,14 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
 
     private async Task<T?> ScalarAsync<T>(string sql)
     {
-        await using var command = DataSource.CreateCommand(sql);
+        await using var command = RawDataSource.CreateCommand(sql);
         var value = await command.ExecuteScalarAsync();
         return value is null or DBNull ? default : (T)value;
     }
 
     private async Task<Dictionary<string, string>> ColumnsAsync(string table)
     {
-        await using var command = DataSource.CreateCommand(
+        await using var command = RawDataSource.CreateCommand(
             "SELECT column_name, data_type FROM information_schema.columns " +
             $"WHERE table_schema = 'agent_experience' AND table_name = '{table}'");
 

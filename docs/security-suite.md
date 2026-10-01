@@ -10,9 +10,12 @@ parses every table below and fails if a listed test no longer exists in the name
 table falls below its minimum. Every listed test also runs in the ordinary `dotnet test`, so "the security suite
 passed" means "the full suite passed" — there is no separate, weaker security build. `RELEASING.md` step 3 runs it.
 
-Tests marked **(DB)** start a PostgreSQL container and need Docker. The store and vector suites run twice in CI: in
-plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENCE_TEST_ENCRYPTION=on`), so every
-**(DB)** row below that belongs to those two projects holds in both modes.
+Tests marked **(DB)** start a PostgreSQL container and need Docker. The store and vector suites run three times in CI:
+in plaintext mode; again, unmodified, in crypto-shredding mode (`AGENTEXPERIENCE_TEST_ENCRYPTION=on`); and again with
+PostgreSQL row-level security on (`AGENTEXPERIENCE_TEST_RLS=on`, story 15.1), every store running as the application
+role behind the policies. So every **(DB)** row below that belongs to those two projects holds in all three modes. The
+`PostgresRowLevelSecurityTests` rows build their own database with row-level security on, so they prove the second
+layer in every mode.
 
 ## 1. Tenant isolation — a caller in scope A cannot retrieve, inject, or write against scope B
 
@@ -26,6 +29,13 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | Storage.Postgres.Tests | `PostgresExperienceRecordStoreTests.Query_never_crosses_tenants_or_optional_scope_fields` | Listing a scope **(DB)** |
 | Storage.Postgres.Tests | `PostgresLifecycleCommitTests.History_of_a_record_in_another_scope_is_NotFound_like_a_missing_one` | History reveals nothing across scopes **(DB)** |
 | Storage.Postgres.Tests | `PostgresGrantTests.A_grant_never_widens_a_read_across_a_tenant_application_or_project` | A sharing grant cannot cross the hard boundary **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.A_broken_store_predicate_is_cut_back_to_the_declared_bounds` | Second layer (story 15.1): a store read with its scope predicate removed, which as the owner really returns another tenant's record, returns only the declared tenant's as the application role **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.With_nothing_declared_the_application_role_sees_no_row_and_can_write_none` | A statement that declared no bounds sees no row in any covered table and can insert none **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.A_live_grant_admits_its_recipients_bounds_to_read_and_never_to_write_and_revoking_it_ends_that` | The policies follow the grant rule: a live grant admits its recipient's bounds for reading only, and revoking it admits nothing **(DB)** |
+| Storage.Postgres.Vectors.Tests | `ApplicationRoleVectorsTests.The_embeddings_table_is_behind_row_level_security_exactly_when_the_mode_says_so_and_then_admits_only_the_declared_bounds` | The embedding table's policies admit only the declared tenant **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Every_covered_table_hides_another_tenants_rows_and_refuses_writing_them` | Every covered table, one by one: another tenant's rows are invisible and a copy of one cannot be written, and a grant's recipient sees only the record, the live grant and its own access row **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.A_grant_admits_a_record_only_while_live_and_only_the_record_owner_and_recipient_it_names` | Expired grants, grants over another record, grants whose owner columns do not match, and agent- or user-bounded recipients are admitted exactly as the grant rule says **(DB)** |
+| Storage.Postgres.Vectors.Tests | `ApplicationRoleVectorsTests.Another_tenants_embedding_is_invisible_and_cannot_be_written_under_a_declaration` | Another tenant's vector is invisible, cannot be deleted, and cannot be written back under a foreign declaration **(DB)** |
 | Core.Tests | `ExperienceRetrievalServiceTests.A_scope_outside_the_authorization_is_an_empty_fail_closed_result_and_no_search_is_issued` | Denied before any channel is queried |
 | Core.Tests | `ExperienceRetrievalServiceTests.A_candidate_from_another_tenant_application_or_project_empties_the_result_whatever_the_optional_fields_say` | A misbehaving adapter returning a foreign row fails closed |
 | Core.Tests | `ExperienceRetrievalServiceTests.A_declared_grant_can_still_not_carry_a_candidate_across_a_tenant_application_or_project` | Core re-checks what the adapter says a grant permitted |
@@ -84,6 +94,17 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.The_privilege_call_rolls_back_on_CREATE_through_PUBLIC_or_DELETE_one_SET_ROLE_away` | `CREATE` on the schema from `PUBLIC`, and `DELETE` held by a role the application role can `SET ROLE` to but does not inherit from, both fail verification and roll back **(DB)** |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.The_privilege_call_refuses_MAINTAIN_and_pg_maintain_on_PostgreSQL_17_and_later` | On PostgreSQL 17 and later, `MAINTAIN` on a guarded table (through `PUBLIC` or one `SET ROLE` away) and membership in `pg_maintain` both fail the call and roll back; on 15 and 16, which have neither, the same call succeeds **(DB)** |
 | Storage.Postgres.Tests | `PostgresApplicationRoleTests.An_object_a_later_migration_adds_gets_nothing_until_the_manifest_names_it` | Re-applying on every deploy covers later objects: a new table gets nothing, and a new `SECURITY DEFINER` function executable by the role fails verification **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.A_declaration_for_one_tenant_cannot_read_or_update_another_tenants_rows` | Second layer (story 15.1): one tenant's declared bounds cannot read, update or insert another tenant's rows, and a narrower bound narrows **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Enabling_is_declarative_never_forced_and_verified` | Row-level security is enabled and disabled by the privileges call, never forced, and a hand-forced table is put back **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Enabling_refuses_a_policy_the_migrations_did_not_create_and_a_missing_one_and_changes_nothing` | An extra permissive policy or a missing one fails the call and rolls it back **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Enabling_refuses_an_application_role_that_can_bypass_it` | An application role holding `BYPASSRLS` is refused **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.The_suite_runs_behind_row_level_security_exactly_when_its_mode_says_so` | The suite's third mode really runs behind the policies **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.A_declaration_for_one_tenant_cannot_purge_sweep_or_seal_another_tenants_rows_through_the_owners_functions` | The `SECURITY DEFINER` erasure, grant purge, access purge and sealing functions refuse a scope outside the declared bounds **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Enabling_puts_back_a_policy_altered_by_hand` | A policy widened with `ALTER POLICY … USING (true)` is re-created from its canonical definition on the next deploy **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Enabling_refuses_a_default_for_the_settings_the_policies_read` | A role or database default for the declared settings fails the call **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.An_access_log_batch_naming_several_readers_lands_row_by_row_with_each_readers_own_scope` | An access row about a grant it was not delivered through is refused with row-level security on **(DB)** |
+| Storage.Postgres.Tests | `PostgresRowLevelSecurityTests.Declared_bounds_end_with_their_transaction_on_the_same_physical_connection` | The declaration never outlives its transaction, committed or rolled back, on one pooled connection **(DB)** |
+| Storage.Postgres.Vectors.Tests | `ApplicationRoleVectorsTests.Enabling_row_level_security_over_an_embedding_table_without_its_policies_is_refused_and_enables_nothing` | The embedding table is never left with row-level security on and no policy **(DB)** |
 | Storage.Postgres.Tests | `PostgresReuseFeedbackTests.A_run_scope_outside_the_authorization_is_denied_before_anything_is_written` | Feedback **(DB)** |
 | Storage.Postgres.Tests | `PostgresGrantTests.A_revoke_without_administrator_authority_is_denied_and_the_grant_still_stands` | Grant administration needs its own authority **(DB)** |
 | Storage.Postgres.Tests | `PostgresSupersessionAndAppendOnlyTests.A_live_grants_disclosure_level_cannot_be_changed_in_place` | A grant's disclosure level is immutable: widening it needs a new, audited grant **(DB)** |
@@ -239,6 +260,13 @@ plaintext mode, and again, unmodified, in crypto-shredding mode (`AGENTEXPERIENC
 | Storage.Postgres.Tests | `PostgresSignedProvenanceTests.A_record_forged_through_CreateAsync_with_a_copied_signature_or_none_is_refused_in_either_mode` | A genuine signature copied onto a forged record, or none, vouches for nothing, in plaintext and crypto-shredding mode **(DB)** |
 
 ## What this suite does not prove
+
+It does not prove that row-level security binds a compromised application role. The bounds the policies read are
+settings any session may set, so a host that runs arbitrary SQL as the application role can declare wide ones; the
+second layer catches a mistake in a store's own SQL, not an attacker holding the role's credentials. Nor does the
+second layer enforce a grant's disclosure level, hide that a colliding ID exists in another tenant, or check the
+record a feedback exposure names; those are KL-17 too. See
+[Enabling row-level security](guide/deployment.md#enabling-row-level-security).
 
 It does not prove that erasure reaches a copy of the **derived search data**. In crypto-shredding mode a record's
 full-text vector (its task ID, summary and lesson as lexemes) and its embedding stay readable in every backup,
