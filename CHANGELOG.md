@@ -6,6 +6,20 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.5
+
+The hardening release. It adds:
+- tests that upgrade databases the published previews created, plus benchmarks (Epic 12);
+- opt-in HMAC signing of finalization provenance (Epic 13);
+- screening of every reflection, an optional model-backed reflector, and labelling and an exclude option for the
+  lessons it writes (Epic 14);
+- opt-in PostgreSQL row-level security behind the application role (Epic 15).
+
+Upgrading from `0.1.0-preview.4` applies migration `0019` and, with the vectors package, `0020`. Everything new is off
+by default apart from reflection screening. Read the story sections below before you upgrade.
+
 ### Model-authored lessons are marked and guarded (story 14.3)
 
 - **Authorship, declared by the reflector.** `Reflection` gains `Authorship` (`ReflectionAuthorship.Deterministic =
