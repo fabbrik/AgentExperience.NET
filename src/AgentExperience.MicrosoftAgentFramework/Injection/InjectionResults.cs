@@ -105,6 +105,15 @@ public enum InjectionOmissionReason
     /// Checked after <see cref="ToolUnavailable"/>. The omission names no tool.
     /// </summary>
     RiskClassExceeded,
+
+    /// <summary>
+    /// The record's reflection is model-authored (its authorship is anything but
+    /// <see cref="AgentExperience.Abstractions.ReflectionAuthorship.Deterministic"/>) and the host set
+    /// <see cref="ExperienceInjectionOptions.ModelAuthoredLessons"/> to <see cref="ModelAuthoredLessonPolicy.Exclude"/>.
+    /// Decided on the ranked candidate before the record limit, so it takes no slot, and again on the re-read record
+    /// before the capability gate and <see cref="ExperienceInjectionOptions.DecideInjection"/>. The omission carries no detail.
+    /// </summary>
+    ModelAuthored,
 }
 
 /// <summary>

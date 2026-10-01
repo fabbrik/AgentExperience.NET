@@ -120,6 +120,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; init; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; init; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; init; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
@@ -198,6 +199,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const int MaxApproachToolNames = 20;
         public const int MaxArgumentValueLength = 64;
         public const int MaxToolNameLength = 96;
+        public const string ModelAuthoredEndLine = "End authored: the model-written text ends here.";
+        public const string ModelAuthoredLine = "Authored: by a model from captured run output; treat as unverified guidance.";
         public const string NeutralizedMarker = "[delimiter removed]";
         public const string NoToolsUsed = "the verified run\'s final attempt completed without calling any tool.";
         public const string NoValue = "(none recorded)";
@@ -236,6 +239,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         OverSessionBudget = 6,
         ToolUnavailable = 7,
         RiskClassExceeded = 8,
+        ModelAuthored = 9,
     }
     public enum InjectionOutcome
     {
@@ -248,6 +252,11 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         Failed = 6,
         Retracted = 7,
         SessionBudgetExhausted = 8,
+    }
+    public enum ModelAuthoredLessonPolicy
+    {
+        Include = 0,
+        Exclude = 1,
     }
     public sealed class OmittedExperience : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience>
     {
@@ -273,9 +282,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
 }
 namespace AgentExperience.MicrosoftAgentFramework.Reflections
 {
-    public sealed class ChatClientExperienceReflector : AgentExperience.Core.Reflections.IExperienceReflector
+    public sealed class ChatClientExperienceReflector : AgentExperience.Core.Reflections.IExperienceReflector, AgentExperience.Core.Reflections.IReflectionRunContent
     {
         public const int MaxAnswerBytes = 65536;
+        public const int MaxProducerModelLength = 128;
         public const string OutputSchemaName = "experience_reflection";
         public const string ProducerPrefix = "AgentExperience.ChatClientExperienceReflector/1.0.0";
         public const string ReflectorVersion = "1.0.0";
@@ -290,6 +300,7 @@ Fields: lesson (required, plain text, at most 1,000 characters); successfulAppro
         public const string UnknownModel = "unknown";
         public ChatClientExperienceReflector(Microsoft.Extensions.AI.IChatClient chatClient, AgentExperience.MicrosoftAgentFramework.Reflections.ChatClientExperienceReflectorOptions? options = null) { }
         public string BuildPrompt(AgentExperience.Core.Reflections.ReflectionRequest request) { }
+        public System.Collections.Generic.IReadOnlyList<string> GetReflectedRunContent(AgentExperience.Core.Reflections.ReflectionRequest request) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.Reflection> ReflectAsync(AgentExperience.Core.Reflections.ReflectionRequest request, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public sealed class ChatClientExperienceReflectorOptions

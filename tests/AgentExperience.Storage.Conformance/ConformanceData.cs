@@ -65,8 +65,9 @@ public static class ConformanceData
     /// <summary>
     /// A record with every part populated: attempts with tool calls whose arguments nest objects and lists,
     /// verification evidence, a reflection with every list filled, environment metadata, provenance with an
-    /// exposure, a closed round, and confidence counters its score agrees with. What a store returns for it must
-    /// be the same record.
+    /// exposure, a closed round, and confidence counters its score agrees with. Its reflection is model-authored,
+    /// so the non-default authorship round-trips too (a record from <see cref="Record"/> keeps the default). What a
+    /// store returns for it must be the same record.
     /// </summary>
     public static ExperienceRecord FullRecord(Scope scope, Guid? id = null)
     {
@@ -129,7 +130,10 @@ public static class ConformanceData
                 1,
                 "v1",
                 "template-reflector/1.0",
-                Time.AddMinutes(2)),
+                Time.AddMinutes(2))
+            {
+                Authorship = ReflectionAuthorship.Model,
+            },
             Environment: new EnvironmentFingerprint("worker-01", "10.0.0", "linux-x64", "1.2.3", new Dictionary<string, string> { ["region"] = "us-east", ["az"] = "1b", ["a"] = "x" }),
             Provenance: new Provenance("conformance-adapter", "1.0.0", Time, "trace-123") { ExposedTo = [new RunExposure(Guid.NewGuid(), 2)] },
             Status: ExperienceStatus.Validated,

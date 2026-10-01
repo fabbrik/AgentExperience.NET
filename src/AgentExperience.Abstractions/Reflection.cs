@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AgentExperience.Abstractions;
 
 /// <summary>
@@ -41,4 +43,34 @@ public sealed record Reflection(
     double CompletionScore,
     string VerificationRuleVersion,
     string Producer,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    /// <summary>
+    /// Who wrote this reflection's free text: <see cref="ReflectionAuthorship.Deterministic"/> (the default,
+    /// and what every reflection written before this property existed reads back as) or
+    /// <see cref="ReflectionAuthorship.Model"/>. It is recorded exactly as the reflector returned it and never
+    /// inferred from <see cref="Producer"/>. It is <b>self-declared</b>: a reflector that has a model write any of
+    /// the free text must set <see cref="ReflectionAuthorship.Model"/> itself, or its lessons read as deterministic
+    /// and escape both the content guard and the injection label. A model-authored reflection (any value but
+    /// <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts) is held to
+    /// finalization's content guard and labelled as such when injected. Neither this property nor the free-text
+    /// fields are covered by the provenance signature: a party that can write the store can change them. Omitted from System.Text.Json output when it is
+    /// <see cref="ReflectionAuthorship.Deterministic"/>, so a deterministic reflection serializes exactly as it
+    /// did before this property existed, and an absent member reads back as <c>Deterministic</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public ReflectionAuthorship Authorship { get; init; }
+}
+
+/// <summary>Who wrote a <see cref="Reflection"/>'s free-text fields.</summary>
+public enum ReflectionAuthorship
+{
+    /// <summary>A deterministic reflector derived the text from the run, without a model. The default.</summary>
+    Deterministic = 0,
+
+    /// <summary>
+    /// A model wrote the text from captured run output. Such text can be steered by what the run captured,
+    /// so it is screened by a content guard and labelled as unverified guidance when injected.
+    /// </summary>
+    Model = 1,
+}

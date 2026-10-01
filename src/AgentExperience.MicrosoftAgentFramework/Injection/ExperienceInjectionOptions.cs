@@ -342,6 +342,35 @@ public sealed class ExperienceInjectionOptions
     public ReceivingAgentCapabilities? ReceivingAgent { get; init; }
 
     /// <summary>
+    /// Whether records whose free text a model wrote (<see cref="Reflection.Authorship"/> is anything but
+    /// <see cref="ReflectionAuthorship.Deterministic"/>) may be injected. <see cref="ModelAuthoredLessonPolicy.Include"/>
+    /// (the default) injects them with their model-written fields between
+    /// <see cref="HistoricalReferenceWriter.ModelAuthoredLine"/> and <see cref="HistoricalReferenceWriter.ModelAuthoredEndLine"/>;
+    /// <see cref="ModelAuthoredLessonPolicy.Exclude"/> omits them as <see cref="InjectionOmissionReason.ModelAuthored"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This, and the label, are the controls to rely on for model-authored lessons; finalization's content guard is a
+    /// best-effort filter. Authorship is what the reflector declared: a record a model-backed reflector wrote without
+    /// declaring it, such as one from the story 14.2 <c>ChatClientExperienceReflector</c> before authorship existed,
+    /// reads as deterministic.
+    /// </para>
+    /// <para>
+    /// With <see cref="ModelAuthoredLessonPolicy.Exclude"/>, a candidate that was model-authored when retrieval ranked
+    /// it is omitted before the <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, so it takes no slot and cannot
+    /// crowd deterministic records out, and the re-read record is checked again before the capability gate and
+    /// <see cref="DecideInjection"/>. An omitted record is never re-read (unless it changed between the two checks),
+    /// shown to the host's decision, rendered, charged to the session budget, or recorded as a run exposure, and it
+    /// withdraws nothing. The selection is made from the candidates retrieval returned: when its candidate window
+    /// (<see cref="RetrieveExperienceRequest.Limit"/>, or the policy's candidate limit) is filled by model-authored
+    /// records, deterministic records outside it are not found. Authorship is read from the stored reflection, never
+    /// inferred from its <see cref="Reflection.Producer"/>. A value that is not a defined
+    /// <see cref="ModelAuthoredLessonPolicy"/> is refused when the provider is constructed.
+    /// </para>
+    /// </remarks>
+    public ModelAuthoredLessonPolicy ModelAuthoredLessons { get; init; } = ModelAuthoredLessonPolicy.Include;
+
+    /// <summary>
     /// Optional. Receives the content-free account of every injection attempt -- injected, empty,
     /// skipped, timed out, denied, or failed -- including each omission and its reason. Exceptions
     /// thrown by the callback are swallowed.
@@ -445,6 +474,13 @@ public sealed class ExperienceInjectionOptions
         ArgumentNullException.ThrowIfNull(TimeProvider, $"{paramName}.{nameof(TimeProvider)}");
         ArgumentNullException.ThrowIfNull(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
         ValidateSessionStateKey(SessionStateKey, $"{paramName}.{nameof(SessionStateKey)}");
+        if (!Enum.IsDefined(ModelAuthoredLessons))
+        {
+            throw new ArgumentException(
+                "ModelAuthoredLessons must be a defined ModelAuthoredLessonPolicy value.",
+                $"{paramName}.{nameof(ModelAuthoredLessons)}");
+        }
+
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)
         {
             // A notice that can never fit would stay owed forever and, since no record is written while

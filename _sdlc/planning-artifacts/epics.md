@@ -36,7 +36,7 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 11: 11.1 → 11.2.
 - Epic 12: 12.1 → 12.2.
 - Epic 13: 13.1.
-- Epic 14: 14.1 → 14.2.
+- Epic 14: 14.1 → 14.2 → 14.3.
 - Epic 15: 15.1.
 
 Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
@@ -155,7 +155,29 @@ Operators can detect records whose finalization claims were forged outside the l
 ### Epic 14: Reflect With a Model, Safely
 Developers can opt into a model-written lesson that is screened and bound to its evidence exactly like the deterministic one.
 
-### Epic 15: Isolate Tenants in the Database Too
+#### Story 14.3: Mark and Guard Model-Authored Lessons
+
+**Traces:** FR5, FR8, NFR2 · **Depends on:** 14.1, 14.2
+
+As a platform engineer,
+I want model-written lessons marked, screened for content the run never contained, and labelled when injected,
+So that captured tool output cannot quietly steer a model into teaching other agents to follow injected instructions.
+
+**Acceptance Criteria:**
+
+**Given** a reflection
+**When** it is stored
+**Then** it records its authorship (deterministic or model), the model reflector always marks its output as model-authored, and older records read as deterministic.
+
+**Given** a model-authored reflection
+**When** it is screened
+**Then** it is quarantined if it names a URL or host absent from the captured run, carries instruction-override phrasing, or contains credential-shaped text; the deterministic reflector is unaffected.
+
+**Given** injection
+**When** a model-authored record is rendered
+**Then** the Historical Reference labels it as written by a model from captured output, and a host option can exclude model-authored records from injection.
+
+## Epic 15: Isolate Tenants in the Database Too
 Operators can add PostgreSQL row-level security as a second isolation layer behind the application role.
 
 ## Epic 1: Capture and Explain Agent Experience

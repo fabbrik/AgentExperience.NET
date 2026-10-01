@@ -49,6 +49,12 @@ namespace AgentExperience.MicrosoftAgentFramework.Reflections;
 /// <b>Screening.</b> What the model writes is screened by finalization like any reflector's output
 /// (<see cref="ReflectionScreening"/>): text over <see cref="ReflectionLimits"/> is refused, not truncated,
 /// and the record is quarantined. <see cref="Reflection.Producer"/> names the model and is screened too.
+/// Every reflection this reflector returns is marked <see cref="ReflectionAuthorship.Model"/>, so finalization
+/// also applies its content guard (<see cref="ReflectionScreeningRefusal.UnsafeContent"/>), comparing links with
+/// exactly the run content this reflector sent (<see cref="GetReflectedRunContent"/>), and injection labels the
+/// model-written text, or omits it when the host asks. A model ID that is longer than
+/// <see cref="MaxProducerModelLength"/>, contains <c>:</c> or <c>/</c>, or looks like a link is not named in
+/// <see cref="Reflection.Producer"/>.
 /// </para>
 /// <para>
 /// <b>Failure.</b> Anything short of a readable answer with a lesson throws
@@ -68,7 +74,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Reflections;
 /// or <c>UseLogging</c>, can record the prompt and the answer.
 /// </para>
 /// </remarks>
-public sealed class ChatClientExperienceReflector : IExperienceReflector
+public sealed class ChatClientExperienceReflector : IExperienceReflector, IReflectionRunContent
 {
     /// <summary>The version of this reflector's prompt and output handling. Bumped whenever either changes.</summary>
     public const string ReflectorVersion = "1.0.0";
@@ -102,6 +108,9 @@ public sealed class ChatClientExperienceReflector : IExperienceReflector
 
     private const string NotValidatedReuseGuidanceFormat =
         "Do not reuse as a validated procedure: task verification status is {0}. Treat the listed approaches as observed history only, and verify any approach independently before relying on it.";
+
+    /// <summary>The longest model ID <see cref="Reflection.Producer"/> names; a longer one is dropped.</summary>
+    public const int MaxProducerModelLength = 128;
 
     /// <summary>The most characters of an environment metadata key the reflector writes into a precondition or warning.</summary>
     private const int MaxMetadataKeyLength = 200;
@@ -222,11 +231,46 @@ public sealed class ChatClientExperienceReflector : IExperienceReflector
             throw new ReflectionFailedException(ReflectionFailureKind.EmptyLesson);
         }
 
-        var model = !string.IsNullOrWhiteSpace(response.ModelId) ? response.ModelId
-            : !string.IsNullOrWhiteSpace(_options.ModelName) ? _options.ModelName
-            : UnknownModel;
+        var model = UsableModelName(response.ModelId) ?? UsableModelName(_options.ModelName) ?? UnknownModel;
 
         return Assemble(request, output, ProducerFor(model));
+    }
+
+    /// <summary>
+    /// The model as <see cref="Reflection.Producer"/> may name it, or <see langword="null"/> when it is blank, longer
+    /// than <see cref="MaxProducerModelLength"/> characters, contains <c>:</c> or <c>/</c>, or looks like a URL,
+    /// hostname, IP address or link (the content guard's rules). A model ID is the provider's text: it is dropped
+    /// rather than written, and the reflection is never refused over it.
+    /// </summary>
+    internal static string? UsableModelName(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model) || model.Length > MaxProducerModelLength || model.Contains(':', StringComparison.Ordinal) || model.Contains('/', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        try
+        {
+            return ModelTextPatterns.HasLink(model) ? null : model;
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+        {
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Exactly the captured text <see cref="BuildPrompt"/> quotes, unescaped and cut where its spans are cut, plus the
+    /// environment metadata keys this reflector itself writes into its "unknown" preconditions.
+    /// </remarks>
+    /// <exception cref="ReflectionFailedException">Not even the smallest data message fits (<see cref="ReflectionFailureKind.PromptTooLarge"/>).</exception>
+    public IReadOnlyList<string> GetReflectedRunContent(ReflectionRequest request)
+    {
+        Validate(request);
+        var shown = ReflectionPromptBuilder.ShownContent(request, _options.MaxQuotedLength, _options.MaxPromptLength).ToList();
+        shown.AddRange(request.Run.Environment.Metadata.Keys.Select(key => ReflectionPromptBuilder.Clip(key, MaxMetadataKeyLength)));
+        return shown;
     }
 
     /// <summary>
@@ -447,7 +491,10 @@ public sealed class ChatClientExperienceReflector : IExperienceReflector
             CompletionScore: evaluation.CompletionScore,
             VerificationRuleVersion: evaluation.RuleVersion,
             Producer: producer,
-            CreatedAt: request.CreatedAt);
+            CreatedAt: request.CreatedAt)
+        {
+            Authorship = ReflectionAuthorship.Model,
+        };
     }
 
     /// <summary>

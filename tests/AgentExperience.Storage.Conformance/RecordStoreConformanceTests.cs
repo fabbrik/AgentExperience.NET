@@ -207,7 +207,7 @@ public abstract class RecordStoreConformanceTests
 
     public static TheoryData<string> MalformedRecords => ["empty-id", "blank-task", "blank-application", "confidence-above-one", "negative-supporting", "negative-contradictions", "negative-revision",
         "signature-empty-value", "signature-oversized-value", "signature-bad-key-id", "signature-bad-algorithm",
-        "scope-lone-surrogate"];
+        "scope-lone-surrogate", "undefined-authorship"];
 
     [Theory]
     [MemberData(nameof(MalformedRecords))]
@@ -228,6 +228,7 @@ public abstract class RecordStoreConformanceTests
             "signature-bad-key-id" => valid with { ProvenanceSignature = Signature() with { KeyId = "key id/1" } },
             "signature-bad-algorithm" => valid with { ProvenanceSignature = Signature() with { Algorithm = " " } },
             "scope-lone-surrogate" => valid with { Scope = valid.Scope with { TeamId = "team-\uD800" } },
+            "undefined-authorship" => valid with { Reflection = Record(Scope(tenant), lesson: "a lesson").Reflection! with { Authorship = (ReflectionAuthorship)7 } },
             _ => valid with { Revision = -1 },
         };
 

@@ -256,7 +256,8 @@ for nothing.
 
   The signature is stored with the record as `ExperienceRecord.ProvenanceSignature` (key ID, algorithm and value) in
   the same create. Nothing else is signed. Content, status, counters and timestamps change through the lifecycle and
-  are not claims about the run. Both stores refuse a scope field that is not well-formed UTF-16.
+  are not claims about the run. That includes the reflection: its free text and its `Authorship` (story 14.3) are not
+  signed, so a party that can write the store can change them (KL-18). Both stores refuse a scope field that is not well-formed UTF-16.
 - **What is checked.** Wherever verification relies on a run's finalized record, the signature must verify under a key
   in the ring, compared in constant time. A record whose signature is missing, names a key that is not in the ring,
   or does not verify is treated as written outside finalization, and the evidence is refused as `HostWrittenRun`.

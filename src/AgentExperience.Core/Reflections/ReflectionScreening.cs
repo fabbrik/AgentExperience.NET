@@ -40,6 +40,16 @@ namespace AgentExperience.Core.Reflections;
 /// it is not Unicode-normalized, so a pattern rule should fold (for example NFKC plus confusable folding)
 /// inside the sanitizer.
 /// </description></item>
+/// <item><description>
+/// <b>The content guard, for model-authored text only.</b> A reflection whose
+/// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/> is then
+/// refused, as <see cref="ReflectionScreeningRefusal.UnsafeContent"/>, when a screened field holds a whole URL,
+/// hostname or IP address that is not in the run content its reflector was given (see
+/// <see cref="IReflectionRunContent"/>; with none, every one is refused), a <c>data:</c>, <c>javascript:</c>,
+/// <c>vbscript:</c> or <c>file:</c> link or a UNC path, instruction-override phrasing (also across all fields
+/// joined), credential-shaped text, or a word mixing Latin with Cyrillic or Greek letters. It is a fixed,
+/// best-effort filter, never a model call, and never applied to a deterministic reflection.
+/// </description></item>
 /// </list>
 /// <para>
 /// A refused reflection quarantines the record, exactly as a binding mismatch does, with a
@@ -48,9 +58,10 @@ namespace AgentExperience.Core.Reflections;
 /// score, the rule version, the evidence IDs and <c>CreatedAt</c> -- are never rewritten.
 /// </para>
 /// <para>
-/// Neither layer detects prompt injection or an arbitrary secret in free text. The hygiene layer
-/// removes what a reader cannot see and bounds what it can; anything beyond that is the host
-/// sanitizer's policy.
+/// No layer detects prompt injection or an arbitrary secret in free text. The hygiene layer
+/// removes what a reader cannot see and bounds what it can; the content guard catches a few fixed
+/// shapes in model-authored text; anything beyond that is the host sanitizer's policy, and the approval
+/// boundary around tools stays the control.
 /// </para>
 /// </remarks>
 public static class ReflectionScreening
@@ -125,7 +136,8 @@ public static class ReflectionScreening
         Reflection reflection,
         ISanitizer sanitizer,
         ReflectionLimits limits,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? runContent = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -134,6 +146,11 @@ public static class ReflectionScreening
         Hygienic first;
         try
         {
+            if (!Enum.IsDefined(reflection.Authorship))
+            {
+                throw new Refusal(ReflectionScreeningRefusal.UndefinedAuthorship, "its Authorship is not a defined ReflectionAuthorship value");
+            }
+
             producer = Clean(reflection.Producer)
                 ?? throw new Refusal(ReflectionScreeningRefusal.MissingProducer, "its Producer is missing, or empty once invisible characters are removed");
             EnsureLength(producer, limits.MaxProducerLength, nameof(Reflection.Producer));
@@ -226,6 +243,14 @@ public static class ReflectionScreening
             }
 
             var second = Hygiene(lesson, lists, guidance, first.SourceIndexes, limits, afterSanitizer: true);
+
+            // Layer 3, for model-authored text only: the content guard, over exactly what would be stored. Fail
+            // closed: anything that is not Deterministic counts as model-authored. With no run content, every
+            // URL, hostname and IP address is refused.
+            if (reflection.Authorship != ReflectionAuthorship.Deterministic)
+            {
+                GuardModelAuthored(second, ModelAuthoredContentGuard.LinksOf(runContent));
+            }
 
             var screened = reflection with
             {
@@ -332,6 +357,39 @@ public static class ReflectionScreening
         }
 
         return mapped?.ToString() ?? value;
+    }
+
+    /// <summary>
+    /// Refuses, as <see cref="ReflectionScreeningRefusal.UnsafeContent"/>, the first screened field that breaks
+    /// a <see cref="ModelAuthoredContentGuard"/> rule, naming the field (a list item by the reflector's own
+    /// index) and the rule, never the text.
+    /// </summary>
+    private static void GuardModelAuthored(Hygienic screened, Links runContent)
+    {
+        void Check(string? text, string field)
+        {
+            if (text is not null && ModelAuthoredContentGuard.Check(text, runContent) is { } rule)
+            {
+                throw new Refusal(ReflectionScreeningRefusal.UnsafeContent, Invariant($"its {field} contains {rule}"));
+            }
+        }
+
+        Check(screened.Lesson, nameof(Reflection.Lesson));
+        for (var list = 0; list < screened.Lists.Length; list++)
+        {
+            for (var item = 0; item < screened.Lists[list].Length; item++)
+            {
+                Check(screened.Lists[list][item], Invariant($"{ListFieldNames[list]}[{screened.SourceIndexes[list][item]}]"));
+            }
+        }
+
+        Check(screened.ReuseGuidance, nameof(Reflection.ReuseGuidance));
+
+        // A phrase split across fields or items is caught on all of them joined.
+        if (ModelAuthoredContentGuard.CheckCombined([screened.Lesson, .. screened.Lists.SelectMany(list => list), screened.ReuseGuidance]) is { } combined)
+        {
+            throw new Refusal(ReflectionScreeningRefusal.UnsafeContent, Invariant($"the text across its fields contains {combined}"));
+        }
     }
 
     /// <summary>Code points that are letters, marks or symbols by category but render as nothing or as blank space.</summary>

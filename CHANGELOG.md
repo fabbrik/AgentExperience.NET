@@ -6,6 +6,49 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Model-authored lessons are marked and guarded (story 14.3)
+
+- **Authorship, declared by the reflector.** `Reflection` gains `Authorship` (`ReflectionAuthorship.Deterministic =
+  0`, the default, or `Model = 1`), an init property. It is self-declared: `ChatClientExperienceReflector` always sets
+  `Model`, and **a host's own model-backed `IExperienceReflector` must set it too** (the contract now says so). Nothing
+  infers it from `Producer`. A deterministic reflection serializes as before (System.Text.Json omits the default). The
+  PostgreSQL store writes an optional `authorship` member in the version-1 reflection payload only when it is not
+  `Deterministic` (no migration; absent reads back as `Deterministic`; sealed with the rest in crypto-shredding mode);
+  the in-memory store keeps it. An undefined value is `Invalid` in both stores and refused by screening as the new
+  `ReflectionScreeningRefusal.UndefinedAuthorship`. Neither authorship nor the reflection's text is covered by
+  provenance signing (new documented boundary KL-18).
+- **A best-effort content guard for model-authored text.** After hygiene and the host sanitizer, screening refuses a
+  reflection whose authorship is anything but `Deterministic` with the new `ReflectionScreeningRefusal.UnsafeContent`
+  when a free-text field holds credential-shaped text (private keys, AWS, OpenAI/Anthropic `sk-`, GitHub, GitLab,
+  Google, Slack, JWT, Azure `AccountKey=`/`SharedAccessSignature=`, `password=`/`pwd=`); a word mixing Latin with
+  Cyrillic or Greek letters; listed instruction-override phrasing (normalized, with look-alikes folded, letters run
+  together, and across all fields joined); a `data:`, `javascript:`, `vbscript:` or `file:` link or a UNC path; or a
+  whole URL, hostname (last label a listed TLD, an `xn--` or a non-ASCII label) or IP address that does not equal a
+  whole token in the run content the reflector was given, after undoing `[.]`, `(dot)`, ` dot ` and full-width dots.
+  The new `IReflectionRunContent` lets a reflector declare exactly what it sent; `ChatClientExperienceReflector`
+  implements it with the same clipping as its prompt. With no run content, every link is refused. The reason names
+  the field and the rule, never the matched text.
+- **Injection labels every model-written field and can exclude them.** A model-authored entry carries its `Approach:`
+  line first, then `HistoricalReferenceWriter.ModelAuthoredLine`, the lesson, reuse guidance, preconditions and
+  warnings, then `HistoricalReferenceWriter.ModelAuthoredEndLine`. Any authorship other than `Deterministic` counts.
+  The new `ExperienceInjectionOptions.ModelAuthoredLessons` (`ModelAuthoredLessonPolicy.Include`, the default, or
+  `Exclude`) omits such records as the new `InjectionOmissionReason.ModelAuthored`, with no detail, **before** the
+  record limit (so they cannot crowd deterministic records out) and again after the re-read.
+- **Behaviour change for deterministic records:** none to their rendering, except that a line of a record's own text
+  that starts with `Authored:` or `End authored:` is now neutralized like any other field label. A test pins a
+  deterministic entry byte for byte against the pre-14.3 rendering.
+- **Behaviour change in `ChatClientExperienceReflector`'s `Producer`:** a model ID longer than 128 characters
+  (`MaxProducerModelLength`), or one containing `:` or `/`, or one shaped like a URL, hostname or IP address, is now
+  dropped (falling back to `ModelName`, then `unknown`) instead of being cut and named. The reflection is not refused.
+- **Upgrade note.** Records the story 14.2 `ChatClientExperienceReflector` wrote before this release read back as
+  `Deterministic`, are not relabelled, and `Exclude` does not cover them. Find them by `Producer` (it starts with
+  `AgentExperience.ChatClientExperienceReflector/`) and revoke or erase them; see
+  [Limits of model-authored lessons](docs/guide/finalization.md#limits-of-model-authored-lessons).
+- **The guard is a filter, not a boundary.** Content echoed from the run (a poisoned tool result included) passes by
+  design; paraphrased instructions, whitespace-split dots, encoded secrets and mid-line contradictions pass too; and a
+  legitimate lesson can be refused (`ASP.NET`, `1.0.0.0`). The label, `Exclude` and the approval boundary are the
+  controls to rely on. This closes the deferred-work item story 14.2 opened.
+
 ### Row-level security (story 15.1)
 
 - **An opt-in second isolation layer.** `ExperienceApplicationRoleOptions.EnableRowLevelSecurity` (default `false`)
