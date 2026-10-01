@@ -284,6 +284,29 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string RowLevelSecurityScriptName = "0019_row_level_security.sql";
 
+    /// <summary>
+    /// The script that records each record's reflection authorship beside its payload (story 14.4):
+    /// <c>experience_records.reflection_model_authored</c>, backfilled from every live plaintext payload, so an
+    /// excluding search (<see cref="AgentExperience.Abstractions.ExperienceCandidateQuery.ExcludeModelAuthored"/>) can
+    /// leave model-authored records out in SQL, before its limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A trigger derives the flag from every unsealed payload whenever the row is written, the store writes it from the
+    /// reflection when it seals a record, and a tombstone carries the fixed <c>false</c>. A sealed row stored without
+    /// the flag -- sealed before this script, or by an instance on the previous build during a rolling deploy -- keeps
+    /// <c>NULL</c>, which an excluding search keeps as a candidate: the residual the script's header and
+    /// docs/guide/postgres-schema.md describe, with the query that finds those records.
+    /// </para>
+    /// <para>
+    /// The application role's manifest is unchanged: its table-level <c>INSERT</c> and <c>SELECT</c> cover the column,
+    /// and it gets no <c>UPDATE</c> on it. The script holds <c>ACCESS EXCLUSIVE</c> on <c>experience_records</c> until
+    /// its backfill commits, and rewrites every row it backfills; see its header for when to run the backfill in
+    /// batches instead, and for the <c>NOT VALID</c> check.
+    /// </para>
+    /// </remarks>
+    public const string ReflectionAuthorshipScriptName = "0021_reflection_authorship.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -291,7 +314,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> is absent from this list while <c>0005</c> is present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -312,6 +335,7 @@ public static class PostgresExperienceRecordSchema
         GrantArgumentDisclosureScriptName,
         EvidenceAdmissionScriptName,
         RowLevelSecurityScriptName,
+        ReflectionAuthorshipScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

@@ -25,8 +25,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <see cref="RetrieveExperienceRequest"/>; retrieval ranks what is eligible and bounded by its own
 /// timeout; the top <see cref="ExperienceInjectionLimits.MaxRecords"/> are re-read together, in one
 /// batched read through the record store (with <see cref="ExperienceInjectionOptions.ModelAuthoredLessons"/> set to
-/// <see cref="ModelAuthoredLessonPolicy.Exclude"/>, every model-authored record is dropped before that limit is
-/// applied, and again after the re-read); with
+/// <see cref="ModelAuthoredLessonPolicy.Exclude"/>, the request asks retrieval to leave model-authored records out
+/// through <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, and any it still returns is dropped before
+/// that limit is applied, and again after the re-read); with
 /// <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
 /// capability gate then drops each record whose <c>Approach:</c> line names a tool the agent lacks or may not use
 /// -- after the record limit, so a gated record still takes a slot and the agent may get fewer records than
@@ -258,6 +259,15 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             // The host opted this invocation out. Not a failure, and nothing to report beyond that.
             return Nothing(trace, InjectionOutcome.Skipped, NoOmissions, retrieved: null, correlationId: null, failure: null);
+        }
+
+        if (_excludeModelAuthored && !request.ExcludeModelAuthored)
+        {
+            // Story 14.4: the exclusion moves into retrieval, so every source applies it before its own limit and
+            // model-authored records cannot fill the candidate window. Only ever switched on here, never off: a host
+            // that asked for it itself keeps it whatever the policy. Retrieval also excludes what a source still
+            // returns; the checks below stay as defence in depth, and for a record that changed before its re-read.
+            request = request with { ExcludeModelAuthored = true };
         }
 
         // From the request, not from a result: the host's correlation identifier is then on the span for
@@ -725,7 +735,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
             }
 
             // Model-authored records the host excluded (story 14.3) take no slot, so they can never crowd the
-            // deterministic records out of the record limit. Fail closed on authorship, as the writer does.
+            // deterministic records out of the record limit. Fail closed on authorship, as the writer does. Since
+            // story 14.4 retrieval leaves them out already, so this is defence in depth.
             if (_excludeModelAuthored && HistoricalReferenceWriter.IsModelAuthored(candidate.Record.Reflection))
             {
                 omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.ModelAuthored));

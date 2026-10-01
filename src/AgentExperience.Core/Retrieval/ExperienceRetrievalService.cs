@@ -369,7 +369,12 @@ public sealed class ExperienceRetrievalService
             _policy.CandidateLimit + 1,
             // Carried only so a channel that audits what it discloses can tie a delivered record back
             // to the invocation that asked for it. Nothing in retrieval reads it.
-            request.CorrelationId);
+            request.CorrelationId)
+        {
+            // A filter of the source's, like the status list and the floor: applied before its limit, so
+            // model-authored records cannot fill the window that deterministic ones would otherwise take.
+            ExcludeModelAuthored = request.ExcludeModelAuthored,
+        };
 
         // Cancelled only after a timeout has been reported (it carries no timer of its own), so a
         // token-honouring source can never race a cancellation failure ahead of the timeout report.
@@ -541,7 +546,11 @@ public sealed class ExperienceRetrievalService
                         _policy.MinimumConfidence,
                         // The same ceiling-plus-one probe the text channel uses, so either channel
                         // reaching the ceiling is visible as truncation.
-                        _policy.CandidateLimit + 1),
+                        _policy.CandidateLimit + 1)
+                    {
+                        // The text channel's exclusion, so neither channel can bring back what the other left out.
+                        ExcludeModelAuthored = request.ExcludeModelAuthored,
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -681,6 +690,17 @@ public sealed class ExperienceRetrievalService
             if (!EligibleStatuses.Contains(record.Status))
             {
                 excluded.Add(new ExcludedExperience(record.ExperienceId, RetrievalExclusionReason.IneligibleStatus));
+                continue;
+            }
+
+            // Story 14.4: the sources leave model-authored records out before their limits; this catches what one still
+            // returned -- a source that does not honour the request, or a PostgreSQL row sealed without its flag, which
+            // only now reads back opened. Fail closed on authorship; a record with no reflection is kept.
+            if (request.ExcludeModelAuthored
+                && record.Reflection is { } reflection
+                && reflection.Authorship != ReflectionAuthorship.Deterministic)
+            {
+                excluded.Add(new ExcludedExperience(record.ExperienceId, RetrievalExclusionReason.ModelAuthored));
                 continue;
             }
 

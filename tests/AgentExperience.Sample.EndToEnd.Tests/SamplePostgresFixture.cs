@@ -51,6 +51,22 @@ public sealed class SamplePostgresFixture : IAsyncLifetime
     }
 
     /// <summary>
+    /// A connection string for the role that owns the database <paramref name="connectionString"/> names, for a test
+    /// that stages what the application role may not do: the same string outside row-level security mode, where it is
+    /// already the superuser's, and the owner role's in that mode.
+    /// </summary>
+    public static string OwnerOf(string connectionString)
+    {
+        if (!RowLevelSecurityOn)
+        {
+            return connectionString;
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        return new NpgsqlConnectionStringBuilder(connectionString) { Username = builder.Database + "_o" }.ConnectionString;
+    }
+
+    /// <summary>
     /// <c>AGENTEXPERIENCE_TEST_RLS=on</c> (story 15.1): the sample then runs as an application role behind PostgreSQL
     /// row-level security instead of as the container's superuser, whom row-level security does not bind.
     /// </summary>

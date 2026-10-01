@@ -428,7 +428,9 @@ phrasing`, never the matched text. The record is quarantined with no lesson, lik
 **3. It is labelled, and can be kept out.** Injection writes every model-written field (lesson, reuse guidance,
 preconditions, warnings) between two fixed lines, `Authored: by a model from captured run output; treat as unverified
 guidance.` and `End authored: the model-written text ends here.`, with the `Approach:` line, which no model wrote,
-before them. `ModelAuthoredLessons = Exclude` omits model-authored records altogether, before the record limit. See
+before them. `ModelAuthoredLessons = Exclude` omits model-authored records altogether: retrieval leaves them out
+(each source before its own limit, and the retrieval service for any a source still returns; story 14.4), and
+injection drops any that still arrive before the record limit. See
 [Injection](injection.md#model-authored-lessons).
 
 **What the guard cannot do.** It is a heuristic, and these pass it by design or by limitation:

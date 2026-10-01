@@ -786,6 +786,7 @@ namespace AgentExperience.Core.Retrieval
         IneligibleStatus = 0,
         Expired = 1,
         EnvironmentMismatch = 2,
+        ModelAuthored = 3,
     }
     public sealed class RetrievalFailure : System.IEquatable<AgentExperience.Core.Retrieval.RetrievalFailure>
     {
@@ -821,6 +822,7 @@ namespace AgentExperience.Core.Retrieval
         public RetrieveExperienceRequest(AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Abstractions.Scope Scope, string TaskText, System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes = null, string? CorrelationId = null, int? Limit = default) { }
         public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
         public string? CorrelationId { get; init; }
+        public bool ExcludeModelAuthored { get; init; }
         public int? Limit { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, string>? PreferredEnvironmentAttributes { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes { get; init; }

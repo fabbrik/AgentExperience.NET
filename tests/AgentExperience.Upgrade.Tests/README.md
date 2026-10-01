@@ -77,9 +77,13 @@ Then, as the application role, with today's crypto-shredding over the same keys 
   case); the supersession checks; the tombstone (it reads as deleted, at the recorded revision, and re-creating a record
   under its ID is refused); each grant and its history; the shared read; the grant access log; each embedding's scan,
   its stored vector (read from the table, since no API returns one, and required to be exactly the vector written) and
-  a vector search, whose hits and relevances must be exactly the preview's; and the storage mode (every live record,
+  a vector search, whose hits and relevances must be exactly the preview's; the storage mode (every live record,
   search vector and feedback rationale sealed in the encrypted case with its data key still active, and nothing
-  sealed otherwise);
+  sealed otherwise); and `0021`'s authorship backfill (story 14.4): every sealed row unknown, every tombstone the fixed `false`, every seeded plaintext
+  row deterministic, and every text search answering the same with `ExcludeModelAuthored` on. In the plaintext cases
+  the suite itself, before the upgrade, inserts two SQL copies of `a-validated` in a project of its own, one whose
+  payload says `authorship: Model` (no published preview could write that), and checks that only that one is
+  flagged and that an excluding search leaves it out;
 - **writes:** a new transition (Validated to Reinforced); new confidence evidence, refused by today's verifying
   service with the documented reason, admitted `HostTrusted` by the opt-out, and, for `0.1.0-preview.2`, admitted
   `Verified` about the run the preview exposed; the expiring grant, which after it expires admits nothing and is

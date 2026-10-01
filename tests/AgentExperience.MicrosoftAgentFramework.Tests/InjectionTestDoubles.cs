@@ -141,6 +141,16 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// <summary>Thrown by <see cref="SearchAsync"/> when set, to exercise a failing retrieval.</summary>
     public Exception? SearchThrows { get; set; }
 
+    /// <summary>
+    /// Whether <see cref="SearchAsync"/> honours <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/> before its
+    /// limit, as a real store does (story 14.4). Off by default: the fake then returns model-authored records whatever
+    /// the query says, like a PostgreSQL record sealed before <c>0021</c>, so the provider's own check is what is tested.
+    /// </summary>
+    public bool HonoursAuthorshipExclusion { get; set; }
+
+    /// <summary>The last query <see cref="SearchAsync"/> received, so a test can assert what the provider asked for.</summary>
+    public ExperienceCandidateQuery? LastQuery { get; private set; }
+
     /// <summary>Thrown by <see cref="GetAsync(AuthorizationContext, Scope, Guid, ExperienceReadOptions, CancellationToken)"/> when set, to exercise a store that is down at re-check time.</summary>
     public Exception? GetThrows { get; set; }
 
@@ -359,6 +369,7 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _searches);
+        LastQuery = query;
         Entered.TrySetResult();
 
         if (SearchDelay is { } delay)
@@ -382,7 +393,8 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
             matches = _indexed
                 .Where(candidate => Readable(candidate.Record, query.Scope)
                     && query.EligibleStatuses.Contains(candidate.Record.Status)
-                    && candidate.Record.ReuseConfidence >= query.MinimumConfidence)
+                    && candidate.Record.ReuseConfidence >= query.MinimumConfidence
+                    && !(HonoursAuthorshipExclusion && query.ExcludeModelAuthored && Injection.HistoricalReferenceWriter.IsModelAuthored(candidate.Record.Reflection)))
                 .OrderByDescending(candidate => candidate.Relevance)
                 .Take(query.Limit)
                 .Select(candidate => candidate with { SharedByGrant = SharedByGrant(candidate.Record, query.Scope) })

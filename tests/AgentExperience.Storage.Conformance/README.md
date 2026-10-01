@@ -76,6 +76,10 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - It filters by exact scope, by the requested statuses, and by minimum confidence (the minimum itself is included).
 - It ranks before it limits, returns the strongest match first with a strictly higher relevance than a clearly
   weaker one, and gives each candidate a relevance in [0, 1].
+- With `ExcludeModelAuthored`, it leaves out every record whose reflection authorship is anything but
+  `Deterministic`, before the limit: with model-authored records ranked above deterministic ones and `Limit = N`, it
+  returns the top N deterministic records and no model-authored one. A record with no reflection is kept. Without it
+  (the default), the search is unchanged and model-authored records are returned like any other.
 - A record that matches none of the query's terms is not returned. Text that matches nothing is `Found` with no
   candidates. Each candidate is the record exactly as stored.
 - Blank or over-long text, an empty or undefined status list, a minimum confidence outside [0, 1] and a limit

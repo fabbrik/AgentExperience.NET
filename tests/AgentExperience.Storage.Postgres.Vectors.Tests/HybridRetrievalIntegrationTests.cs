@@ -44,6 +44,40 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
     }
 
     [Fact]
+    public async Task Excluding_model_authored_records_leaves_the_whole_limit_to_deterministic_ones_on_both_channels()
+    {
+        // Story 14.4: five model-authored records are the strongest match on both channels, and the request's limit is
+        // three. Each channel leaves them out before its own limit, so the three deterministic records come back.
+        var world = await TestWorld.CreateAsync(fixture);
+        var model = new List<Guid>();
+        for (var i = 0; i < 5; i++)
+        {
+            model.Add(await world.AddRecordAsync("refund-lock", "Refund stuck on a lock", "Wait out the lock contention", authorship: ReflectionAuthorship.Model));
+        }
+
+        var deterministic = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            deterministic.Add(await world.AddRecordAsync("deploy-ticket", "Refund after the deploy pipeline build", "Ship the release"));
+        }
+
+        foreach (var id in model.Concat(deterministic))
+        {
+            await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
+        }
+
+        var request = Request(world, "refund stuck on a lock") with { Limit = 3 };
+        var excluding = await world.Retrieval().RetrieveAsync(request with { ExcludeModelAuthored = true });
+        var including = await world.Retrieval().RetrieveAsync(request);
+
+        Assert.Equal(RetrievalOutcome.Completed, excluding.Outcome);
+        Assert.False(excluding.TextOnly);
+        Assert.Equal(deterministic.Order(), excluding.Records.Select(r => r.Record.ExperienceId).Order());
+        Assert.Equal(3, including.Records.Count);
+        Assert.All(including.Records, r => Assert.Contains(r.Record.ExperienceId, model));
+    }
+
+    [Fact]
     public async Task Both_channels_merge_into_one_ranked_answer_with_each_record_appearing_once()
     {
         var world = await TestWorld.CreateAsync(fixture);

@@ -84,7 +84,7 @@ Schema comes in two calls, matching that split, and neither store ever migrates 
 
 ```csharp
 // As the owner role, on every deploy. The stores themselves connect as the application role.
-await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003 and 0005-0019 (no 0014), always
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003, 0005-0019 and 0021 (no 0014), always
 await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004 and 0020, only with the vector channel
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(                     // last, so it covers both
     ownerDataSource,

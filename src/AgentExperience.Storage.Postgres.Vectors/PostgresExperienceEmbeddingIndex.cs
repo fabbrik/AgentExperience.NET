@@ -43,6 +43,13 @@ namespace AgentExperience.Storage.Postgres.Vectors;
 /// match.
 /// </para>
 /// <para>
+/// <b>The authorship exclusion</b> (<see cref="ExperienceVectorQuery.ExcludeModelAuthored"/>, story 14.4) is a
+/// predicate on the record side of the join, before the limit, on the same <c>0021</c> flag the text channel reads;
+/// like that channel, it keeps a sealed row stored without its flag. Under the out-of-band HNSW index pgvector applies
+/// it, like every other filter here, to the neighbours the index walk produced, so a search can return fewer than its
+/// limit; docs/guide/indexing.md names the host's levers.
+/// </para>
+/// <para>
 /// <b>Relevance.</b> Distance is pgvector's cosine distance (<c>&lt;=&gt;</c>), which lies in [0, 2];
 /// the reported relevance is <c>1 - distance / 2</c>, so it is already in [0, 1] with 1 for an exact
 /// direction match. Like the text channel's relevance it is a within-search measure.
@@ -206,21 +213,24 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// outside the limit, even though the real cause was the width.
     /// </para>
     /// </summary>
-    private static readonly string CompatibilityProbeExactSql =
-        $"SELECT EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ExactJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
-        "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence), " +
-        $"EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ExactJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
-        "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence AND e.model_id = @model_id)";
+    private static readonly string CompatibilityProbeExactSql = CompatibilityProbe(ExactJoinScopePredicate, excludeModelAuthored: false);
 
-    private static readonly string CompatibilityProbeSql =
-        $"SELECT EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ReadableJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
-        "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence), " +
-        $"EXISTS (SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id " +
-        $"WHERE {ReadableJoinScopePredicate} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
-        "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence AND e.model_id = @model_id)";
+    private static readonly string CompatibilityProbeSql = CompatibilityProbe(ReadableJoinScopePredicate, excludeModelAuthored: false);
+
+    /// <summary>
+    /// The probes for an excluding search (story 14.4): they see exactly what that search saw, so a scope whose only
+    /// comparable embeddings belong to model-authored records reports an empty match, not a mismatch.
+    /// </summary>
+    private static readonly string ExcludingCompatibilityProbeExactSql = CompatibilityProbe(ExactJoinScopePredicate, excludeModelAuthored: true);
+
+    private static readonly string ExcludingCompatibilityProbeSql = CompatibilityProbe(ReadableJoinScopePredicate, excludeModelAuthored: true);
+
+    /// <summary>
+    /// The authorship exclusion on the record side of the join: the text channel's own predicate, qualified with
+    /// <c>r</c>. It leaves out <c>0021</c>'s <c>true</c> only, so a sealed row stored without its flag stays a candidate
+    /// here exactly as it does there.
+    /// </summary>
+    private const string RecordModelAuthoredPredicate = "r." + PostgresExperienceCandidateSource.ModelAuthoredPredicate;
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -617,7 +627,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     {
         var candidates = new List<ExperienceCandidate>();
         var disclosures = new List<ExperienceGrantDisclosure?>();
-        await using (var command = new NpgsqlCommand(SearchSql(dimension, readable), connection, transaction))
+        await using (var command = new NpgsqlCommand(SearchSql(dimension, readable, query.ExcludeModelAuthored), connection, transaction))
         {
             var parameters = command.Parameters;
             PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
@@ -678,7 +688,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </summary>
     internal static string SearchSqlForTesting(int dimension) => SearchSql(dimension, readable: true);
 
-    private static string SearchSql(int dimension, bool readable)
+    private static string SearchSql(int dimension, bool readable, bool excludeModelAuthored = false)
     {
         var width = dimension.ToString(CultureInfo.InvariantCulture);
         var scope = readable ? ReadableJoinScopeWithNamedGrantPredicate : ExactJoinScopePredicate;
@@ -707,6 +717,9 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
             "AND r.status = ANY(@statuses) " +
             "AND r.reuse_confidence >= @min_confidence " +
+            // Story 14.4: applied before the LIMIT, like the status filter and the floor, so model-authored records
+            // cannot fill the nearest-neighbour window. Absent from the statement unless the query asks for it.
+            (excludeModelAuthored ? $"AND {RecordModelAuthoredPredicate} " : string.Empty) +
             "AND e.model_id = @model_id " +
             $"AND e.dimension = {width} " +
             // The distance expression is repeated rather than referenced by its alias, and it is the
@@ -716,6 +729,19 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             // Core re-sorts every candidate by score and breaks its own ties on ExperienceId, so the
             // order a caller sees is still total and stable.
             $"ORDER BY (e.embedding::vector({width}) <=> CAST(@query_vector AS vector({width}))) LIMIT @limit";
+    }
+
+    /// <summary>
+    /// Builds one compatibility probe: two <c>EXISTS</c> over the join, with the search's own filters, under
+    /// <paramref name="scope"/>; the second also requires the query's model.
+    /// </summary>
+    private static string CompatibilityProbe(string scope, bool excludeModelAuthored)
+    {
+        var filters = $"WHERE {scope} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+            "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence" +
+            (excludeModelAuthored ? " AND " + RecordModelAuthoredPredicate : string.Empty);
+        var from = $"SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id ";
+        return $"SELECT EXISTS ({from}{filters}), EXISTS ({from}{filters} AND e.model_id = @model_id)";
     }
 
     private static async Task<long?> ProbeRevisionAsync(
@@ -745,7 +771,10 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         bool readable,
         CancellationToken cancellationToken)
     {
-        await using var command = new NpgsqlCommand(readable ? CompatibilityProbeSql : CompatibilityProbeExactSql, connection, transaction);
+        var sql = query.ExcludeModelAuthored
+            ? (readable ? ExcludingCompatibilityProbeSql : ExcludingCompatibilityProbeExactSql)
+            : (readable ? CompatibilityProbeSql : CompatibilityProbeExactSql);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         var parameters = command.Parameters;
         PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
         parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });

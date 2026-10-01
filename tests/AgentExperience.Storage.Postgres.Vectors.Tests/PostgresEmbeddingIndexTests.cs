@@ -404,6 +404,83 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
     }
 
     [Fact]
+    public async Task An_excluding_vector_search_fills_its_limit_with_the_nearest_records_that_are_not_model_authored()
+    {
+        // Story 14.4: the model-authored records are the nearest, so a search that excluded them after its LIMIT would
+        // come back empty.
+        var world = await WorldAsync();
+        var model = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            model.Add(await world.AddRecordAsync("refund-lock", "Refund stuck on a lock", "Wait out the lock contention", authorship: ReflectionAuthorship.Model));
+        }
+
+        var deterministic = new[]
+        {
+            await world.AddRecordAsync("deploy-ticket", "Refund after the deploy pipeline build", "Ship the release"),
+            await world.AddRecordAsync("deploy-ticket", "Refund after the deploy pipeline build", "Ship the release"),
+        };
+
+        foreach (var id in model.Concat(deterministic))
+        {
+            await world.Indexing.IndexAsync(world.Authorization, world.Scope, id);
+        }
+
+        var query = VectorQuery(world, TopicEmbeddingGenerator.VectorFor("refund stuck on a lock")) with { Limit = 2 };
+        var excluding = await world.Index.SearchAsync(world.Authorization, query with { ExcludeModelAuthored = true }, CancellationToken.None);
+        var including = await world.Index.SearchAsync(world.Authorization, query, CancellationToken.None);
+
+        Assert.Equal(ExperienceVectorSearchOutcome.Found, excluding.Outcome);
+        Assert.Equal(deterministic.Order(), excluding.Candidates.Select(candidate => candidate.Record.ExperienceId).Order());
+        Assert.Equal(2, including.Candidates.Count);
+        Assert.All(including.Candidates, candidate => Assert.Contains(candidate.Record.ExperienceId, model));
+        Assert.False(query.ExcludeModelAuthored);
+    }
+
+    [Fact]
+    public async Task A_model_authored_record_shared_by_a_grant_is_excluded_from_the_vector_channel_like_an_owned_one()
+    {
+        var world = await WorldAsync();
+        var owner = world.Scope with { TeamId = "team-a" };
+        var recipient = world.Scope with { TeamId = "team-b" };
+        var model = await world.AddRecordAsync("refund-lock", "Refund stuck on a lock", "Wait out the lock contention", scope: owner, authorship: ReflectionAuthorship.Model);
+        var deterministic = await world.AddRecordAsync("deploy-ticket", "Refund after the deploy pipeline build", "Ship the release", scope: owner);
+        foreach (var id in new[] { model, deterministic })
+        {
+            await world.Indexing.IndexAsync(world.Authorization, owner, id);
+            await world.GrantAsync(id, owner, recipient);
+        }
+
+        var query = VectorQuery(world, TopicEmbeddingGenerator.VectorFor("refund stuck on a lock")) with { Scope = recipient };
+        var excluding = await world.Index.SearchAsync(world.Authorization, query with { ExcludeModelAuthored = true }, CancellationToken.None);
+        var including = await world.Index.SearchAsync(world.Authorization, query, CancellationToken.None);
+
+        var shared = Assert.Single(excluding.Candidates);
+        Assert.Equal(deterministic, shared.Record.ExperienceId);
+        Assert.True(shared.SharedByGrant);
+        Assert.Equal(new[] { model, deterministic }.Order(), including.Candidates.Select(candidate => candidate.Record.ExperienceId).Order());
+    }
+
+    [Fact]
+    public async Task An_excluding_search_over_only_model_authored_embeddings_is_an_empty_match_and_not_a_mismatch()
+    {
+        var world = await WorldAsync();
+        var model = await world.AddRecordAsync("refund-lock", "Refund stuck on a lock", "Wait out the lock contention", authorship: ReflectionAuthorship.Model);
+        await world.Indexing.IndexAsync(world.Authorization, world.Scope, model);
+
+        // A width nothing is stored at: without the exclusion it is a dimension mismatch. With it, the probe sees what
+        // the search saw -- nothing comparable is left -- so it is an empty answer.
+        var wider = new float[] { 1f, 0f, 0f, 0f, 0f };
+        var excluding = await world.Index.SearchAsync(
+            world.Authorization, VectorQuery(world, wider) with { ExcludeModelAuthored = true }, CancellationToken.None);
+        var including = await world.Index.SearchAsync(world.Authorization, VectorQuery(world, wider), CancellationToken.None);
+
+        Assert.Equal(ExperienceVectorSearchOutcome.Found, excluding.Outcome);
+        Assert.Empty(excluding.Candidates);
+        Assert.Equal(ExperienceVectorSearchOutcome.DimensionMismatch, including.Outcome);
+    }
+
+    [Fact]
     public async Task A_scope_outside_the_authorization_is_denied_before_any_statement_runs()
     {
         var world = await WorldAsync();

@@ -18,8 +18,8 @@ namespace AgentExperience.Abstractions;
 /// </para>
 /// <para>
 /// An implementation decides <em>nothing</em> about eligibility beyond what the query asks for: it
-/// applies the scope, the requested statuses, and the minimum confidence, matches the text, and
-/// returns each match with a normalized relevance. Which statuses are eligible, whether a record has
+/// applies the scope, the requested statuses, the minimum confidence, and the authorship exclusion when the
+/// query asks for it, matches the text, and returns each match with a normalized relevance. Which statuses are eligible, whether a record has
 /// expired, whether its environment is compatible, and how candidates are ranked are all Core's
 /// decisions, made over what this port returns.
 /// </para>
@@ -32,7 +32,8 @@ public interface IExperienceCandidateSource
     /// <see cref="ExperienceRecord.Status"/> is one of
     /// <see cref="ExperienceCandidateQuery.EligibleStatuses"/>, and whose
     /// <see cref="ExperienceRecord.ReuseConfidence"/> is at least
-    /// <see cref="ExperienceCandidateQuery.MinimumConfidence"/>. At most
+    /// <see cref="ExperienceCandidateQuery.MinimumConfidence"/>, leaving out model-authored records when
+    /// <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/> is set. At most
     /// <see cref="ExperienceCandidateQuery.Limit"/> records are returned, the strongest text matches
     /// first.
     /// </summary>
@@ -83,6 +84,32 @@ public sealed record ExperienceCandidateQuery(
 
     /// <summary>The <see cref="Limit"/> used when none is specified.</summary>
     public const int DefaultLimit = 50;
+
+    /// <summary>
+    /// <see langword="true"/> to leave out every model-authored record: one whose <see cref="ExperienceRecord.Reflection"/>
+    /// exists and whose <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>,
+    /// so an undefined or future value counts as model-authored. A record with no reflection is not model-authored.
+    /// <see langword="false"/> (the default) leaves the search exactly as it is without this property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The exclusion is a filter like <see cref="EligibleStatuses"/> and <see cref="MinimumConfidence"/>, applied
+    /// <em>before</em> <see cref="Limit"/>: an excluding search returns up to <see cref="Limit"/> of the strongest
+    /// records that are not model-authored, never fewer because model-authored records filled the window. Authorship is
+    /// read from the stored reflection, never inferred from <see cref="Reflection.Producer"/>.
+    /// </para>
+    /// <para>
+    /// An implementation that cannot honour it must not ignore it: it answers
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>, with an error naming this property, rather than returning a page
+    /// that may hold model-authored records. The store conformance suite checks the exclusion. The PostgreSQL candidate
+    /// source has one documented residual: a sealed row stored without its authorship flag -- sealed before its
+    /// <c>0021</c> migration, sealed during a rolling deploy by an instance still on the previous build, or written by
+    /// any writer that left the flag out -- has no authorship SQL can read, so it stays a candidate. A consumer that must
+    /// never see a model-authored record therefore still checks what it receives, as Core's retrieval service and the
+    /// injection provider do.
+    /// </para>
+    /// </remarks>
+    public bool ExcludeModelAuthored { get; init; }
 }
 
 /// <summary>

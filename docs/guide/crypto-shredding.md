@@ -56,7 +56,7 @@ plaintext mode both still hold the text after the erasure.
 
 | Column | Sealed under | Stored in the clear instead |
 | --- | --- | --- |
-| `experience_records.payload` **and** `task_id` — task summary, attempts and tool calls, outcome and evidence detail, reflection and lesson, environment, provenance | the record's key, together as one value | `payload = {"sealed": "aexp-sealed:v1:…"}`, `payload_version = 2`, `task_id = '(sealed)'`, and the derived `search_vector_sealed` |
+| `experience_records.payload` **and** `task_id` — task summary, attempts and tool calls, outcome and evidence detail, reflection and lesson, environment, provenance | the record's key, together as one value | `payload = {"sealed": "aexp-sealed:v1:…"}`, `payload_version = 2`, `task_id = '(sealed)'`, the derived `search_vector_sealed`, and `0021`'s `reflection_model_authored`, whether a model wrote the reflection (one bit, reset to `false` by erasure; a row sealed without it — before `0021`, or by an instance on the previous build — has `NULL`) |
 | `lifecycle_events.reason`, `lifecycle_events.confidence_detail` | the record's key | — |
 | `confidence_evidence.detail` | the record's key | — |
 | `experience_grants.reason`, `experience_grants.revocation_reason`, `experience_grant_events.reason` | the key of the record the grant is over | — |

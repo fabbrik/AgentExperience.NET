@@ -6,8 +6,8 @@ namespace AgentExperience.Storage.Conformance;
 /// The behaviour every <see cref="IExperienceCandidateSource"/> must show, observed through the ports alone: it
 /// filters by exact scope, by the requested statuses and by the minimum confidence; it ranks before it applies the
 /// limit; it returns the strongest match first with a relevance in [0, 1]; it never returns a record that matches
-/// none of the query's terms; it returns each matched record exactly as stored; and it sees a committed write on
-/// the next search. Exact relevance values are not part of the contract. Records are seeded through the record
+/// none of the query's terms; it returns each matched record exactly as stored; it sees a committed write on
+/// the next search; and, asked to, it leaves model-authored records out before the limit. Exact relevance values are not part of the contract. Records are seeded through the record
 /// store the source reads from, so a subclass supplies both: <see cref="CreateRecordStore"/> and
 /// <see cref="CreateCandidateSource"/> must see the same records.
 /// </summary>
@@ -254,6 +254,53 @@ public abstract class CandidateSourceConformanceTests
     }
 
     [Fact]
+    public async Task An_excluding_search_fills_its_limit_with_the_strongest_records_that_are_not_model_authored()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+
+        // Story 14.4: model-authored records rank above every deterministic one, so a store that excluded them after
+        // its limit would return nothing, or fewer than the limit.
+        var model = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            model.Add(await SeedStrongAsync(tenant, scope, ReflectionAuthorship.Model));
+        }
+
+        var medium = new[] { await SeedMediumAsync(tenant, scope), await SeedMediumAsync(tenant, scope) };
+        var weak = new[] { await SeedWeakAsync(tenant, scope), await SeedWeakAsync(tenant, scope) };
+
+        var excluding = await SearchAsync(tenant, scope, "refund policy invoice", limit: 2, excludeModelAuthored: true);
+        var including = await SearchAsync(tenant, scope, "refund policy invoice", limit: 3);
+        var excludingAll = await SearchAsync(tenant, scope, "refund policy invoice", excludeModelAuthored: true);
+        var includingAll = await SearchAsync(tenant, scope, "refund policy invoice");
+
+        Assert.Equal(ExperienceStoreOutcome.Found, excluding.Outcome);
+        Assert.Equal(medium.Order(), Ids(excluding).Order());
+        Assert.Equal(model.Order(), Ids(including).Order());
+        Assert.Equal(medium.Concat(weak).Order(), Ids(excludingAll).Order());
+        Assert.Equal(model.Concat(medium).Concat(weak).Order(), Ids(includingAll).Order());
+        Assert.False(new ExperienceCandidateQuery(scope, "refund", Eligible, 0d).ExcludeModelAuthored);
+    }
+
+    [Fact]
+    public async Task An_excluding_search_keeps_a_record_with_no_reflection_and_a_deterministic_one()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var model = await SeedAsync(tenant, scope, authorship: ReflectionAuthorship.Model);
+        var deterministic = await SeedAsync(tenant, scope);
+        var unreflected = Record(scope, ExperienceStatus.Validated, taskId: "refund-ticket", summary: "Resolve a refund", confidence: 0.75);
+        Assert.Equal(ExperienceStoreOutcome.Created, (await RecordStore.CreateAsync(Authorize(tenant), unreflected, CancellationToken.None)).Outcome);
+
+        var excluding = await SearchAsync(tenant, scope, "refund", excludeModelAuthored: true);
+
+        Assert.Equal(new[] { deterministic, unreflected.ExperienceId }.Order(), Ids(excluding).Order());
+        Assert.DoesNotContain(model, Ids(excluding));
+        Assert.All(excluding.Candidates, candidate => Assert.NotEqual(ReflectionAuthorship.Model, candidate.Record.Reflection?.Authorship));
+    }
+
+    [Fact]
     public async Task A_search_with_a_cancelled_token_throws_an_unwrapped_OperationCanceledException()
     {
         var tenant = NewTenant();
@@ -271,20 +318,30 @@ public abstract class CandidateSourceConformanceTests
         Scope scope,
         string taskText,
         double minimumConfidence = 0d,
-        int limit = ExperienceCandidateQuery.DefaultLimit) =>
+        int limit = ExperienceCandidateQuery.DefaultLimit,
+        bool excludeModelAuthored = false) =>
         Source.SearchAsync(
             Authorize(tenant),
-            new ExperienceCandidateQuery(scope, taskText, Eligible, minimumConfidence, limit),
+            new ExperienceCandidateQuery(scope, taskText, Eligible, minimumConfidence, limit) { ExcludeModelAuthored = excludeModelAuthored },
             CancellationToken.None);
 
     private static Guid[] Ids(ExperienceCandidateSearchResult result) =>
         [.. result.Candidates.Select(candidate => candidate.Record.ExperienceId)];
 
     /// <summary>Every query term, repeated, in the task summary, the task ID and the lesson.</summary>
-    private Task<Guid> SeedStrongAsync(string tenant, Scope scope) => SeedAsync(
+    private Task<Guid> SeedStrongAsync(string tenant, Scope scope, ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic) => SeedAsync(
         tenant,
         scope,
         taskId: "refund-policy-invoice",
+        summary: "Refund policy invoice: apply the refund policy to the disputed invoice",
+        lesson: "Apply the refund policy before reissuing the invoice",
+        authorship: authorship);
+
+    /// <summary>The strong match's summary and lesson under an unrelated task ID: weaker than it, stronger than the weak one.</summary>
+    private Task<Guid> SeedMediumAsync(string tenant, Scope scope) => SeedAsync(
+        tenant,
+        scope,
+        taskId: "billing-follow-up",
         summary: "Refund policy invoice: apply the refund policy to the disputed invoice",
         lesson: "Apply the refund policy before reissuing the invoice");
 
@@ -307,9 +364,11 @@ public abstract class CandidateSourceConformanceTests
         string summary = "Resolve a refund",
         string lesson = "Retry the refund once the lock clears",
         ExperienceStatus status = ExperienceStatus.Validated,
-        double confidence = 0.75)
+        double confidence = 0.75,
+        ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic)
     {
         var record = Record(scope, status, taskId: taskId, summary: summary, lesson: lesson, confidence: confidence);
+        record = record with { Reflection = record.Reflection! with { Authorship = authorship } };
         var created = await RecordStore.CreateAsync(Authorize(tenant), record, CancellationToken.None);
         Assert.True(
             created.Outcome == ExperienceStoreOutcome.Created,

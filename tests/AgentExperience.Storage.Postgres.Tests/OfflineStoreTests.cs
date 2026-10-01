@@ -387,6 +387,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.GrantArgumentDisclosureScriptName,
                 PostgresExperienceRecordSchema.EvidenceAdmissionScriptName,
                 PostgresExperienceRecordSchema.RowLevelSecurityScriptName,
+                PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1270,7 +1271,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Row_level_security_script_is_applied_last_creates_policies_and_switches_nothing_on()
+    public void Row_level_security_script_creates_policies_and_switches_nothing_on()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.RowLevelSecurityScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -1315,9 +1316,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // Nothing is admitted without the marker a store sets.
         Assert.Contains("pg_catalog.current_setting('agent_experience.auth_set', true) = 'on'", statements, StringComparison.Ordinal);
 
+        // Applied after 0018, which it builds on, and before every later script.
         Assert.Equal(
-            PostgresExperienceRecordSchema.RowLevelSecurityScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^1]);
+            PostgresExperienceRecordSchema.EvidenceAdmissionScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[PostgresExperienceRecordSchema.ScriptNames.ToList().IndexOf(PostgresExperienceRecordSchema.RowLevelSecurityScriptName) - 1]);
         Assert.Equal(
             PostgresExperienceRecordSchema.ScriptNames.Order(StringComparer.Ordinal),
             PostgresExperienceRecordSchema.ScriptNames);

@@ -36,7 +36,7 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 11: 11.1 → 11.2.
 - Epic 12: 12.1 → 12.2.
 - Epic 13: 13.1.
-- Epic 14: 14.1 → 14.2 → 14.3.
+- Epic 14: 14.1 → 14.2 → 14.3 → 14.4.
 - Epic 15: 15.1.
 
 Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
@@ -176,6 +176,24 @@ So that captured tool output cannot quietly steer a model into teaching other ag
 **Given** injection
 **When** a model-authored record is rendered
 **Then** the Historical Reference labels it as written by a model from captured output, and a host option can exclude model-authored records from injection.
+
+#### Story 14.4: Exclude Model-Authored Lessons at Retrieval
+
+**Traces:** FR5, FR8 · **Depends on:** 14.3
+
+As a platform engineer,
+I want retrieval itself to leave out model-authored records when I ask it to,
+So that excluding model-written lessons from injection never costs me deterministic lessons that model records outranked.
+
+**Acceptance Criteria:**
+
+**Given** a retrieval or candidate search that asks to exclude model-authored records
+**When** model-authored records outrank deterministic ones
+**Then** the store leaves them out before applying its limit, so the deterministic records fill the result.
+
+**Given** injection with `ModelAuthoredLessons = Exclude`
+**When** it retrieves
+**Then** it asks retrieval for the exclusion, and still drops any model-authored record it re-reads.
 
 ## Epic 15: Isolate Tenants in the Database Too
 Operators can add PostgreSQL row-level security as a second isolation layer behind the application role.
