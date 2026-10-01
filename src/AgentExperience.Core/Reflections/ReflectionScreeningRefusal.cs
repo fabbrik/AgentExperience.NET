@@ -37,4 +37,15 @@ public enum ReflectionScreeningRefusal
 
     /// <summary>The host sanitizer omitted a screened field or a list item (reported it omitted, or left it out of its result).</summary>
     FieldOmitted,
+
+    /// <summary>
+    /// A model-authored reflection (<see cref="AgentExperience.Abstractions.ReflectionAuthorship.Model"/>) holds
+    /// a URL or hostname that is not in the captured run it reflected, instruction-override phrasing, or
+    /// credential-shaped text. The reason names the field and the rule, never the matched text. A heuristic:
+    /// see the finalization guide's "Limits of model-authored lessons".
+    /// </summary>
+    UnsafeContent,
+
+    /// <summary>The reflection's <see cref="AgentExperience.Abstractions.Reflection.Authorship"/> is not a defined value.</summary>
+    UndefinedAuthorship,
 }

@@ -871,6 +871,7 @@ internal static partial class ExperienceRecordValidator
         RequireUnitInterval(reflection.CompletionScore, "Reflection.CompletionScore", errors);
         RequireNotNull(reflection.VerificationRuleVersion, "Reflection.VerificationRuleVersion", errors);
         RequireNotNull(reflection.Producer, "Reflection.Producer", errors);
+        RequireDefined(reflection.Authorship, "Reflection.Authorship", errors);
     }
 
     private static void ValidateEnvironment(EnvironmentFingerprint? environment, List<StoreValidationError> errors)

@@ -96,7 +96,8 @@ internal static class ExperiencePayload
                 record.Reflection.CompletionScore,
                 record.Reflection.VerificationRuleVersion,
                 record.Reflection.Producer,
-                Utc(record.Reflection.CreatedAt)),
+                Utc(record.Reflection.CreatedAt),
+                record.Reflection.Authorship == ReflectionAuthorship.Deterministic ? null : record.Reflection.Authorship),
         new EnvironmentV1(
             record.Environment.HostName,
             record.Environment.RuntimeVersion,
@@ -183,7 +184,10 @@ internal static class ExperiencePayload
                     payload.Reflection.CompletionScore,
                     payload.Reflection.VerificationRuleVersion,
                     payload.Reflection.Producer,
-                    Utc(payload.Reflection.CreatedAt)),
+                    Utc(payload.Reflection.CreatedAt))
+                {
+                    Authorship = payload.Reflection.Authorship ?? ReflectionAuthorship.Deterministic,
+                },
             new EnvironmentFingerprint(
                 payload.Environment.HostName,
                 payload.Environment.RuntimeVersion,
@@ -260,7 +264,8 @@ internal static class ExperiencePayload
     /// through <c>0016</c>'s sealing function while the host grants <c>AllowSealing</c>.
     /// <c>ProvenanceSignature</c> was added the same way (story 13.1): written only when finalization signed the
     /// record, read back as none when absent, its value base64. It is sealed with the rest in crypto-shredding
-    /// mode, and needs no migration.
+    /// mode, and needs no migration. The reflection's <c>Authorship</c> was added the same way (story 14.3):
+    /// written only for a model-authored reflection, read back as <c>Deterministic</c> when absent.
     /// </remarks>
     internal sealed record PayloadV1(
         string? TaskSummary,
@@ -326,7 +331,8 @@ internal static class ExperiencePayload
         double CompletionScore,
         string VerificationRuleVersion,
         string Producer,
-        DateTimeOffset CreatedAt);
+        DateTimeOffset CreatedAt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReflectionAuthorship? Authorship = null);
 
     internal sealed record EnvironmentV1(
         string HostName,

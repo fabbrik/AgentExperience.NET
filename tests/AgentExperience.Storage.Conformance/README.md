@@ -32,13 +32,13 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 **Record store**
 
 - A record reads back exactly as it was created, every nested part included (attempts, tool-call arguments,
-  evidence, reflection, environment metadata, provenance and its exposures, origin, closed round, provenance
+  evidence, reflection and its authorship, environment metadata, provenance and its exposures, origin, closed round, provenance
   signature, counters). A store persists the provenance signature as given and never checks it, but refuses a
   malformed one (an empty or over-long value, a key ID or algorithm outside `[A-Za-z0-9._-]{1,64}`) as `Invalid`.
 - `CreateAsync` only creates. An ID that already exists, in any scope, is `Conflict`, the stored record does not
   change, and the result is the same whichever scope holds the existing record. Concurrent creates of one ID have
   exactly one winner. Malformed records (empty ID, blank task ID or required scope field, confidence outside
-  [0, 1], negative counters or revision) are `Invalid`.
+  [0, 1], negative counters or revision, a reflection authorship that is not a defined value) are `Invalid`.
 - Reads are scope-exact. A record in another scope, whether it differs by tenant, project, team or letter case,
   reads exactly like a missing one (`NotFound`), so the result does not show that the record exists. An empty ID
   is `Invalid`.

@@ -152,6 +152,12 @@ What to know:
   `replaceExisting: true`. A scoped `IChatClient` is refused, and a keyed client has no unkeyed fallback.
 - **Not deterministic, and it costs a model call** per verified run finalized. Verification never uses a model.
   Captured tool output can steer the lesson's text; your approval boundary still denies any call it induces.
+- **Marked, filtered and labelled.** Its reflections are `ReflectionAuthorship.Model` (a model-backed reflector of
+  your own must set that itself). Finalization's content guard refuses one carrying a link the run never showed,
+  instruction-override phrasing, credential-shaped text or a mixed-script word, but it is a best-effort filter, not a
+  boundary: content echoed from the run, a poisoned tool result included, passes by design. The controls to rely on
+  are injection's label around every model-written field and `ModelAuthoredLessons = Exclude`, plus your approval
+  boundary. Its records written before story 14.3 read as deterministic; see the upgrade note in the guide.
 
 Details: [Model-backed reflection](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/finalization.md#model-backed-reflection).
 

@@ -53,6 +53,76 @@ internal static class ReflectionPromptBuilder
     /// <exception cref="ReflectionFailedException">Not even the smallest header fits (<see cref="ReflectionFailureKind.PromptTooLarge"/>).</exception>
     internal static string Build(ReflectionRequest request, int maxQuotedLength, int maxPromptLength)
     {
+        var plan = Plan(request, maxQuotedLength, maxPromptLength);
+        if (plan.Blocks.Count == 0)
+        {
+            return plan.Header + NoAttempts;
+        }
+
+        var message = new StringBuilder(plan.Header).Append(AttemptsHeading);
+        if (plan.Omitted > 0)
+        {
+            message.Append(OmissionNote(plan.Omitted));
+        }
+
+        foreach (var block in plan.Blocks.Skip(plan.Omitted))
+        {
+            message.Append(block);
+        }
+
+        return message.ToString();
+    }
+
+    /// <summary>
+    /// The captured text <see cref="Build"/> puts in the data message for <paramref name="request"/>, unescaped:
+    /// the task text (or task ID), the check IDs the header lists, and the kept attempts' tool names, results and
+    /// errors, each cut exactly where its quoted span is cut (the same clipping, through <see cref="Fit"/>).
+    /// </summary>
+    /// <exception cref="ReflectionFailedException">Not even the smallest header fits (<see cref="ReflectionFailureKind.PromptTooLarge"/>).</exception>
+    internal static IReadOnlyList<string> ShownContent(ReflectionRequest request, int maxQuotedLength, int maxPromptLength)
+    {
+        var plan = Plan(request, maxQuotedLength, maxPromptLength);
+        var run = request.Run;
+        var outcome = request.Evaluation.Outcome;
+        var identifierLength = Math.Min(maxQuotedLength, MaxIdentifierLength);
+
+        var shown = new List<string> { Shown(run.TaskDescription ?? run.TaskId, maxQuotedLength) };
+        shown.AddRange(DistinctInOrder(outcome.Evidence.Where(e => e.Result == CheckResult.Pass).Select(e => e.CheckId)).Take(plan.Listed).Select(c => Shown(c, identifierLength)));
+        shown.AddRange(DistinctInOrder(outcome.Evidence.Where(e => e.Result == CheckResult.Fail).Select(e => e.CheckId)).Take(plan.Listed).Select(c => Shown(c, identifierLength)));
+
+        foreach (var attempt in plan.Attempts.Skip(plan.Omitted))
+        {
+            foreach (var call in attempt.ToolCalls)
+            {
+                shown.Add(Shown(call.ToolName, identifierLength));
+                if (call.Error is not null)
+                {
+                    shown.Add(Shown(call.Error, maxQuotedLength));
+                }
+
+                if (call.Result is not null)
+                {
+                    shown.Add(Shown(call.Result, maxQuotedLength));
+                }
+            }
+
+            if (attempt.Error is not null)
+            {
+                shown.Add(Shown(attempt.Error, maxQuotedLength));
+            }
+
+            if (attempt.Result is not null)
+            {
+                shown.Add(Shown(attempt.Result, maxQuotedLength));
+            }
+        }
+
+        return shown;
+    }
+
+    /// <summary>What the data message holds: its header, how many IDs each header list names, the attempts in order with their blocks, and how many of the oldest are left out.</summary>
+    private static MessagePlan Plan(ReflectionRequest request, int maxQuotedLength, int maxPromptLength)
+    {
         var run = request.Run;
         var attempts = run.Attempts.OrderBy(a => a.SequenceNumber).ToList();
 
@@ -60,12 +130,14 @@ internal static class ReflectionPromptBuilder
         var reserve = attempts.Count == 0 ? NoAttempts.Length : AttemptsHeading.Length + OmissionNote(attempts.Count).Length;
 
         string? header = null;
+        var listedIds = 0;
         foreach (var listed in new[] { MaxListedIds, 8, 1, 0 })
         {
             var candidate = Header(request, maxQuotedLength, listed);
             if (candidate.Length + reserve <= maxPromptLength)
             {
                 header = candidate;
+                listedIds = listed;
                 break;
             }
         }
@@ -73,11 +145,6 @@ internal static class ReflectionPromptBuilder
         if (header is null)
         {
             throw new ReflectionFailedException(ReflectionFailureKind.PromptTooLarge);
-        }
-
-        if (attempts.Count == 0)
-        {
-            return header + NoAttempts;
         }
 
         var blocks = attempts.Select(a => DescribeAttempt(a, maxQuotedLength)).ToList();
@@ -97,19 +164,7 @@ internal static class ReflectionPromptBuilder
             kept++;
         }
 
-        var omitted = blocks.Count - kept;
-        var message = new StringBuilder(header).Append(AttemptsHeading);
-        if (omitted > 0)
-        {
-            message.Append(OmissionNote(omitted));
-        }
-
-        foreach (var block in blocks.Skip(omitted))
-        {
-            message.Append(block);
-        }
-
-        return message.ToString();
+        return new MessagePlan(header, listedIds, attempts, blocks, blocks.Count - kept);
     }
 
     private static string Header(ReflectionRequest request, int maxQuotedLength, int listed)
@@ -195,6 +250,42 @@ internal static class ReflectionPromptBuilder
     /// </summary>
     internal static string Quote(string text, int maxLength)
     {
+        var (units, kept, clipped) = Fit(text, maxLength);
+        var result = new StringBuilder(Math.Min(text.Length, maxLength) + 2).Append('"');
+        for (var index = 0; index < kept; index++)
+        {
+            result.Append(units[index]);
+        }
+
+        if (clipped)
+        {
+            result.Append(ClipMarker);
+        }
+
+        return result.Append('"').ToString();
+    }
+
+    /// <summary>The part of <paramref name="text"/>, unescaped, that <see cref="Quote"/> shows between its quotes (less the clip marker).</summary>
+    internal static string Shown(string text, int maxLength)
+    {
+        var (units, kept, _) = Fit(text, maxLength);
+        var characters = 0;
+        for (var index = 0; index < kept; index++)
+        {
+            // A valid surrogate pair is one unit of two characters; every other unit stands for one character.
+            characters += units[index].Length == 2 && char.IsHighSurrogate(units[index][0]) ? 2 : 1;
+        }
+
+        return text[..characters];
+    }
+
+    /// <summary>
+    /// <paramref name="text"/> as escaped units, and how many of them fit in <paramref name="maxLength"/>: all of
+    /// them, or as many as leave room for <see cref="ClipMarker"/>, with <c>clipped</c> set. The one clipping rule
+    /// both <see cref="Quote"/> and <see cref="Shown"/> use.
+    /// </summary>
+    private static (List<string> Units, int Kept, bool Clipped) Fit(string text, int maxLength)
+    {
         var units = Units(text);
         var total = 0;
         foreach (var unit in units)
@@ -202,19 +293,14 @@ internal static class ReflectionPromptBuilder
             total += unit.Length;
         }
 
-        var result = new StringBuilder(Math.Min(total, maxLength) + 2).Append('"');
         if (total <= maxLength)
         {
-            foreach (var unit in units)
-            {
-                result.Append(unit);
-            }
-
-            return result.Append('"').ToString();
+            return (units, units.Count, false);
         }
 
         var room = maxLength - ClipMarker.Length;
         var length = 0;
+        var kept = 0;
         foreach (var unit in units)
         {
             if (length + unit.Length > room)
@@ -222,11 +308,11 @@ internal static class ReflectionPromptBuilder
                 break;
             }
 
-            result.Append(unit);
             length += unit.Length;
+            kept++;
         }
 
-        return result.Append(ClipMarker).Append('"').ToString();
+        return (units, kept, true);
     }
 
     /// <summary><paramref name="text"/> as escaped units: a valid surrogate pair is one unit, every other code unit its own.</summary>
@@ -304,4 +390,6 @@ internal static class ReflectionPromptBuilder
 
         return result;
     }
+
+    private sealed record MessagePlan(string Header, int Listed, List<Attempt> Attempts, List<string> Blocks, int Omitted);
 }

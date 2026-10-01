@@ -625,6 +625,10 @@ namespace AgentExperience.Core.Reflections
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.Reflection> ReflectAsync(AgentExperience.Core.Reflections.ReflectionRequest request, System.Threading.CancellationToken cancellationToken = default);
     }
+    public interface IReflectionRunContent
+    {
+        System.Collections.Generic.IReadOnlyList<string> GetReflectedRunContent(AgentExperience.Core.Reflections.ReflectionRequest request);
+    }
     public sealed class ReflectionBindingException : System.ArgumentException
     {
         public ReflectionBindingException() { }
@@ -677,6 +681,8 @@ namespace AgentExperience.Core.Reflections
         SanitizerFailed = 6,
         SanitizerTimedOut = 7,
         FieldOmitted = 8,
+        UnsafeContent = 9,
+        UndefinedAuthorship = 10,
     }
 }
 namespace AgentExperience.Core.Retrieval

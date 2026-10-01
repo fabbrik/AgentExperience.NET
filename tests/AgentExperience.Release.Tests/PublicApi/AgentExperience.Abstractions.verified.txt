@@ -907,6 +907,8 @@
     public sealed class Reflection : System.IEquatable<AgentExperience.Abstractions.Reflection>
     {
         public Reflection(System.Guid ReflectionId, System.Guid ExperienceRunId, string Lesson, System.Collections.Generic.IReadOnlyList<string> SuccessfulApproaches, System.Collections.Generic.IReadOnlyList<string> FailedApproaches, System.Collections.Generic.IReadOnlyList<string> Preconditions, System.Collections.Generic.IReadOnlyList<string> Warnings, string? ReuseGuidance, System.Collections.Generic.IReadOnlyList<System.Guid> EvidenceIds, AgentExperience.Abstractions.TaskVerificationStatus VerificationStatus, double CompletionScore, string VerificationRuleVersion, string Producer, System.DateTimeOffset CreatedAt) { }
+        [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+        public AgentExperience.Abstractions.ReflectionAuthorship Authorship { get; init; }
         public double CompletionScore { get; init; }
         public System.DateTimeOffset CreatedAt { get; init; }
         public System.Collections.Generic.IReadOnlyList<System.Guid> EvidenceIds { get; init; }
@@ -921,6 +923,11 @@
         public string VerificationRuleVersion { get; init; }
         public AgentExperience.Abstractions.TaskVerificationStatus VerificationStatus { get; init; }
         public System.Collections.Generic.IReadOnlyList<string> Warnings { get; init; }
+    }
+    public enum ReflectionAuthorship
+    {
+        Deterministic = 0,
+        Model = 1,
     }
     public enum ReuseAttributionSource
     {

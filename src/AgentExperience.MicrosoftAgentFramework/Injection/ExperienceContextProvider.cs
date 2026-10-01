@@ -24,7 +24,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <b>What happens on each invocation.</b> The resolver turns the invocation into a
 /// <see cref="RetrieveExperienceRequest"/>; retrieval ranks what is eligible and bounded by its own
 /// timeout; the top <see cref="ExperienceInjectionLimits.MaxRecords"/> are re-read together, in one
-/// batched read through the record store; with <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
+/// batched read through the record store (with <see cref="ExperienceInjectionOptions.ModelAuthoredLessons"/> set to
+/// <see cref="ModelAuthoredLessonPolicy.Exclude"/>, every model-authored record is dropped before that limit is
+/// applied, and again after the re-read); with
+/// <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
 /// capability gate then drops each record whose <c>Approach:</c> line names a tool the agent lacks or may not use
 /// -- after the record limit, so a gated record still takes a slot and the agent may get fewer records than
 /// the limit; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
@@ -142,6 +145,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private readonly ExperienceInjectionOptions _options;
     private readonly ApproachArgumentAllowlist _approachArguments;
     private readonly CapabilityGate? _capabilityGate;
+    private readonly bool _excludeModelAuthored;
     private readonly string _stateKey;
     private readonly IReadOnlyList<string> _stateKeys;
 
@@ -170,6 +174,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         _options = options;
         _approachArguments = approachArguments;
         _capabilityGate = capabilityGate;
+        _excludeModelAuthored = options.ModelAuthoredLessons == ModelAuthoredLessonPolicy.Exclude;
 
         // Snapshotted with the rest: the key this provider reads and writes never changes under it.
         _stateKey = options.SessionStateKey;
@@ -719,6 +724,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 continue;
             }
 
+            // Model-authored records the host excluded (story 14.3) take no slot, so they can never crowd the
+            // deterministic records out of the record limit. Fail closed on authorship, as the writer does.
+            if (_excludeModelAuthored && HistoricalReferenceWriter.IsModelAuthored(candidate.Record.Reflection))
+            {
+                omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.ModelAuthored));
+                continue;
+            }
+
             // A revision the session already holds is in its conversation already. Decided on the ranked
             // revision here, so it takes no slot, and again on the re-read one.
             if (session?.State.ActiveFor(candidate.Record.ExperienceId) is { Confirmed: true } delivered
@@ -994,6 +1007,16 @@ public sealed class ExperienceContextProvider : AIContextProvider
                         ? FrozenGrantArguments(result.GrantApproachArguments)
                         : null,
             };
+
+            // Model-authored lessons the host excluded (story 14.3). Select already dropped every candidate that
+            // was model-authored when ranked; this re-checks the re-read record, so one that changed since cannot
+            // slip through. Read from the record's own reflection, never inferred from its producer text, and
+            // fail closed: any authorship that is not Deterministic counts. No detail.
+            if (_excludeModelAuthored && HistoricalReferenceWriter.IsModelAuthored(current.Reflection))
+            {
+                omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.ModelAuthored));
+                continue;
+            }
 
             // The capability gate (story 10.4): a record whose verified approach the receiving agent
             // cannot, or must not, carry out is kept out, on the record as it stands now and on exactly the

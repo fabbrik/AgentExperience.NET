@@ -109,6 +109,7 @@ the documented behaviour instead:
 | A `0.1.0-preview.1` grant | `LessonOnly`: `0011` gives every existing grant that level, so a borrowed record loses its `Approach:` line until the grant is reissued; the shared read reports `GrantDisclosure = LessonOnly` | CHANGELOG `0.1.0-preview.2`, Behaviour changes; [`0011`](../../docs/guide/postgres-schema.md#0011-grant-disclosure) |
 | A `0.1.0-preview.1` grant event or grant access row | no recorded disclosure (`null`): rows written before `0011` stay "not recorded" | [`0011`](../../docs/guide/postgres-schema.md#0011-grant-disclosure) |
 | A `0.1.0-preview.1` record | `Origin = HostWritten`, no `ClosedRoundId`, exposed to nothing: the payload never carried them | CHANGELOG `0.1.0-preview.2`, Breaking changes; [`0015`](../../docs/guide/postgres-schema.md#0015-verified-independence), [`0018`](../../docs/guide/postgres-schema.md#0018-evidence-admission) |
+| A reflection from any published preview | `Authorship = Deterministic`: the payload never carried it, and no published preview had a model-backed reflector | [Limits of model-authored lessons](../../docs/guide/finalization.md#limits-of-model-authored-lessons) |
 | A record from any published preview | no `ProvenanceSignature`: signing is opt-in and did not exist. With signing on, its run vouches for nothing unless its ID is listed in `TrustUnsignedRecordIds` | [Signing provenance](../../docs/guide/confidence.md#signing-provenance) |
 | `0.1.0-preview.1` confidence evidence | no recorded admission (`null`), counted as unrecorded | [`0018`](../../docs/guide/postgres-schema.md#0018-evidence-admission) |
 | New evidence naming a run that vouches for nothing | refused (`Unverified`) by today's default, verifying lifecycle service: `HostWrittenRun` for a `0.1.0-preview.1` run, `NotExposed` for a `0.1.0-preview.2` run exposed to nothing. The documented opt-out, `IndependenceVerification.TrustHostSuppliedIdentifiers`, admits it, labelled `HostTrusted` | CHANGELOG `0.1.0-preview.2`, Upgrade step 5 and Breaking changes |
@@ -116,8 +117,9 @@ the documented behaviour instead:
 
 The comparison enforces the same list from the other side: a member today's API returns that the preview's did not
 fails unless it is one of these, new by design, each listed with its reason in `UpgradeReport.NewByDesign`:
-`closedRoundId`, `origin`, `exposedTo`, `provenanceSignature`, `assessmentId`, `admission`, `disclosure`,
-`approachArguments`, `grantDisclosure` and `grantApproachArguments`. Everything else must read back identical.
+`closedRoundId`, `origin`, `exposedTo`, `provenanceSignature`, `authorship`, `assessmentId`, `admission`,
+`disclosure`, `approachArguments`, `grantDisclosure` and `grantApproachArguments`. Everything else must read back
+identical.
 
 ## Running it
 

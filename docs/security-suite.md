@@ -258,8 +258,22 @@ layer in every mode.
 | Core.Tests | `SignedProvenanceTests.The_signature_is_compared_in_constant_time` | The signature comparison is `CryptographicOperations.FixedTimeEquals` |
 | Storage.Postgres.Tests | `PostgresSignedProvenanceTests.A_payload_whose_signed_claim_was_changed_in_the_database_is_refused_as_host_written` | A closed round rewritten in place in the payload, by a role that can, makes the run vouch for nothing **(DB)** |
 | Storage.Postgres.Tests | `PostgresSignedProvenanceTests.A_record_forged_through_CreateAsync_with_a_copied_signature_or_none_is_refused_in_either_mode` | A genuine signature copied onto a forged record, or none, vouches for nothing, in plaintext and crypto-shredding mode **(DB)** |
+| Core.Tests | `ModelAuthoredContentGuardTests.A_model_lesson_adding_a_URL_absent_from_the_run_is_quarantined_as_UnsafeContent` | Story 14.3: a model-authored lesson carrying a URL the run never showed is quarantined, and the reason does not repeat it |
+| Core.Tests | `ModelAuthoredContentGuardTests.Each_rule_refuses_model_text_in_every_field_naming_the_rule_and_never_the_matched_text` | Every guard rule (links, obfuscated dots, IPs, colon-only schemes, UNC paths, homoglyphs, instruction phrasing, credentials) refuses model text in the lesson, a list item and the reuse guidance |
+| Core.Tests | `ModelAuthoredContentGuardTests.A_link_passes_only_as_a_whole_token_the_run_showed` | A host passes only as a whole token: `evil.com` is not admitted by `notevil.com` or `evil.com.au`, nor a URL by a longer one |
+| Core.Tests | `ModelAuthoredContentGuardTests.With_no_run_content_every_URL_hostname_and_IP_address_is_refused` | A reflector that declares no run content, or whose declaration throws, has every link refused |
+| MicrosoftAgentFramework.Tests | `ModelAuthoredInjectionTests.A_model_authored_record_wraps_every_model_written_field_and_keeps_the_approach_outside` | Every model-written field sits between the fixed `Authored:` and `End authored:` lines |
+| MicrosoftAgentFramework.Tests | `ModelAuthoredInjectionTests.An_undefined_authorship_read_back_from_a_store_is_labelled_and_excluded` | Any authorship other than `Deterministic` is labelled and excluded: the label fails closed |
+| MicrosoftAgentFramework.Tests | `ModelAuthoredInjectionTests.Exclude_drops_model_records_before_the_record_limit_so_they_cannot_crowd_out_deterministic_ones` | Model-authored records excluded by the host take no record slot |
+| MicrosoftAgentFramework.Tests | `ModelAuthoredInjectionTests.A_lesson_cannot_forge_or_contradict_the_authored_line` | A lesson cannot start a line with `Authored:` or `End authored:` |
 
 ## What this suite does not prove
+
+It does not prove that a model-authored lesson is safe. The content guard is a best-effort filter: content echoed
+from the run, a poisoned tool result included, passes it by design, and so do paraphrased instructions,
+whitespace-split dots and encoded secrets. Authorship is self-declared and unsigned. The label, `Exclude` and the
+approval boundary are what the suite pins down; see KL-18 and
+[Limits of model-authored lessons](guide/finalization.md#limits-of-model-authored-lessons).
 
 It does not prove that row-level security binds a compromised application role. The bounds the policies read are
 settings any session may set, so a host that runs arbitrary SQL as the application role can declare wide ones; the

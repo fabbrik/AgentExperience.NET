@@ -620,7 +620,7 @@ public sealed class ExperienceFinalizationService
                     {
                         // Only a bound reflection is screened, and only its free text: the binding check
                         // above already owns every other field.
-                        (reflection, failure, redactedPaths) = await ScreenAsync(bound, cancellationToken).ConfigureAwait(false);
+                        (reflection, failure, redactedPaths) = await ScreenAsync(bound, reflectionRequest, cancellationToken).ConfigureAwait(false);
                     }
                 }
             }
@@ -775,19 +775,42 @@ public sealed class ExperienceFinalizationService
     }
 
     /// <summary>
+    /// The run content the content guard compares a model-authored reflection's links with: what the reflector
+    /// says it sent (<see cref="IReflectionRunContent"/>), or the default when it says nothing. A reflector whose
+    /// answer throws or is <see langword="null"/> is taken to have sent nothing.
+    /// </summary>
+    private IReadOnlyList<string> RunContentFor(ReflectionRequest request)
+    {
+        if (_reflector is not IReflectionRunContent declared)
+        {
+            return ModelAuthoredContentGuard.DefaultRunContent(request);
+        }
+
+        try
+        {
+            return declared.GetReflectedRunContent(request) ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
     /// Screens a bound reflection's free text (see <see cref="ReflectionScreening"/>): the screened
     /// reflection and the paths the host sanitizer redacted, or no reflection and the content-free
     /// reason it was refused -- handled exactly like a binding mismatch.
     /// </summary>
     private async Task<(Reflection? Reflection, FinalizationFailure? Failure, IReadOnlyList<string> RedactedPaths)> ScreenAsync(
         Reflection reflection,
+        ReflectionRequest request,
         CancellationToken cancellationToken)
     {
         ReflectionScreeningResult screened;
         try
         {
             screened = await ReflectionScreening
-                .ScreenAsync(reflection, _reflectionSanitizer, Options.ReflectionLimits, cancellationToken)
+                .ScreenAsync(reflection, _reflectionSanitizer, Options.ReflectionLimits, cancellationToken, RunContentFor(request))
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException)

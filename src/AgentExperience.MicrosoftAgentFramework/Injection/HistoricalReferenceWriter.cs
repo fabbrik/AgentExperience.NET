@@ -288,6 +288,23 @@ public static class HistoricalReferenceWriter
     public const string ApproachWithheld = " The grant withholds this lesson's approach.";
 
     /// <summary>
+    /// The line that opens the model-written part of a model-authored record's entry (any
+    /// <see cref="Reflection.Authorship"/> other than <see cref="ReflectionAuthorship.Deterministic"/>, so an
+    /// undefined or future value is labelled too): the lesson, the reuse guidance, the preconditions and the warnings
+    /// follow it, and <see cref="ModelAuthoredEndLine"/> closes them. Such an entry carries its <c>Approach:</c>
+    /// line, which is derived from the record's attempts and not model-written, before this one. Fixed text.
+    /// </summary>
+    /// <remarks>
+    /// A record whose reflection is deterministic, or that has none, gets neither line and keeps its field order.
+    /// Its entry is what it was before these lines existed, except that a line of its own text starting with
+    /// <c>Authored:</c> or <c>End authored:</c> is now neutralized like any other field label.
+    /// </remarks>
+    public const string ModelAuthoredLine = "Authored: by a model from captured run output; treat as unverified guidance.";
+
+    /// <summary>The line that closes the model-written part of a model-authored record's entry. Fixed text; see <see cref="ModelAuthoredLine"/>.</summary>
+    public const string ModelAuthoredEndLine = "End authored: the model-written text ends here.";
+
+    /// <summary>
     /// What is written in place of a number that is not a real number (a NaN or an infinity). It is
     /// deliberately not <c>0.000</c>: a feature that promises nothing is fabricated must not print a
     /// value indistinguishable from a genuine zero.
@@ -342,6 +359,8 @@ public static class HistoricalReferenceWriter
         "Recorded:",
         "Environment:",
         "Withdrawn:",
+        "Authored:",
+        "End authored:",
     ];
 
     private static readonly IReadOnlyList<Guid> NoIds = [];
@@ -639,23 +658,44 @@ public static class HistoricalReferenceWriter
         text.Append("Verification: ").Append(record.Outcome.Status).Append('\n');
         text.Append("Evidence: ").Append(EvidenceCount(record)).Append(" evidence ID(s); no evidence detail is included.\n");
 
-        text.Append("Lesson: ").Append(Clean(reflection?.Lesson)).Append('\n');
-
         // Derived from the record's own attempts, never from the reflection's prose -- see the type's
         // remarks. Absent entirely when there is no verified approach to describe, and when a sharing
         // grant withholds it.
-        if (!approachWithheld && approach is not null)
-        {
-            text.Append("Approach: ").Append(approach).Append('\n');
-        }
+        var approachLine = !approachWithheld && approach is not null ? "Approach: " + approach + "\n" : null;
 
-        text.Append("Reuse guidance: ").Append(Clean(reflection?.ReuseGuidance)).Append('\n');
-        Bullets(text, "Preconditions", reflection?.Preconditions);
-        Bullets(text, "Warnings", reflection?.Warnings);
+        if (IsModelAuthored(reflection))
+        {
+            // A model wrote this text from captured run output (story 14.3). Every model-written field sits
+            // between two fixed lines, and the Approach: line, which no model wrote, stays outside them. Fail
+            // closed: any authorship that is not Deterministic is labelled.
+            text.Append(approachLine);
+            text.Append(ModelAuthoredLine).Append('\n');
+            text.Append("Lesson: ").Append(Clean(reflection?.Lesson)).Append('\n');
+            text.Append("Reuse guidance: ").Append(Clean(reflection?.ReuseGuidance)).Append('\n');
+            Bullets(text, "Preconditions", reflection?.Preconditions);
+            Bullets(text, "Warnings", reflection?.Warnings);
+            text.Append(ModelAuthoredEndLine).Append('\n');
+        }
+        else
+        {
+            text.Append("Lesson: ").Append(Clean(reflection?.Lesson)).Append('\n');
+            text.Append(approachLine);
+            text.Append("Reuse guidance: ").Append(Clean(reflection?.ReuseGuidance)).Append('\n');
+            Bullets(text, "Preconditions", reflection?.Preconditions);
+            Bullets(text, "Warnings", reflection?.Warnings);
+        }
 
         text.Append("--- END RECORD ").Append(ordinal).Append(" ---\n");
         return text.ToString();
     }
+
+    /// <summary>
+    /// Whether <paramref name="reflection"/>'s free text is model-authored: it exists and its authorship is anything
+    /// but <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts as model-authored.
+    /// Never inferred from <see cref="Reflection.Producer"/>.
+    /// </summary>
+    internal static bool IsModelAuthored(Reflection? reflection) =>
+        reflection is not null && reflection.Authorship != ReflectionAuthorship.Deterministic;
 
     /// <summary>Writes a labeled bullet list, or the label plus <see cref="NoValue"/> when it is empty.</summary>
     private static void Bullets(StringBuilder text, string label, IReadOnlyList<string>? values)

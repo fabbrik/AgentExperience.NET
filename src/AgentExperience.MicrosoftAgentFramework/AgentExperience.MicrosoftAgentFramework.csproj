@@ -29,4 +29,14 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_MAF</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Shared source (story 14.3): the model-authored content guard's patterns, linked into Core and the MAF
+         adapter so both agree on what a link is. -->
+    <Compile Include="..\Shared\ModelTextPatterns.Shared.cs" Link="Shared\ModelTextPatterns.Shared.cs" />
+  </ItemGroup>
+
 </Project>
