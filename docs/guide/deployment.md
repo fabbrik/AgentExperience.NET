@@ -73,7 +73,7 @@ still works — finalization commits records with no indexing hook, and retrieva
 `CREATE EXTENSION vector` needs a superuser, and a text-only deployment must never be made to run it for a feature
 it has not enabled. See [Indexing](indexing.md).
 
-The MAF adapter can drive finalization for you: set `FinalizationService` and `ResolveFinalization` on
+The MAF adapter can drive finalization for you: set `FinalizationService` and `ResolveFinalizationAsync` on
 `ExperienceCaptureOptions` and every successfully captured invocation is finalized right after it is completed. See
 [Finalization](finalization.md#finalizing-from-the-maf-adapter). `AssessmentTokenIssuer` is deliberately not
 registered: construct it in your review flow, where a person decides (see [Confidence](confidence.md)).

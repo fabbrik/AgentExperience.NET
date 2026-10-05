@@ -58,8 +58,9 @@ Call `UseExperienceCapture` first on the builder so capture is the outermost lay
   type name only, never its message.
 - **Tool calls need a `ChatClientAgent`** (`CaptureToolCalls`, on by default). Other `AIAgent` types are captured
   with `CaptureToolCalls = false`.
-- **Finalization is opt-in.** Set `FinalizationService` and `ResolveFinalization`, and each completed run is turned
-  into a durable record inside `FinalizationTimeout` (5 s by default). That adds caller-visible latency; leave it
+- **Finalization is opt-in.** Set `FinalizationService` and `ResolveFinalizationAsync` (or the synchronous
+  `ResolveFinalization`), and each completed run is turned into a durable record inside `FinalizationTimeout` (5 s by
+  default). That adds caller-visible latency; leave it
   unset to finalize out of band.
 - **Retries can be one run.** Return `ContinuesRunId` from `ResolveRun` and decide with `ShouldCompleteRun`, so a
   lesson sees the failure and the fix together. An open run is always bounded, by `MaxAttemptsPerOpenRun` (8) and
@@ -83,12 +84,13 @@ var provider = new ExperienceContextProvider(
     new ExperienceInjectionOptions
     {
         // The user's latest words, bounded; with none (an image-only turn, say), return null to skip injection.
-        ResolveRequest = context => context.DerivedTaskText is { } taskText
+        // Awaited with the invocation's token, so the caller's authorization and scope can be looked up here.
+        ResolveRequestAsync = (context, cancellationToken) => ValueTask.FromResult(context.DerivedTaskText is { } taskText
             ? new RetrieveExperienceRequest(
                 Authorization: hostAuthorization,  // host-established; nothing in the invocation may widen it
                 Scope: hostScope,
                 TaskText: taskText)
-            : null,
+            : null),
         DecideInjection = decision => riskPolicy.Allows(decision.Current)
             ? InjectionDecision.Permit
             : InjectionDecision.Deny("risk policy"),

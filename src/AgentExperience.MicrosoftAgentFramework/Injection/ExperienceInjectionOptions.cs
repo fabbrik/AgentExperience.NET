@@ -189,7 +189,8 @@ public sealed record ExperienceInjectionContext(
     /// The task text <see cref="ExperienceTaskText.Derive(IEnumerable{ChatMessage}, int)"/> derives for this invocation
     /// (at most <see cref="ExperienceTaskText.DefaultMaxLength"/> UTF-16 code units), or <see langword="null"/> when no
     /// user message qualifies. Nothing uses it unless the host does. The recommended wiring in
-    /// <see cref="ExperienceInjectionOptions.ResolveRequest"/> is
+    /// <see cref="ExperienceInjectionOptions.ResolveRequestAsync"/> (or the synchronous
+    /// <see cref="ExperienceInjectionOptions.ResolveRequest"/>) is
     /// <c>context.DerivedTaskText is { } text ? new RetrieveExperienceRequest(..., TaskText: text) : null</c>: return
     /// <see langword="null"/> to skip injection when it is <see langword="null"/>, and fall back to other text only when
     /// the host has a meaningful task label of its own.
@@ -331,9 +332,10 @@ public sealed record ExperienceInjectionDecisionContext(
 public sealed class ExperienceInjectionOptions
 {
     /// <summary>
-    /// Turns one invocation into a retrieval request: the host-established authorization, the exact
-    /// scope, the task text to match, and any required environment attributes. Called once per
-    /// invocation, before the model is called.
+    /// The synchronous form of <see cref="ResolveRequestAsync"/>: turns one invocation into a retrieval request --
+    /// the host-established authorization, the exact scope, the task text to match, and any required environment
+    /// attributes. Called once per invocation, before the model is called. Set exactly one of this and
+    /// <see cref="ResolveRequestAsync"/>; prefer the async form whenever building the request needs I/O.
     /// </summary>
     /// <remarks>
     /// Returning <see langword="null"/> skips injection for that invocation and is not a failure
@@ -345,7 +347,32 @@ public sealed class ExperienceInjectionOptions
     /// <see cref="ExperienceCandidateQuery.MaxTaskTextLength"/> characters, or retrieval refuses the
     /// request and the invocation gets no context.
     /// </remarks>
-    public required Func<ExperienceInjectionContext, RetrieveExperienceRequest?> ResolveRequest { get; init; }
+    public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? ResolveRequest { get; init; }
+
+    /// <summary>
+    /// Turns one invocation into a retrieval request, asynchronously: the host-established authorization, the exact
+    /// scope, the task text to match, and any required environment attributes. Awaited once per invocation, before the
+    /// model is called, with the invocation's <see cref="CancellationToken"/>. Set exactly one of this and
+    /// <see cref="ResolveRequest"/>; this is the preferred form, because looking up the caller's authorization and scope
+    /// usually needs I/O.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Its result is treated exactly as <see cref="ResolveRequest"/>'s: <see langword="null"/> skips injection for that
+    /// invocation (<see cref="InjectionOutcome.Skipped"/>); a throw or a faulted task injects nothing, lets the
+    /// invocation run normally, and is reported through <see cref="OnContextInjected"/> as
+    /// <see cref="InjectionOutcome.Failed"/>; the authorization it returns is the host's own and may not be widened by
+    /// anything in the invocation or in a retrieved record; and the task text must be non-blank and at most
+    /// <see cref="ExperienceCandidateQuery.MaxTaskTextLength"/> characters.
+    /// </para>
+    /// <para>
+    /// <b>Cancellation.</b> An <see cref="OperationCanceledException"/> raised while the invocation's own token is
+    /// cancelled propagates to the caller, as the provider's cancellation does everywhere else; any other cancellation
+    /// is a failure like any other throw. The time it takes is host time, spent before the model is called and on top
+    /// of the provider's own pre-model budget; the provider puts no timeout around it.
+    /// </para>
+    /// </remarks>
+    public Func<ExperienceInjectionContext, CancellationToken, ValueTask<RetrieveExperienceRequest?>>? ResolveRequestAsync { get; init; }
 
     /// <summary>
     /// The record and byte bounds one injected block runs under. Defaults to
@@ -435,9 +462,17 @@ public sealed class ExperienceInjectionOptions
     /// the stored record.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Fail-closed: a callback that throws, or that returns <see langword="null"/>, denies the record
     /// rather than admitting it. Leave it unset to permit every candidate that survived retrieval and
     /// the final eligibility check.
+    /// </para>
+    /// <para>
+    /// <b>Why it is synchronous.</b> With session tracking on, it runs while the session's lock is held, so a
+    /// concurrent invocation on the same session waits for it. Keep it to an in-memory decision. Per-candidate I/O has
+    /// no async hook: prefetch what it needs, keyed by scope, in <see cref="ResolveRequestAsync"/>, or decide offline
+    /// and hand it the result.
+    /// </para>
     /// </remarks>
     public Func<ExperienceInjectionDecisionContext, InjectionDecision>? DecideInjection { get; init; }
 
@@ -652,11 +687,17 @@ public sealed class ExperienceInjectionOptions
     /// </summary>
     /// <param name="paramName">The parameter name to report on a validation failure.</param>
     /// <returns>The validated snapshot of <see cref="ApproachArguments"/>.</returns>
-    /// <exception cref="ArgumentNullException"><see cref="ResolveRequest"/>, <see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, or <see cref="SessionStateKey"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><see cref="ApproachArguments"/> or <see cref="SessionStateKey"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
+    /// <exception cref="ArgumentNullException"><see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, or <see cref="SessionStateKey"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Not exactly one of <see cref="ResolveRequest"/> and <see cref="ResolveRequestAsync"/> is set, or <see cref="ApproachArguments"/> or <see cref="SessionStateKey"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
     internal ApproachArgumentAllowlist Validate(string paramName)
     {
-        ArgumentNullException.ThrowIfNull(ResolveRequest, $"{paramName}.{nameof(ResolveRequest)}");
+        if (ResolveRequest is null == (ResolveRequestAsync is null))
+        {
+            throw new ArgumentException(
+                $"Exactly one of {nameof(ResolveRequest)} and {nameof(ResolveRequestAsync)} must be set.",
+                $"{paramName}.{nameof(ResolveRequest)}/{nameof(ResolveRequestAsync)}");
+        }
+
         ArgumentNullException.ThrowIfNull(Limits, $"{paramName}.{nameof(Limits)}");
         ArgumentNullException.ThrowIfNull(TimeProvider, $"{paramName}.{nameof(TimeProvider)}");
         ArgumentNullException.ThrowIfNull(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");

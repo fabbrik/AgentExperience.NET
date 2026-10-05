@@ -36,6 +36,7 @@
         public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>? OnCaptureFailure { get; init; }
         public System.Action<AgentExperience.Core.Finalization.FinalizeExperienceResult>? OnRunFinalized { get; init; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, AgentExperience.Core.Finalization.FinalizeExperienceRequest?>? ResolveFinalization { get; init; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Finalization.FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; init; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext, AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor> ResolveRun { get; init; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; init; }
         public System.TimeProvider TimeProvider { get; init; }
@@ -150,7 +151,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
-        public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>? ResolveRequest { get; init; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>>? ResolveRequestAsync { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; init; }
         public string SessionStateKey { get; init; }
         public System.TimeProvider TimeProvider { get; init; }

@@ -162,10 +162,10 @@ var request = new RetrieveExperienceRequest(authorization, scope, "refund ticket
   cancelled propagates unwrapped instead.
 - **Keep it cheap.** It runs synchronously after both channels answer and is not bounded by
   `RetrievalPolicy.Timeout`. The caller's cancellation token is checked between records, not during a call.
-- **MAF.** Set the property in `ExperienceInjectionOptions.ResolveRequest`, where you build the request anyway. The
-  injected Historical Reference block's format does not change; only the order of its records and the
-  `EnvironmentCompatibility` value in each record's applicability line (verbose rendering) do, and, in the default
-  compact rendering, whether a record gets an `Environment:` line.
+- **MAF.** Set the property in `ExperienceInjectionOptions.ResolveRequestAsync` (or `ResolveRequest`), where you
+  build the request anyway. The injected Historical Reference block's format does not change; only the order of its
+  records and the `EnvironmentCompatibility` value in each record's applicability line (verbose rendering) do, and,
+  in the default compact rendering, whether a record gets an `Environment:` line.
 
 ## Decaying confidence by domain
 

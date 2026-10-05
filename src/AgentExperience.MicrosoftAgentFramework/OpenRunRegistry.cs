@@ -582,7 +582,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
             return;
         }
 
-        await CaptureScope.FinalizeExperienceAsync(service, options, runId, Report, cancellationToken).ConfigureAwait(false);
+        await CaptureScope.FinalizeExperienceAsync(service, options, runId, Report, () => IsDisposed, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

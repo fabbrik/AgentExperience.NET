@@ -31,8 +31,9 @@ public static class ExperienceCaptureAgentBuilderExtensions
     /// streaming consumer that stops reading early -- and then, when
     /// <see cref="ExperienceCaptureOptions.CaptureToolCalls"/> is <see langword="true"/>, function
     /// middleware that records each tool call into that run. When
-    /// <see cref="ExperienceCaptureOptions.FinalizationService"/> and
-    /// <see cref="ExperienceCaptureOptions.ResolveFinalization"/> are configured, each successfully
+    /// <see cref="ExperienceCaptureOptions.FinalizationService"/> and a finalization resolver
+    /// (<see cref="ExperienceCaptureOptions.ResolveFinalizationAsync"/> or
+    /// <see cref="ExperienceCaptureOptions.ResolveFinalization"/>) are configured, each successfully
     /// captured run is then handed to Core's finalization service to become a durable Experience
     /// Record, inside the same timeout-bounded step.
     /// </summary>
@@ -69,7 +70,7 @@ public static class ExperienceCaptureAgentBuilderExtensions
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceCaptureOptions.ResolveRun"/>, <see cref="ExperienceCaptureOptions.Environment"/>, <see cref="ExperienceCaptureOptions.TimeProvider"/>, <see cref="ExperienceCaptureOptions.NewId"/>, or <see cref="ExperienceCaptureOptions.ShouldCompleteRun"/>, is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">Exactly one of <see cref="ExperienceCaptureOptions.FinalizationService"/> and <see cref="ExperienceCaptureOptions.ResolveFinalization"/> is set.</exception>
+    /// <exception cref="ArgumentException">Only one of <see cref="ExperienceCaptureOptions.FinalizationService"/> and a finalization resolver (<see cref="ExperienceCaptureOptions.ResolveFinalization"/> or <see cref="ExperienceCaptureOptions.ResolveFinalizationAsync"/>) is set, or both resolvers are.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceCaptureOptions.FinalizationTimeout"/> or <see cref="ExperienceCaptureOptions.MaxOpenRunDuration"/> is not positive or exceeds the timer maximum, or <see cref="ExperienceCaptureOptions.MaxAttemptsPerOpenRun"/> is not positive.</exception>
     public static AIAgentBuilder UseExperienceCapture(
         this AIAgentBuilder builder,
@@ -134,10 +135,17 @@ public static class ExperienceCaptureAgentBuilderExtensions
         // Either half alone could only ever do nothing, silently -- and a resolver without a service is
         // the easier mistake to make. Only the host can supply a run's required checks, evidence,
         // authorization, and storage decision, so the two are configured together or not at all.
-        if (options.FinalizationService is null != (options.ResolveFinalization is null))
+        if (options.ResolveFinalization is not null && options.ResolveFinalizationAsync is not null)
         {
             throw new ArgumentException(
-                $"{nameof(ExperienceCaptureOptions.FinalizationService)} and {nameof(ExperienceCaptureOptions.ResolveFinalization)} must be set together, or neither set.",
+                $"At most one of {nameof(ExperienceCaptureOptions.ResolveFinalization)} and {nameof(ExperienceCaptureOptions.ResolveFinalizationAsync)} may be set.",
+                nameof(options));
+        }
+
+        if (options.FinalizationService is null != (options.ResolveFinalization is null && options.ResolveFinalizationAsync is null))
+        {
+            throw new ArgumentException(
+                $"{nameof(ExperienceCaptureOptions.FinalizationService)} and a finalization resolver ({nameof(ExperienceCaptureOptions.ResolveFinalization)} or {nameof(ExperienceCaptureOptions.ResolveFinalizationAsync)}) must be set together, or neither set.",
                 nameof(options));
         }
 

@@ -113,8 +113,9 @@ Sanitization is name-based: it cannot guarantee that every arbitrary secret hidi
 | `CaptureToolCalls` | `true` | Registers function middleware. Requires a `ChatClientAgent`. |
 | `FinalizationTimeout` | 5 s | Upper bound on the whole post-invocation step: appending the attempt, completing the run, and — when `FinalizationService` is set — finalizing it into a durable Experience Record. With finalization configured this bounds database round trips, not just in-memory capture, so 5 s may be too tight. Must be positive and at most `uint.MaxValue - 1` milliseconds. It uses its own token, never the caller's. |
 | `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, `Finalization` (turning the completed run into a durable Experience Record), and `RecordExposure` (recording which records the context provider delivered into the run). Exceptions it throws are swallowed. |
-| `FinalizationService` | none | Core's `ExperienceFinalizationService`. When set, each successfully captured run is finalized into a durable Experience Record. Requires `ResolveFinalization`. |
-| `ResolveFinalization` | none | Builds the `FinalizeExperienceRequest` for one completed run. Return `null` to skip finalizing that run. Required when `FinalizationService` is set. |
+| `FinalizationService` | none | Core's `ExperienceFinalizationService`. When set, each successfully captured run is finalized into a durable Experience Record. Requires exactly one of `ResolveFinalizationAsync` and `ResolveFinalization`. |
+| `ResolveFinalizationAsync` | none | Builds the `FinalizeExperienceRequest` for one completed run, awaited with the `FinalizationTimeout`-bounded token (never the caller's), so it can run checks or read CI for the evidence. Return `null` to skip finalizing that run. The preferred form. A throw or a faulted task is reported through `OnCaptureFailure` exactly as a synchronous throw is. |
+| `ResolveFinalization` | none | The synchronous form of `ResolveFinalizationAsync`, unchanged. With `FinalizationService` set, exactly one of the two is required; setting both, or either without `FinalizationService`, throws `ArgumentException` at `UseExperienceCapture`. |
 | `OnRunFinalized` | none | Receives every `FinalizeExperienceResult`, durable or not — including a host decision such as `StorageDenied`, which is not a capture failure. Not called once finalization has overrun `FinalizationTimeout`. Exceptions it throws are swallowed. |
 | `TimeProvider` | `TimeProvider.System` | Timestamps, durations, and the finalization timeout. |
 | `NewId` | `Guid.NewGuid` | Run, attempt, tool-call, and completion-event IDs. Must be thread-safe. |
@@ -144,7 +145,7 @@ var agent = innerAgent.AsBuilder()
         MaxAttemptsPerOpenRun = 3,
         MaxOpenRunDuration = TimeSpan.FromMinutes(2),
         FinalizationService = finalization,
-        ResolveFinalization = ctx => BuildRequest(ctx.Run),
+        ResolveFinalizationAsync = (ctx, cancellationToken) => BuildRequestAsync(ctx.Run, cancellationToken),
     }, out var captureLifetime)
     .Build();
 

@@ -372,7 +372,8 @@ public sealed class ExperienceCaptureOptions
     /// itself, whenever it likes, from the capture service's snapshot.
     /// </summary>
     /// <remarks>
-    /// Setting this requires <see cref="ResolveFinalization"/> too (and vice versa), because only the
+    /// Setting this requires exactly one finalization resolver too -- <see cref="ResolveFinalizationAsync"/>
+    /// (preferred) or <see cref="ResolveFinalization"/> -- and a resolver requires this, because only the
     /// host knows a run's required checks, its verification evidence, its authorization context, and
     /// its storage policy. Finalization runs inside the same once-only, <see cref="FinalizationTimeout"/>-bounded
     /// step as capture finalization, after the run's attempt and completion were recorded, and only
@@ -382,13 +383,32 @@ public sealed class ExperienceCaptureOptions
     public ExperienceFinalizationService? FinalizationService { get; init; }
 
     /// <summary>
-    /// Required when <see cref="FinalizationService"/> is set (and only valid then): builds the
+    /// The synchronous form of <see cref="ResolveFinalizationAsync"/>. When <see cref="FinalizationService"/> is
+    /// set, exactly one of the two resolvers is required (and neither is valid without it): builds the
     /// finalize request for one completed run. Returning <see langword="null"/> skips finalizing that
     /// run. The request's <c>RunId</c> must be this invocation's run. If it throws, or returns a
     /// request for another run, the run is not finalized and the failure is reported through
-    /// <see cref="OnCaptureFailure"/>.
+    /// <see cref="OnCaptureFailure"/>. Prefer <see cref="ResolveFinalizationAsync"/> whenever producing the
+    /// evidence needs I/O.
     /// </summary>
     public Func<ExperienceFinalizationContext, FinalizeExperienceRequest?>? ResolveFinalization { get; init; }
+
+    /// <summary>
+    /// The preferred finalization resolver: builds the finalize request for one completed run, asynchronously --
+    /// running the run's checks or reading CI for its evidence, say. When <see cref="FinalizationService"/> is set,
+    /// exactly one of this and <see cref="ResolveFinalization"/> is required, and neither is valid without it.
+    /// </summary>
+    /// <remarks>
+    /// Awaited at the point <see cref="ResolveFinalization"/> would be called, with the token finalization already
+    /// runs under: the <see cref="FinalizationTimeout"/>-bounded token, never the caller's. Its result is treated
+    /// exactly as the synchronous resolver's: <see langword="null"/> skips finalizing that run; a request for another
+    /// run, a throw, or a faulted task leaves the run not finalized and is reported through
+    /// <see cref="OnCaptureFailure"/>. When <see cref="FinalizationTimeout"/> fires while it is awaited, the timeout
+    /// is reported once, at stage <see cref="ExperienceCaptureFailureStage.Finalize"/>, and the resolver's own
+    /// cancellation is not reported again; a request it returns after the timeout, or after the capture lifetime was
+    /// disposed, finalizes nothing.
+    /// </remarks>
+    public Func<ExperienceFinalizationContext, CancellationToken, ValueTask<FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; init; }
 
     /// <summary>
     /// Optional. Receives every finalization result, durable or not -- including an expected

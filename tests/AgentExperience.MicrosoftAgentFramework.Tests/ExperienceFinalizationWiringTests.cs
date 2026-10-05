@@ -205,6 +205,237 @@ public class ExperienceFinalizationWiringTests
     }
 
     [Fact]
+    public async Task An_async_resolver_that_awaits_its_evidence_finalizes_the_run_as_the_sync_form_does()
+    {
+        Harness? harness = null;
+        CancellationToken observed = default;
+        harness = new Harness
+        {
+            ResolveAsync = async (context, cancellationToken) =>
+            {
+                observed = cancellationToken;
+                await Task.Yield();
+                await Task.Delay(1, cancellationToken);
+                return harness!.RequestFor(context.Run.RunId);
+            },
+        };
+
+        var response = await harness.Capture(new ScriptedChatClient()).RunAsync("task-finalize-async");
+
+        Assert.Equal("Hello, world", response.Text);
+        var result = Assert.Single(harness.Finalized);
+        Assert.Equal(FinalizationOutcome.Validated, result.Outcome);
+        Assert.Empty(harness.Failures);
+        var runId = Assert.Single(harness.Service.StartedRunIds);
+        Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(runId, TestScope), result.ExperienceId);
+
+        // Awaited under the finalization-bounded token, which a resolver can honour.
+        Assert.True(observed.CanBeCanceled);
+    }
+
+    [Fact]
+    public async Task The_async_resolvers_token_is_the_finalization_token_not_the_callers()
+    {
+        using var caller = new CancellationTokenSource();
+        Harness? harness = null;
+        var cancelledWhenResolving = true;
+        harness = new Harness
+        {
+            ResolveAsync = async (context, cancellationToken) =>
+            {
+                // The caller gives up while the evidence is being produced; finalization is not the caller's to stop.
+                await caller.CancelAsync();
+                cancelledWhenResolving = cancellationToken.IsCancellationRequested;
+                return harness!.RequestFor(context.Run.RunId);
+            },
+        };
+
+        var response = await harness.Capture(new ScriptedChatClient()).RunAsync("task-caller-cancels", cancellationToken: caller.Token);
+
+        Assert.Equal("Hello, world", response.Text);
+        Assert.False(cancelledWhenResolving);
+        Assert.Equal(FinalizationOutcome.Validated, Assert.Single(harness.Finalized).Outcome);
+        Assert.Empty(harness.Failures);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_async_resolver_overrunning_FinalizationTimeout_is_reported_once_and_finalizes_nothing(bool honoursToken)
+    {
+        var clock = new ManualTimeoutTimeProvider();
+        var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource();
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Harness? harness = null;
+        harness = new Harness
+        {
+            Clock = clock,
+            ResolveAsync = async (context, cancellationToken) =>
+            {
+                try
+                {
+                    entered.TrySetResult(cancellationToken);
+                    if (honoursToken)
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    }
+                    else
+                    {
+                        await release.Task;
+                    }
+
+                    return harness!.RequestFor(context.Run.RunId);
+                }
+                finally
+                {
+                    exited.TrySetResult();
+                }
+            },
+        };
+
+        var run = harness.Capture(new ScriptedChatClient()).RunAsync("task-slow-evidence");
+        var token = await entered.Task;
+        await clock.FireTimeoutsAsync();
+
+        // Capture never changes what the caller sees: the invocation returns once the step has timed out.
+        Assert.Equal("Hello, world", (await run).Text);
+        Assert.True(token.IsCancellationRequested);
+
+        release.TrySetResult();
+        await exited.Task;
+        await Task.Delay(50);
+
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(ExperienceCaptureFailureStage.Finalize, failure.Stage);
+        Assert.Contains("did not finish within", failure.Reason, StringComparison.Ordinal);
+        Assert.Empty(harness.Finalized);
+        Assert.Empty(harness.Store.Records);
+    }
+
+    [Fact]
+    public async Task Disposing_capture_while_the_async_resolver_awaits_finalizes_nothing()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Harness? harness = null;
+        harness = new Harness
+        {
+            ResolveAsync = async (context, _) =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return harness!.RequestFor(context.Run.RunId);
+            },
+        };
+
+        var run = harness.Capture(new ScriptedChatClient(), out var captureLifetime).RunAsync("task-disposed");
+        await entered.Task;
+        captureLifetime.Dispose();
+        release.TrySetResult();
+
+        Assert.Equal("Hello, world", (await run).Text);
+        Assert.Empty(harness.Finalized);
+        Assert.Empty(harness.Store.Records);
+    }
+
+    [Fact]
+    public async Task An_async_resolver_that_returns_null_skips_finalizing_that_run_without_reporting_a_failure()
+    {
+        var harness = new Harness { ResolveAsync = static async (_, _) => { await Task.Yield(); return null; } };
+
+        await harness.Capture(new ScriptedChatClient()).RunAsync("task-skip-async");
+
+        Assert.Empty(harness.Finalized);
+        Assert.Empty(harness.Failures);
+        Assert.Empty(harness.Store.Records);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_async_resolver_that_throws_or_faults_reports_a_capture_failure_and_leaves_the_invocation_alone(bool faultAfterAwait)
+    {
+        var harness = new Harness
+        {
+            ResolveAsync = faultAfterAwait
+                ? static async (_, _) =>
+                {
+                    await Task.Yield();
+                    throw new InvalidOperationException("evidence unavailable");
+                }
+                : static (_, _) => throw new InvalidOperationException("evidence unavailable"),
+        };
+
+        var response = await harness.Capture(new ScriptedChatClient()).RunAsync("task-resolver-async-throws");
+
+        Assert.Equal("Hello, world", response.Text);
+        Assert.Empty(harness.Finalized);
+        Assert.Empty(harness.Store.Records);
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(ExperienceCaptureFailureStage.Finalization, failure.Stage);
+        Assert.IsType<InvalidOperationException>(failure.Exception);
+        Assert.Contains(nameof(ExperienceCaptureOptions.ResolveFinalizationAsync), failure.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_async_resolver_that_returns_a_request_for_another_run_is_refused()
+    {
+        var foreignRunId = Guid.NewGuid();
+        var harness = new Harness { ResolveAsync = async (_, _) => { await Task.Yield(); return ForeignRequest(foreignRunId); } };
+
+        await harness.Capture(new ScriptedChatClient()).RunAsync("task-foreign-run-async");
+
+        Assert.Empty(harness.Finalized);
+        Assert.Empty(harness.Store.Records);
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(ExperienceCaptureFailureStage.Finalization, failure.Stage);
+        Assert.Contains("different run", failure.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Finalization_pairing_counts_either_resolver_and_refuses_both()
+    {
+        var harness = new Harness();
+        static ExperienceRunDescriptor Run(ExperienceRunContext _) => new("task", TestScope);
+
+        // An async resolver alone, with no service, would silently never finalize...
+        var asyncResolverOnly = new ExperienceCaptureOptions
+        {
+            ResolveRun = Run,
+            ResolveFinalizationAsync = static (_, _) => ValueTask.FromResult<FinalizeExperienceRequest?>(null),
+        };
+
+        // ...and a service with both resolvers is ambiguous.
+        var bothResolvers = new ExperienceCaptureOptions
+        {
+            ResolveRun = Run,
+            FinalizationService = harness.Finalization,
+            ResolveFinalization = static _ => null,
+            ResolveFinalizationAsync = static (_, _) => ValueTask.FromResult<FinalizeExperienceRequest?>(null),
+        };
+
+        foreach (var options in new[] { asyncResolverOnly, bothResolvers })
+        {
+            var exception = Assert.Throws<ArgumentException>(() =>
+                new ScriptedAgent().AsBuilder().UseExperienceCapture(harness.Service, options).Build());
+
+            Assert.Contains(nameof(ExperienceCaptureOptions.ResolveFinalization), exception.Message, StringComparison.Ordinal);
+            Assert.Contains(nameof(ExperienceCaptureOptions.ResolveFinalizationAsync), exception.Message, StringComparison.Ordinal);
+        }
+
+        // A service with only the async resolver is complete.
+        var serviceAndAsync = new ExperienceCaptureOptions
+        {
+            ResolveRun = Run,
+            CaptureToolCalls = false,
+            FinalizationService = harness.Finalization,
+            ResolveFinalizationAsync = static (_, _) => ValueTask.FromResult<FinalizeExperienceRequest?>(null),
+        };
+        Assert.NotNull(new ScriptedAgent().AsBuilder().UseExperienceCapture(harness.Service, serviceAndAsync).Build());
+    }
+
+    [Fact]
     public async Task A_failed_invocation_is_still_finalized_and_quarantined()
     {
         var harness = new Harness { Evidence = () => [PassingEvidence(CheckResult.Fail)] };
@@ -290,6 +521,9 @@ public class ExperienceFinalizationWiringTests
 
         public Func<ExperienceFinalizationContext, FinalizeExperienceRequest?>? Resolve { get; init; }
 
+        /// <summary>When set, wired as <see cref="ExperienceCaptureOptions.ResolveFinalizationAsync"/> instead of any sync resolver.</summary>
+        public Func<ExperienceFinalizationContext, CancellationToken, ValueTask<FinalizeExperienceRequest?>>? ResolveAsync { get; init; }
+
         public bool ThrowFromOnRunFinalized { get; init; }
 
         /// <summary>When set, every invocation continues this run rather than opening its own.</summary>
@@ -331,6 +565,13 @@ public class ExperienceFinalizationWiringTests
             }
         }
 
+        /// <summary>As <see cref="Capture(ScriptedChatClient)"/>, handing back the capture lifetime.</summary>
+        public AIAgent Capture(ScriptedChatClient client, out IDisposable captureLifetime)
+        {
+            var inner = new ChatClientAgent(client, new ChatClientAgentOptions());
+            return inner.AsBuilder().UseExperienceCapture(Service, Options(), out captureLifetime).Build();
+        }
+
         public AIAgent Capture(ScriptedChatClient client)
         {
             var inner = new ChatClientAgent(client, new ChatClientAgentOptions());
@@ -344,7 +585,10 @@ public class ExperienceFinalizationWiringTests
             TimeProvider = Clock,
             CaptureToolCalls = false,
             FinalizationService = Finalization,
-            ResolveFinalization = Resolve ?? (context => RequestFor(context.Run.RunId)),
+            ResolveFinalization = ResolveAsync is null
+                ? Resolve ?? (context => RequestFor(context.Run.RunId))
+                : Resolve is null ? null : throw new InvalidOperationException("Set Resolve or ResolveAsync, not both."),
+            ResolveFinalizationAsync = ResolveAsync,
             OnRunFinalized = result =>
             {
                 lock (_finalized)

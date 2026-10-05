@@ -1480,6 +1480,172 @@ public class ExperienceInjectionTests
         Assert.IsType<InvalidOperationException>(result.Failure!.Exception);
     }
 
+    // ---- Async resolver: the same outcomes as the sync form -------------------------------------
+
+    [Fact]
+    public async Task An_async_resolver_that_awaits_injects_exactly_what_the_sync_equivalent_does()
+    {
+        var sync = new Harness();
+        sync.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Check the lock table first."), relevance: 1d);
+        await sync.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Harness? harness = null;
+        CancellationToken observed = default;
+        using var cts = new CancellationTokenSource();
+        harness = new Harness
+        {
+            ResolveAsync = async (context, cancellationToken) =>
+            {
+                observed = cancellationToken;
+                await Task.Yield();
+                await Task.Delay(1, cancellationToken);
+                return harness!.DefaultRequest(context);
+            },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Check the lock table first."), relevance: 1d);
+
+        var response = await harness.Agent().RunAsync("refund ticket stuck on a lock", cancellationToken: cts.Token);
+
+        Assert.Equal("Hello, world", response.Text);
+        Assert.NotNull(harness.InjectedText());
+        Assert.Equal(sync.InjectedText(), harness.InjectedText());
+        var expected = Assert.Single(sync.Results);
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Injected, result.Outcome);
+        Assert.Equal(expected.Outcome, result.Outcome);
+        Assert.Equal(expected.InjectedExperienceIds, result.InjectedExperienceIds);
+        Assert.Equal(expected.PayloadBytes, result.PayloadBytes);
+        Assert.Equal("corr-1", result.CorrelationId);
+
+        // Awaited with the invocation's own token.
+        Assert.True(observed.CanBeCanceled);
+        cts.Cancel();
+        Assert.True(observed.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task An_async_resolver_that_returns_null_skips_injection_without_touching_retrieval()
+    {
+        var harness = new Harness { ResolveAsync = static async (_, _) => { await Task.Yield(); return null; } };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        harness.World.SearchThrows = new InvalidOperationException("search must never be called");
+
+        var response = await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal("Hello, world", response.Text);
+        Assert.Null(harness.InjectedText());
+        Assert.Equal(InjectionOutcome.Skipped, Assert.Single(harness.Results).Outcome);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_async_resolver_that_throws_or_faults_injects_nothing_and_is_reported_as_a_sync_throw_is(bool faultAfterAwait)
+    {
+        var sync = new Harness { Resolve = _ => throw new InvalidOperationException("resolver failed") };
+        await sync.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var harness = new Harness
+        {
+            ResolveAsync = faultAfterAwait
+                ? static async (_, _) =>
+                {
+                    await Task.Yield();
+                    throw new InvalidOperationException("resolver failed");
+                }
+                : static (_, _) => throw new InvalidOperationException("resolver failed"),
+        };
+
+        var response = await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal("Hello, world", response.Text);
+        Assert.Null(harness.InjectedText());
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.IsType<InvalidOperationException>(result.Failure!.Exception);
+        Assert.Equal("The injection request resolver (ResolveRequest) threw.", Assert.Single(sync.Results).Failure!.Reason);
+        Assert.Equal("The injection request resolver (ResolveRequestAsync) threw.", result.Failure.Reason);
+    }
+
+    [Fact]
+    public async Task An_async_resolver_cancelled_by_something_other_than_the_invocation_is_a_failure_not_propagated()
+    {
+        var harness = new Harness
+        {
+            ResolveAsync = static async (_, _) =>
+            {
+                await Task.Yield();
+                throw new TaskCanceledException("the host's own lookup timed out");
+            },
+        };
+
+        var response = await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal("Hello, world", response.Text);
+        Assert.Null(harness.InjectedText());
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.IsType<TaskCanceledException>(result.Failure!.Exception);
+    }
+
+    [Fact]
+    public async Task A_sync_resolver_throwing_OperationCanceledException_is_still_a_failure_even_with_the_invocation_cancelled()
+    {
+        using var cts = new CancellationTokenSource();
+        var harness = new Harness
+        {
+            Clock = TimeProvider.System,
+            Resolve = _ =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            },
+        };
+
+        try
+        {
+            await harness.Agent().RunAsync("refund ticket stuck on a lock", cancellationToken: cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // MAF itself may stop the cancelled invocation after the provider returns; that is not the provider's doing.
+        }
+
+        // Unchanged sync behaviour: the provider caught the resolver's cancellation and reported it, rather than
+        // letting it escape (an escaping exception reports nothing).
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.IsType<OperationCanceledException>(result.Failure!.Exception);
+        Assert.Equal("The injection request resolver (ResolveRequest) threw.", result.Failure.Reason);
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_during_the_async_resolver_propagates_and_reports_nothing()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var harness = new Harness
+        {
+            Clock = TimeProvider.System,
+            ResolveAsync = async (_, cancellationToken) =>
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return null;
+            },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        using var cts = new CancellationTokenSource();
+
+        var run = harness.Agent().RunAsync("refund ticket stuck on a lock", cancellationToken: cts.Token);
+        await entered.Task;
+        await cts.CancelAsync();
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        Assert.Equal(cts.Token, thrown.CancellationToken);
+        Assert.Empty(harness.Results);
+        Assert.Null(harness.InjectedText());
+    }
+
     [Fact]
     public async Task Exceptions_thrown_by_the_result_callback_are_swallowed()
     {
@@ -1698,11 +1864,29 @@ public class ExperienceInjectionTests
     {
         var world = new FakeExperienceWorld();
         var retrieval = new ExperienceRetrievalService(world, RetrievalPolicy.Default, RankingWeights.Default, TimeProvider.System);
-        var options = new ExperienceInjectionOptions { ResolveRequest = null! };
+        var options = new ExperienceInjectionOptions();
 
-        Assert.Throws<ArgumentNullException>(() => new ExperienceContextProvider(retrieval, world, options));
+        var exception = Assert.Throws<ArgumentException>(() => new ExperienceContextProvider(retrieval, world, options));
+        Assert.Contains(nameof(ExperienceInjectionOptions.ResolveRequest), exception.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(ExperienceInjectionOptions.ResolveRequestAsync), exception.Message, StringComparison.Ordinal);
         Assert.Throws<ArgumentNullException>(() => new ExperienceContextProvider(retrieval, world, null!));
         Assert.Throws<ArgumentNullException>(() => new ExperienceContextProvider(retrieval, null!, options));
+    }
+
+    [Fact]
+    public void A_provider_with_both_resolvers_is_rejected_at_construction()
+    {
+        var world = new FakeExperienceWorld();
+        var retrieval = new ExperienceRetrievalService(world, RetrievalPolicy.Default, RankingWeights.Default, TimeProvider.System);
+        var options = new ExperienceInjectionOptions
+        {
+            ResolveRequest = static _ => null,
+            ResolveRequestAsync = static (_, _) => ValueTask.FromResult<RetrieveExperienceRequest?>(null),
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => new ExperienceContextProvider(retrieval, world, options));
+        Assert.Contains(nameof(ExperienceInjectionOptions.ResolveRequest), exception.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(ExperienceInjectionOptions.ResolveRequestAsync), exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2623,6 +2807,9 @@ public class ExperienceInjectionTests
 
         public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? Resolve { get; init; }
 
+        /// <summary>When set, wired as <see cref="ExperienceInjectionOptions.ResolveRequestAsync"/> instead of any sync resolver.</summary>
+        public Func<ExperienceInjectionContext, CancellationToken, ValueTask<RetrieveExperienceRequest?>>? ResolveAsync { get; init; }
+
         public IDictionary<string, IReadOnlyList<string>> ApproachArguments { get; init; } =
             new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
@@ -2652,6 +2839,15 @@ public class ExperienceInjectionTests
             ?.FirstOrDefault(m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true)
             ?.Text;
 
+        /// <summary>The request the harness resolves when a test sets no resolver of its own.</summary>
+        public RetrieveExperienceRequest DefaultRequest(ExperienceInjectionContext context) => new(
+            Authorization,
+            TestScope,
+            context.Messages.LastOrDefault(m => m.Role == ChatRole.User && !string.IsNullOrWhiteSpace(m.Text))?.Text
+                ?? "refund ticket stuck on a lock",
+            RequiredEnvironmentAttributes: RequiredEnvironment,
+            CorrelationId: "corr-1");
+
         public ExperienceContextProvider Provider() => new(
             new ExperienceRetrievalService(World, Policy, RankingWeights.Default, Clock),
             World,
@@ -2659,13 +2855,10 @@ public class ExperienceInjectionTests
             {
                 // The shape both READMEs teach: never Last(), which throws on an empty list, and never
                 // whatever message happens to be last, which mid-conversation is a tool result.
-                ResolveRequest = Resolve ?? (context => new RetrieveExperienceRequest(
-                    Authorization,
-                    TestScope,
-                    context.Messages.LastOrDefault(m => m.Role == ChatRole.User && !string.IsNullOrWhiteSpace(m.Text))?.Text
-                        ?? "refund ticket stuck on a lock",
-                    RequiredEnvironmentAttributes: RequiredEnvironment,
-                    CorrelationId: "corr-1")),
+                ResolveRequest = ResolveAsync is null
+                    ? Resolve ?? DefaultRequest
+                    : Resolve is null ? null : throw new InvalidOperationException("Set Resolve or ResolveAsync, not both."),
+                ResolveRequestAsync = ResolveAsync,
                 Limits = Limits,
                 Rendering = Rendering,
                 MessageRole = MessageRole,
