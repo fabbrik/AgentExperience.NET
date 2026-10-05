@@ -81,7 +81,12 @@ public sealed class PostgresFixture : IAsyncLifetime
         }
 
         _superuserInStore = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, username: null));
-        _owner = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, OwnerRoleName));
+        // Story 16.6: error detail on, so a deadlock the privileges call reports names the other session and
+        // its statement (PostgreSQL's DETAIL) instead of Npgsql's redaction notice.
+        _owner = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(ConnectionString(StoreDatabase, OwnerRoleName))
+        {
+            IncludeErrorDetail = true,
+        }.ConnectionString);
         _dataSource = NpgsqlDataSource.Create(ConnectionString(StoreDatabase, ApplicationRoleName));
 
         if (RowLevelSecurityMode.IsOn)

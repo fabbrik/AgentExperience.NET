@@ -594,6 +594,222 @@ public sealed class PostgresApplicationRoleTests
         Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, refused.SqlState);
     }
 
+    // ------------------------------------------------------------------ concurrent calls (story 16.6)
+
+    [Fact]
+    public async Task Concurrent_privilege_calls_with_row_level_security_converge_on_exactly_what_one_call_leaves()
+    {
+        await using var world = await TwoRoleDatabaseAsync("concurrent");
+        var options = new ExperienceApplicationRoleOptions(world.App) { AllowErasure = true, EnableRowLevelSecurity = true };
+        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(world.Owner, options, CancellationToken.None);
+        var expected = await PrivilegeStateSnapshotAsync(world.Owner);
+
+        for (var round = 0; round < 3; round++)
+        {
+            // Four deploy jobs at once against one database. This does not reproduce the CI deadlock -- the
+            // migrator's lock already serialized privileges calls -- it checks that concurrent calls all succeed
+            // and converge, idempotently, on what one call leaves.
+            await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(
+                () => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(world.Owner, options, CancellationToken.None))));
+            Assert.Equal(expected, await PrivilegeStateSnapshotAsync(world.Owner));
+        }
+    }
+
+    [Fact]
+    public async Task A_deadlock_inside_the_real_privileges_transaction_is_retried_on_a_clean_connection_and_succeeds()
+    {
+        await using var world = await TwoRoleDatabaseAsync("deadlockreal");
+        await using var superuser = NpgsqlDataSource.Create(_fixture.ConnectionString(world.Database, username: null));
+        var options = new ExperienceApplicationRoleOptions(world.App) { AllowErasure = true, EnableRowLevelSecurity = true };
+        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(world.Owner, options, CancellationToken.None);
+        var expected = await PrivilegeStateSnapshotAsync(world.Owner);
+
+        // Store-like traffic: a session holding a lock on the last table whose policies the call re-creates (it needs
+        // ACCESS EXCLUSIVE there). Its deadlock_timeout is long, so the privileges transaction -- which waits first and
+        // checks after the default second -- is always the one PostgreSQL rolls back.
+        var last = RowLevelSecurityPolicies.All.Last(p => p.Table != ApplicationRolePrivileges.EmbeddingsTable).Table;
+        await using var traffic = await superuser.OpenConnectionAsync();
+        await ExecuteOnAsync(traffic, null, "SET deadlock_timeout = '10s'");
+        var trafficTransaction = await traffic.BeginTransactionAsync();
+        await ExecuteOnAsync(traffic, trafficTransaction, $"LOCK TABLE agent_experience.{last} IN ACCESS SHARE MODE");
+        var trafficPid = traffic.ProcessID;
+
+        var attempts = 0;
+        var call = ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesCoreAsync(
+            world.Owner,
+            options,
+            (source, opts, token) =>
+            {
+                Interlocked.Increment(ref attempts);
+                return ApplicationRolePrivileges.ApplyAsync(source, opts, token);
+            },
+            CancellationToken.None);
+
+        Task? trafficWait = null;
+        try
+        {
+            // Once the transaction waits on that table, take a lock it already holds: a lock-order cycle.
+            var (privilegesPid, held) = await WaitForAsync(async () =>
+            {
+                await using var command = superuser.CreateCommand(
+                    "SELECT w.pid, h.relation::regclass::text FROM pg_locks w " +
+                    "JOIN pg_locks h ON h.pid = w.pid AND h.granted AND h.locktype = 'relation' AND h.mode = 'AccessExclusiveLock' " +
+                    "JOIN pg_class c ON c.oid = h.relation AND c.relnamespace = 'agent_experience'::regnamespace AND c.relkind = 'r' " +
+                    "WHERE w.locktype = 'relation' AND NOT w.granted AND w.pid <> @traffic " +
+                    "AND w.relation = ('agent_experience.' || @last)::regclass LIMIT 1");
+                command.Parameters.Add(new NpgsqlParameter<int>("traffic", trafficPid));
+                command.Parameters.Add(new NpgsqlParameter<string>("last", last));
+                await using var reader = await command.ExecuteReaderAsync();
+                return await reader.ReadAsync() ? (reader.GetInt32(0), reader.GetString(1)) : ((int, string)?)null;
+            }, "the privileges transaction never waited on the traffic's lock while holding another table");
+            Assert.NotEqual(trafficPid, privilegesPid);
+
+            trafficWait = ExecuteOnAsync(traffic, trafficTransaction, $"LOCK TABLE {held} IN ACCESS SHARE MODE");
+
+            // The privileges transaction is the victim; the traffic's lock is granted once it rolls back.
+            await trafficWait;
+        }
+        finally
+        {
+            await trafficTransaction.DisposeAsync();
+        }
+
+        await call;
+        Assert.Equal(2, attempts);
+        Assert.Equal(expected, await PrivilegeStateSnapshotAsync(world.Owner));
+
+        // The victim's connection went back to the pool rolled back: nothing in this database is left in a transaction.
+        Assert.Equal(0L, await ScalarAsync<long>(
+            superuser,
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() " +
+            "AND state LIKE 'idle in transaction%'"));
+    }
+
+    [Fact]
+    public async Task A_privileges_transaction_chosen_as_a_deadlock_victim_is_retried_and_the_call_succeeds()
+    {
+        await using var world = await TwoRoleDatabaseAsync("deadlockonce");
+        await using var superuser = NpgsqlDataSource.Create(_fixture.ConnectionString(world.Database, username: null));
+        var options = new ExperienceApplicationRoleOptions(world.App) { AllowErasure = true };
+        var attempts = 0;
+
+        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesCoreAsync(
+            world.Owner,
+            options,
+            async (source, opts, token) =>
+            {
+                // The first attempt throws a real 40P01, from a deadlock between two other sessions the helper
+                // opens, before the privileges transaction starts.
+                if (++attempts == 1)
+                {
+                    await DeadlockVictimAsync(superuser);
+                }
+
+                await ApplicationRolePrivileges.ApplyAsync(source, opts, token);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(2, attempts);
+        var applied = await PrivilegeStateSnapshotAsync(world.Owner);
+        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(world.Owner, options, CancellationToken.None);
+        Assert.Equal(applied, await PrivilegeStateSnapshotAsync(world.Owner));
+        Assert.True(await ScalarAsync<bool>(world.Owner, $"SELECT has_schema_privilege('{world.App}', 'agent_experience', 'USAGE')"));
+    }
+
+    [Fact]
+    public async Task A_persistent_deadlock_surfaces_after_three_attempts_saying_so_and_changes_nothing()
+    {
+        await using var world = await TwoRoleDatabaseAsync("deadlockalways");
+        await using var superuser = NpgsqlDataSource.Create(_fixture.ConnectionString(world.Database, username: null));
+        var attempts = 0;
+
+        var thrown = await Assert.ThrowsAsync<ExperienceStoreException>(() => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesCoreAsync(
+            world.Owner,
+            new ExperienceApplicationRoleOptions(world.App),
+            async (_, _, _) =>
+            {
+                attempts++;
+                await DeadlockVictimAsync(superuser);
+            },
+            CancellationToken.None));
+
+        Assert.Equal(3, attempts);
+        Assert.Equal(PostgresErrorCodes.DeadlockDetected, Assert.IsType<PostgresException>(thrown.InnerException).SqlState);
+        Assert.Contains("deadlock victim 3 times in a row", thrown.Message, StringComparison.Ordinal);
+        Assert.Contains("run it when traffic is low. Nothing was changed.", thrown.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(world.App, thrown.Message, StringComparison.Ordinal);
+        Assert.False(await ScalarAsync<bool>(world.Owner, $"SELECT has_schema_privilege('{world.App}', 'agent_experience', 'USAGE')"));
+    }
+
+    [Fact]
+    public async Task Only_a_deadlock_is_retried()
+    {
+        await using var world = await TwoRoleDatabaseAsync("deadlockother");
+
+        // A refusal is not retried.
+        var attempts = 0;
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesCoreAsync(
+            world.Owner,
+            new ExperienceApplicationRoleOptions("no_such_role_" + Guid.NewGuid().ToString("N")),
+            (source, opts, token) =>
+            {
+                attempts++;
+                return ApplicationRolePrivileges.ApplyAsync(source, opts, token);
+            },
+            CancellationToken.None));
+        Assert.Equal(1, attempts);
+
+        // Nor is another database error.
+        attempts = 0;
+        var other = await Assert.ThrowsAsync<ExperienceStoreException>(() => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesCoreAsync(
+            world.Owner,
+            new ExperienceApplicationRoleOptions(world.App),
+            (_, _, _) =>
+            {
+                attempts++;
+                throw new PostgresException("could not serialize access", "ERROR", "ERROR", PostgresErrorCodes.SerializationFailure);
+            },
+            CancellationToken.None));
+        Assert.Equal(1, attempts);
+        Assert.Equal(PostgresErrorCodes.SerializationFailure, Assert.IsType<PostgresException>(other.InnerException).SqlState);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancelling_on_a_deadlock_or_during_the_wait_before_the_retry_ends_the_call_the_same_way(bool duringBackoff)
+    {
+        await using var world = await TwoRoleDatabaseAsync(duringBackoff ? "deadlockwait" : "deadlockcancel");
+        using var cancellation = new CancellationTokenSource();
+        var attempts = 0;
+
+        var thrown = await Assert.ThrowsAsync<OperationCanceledException>(() => ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesCoreAsync(
+            world.Owner,
+            new ExperienceApplicationRoleOptions(world.App),
+            (_, _, _) =>
+            {
+                attempts++;
+                if (duringBackoff)
+                {
+                    // Fires after this 40P01 is thrown and the wait (at least 50 ms) has begun, before any retry.
+                    cancellation.CancelAfter(TimeSpan.FromMilliseconds(5));
+                }
+                else
+                {
+                    cancellation.Cancel();
+                }
+
+                throw new PostgresException("deadlock detected", "ERROR", "ERROR", PostgresErrorCodes.DeadlockDetected);
+            },
+            cancellation.Token));
+
+        Assert.Equal(1, attempts);
+        Assert.Equal("Applying the application role's privileges was cancelled.", thrown.Message);
+        Assert.Equal(cancellation.Token, thrown.CancellationToken);
+        Assert.Equal(PostgresErrorCodes.DeadlockDetected, Assert.IsType<PostgresException>(thrown.InnerException).SqlState);
+        Assert.False(await ScalarAsync<bool>(world.Owner, $"SELECT has_schema_privilege('{world.App}', 'agent_experience', 'USAGE')"));
+    }
+
     [Fact]
     public async Task An_object_a_later_migration_adds_gets_nothing_until_the_manifest_names_it()
     {
@@ -827,6 +1043,106 @@ public sealed class PostgresApplicationRoleTests
         "UNION ALL SELECT 'fn ' || p.oid::regprocedure::text || ' ' || coalesce(p.proacl::text, '') FROM pg_proc p " +
         "WHERE p.pronamespace = 'agent_experience'::regnamespace) acl");
 
+    /// <summary>
+    /// Opens two sessions of their own (superuser connections, so they may set <c>deadlock_timeout</c>), makes
+    /// them deadlock on two advisory locks, and throws the <c>40P01</c> PostgreSQL reports. It is not the
+    /// privileges transaction that deadlocks here, only a real <see cref="PostgresException"/> to throw from it.
+    /// The victim waits first and checks after 200 ms; the other checks only after 10 s, so the victim is always
+    /// the one rolled back. Both are rolled back before this returns.
+    /// </summary>
+    private static async Task DeadlockVictimAsync(NpgsqlDataSource superuser)
+    {
+        const long first = 0x5445535431360601L;
+        const long second = 0x5445535431360602L;
+
+        await using var victim = await superuser.OpenConnectionAsync();
+        await using var other = await superuser.OpenConnectionAsync();
+        await ExecuteOnAsync(victim, null, "SET deadlock_timeout = '200ms'");
+        await ExecuteOnAsync(other, null, "SET deadlock_timeout = '10s'");
+        var victimTransaction = await victim.BeginTransactionAsync();
+        var otherTransaction = await other.BeginTransactionAsync();
+        Task? otherWait = null;
+        try
+        {
+            await AdvisoryLockAsync(victim, victimTransaction, first);
+            await AdvisoryLockAsync(other, otherTransaction, second);
+
+            var victimWait = AdvisoryLockAsync(victim, victimTransaction, second);
+            var victimPid = victim.ProcessID;
+            await WaitForAsync(async () =>
+            {
+                await using var command = superuser.CreateCommand(
+                    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @pid AND locktype = 'advisory' AND NOT granted " +
+                    "AND objid::bigint = @objid)");
+                command.Parameters.Add(new NpgsqlParameter<int>("pid", victimPid));
+                command.Parameters.Add(new NpgsqlParameter<long>("objid", second & 0xFFFFFFFFL));
+                return (bool)(await command.ExecuteScalarAsync())! ? true : (bool?)null;
+            }, "the victim session never waited on the second lock");
+
+            otherWait = AdvisoryLockAsync(other, otherTransaction, first);
+            await victimWait;
+            Assert.Fail("the victim session was not chosen as the deadlock victim");
+        }
+        finally
+        {
+            await victimTransaction.DisposeAsync();
+            try
+            {
+                if (otherWait is not null)
+                {
+                    await otherWait;
+                }
+            }
+            finally
+            {
+                await otherTransaction.DisposeAsync();
+            }
+        }
+    }
+
+    private static async Task AdvisoryLockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long key)
+    {
+        await using var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(@key)", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter<long>("key", key));
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ExecuteOnAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, string sql)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Polls until <paramref name="probe"/> returns a value, failing the test after ten seconds.</summary>
+    private static async Task<T> WaitForAsync<T>(Func<Task<T?>> probe, string failure)
+        where T : struct
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            if (await probe() is { } value)
+            {
+                return value;
+            }
+
+            Assert.True(DateTime.UtcNow < deadline, failure);
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>
+    /// Every ACL in the schema, every table's row-level security switches, and every policy as the catalog
+    /// deparses it: what a privileges call leaves behind, as one comparable string.
+    /// </summary>
+    private static async Task<string> PrivilegeStateSnapshotAsync(NpgsqlDataSource source) =>
+        await AclSnapshotAsync(source) + "\n" + await ScalarAsync<string>(
+            source,
+            "SELECT string_agg(entry, E'\\n' ORDER BY entry) FROM (" +
+            "SELECT 'rls ' || c.relname || ' ' || c.relrowsecurity || ' ' || c.relforcerowsecurity AS entry FROM pg_class c " +
+            "WHERE c.relnamespace = 'agent_experience'::regnamespace AND c.relkind IN ('r', 'p') " +
+            "UNION ALL SELECT 'policy ' || tablename || ' ' || policyname || ' ' || permissive || ' ' || roles::text || ' ' || cmd || ' ' || " +
+            "coalesce(qual, '') || ' ' || coalesce(with_check, '') FROM pg_policies WHERE schemaname = 'agent_experience') state");
+
     /// <summary>A fresh database owned by a fresh owner role, migrated by it, and a fresh application role.</summary>
     private async Task<TwoRoleWorld> TwoRoleDatabaseAsync(string purpose)
     {
@@ -835,12 +1151,14 @@ public sealed class PostgresApplicationRoleTests
         var database = await _fixture.CreateDatabaseNameAsync(purpose, owner);
         await _fixture.ExecuteAsSuperuserAsync(PostgresFixture.OwnerParameterGrant(owner));
 
-        var ownerSource = NpgsqlDataSource.Create(_fixture.ConnectionString(database, owner));
+        // Story 16.6: error detail on, as on the fixture's owner source, so a deadlock names the other session.
+        var ownerSource = NpgsqlDataSource.Create(
+            new NpgsqlConnectionStringBuilder(_fixture.ConnectionString(database, owner)) { IncludeErrorDetail = true }.ConnectionString);
         await ExperienceSchemaMigrator.MigrateAsync(ownerSource, CancellationToken.None);
-        return new TwoRoleWorld(ownerSource, app, _fixture.ConnectionString(database, app));
+        return new TwoRoleWorld(ownerSource, app, _fixture.ConnectionString(database, app), database);
     }
 
-    private sealed record TwoRoleWorld(NpgsqlDataSource Owner, string App, string AppConnectionString) : IAsyncDisposable
+    private sealed record TwoRoleWorld(NpgsqlDataSource Owner, string App, string AppConnectionString, string Database) : IAsyncDisposable
     {
         public NpgsqlDataSource AppSource() => NpgsqlDataSource.Create(AppConnectionString);
 

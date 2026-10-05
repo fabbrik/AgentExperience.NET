@@ -83,6 +83,25 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   in time, and caller cancellation, behave as before. See
   [Pre-model latency budget](docs/guide/injection.md#pre-model-latency-budget).
 
+### The privileges call retries a deadlock (story 16.6)
+
+- **The problem it mitigates.** `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` can fail with
+  `40P01 deadlock detected` when PostgreSQL chooses its transaction as a deadlock victim (seen once in CI, with
+  row-level security and crypto-shredding on). Privileges calls were already serialized against each other by the
+  migrator's advisory lock, so the other side is most likely another session, such as store traffic, taking locks in
+  a different order from the `ACCESS EXCLUSIVE` locks the call takes to re-create policies and switch row-level
+  security. That lock-order risk remains: run the call when store traffic is low.
+- **The mitigation.** On `40P01` the whole privileges transaction, which PostgreSQL has already rolled back, is
+  retried: up to three attempts in all, after a short jittered wait (50–150 ms, then 100–300 ms). Cancelling during
+  that wait ends the call with the same `OperationCanceledException` as any other cancellation. Only a deadlock is
+  retried. A deadlock on the last attempt throws `ExperienceStoreException` (the `PostgresException` inside) whose
+  message says the call was a deadlock victim three times in a row, most likely against live store traffic, and to run
+  it when traffic is low; it carries no SQL or role name. Every other failure surfaces exactly as before, and the
+  checks, refusals, idempotency and the migrator's lock are unchanged. The call still logs nothing. See
+  [Applying the privileges, on every deploy](docs/guide/deployment.md#applying-the-privileges-on-every-deploy).
+- **Tests.** The PostgreSQL test owner data sources set `Include Error Detail=true`, so a future deadlock in the suite
+  names the other session and its statement.
+
 ### Retrieval unwraps record keys in one batch (story 16.3)
 
 - **The problem it fixes.** With crypto-shredding on, every sealed row a read returned cost one key-store call, made

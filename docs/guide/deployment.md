@@ -314,6 +314,17 @@ call, any role that is — or is a member of — the owner of the database, the 
 that is or reaches a superuser, one of the server-file roles, `pg_maintain` (PostgreSQL 17 and later), or `SET` on
 `session_replication_role`. The message names the violation; nothing is changed.
 
+Concurrent privileges calls against one database — parallel deploy jobs, say — are serialized by the migrator's
+advisory lock, so they never run their transactions at once. **Run the call when store traffic is low.** While it
+re-creates policies and switches row-level security it takes `ACCESS EXCLUSIVE` locks table by table, and live store
+traffic that locks the same tables in another order can deadlock with it; PostgreSQL then rolls the call's
+transaction back (`40P01 deadlock detected`). As a mitigation, not a cure, the call retries the whole transaction —
+it is all-or-nothing and idempotent — up to three attempts in all, after a short jittered wait (50–150 ms, then
+100–300 ms) that honours the caller's cancellation token (story 16.6). Only a deadlock is retried. A deadlock on the
+third attempt throws `ExperienceStoreException` saying the call was a deadlock victim three times in a row; every
+other failure is thrown exactly as before. The call writes nothing to any log, so that message is the only report of
+a retry.
+
 **Why it is an API and not a migration.** A migration runs once and is journaled, so it could never re-grant on an
 object a later migration adds, and the role name is host configuration. Revoke-everything-then-grant-the-list is
 idempotent, so running it on every deploy is what keeps the set exact: an object a later migration adds gets nothing

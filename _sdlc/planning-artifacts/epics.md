@@ -38,7 +38,7 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 13: 13.1.
 - Epic 14: 14.1 → 14.2 → 14.3 → 14.4.
 - Epic 15: 15.1.
-- Epic 16: 16.1 → 16.4 → 16.2 → 16.3 → 16.5.
+- Epic 16: 16.1 → 16.4 → 16.2 → 16.3 → 16.5 → 16.6.
 - Epic 17: 17.1 → 17.2 → 17.3 → 17.4 → 17.5 → 17.6 → 17.7.
 - Epic 18: 18.1 → 18.2 → 18.3 → 18.4 → 18.5 → 18.6 → 18.7.
 - Epic 19: 19.1 → 19.2 → 19.3.
@@ -1785,6 +1785,20 @@ So that a store that hangs on every call cannot exhaust the connection pool or l
 **Given** a store whose reads hang and ignore cancellation
 **When** many invocations time out against it
 **Then** the number of abandoned reads still running is capped (configurable), a call over the cap fails fast with the existing timed-out or failed outcome without touching the store, an abandoned read's registration on the caller's token is released when it is abandoned rather than when the read ends, and normal reads are unaffected.
+
+### Story 16.6: Retry the Application-Role Privileges Call on Deadlock
+
+**Traces:** NFR3 · **Depends on:** 15.1, 17.7
+
+As an operator,
+I want the privileges call to survive being chosen as a deadlock victim against live store traffic,
+So that a deploy that re-applies privileges does not fail with `40P01` while agents are running.
+
+**Acceptance Criteria:**
+
+**Given** `ApplyApplicationRolePrivilegesAsync` (already serialized against itself by the migrator's advisory lock)
+**When** its transaction is chosen as a deadlock victim
+**Then** it is retried a bounded number of times with backoff, a persistent deadlock is reported with its own message, and the docs advise running it when store traffic is low.
 
 ## Epic 17: Close the Boundary Residuals a Code Change Can Remove
 
