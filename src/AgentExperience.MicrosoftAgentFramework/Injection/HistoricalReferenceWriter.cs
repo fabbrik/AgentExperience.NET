@@ -289,6 +289,12 @@ public static class HistoricalReferenceWriter
     public const string ApproachWithheld = " The grant withholds this lesson's approach.";
 
     /// <summary>
+    /// What a record's <c>Source:</c> line says in place of its task ID when its content is unconfirmed (story 17.2):
+    /// the task ID is then written as a <c>Task:</c> line inside the model-authored fence. Fixed text.
+    /// </summary>
+    public const string UnconfirmedTaskNotice = "; task given below, with the unconfirmed content";
+
+    /// <summary>
     /// The line that opens the model-written part of a model-authored record's entry (any
     /// <see cref="Reflection.Authorship"/> other than <see cref="ReflectionAuthorship.Deterministic"/>, so an
     /// undefined or future value is labelled too, or a <see cref="Reflection.Producer"/> naming the library's own
@@ -348,6 +354,7 @@ public static class HistoricalReferenceWriter
     private static readonly string[] FieldLabels =
     [
         "Source:",
+        "Task:",
         "Shared:",
         "Confidence:",
         "Applicability",
@@ -392,6 +399,12 @@ public static class HistoricalReferenceWriter
     /// the final eligibility check re-read it, plus the score and components retrieval produced.
     /// </param>
     /// <param name="limits">The byte budget to render within. It is enforced by dropping whole records.</param>
+    /// <remarks>
+    /// This overload decides authorship on each record's reflection alone: it does not check provenance signatures,
+    /// so with signing configured a record whose content is unconfirmed renders by the authorship it declares. Use
+    /// <see cref="Write(IReadOnlyList{RankedExperience}, ExperienceInjectionLimits, IEnumerable{KeyValuePair{string, IReadOnlyList{string}}}, Func{ExperienceRecord, bool})"/>
+    /// with <see cref="ExperienceRetrievalService.IsContentConfirmed"/> to render as <see cref="ExperienceContextProvider"/> does.
+    /// </remarks>
     /// <returns>The block and the records the budget dropped. <see cref="HistoricalReferencePayload.IsEmpty"/> when nothing fit.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="records"/> or <paramref name="limits"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="records"/> holds more than <see cref="ExperienceInjectionLimits.MaxRecords"/> entries, or any entry (or its <see cref="RankedExperience.Record"/>) is <see langword="null"/>. Trimming and null-checking belong to the caller, which must do both before the final eligibility re-read.</exception>
@@ -411,6 +424,7 @@ public static class HistoricalReferenceWriter
     /// <see cref="ExperienceInjectionOptions.ApproachArguments"/> for every bound applied to them.
     /// <see langword="null"/> or empty renders byte for byte what the two-argument overload does.
     /// </param>
+    /// <remarks>Decides authorship on each record's reflection alone, like the two-argument overload.</remarks>
     /// <returns>As for the two-argument overload.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="records"/> or <paramref name="limits"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">As for the two-argument overload, or <paramref name="approachArguments"/> is malformed (see <see cref="ExperienceInjectionOptions.ApproachArguments"/>).</exception>
@@ -425,12 +439,49 @@ public static class HistoricalReferenceWriter
         return Write(records, limits, ApproachArgumentAllowlist.From(approachArguments, nameof(approachArguments)));
     }
 
+    /// <summary>
+    /// Renders <paramref name="records"/> as the three-argument overload does, deciding authorship as
+    /// <see cref="ExperienceContextProvider"/> does (story 17.2): a record whose content
+    /// <paramref name="isContentConfirmed"/> does not confirm is rendered as model-authored whatever it declares, with
+    /// every line drawn from it inside the fence -- its task ID (a <c>Task:</c> line, the <c>Source:</c> line saying
+    /// <see cref="UnconfirmedTaskNotice"/>), its <c>Recorded:</c>, <c>Environment:</c>, <c>Verification:</c> and
+    /// <c>Evidence:</c> lines, its <c>Approach:</c> line and its reflection. Only the record header and the confidence
+    /// and ranking lines the library computes stay above it.
+    /// </summary>
+    /// <param name="records">As for the two-argument overload.</param>
+    /// <param name="limits">As for the two-argument overload.</param>
+    /// <param name="approachArguments">As for the three-argument overload.</param>
+    /// <param name="isContentConfirmed">
+    /// Whether a record's content is confirmed; pass the retrieval service's
+    /// <see cref="ExperienceRetrievalService.IsContentConfirmed"/> so rendering agrees with retrieval.
+    /// </param>
+    /// <returns>As for the two-argument overload.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="records"/>, <paramref name="limits"/> or <paramref name="isContentConfirmed"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">As for the three-argument overload.</exception>
+    public static HistoricalReferencePayload Write(
+        IReadOnlyList<RankedExperience> records,
+        ExperienceInjectionLimits limits,
+        IEnumerable<KeyValuePair<string, IReadOnlyList<string>>>? approachArguments,
+        Func<ExperienceRecord, bool> isContentConfirmed)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(isContentConfirmed);
+        return Write(
+            records,
+            limits,
+            ApproachArgumentAllowlist.From(approachArguments, nameof(approachArguments)),
+            NoIds,
+            sessionBytesRemaining: null,
+            isContentConfirmed);
+    }
+
     /// <summary>The records-only form, over an allowlist already validated and snapshotted.</summary>
     internal static HistoricalReferencePayload Write(
         IReadOnlyList<RankedExperience> records,
         ExperienceInjectionLimits limits,
         ApproachArgumentAllowlist approachArguments) =>
-        Write(records, limits, approachArguments, NoIds, sessionBytesRemaining: null);
+        Write(records, limits, approachArguments, NoIds, sessionBytesRemaining: null, isContentConfirmed: null);
 
     /// <summary>
     /// The one implementation: withdrawal notices first, then records in rank order, within
@@ -445,12 +496,19 @@ public static class HistoricalReferenceWriter
     /// is written only if the whole block, with it, fits in this as well as in the block budget; a
     /// withdrawal notice is never refused by it.
     /// </param>
+    /// <param name="isContentConfirmed">
+    /// Whether a record's content is confirmed: the provider passes its retrieval service's
+    /// <see cref="ExperienceRetrievalService.IsContentConfirmed"/> (story 17.2). A record whose content is not confirmed
+    /// is rendered as model-authored, with every line drawn from it inside the fence.
+    /// <see langword="null"/> confirms every record, deciding on the reflection alone.
+    /// </param>
     internal static HistoricalReferencePayload Write(
         IReadOnlyList<RankedExperience> records,
         ExperienceInjectionLimits limits,
         ApproachArgumentAllowlist approachArguments,
         IReadOnlyList<Guid> retractions,
-        long? sessionBytesRemaining)
+        long? sessionBytesRemaining,
+        Func<ExperienceRecord, bool>? isContentConfirmed = null)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(limits);
@@ -532,7 +590,7 @@ public static class HistoricalReferenceWriter
 
             if (!dropping)
             {
-                var rendered = Render(ranked, included.Count + 1, approachArguments, out var borrowedArguments);
+                var rendered = Render(ranked, included.Count + 1, approachArguments, isContentConfirmed, out var borrowedArguments);
                 var size = Utf8(rendered);
                 var fitsBlock = used + size <= limits.MaxBytes;
                 var fitsSession = sessionBytesRemaining is not { } remaining || used + size <= remaining;
@@ -592,11 +650,21 @@ public static class HistoricalReferenceWriter
     /// <param name="ranked">The record to render.</param>
     /// <param name="ordinal">Its position in the block, from 1.</param>
     /// <param name="approachArguments">The reader's validated allowlist.</param>
+    /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
     /// <param name="borrowedArguments">Whether the record is borrowed and its <c>Approach:</c> line shows at least one argument value.</param>
-    private static string Render(RankedExperience ranked, int ordinal, ApproachArgumentAllowlist approachArguments, out bool borrowedArguments)
+    private static string Render(
+        RankedExperience ranked,
+        int ordinal,
+        ApproachArgumentAllowlist approachArguments,
+        Func<ExperienceRecord, bool>? isContentConfirmed,
+        out bool borrowedArguments)
     {
         var record = ranked.Record;
         var reflection = record.Reflection;
+
+        // Story 17.2: content nothing confirms (with provenance signing configured) is fenced as model-authored, and
+        // so are the task ID and the Approach: line it renders, which a writer of the store could have changed too.
+        var unconfirmed = isContentConfirmed is not null && !isContentConfirmed(record);
 
         var text = new StringBuilder();
         text.Append("\n--- RECORD ").Append(ordinal).Append(" ---\n");
@@ -604,7 +672,7 @@ public static class HistoricalReferenceWriter
         // Source: what this lesson is and where it came from, never who may act on it.
         text.Append("Source: experience ").Append(record.ExperienceId.ToString("D", CultureInfo.InvariantCulture))
             .Append("; source run ").Append(record.SourceRunId.ToString("D", CultureInfo.InvariantCulture))
-            .Append("; task ").Append(Clean(record.TaskId)).Append('\n');
+            .Append(unconfirmed ? UnconfirmedTaskNotice : "; task " + Clean(record.TaskId)).Append('\n');
 
         // Borrowed experience says so. No scope identifier is written -- the block never carries who
         // owns or may act on anything -- only the fact that this lesson is not the reader's own.
@@ -647,25 +715,49 @@ public static class HistoricalReferenceWriter
         text.Append("Applicability (as ranked at retrieval): score ").Append(Number(ranked.Score)).Append(" from ")
             .Append(Components(ranked.Components)).Append('\n');
 
+        // The lines drawn from the record itself. Story 17.2: for a record whose content is unconfirmed they are
+        // written inside the fence below, not here; only the header and the lines the library computes stay above.
+        var drawn = new StringBuilder();
+
         // How old the lesson is, and how recently it was revalidated: the Recency component above is
         // a decayed number, and neither a model nor a human can read a date out of it.
-        text.Append("Recorded: learned ").Append(Timestamp(record.CreatedAt))
+        drawn.Append("Recorded: learned ").Append(Timestamp(record.CreatedAt))
             .Append("; last lifecycle activity ").Append(Timestamp(record.UpdatedAt)).Append('\n');
 
         // The environment the lesson came from, for the same reason: the EnvironmentCompatibility
         // component grades how closely it fit the preferred attributes, not what it actually was.
-        text.Append("Environment: ").Append(Environment(record.Environment)).Append('\n');
+        drawn.Append("Environment: ").Append(Environment(record.Environment)).Append('\n');
 
         // Verification is the record's own outcome status; the reflection carries a copy of it.
-        text.Append("Verification: ").Append(record.Outcome.Status).Append('\n');
-        text.Append("Evidence: ").Append(EvidenceCount(record)).Append(" evidence ID(s); no evidence detail is included.\n");
+        drawn.Append("Verification: ").Append(record.Outcome.Status).Append('\n');
+        drawn.Append("Evidence: ").Append(EvidenceCount(record)).Append(" evidence ID(s); no evidence detail is included.\n");
+
+        if (!unconfirmed)
+        {
+            text.Append(drawn);
+        }
 
         // Derived from the record's own attempts, never from the reflection's prose -- see the type's
         // remarks. Absent entirely when there is no verified approach to describe, and when a sharing
         // grant withholds it.
         var approachLine = !approachWithheld && approach is not null ? "Approach: " + approach + "\n" : null;
 
-        if (IsModelAuthored(reflection))
+        if (unconfirmed)
+        {
+            // Story 17.2: nothing confirms this record's content, so every line drawn from it -- the task ID, when
+            // and where it was recorded, its verification and evidence, the Approach: line and the reflection -- sits
+            // between the two fixed lines.
+            text.Append(ModelAuthoredLine).Append('\n');
+            text.Append("Task: ").Append(Clean(record.TaskId)).Append('\n');
+            text.Append(drawn);
+            text.Append(approachLine);
+            text.Append("Lesson: ").Append(Clean(reflection?.Lesson)).Append('\n');
+            text.Append("Reuse guidance: ").Append(Clean(reflection?.ReuseGuidance)).Append('\n');
+            Bullets(text, "Preconditions", reflection?.Preconditions);
+            Bullets(text, "Warnings", reflection?.Warnings);
+            text.Append(ModelAuthoredEndLine).Append('\n');
+        }
+        else if (IsModelAuthored(reflection))
         {
             // A model wrote this text from captured run output (story 14.3). Every model-written field sits
             // between two fixed lines, and the Approach: line, which no model wrote, stays outside them. Fail

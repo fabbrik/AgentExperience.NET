@@ -98,6 +98,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public AgentExperience.Abstractions.ExperienceRecord Current { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public bool ModelAuthored { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public bool SharedByGrant { get; init; }
     }
@@ -209,12 +210,14 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string NotANumber = "(unavailable)";
         public const string RetractionBegin = "--- WITHDRAWN ---";
         public const string RetractionEnd = "--- END WITHDRAWN ---";
+        public const string UnconfirmedTaskNotice = "; task given below, with the unconfirmed content";
         public const string WithdrawnNotice = ", delivered earlier in this conversation, is withdrawn and is no longer valid ref" +
             "erence material.";
         public static int BlockOverheadBytes { get; }
         public static int RetractionBlockBytes { get; }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments) { }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments, System.Func<AgentExperience.Abstractions.ExperienceRecord, bool> isContentConfirmed) { }
     }
     public sealed class InjectionDecision : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>
     {
@@ -242,6 +245,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         ToolUnavailable = 7,
         RiskClassExceeded = 8,
         ModelAuthored = 9,
+        UnconfirmedContent = 10,
     }
     public enum InjectionOutcome
     {

@@ -245,19 +245,67 @@ Given options of its own, it signs with those instead, and its constructor refus
 ring holds their current key under the same ID, because a record signed under a key the checker lacks would vouch
 for nothing.
 
-- **What is signed.** Finalization signs a canonical encoding of the record's finalization claims, tagged
-  `aexp-prov:v1`, with HMAC-SHA256 under `CurrentKeyId`:
+- **What is signed.** Finalization signs claims version 2 (story 17.2) with HMAC-SHA256 under `CurrentKeyId`, and
+  stores the algorithm as `HMAC-SHA256.aexp-prov.v2` (`ExperienceProvenanceSignature.HmacSha256ClaimsV2`), so a
+  verifier never guesses the version. The claims are a canonical encoding, tagged `aexp-prov:v2`, of:
   - its `ExperienceId`;
   - all six `Scope` fields, as strict UTF-8 (a null field and an empty one encode differently, and a lone surrogate
     is refused, never replaced);
   - its `SourceRunId`, `ClosedRoundId` and `Origin`;
   - its `Provenance.ExposedTo`, sorted by the record ID's big-endian (RFC 4122) bytes compared as unsigned bytes, then
-    by revision ascending.
+    by revision ascending;
+  - then the SHA-256 digest of its content: everything injection can render from the record, encoded in this order:
+    `TaskId`; `TaskSummary`; the outcome's `Status` and evidence count; the `Environment` (host, runtime, operating
+    system, application version, then the metadata sorted by key); the `Attempts` (each attempt's sequence number and
+    whether it failed, and each tool call's sequence number, tool name and arguments, keys sorted, each value through
+    its JSON form as the PostgreSQL store writes it (enums by name, object members camel-cased, a repeated member's last
+    value), with every number canonicalized by its exact decimal value, so `1e17` and `100000000000000000`, or `1.5`
+    and `1.50`, encode alike and either store reads back the same bytes); and the reflection (absent when there is none): `Lesson`, `SuccessfulApproaches`, `FailedApproaches`,
+    `ReuseGuidance`, `Preconditions`, `Warnings`, its evidence count, `Authorship` and `Producer`. Every string is
+    length-prefixed strict UTF-8 with a presence byte, and every list a presence byte and a count, so moving text
+    between fields changes the digest. A run whose content has no such encoding (a lone surrogate, or an argument
+    value with no JSON form) ends `Failed` at the create stage, with nothing stored.
 
   The signature is stored with the record as `ExperienceRecord.ProvenanceSignature` (key ID, algorithm and value) in
-  the same create. Nothing else is signed. Content, status, counters and timestamps change through the lifecycle and
-  are not claims about the run. That includes the reflection: its free text and its `Authorship` (story 14.3) are not
-  signed, so a party that can write the store can change them (KL-18). Both stores refuse a scope field that is not well-formed UTF-16.
+  the same create. Status, counters and timestamps change through the lifecycle and are not signed. Both stores refuse
+  a scope field that is not well-formed UTF-16. Signatures made before story 17.2 carry `HMAC-SHA256`
+  (`ExperienceProvenanceSignature.HmacSha256`): claims version 1, the same encoding tagged `aexp-prov:v1` with no
+  content digest. They still verify for those claims.
+- **Content decides authorship.** With signing configured, a record's content is *confirmed* only when it carries a
+  version 2 signature, under a key in the ring, that verifies, or when it is unsigned and its ID is in
+  `TrustUnsignedRecordIds`. Otherwise (a version 1 signature, none, an unknown key, or one that does not verify) its
+  content is unconfirmed, and it counts as model-authored whatever its reflection declares: `ExperienceRetrievalService`
+  leaves it out under `ExcludeModelAuthored` (`RetrievalExclusionReason.UnconfirmedContent` when that is the only
+  reason, `ModelAuthored` when its reflection is model-authored anyway), and injection omits it under
+  `ModelAuthoredLessons = Exclude` (`InjectionOmissionReason.UnconfirmedContent`), or fences and labels it, with its
+  task ID (a `Task:` line), its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines and its `Approach:`
+  line inside the fence together with its lesson; only the record header and the confidence and ranking lines the
+  library computes stay above it. A stored record whose content cannot be encoded at all is unconfirmed too, and never
+  fails a retrieval. So a party that can write
+  the store can no longer change a lesson or flip its authorship to `Deterministic` unnoticed (KL-18). The retrieval
+  service decides this (`ExperienceRetrievalService.IsModelAuthored` and `IsContentConfirmed`) and the injection provider asks it about the
+  record it re-read, so both decide on what is rendered. `AddAgentExperienceRetrieval` passes the registered options to
+  the service; a host constructing it by hand passes them to the constructor that takes `provenanceSigning`.
+  **Records signed before this release are fenced**, at injection, and excluded under `Exclude`: their version 1
+  signature confirms their claims, not their content. Nothing re-signs them, because signing existing content would
+  vouch for text nobody checked. A record a host writes through `CreateAsync` is unsigned, so it is fenced too unless
+  it is in the cutover set, and a listed unsigned record is trusted as it stands, so its content stays editable.
+  Without signing configured, nothing changes.
+- **Rolling deploys.** A node on a build before story 17.2 refuses a version 2 signature as one it cannot check, so its
+  records would vouch for nothing there. While older nodes still verify, set `SignClaimsVersion = 1` (default 2; only
+  1 or 2 is accepted): finalization then signs version 1, exactly as before, and switch it back once every node runs
+  this build. Records signed version 1 meanwhile have unconfirmed content, as any version 1 record does. Verification
+  always accepts both versions.
+- **Transition for existing lessons.** `ConfirmV1Content = true` lets a version 1 signature that verifies confirm its
+  record's content as well, so lessons signed before this release render by the authorship they declare instead of
+  being fenced. It accepts, for those records, the exposure version 1 left open (their text or authorship may have
+  been changed by a party that can write the store), so use it while those lessons are reviewed or replaced, then
+  turn it off. It never confirms a version 1 signature that does not verify.
+- **Per-record confirmation.** `ConfirmContentRecordIds` is the narrower alternative: the IDs of records whose content
+  you have reviewed (signed version 1 before this release or during a `SignClaimsVersion = 1` rollout, or unsigned),
+  which then count as confirmed. A listed record whose signature is present but does not verify stays unconfirmed.
+  Their content stays editable by a party that can write the store, so prefer replacing them with records finalized
+  under version 2.
 - **What is checked.** Wherever verification relies on a run's finalized record, the signature must verify under a key
   in the ring, compared in constant time. A record whose signature is missing, names a key that is not in the ring,
   or does not verify is treated as written outside finalization, and the evidence is refused as `HostWrittenRun`.
@@ -276,6 +324,9 @@ for nothing.
   can never join the set: its ID would have to be one that already exists, and a store refuses to create over an
   existing ID or a tombstone. So a record forged later is not believed, however far back its `CreatedAt` claims to
   go. A listed record whose signature is present but invalid is refused anyway.
+- **Content edits break a version 2 signature.** Version 2 covers the content, so a record whose lesson, task text,
+  authorship or producer changed after it was signed no longer verifies, and its run stops vouching as well. A version
+  1 signature never covered content, so independence verification treats such a record exactly as it did before.
 - **A retry does not replay a record that does not vouch.** If finalizing a run collides with a stored record at its
   derived ID whose signature does not vouch for it, `FinalizeAsync` reports `Failed` at the create stage, saying the
   stored record does not carry a valid provenance signature, instead of `AlreadyFinalized`.
@@ -293,8 +344,8 @@ for nothing.
 - **Rotation.** Add the new key to the ring and switch `CurrentKeyId` to it. Records signed under the old key keep
   verifying while it stays in the ring. Removing a key makes every record it signed vouch for nothing, as an unsigned
   record does. The cutover set does not bring them back, because it covers unsigned records only.
-- **What it does not change.** Anyone who holds a signing key can sign any claims, so the key is exactly as trusted as
-  the code that can read it. `RecordExposure` is still the host's statement: finalization signs the exposures the
+- **What it does not change.** Anyone who holds a signing key can sign any claims and any content, so the key is
+  exactly as trusted as the code that can read it. `RecordExposure` is still the host's statement: finalization signs the exposures the
   capture service holds, whoever recorded them. A store persists the signature and never checks it, because it holds
   no key. Both shipped stores keep it in the record's payload. The PostgreSQL store seals it with the rest in
   crypto-shredding mode and needs no migration for it.

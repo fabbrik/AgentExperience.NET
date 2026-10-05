@@ -183,6 +183,15 @@ public enum RetrievalExclusionReason
     /// (story 14.4). Sources normally leave such records out themselves, so they are never listed here.
     /// </summary>
     ModelAuthored,
+
+    /// <summary>
+    /// The request set <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, provenance signing is configured,
+    /// and the record counts as model-authored only because its content is unconfirmed (story 17.2): no claims version
+    /// 2 signature under a key in the ring verifies over it (it was signed before that version, is unsigned and not in
+    /// the cutover set, or changed after it was signed). Its declared authorship is not trusted. Stores cannot check
+    /// signatures, so such a record is listed here whenever a source returns it.
+    /// </summary>
+    UnconfirmedContent,
 }
 
 /// <summary>

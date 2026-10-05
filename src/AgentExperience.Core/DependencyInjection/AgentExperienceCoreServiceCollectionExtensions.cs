@@ -256,6 +256,12 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// has each record's confidence component decay by its domain's half-life at ranking time;
     /// otherwise confidence ranks as stored.
     /// </para>
+    /// <para>
+    /// Registered <see cref="ExperienceProvenanceSigningOptions"/> (directly or as an explicitly registered
+    /// <c>IOptions&lt;T&gt;</c>, in any order relative to this call, as for <see cref="AddAgentExperienceCore"/>) make
+    /// the service decide authorship against them (story 17.2): a record whose content no claims version 2 signature
+    /// confirms counts as model-authored.
+    /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="policy">The retrieval bounds and thresholds. Defaults to <see cref="RetrievalPolicy.Default"/>.</param>
@@ -294,7 +300,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetService<IExperienceEmbeddingIndex>(),
             provider.GetService<IExperienceEmbeddingGenerator>(),
             provider.GetService<IEnvironmentCompatibilityScorer>(),
-            provider.GetService<ConfidenceDecayPolicy>()));
+            provider.GetService<ConfidenceDecayPolicy>(),
+            ProvenanceSigningFrom(provider, services)));
 
         return services;
     }

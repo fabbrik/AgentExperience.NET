@@ -698,10 +698,10 @@ public sealed class ExperienceFinalizationService
                 return Ended(
                     FinalizationOutcome.Failed,
                     FinalizationStage.CreateRecord,
-                    "The record's provenance claims have no canonical encoding, so it could not be signed; nothing was stored.",
+                    "The record's provenance claims or content have no canonical encoding, so it could not be signed; nothing was stored.",
                     new FinalizationFailure(
                         FinalizationStage.CreateRecord,
-                        "Signing the record's provenance claims failed: a claim is missing or not well-formed UTF-16.",
+                        "Signing the record's provenance claims and content failed: a claim is missing, a string is not well-formed UTF-16, or a tool call argument value has no JSON form.",
                         NoErrors,
                         ex),
                     evaluation);

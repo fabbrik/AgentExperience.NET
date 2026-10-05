@@ -31,4 +31,9 @@
     <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Story 17.2: the documented canonical encodings, written independently of Core's internal signer. -->
+    <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
+  </ItemGroup>
+
 </Project>

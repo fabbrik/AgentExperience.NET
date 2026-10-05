@@ -407,12 +407,28 @@ rely on**, and the approval boundary remains the control for any tool call a les
   as if a model wrote it, so it takes no place in the candidate window; a deterministic record among them is not
   injected under `Exclude` until the owner-run `BackfillSealedAuthorshipAsync` writes its flag (see
   [Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading)).
-- **What `Exclude` cannot reach.** Authorship is what the reflector declared and is not covered by provenance signing
-  (KL-18): a record a third-party model-backed reflector wrote without declaring it reads as deterministic and is
-  neither labelled nor excluded; see [Limits of model-authored lessons](finalization.md#limits-of-model-authored-lessons).
+- **Unconfirmed content counts as model-authored when signing is on.** With provenance signing configured, retrieval
+  and the provider decide on the same record (the provider asks `ExperienceRetrievalService.IsModelAuthored` and
+  `IsContentConfirmed` about the record it re-read, and the writer fences by that answer): a record whose content no
+  claims version 2 signature confirms (story 17.2) is omitted under `Exclude` as
+  `InjectionOmissionReason.UnconfirmedContent` (retrieval lists it as `RetrievalExclusionReason.UnconfirmedContent`),
+  or labelled and fenced whatever it declares. Its `Source:` line then ends with
+  `HistoricalReferenceWriter.UnconfirmedTaskNotice` instead of its task ID, and the fence holds every line drawn from
+  the record: a `Task:` line, its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines, its `Approach:`
+  line and its reflection, because a party that can write the store could have changed any of them. Only the record
+  header and the confidence and ranking lines the library computes stay above the fence.
+  Records signed before that release are among them. See [Signing provenance](confidence.md#signing-provenance).
+  The public `HistoricalReferenceWriter.Write` overloads without a content-confirmation function decide on the
+  reflection alone; pass `retrieval.IsContentConfirmed` to the four-argument overload to render as the provider does.
+- **What `Exclude` cannot reach.** Authorship is what the reflector declared (KL-18): a record a third-party
+  model-backed reflector wrote without declaring it, and signed by finalization as it was written, reads as
+  deterministic and is neither labelled nor excluded; see [Limits of model-authored lessons](finalization.md#limits-of-model-authored-lessons).
 
-A host that wants to treat model-authored records some other way can read `decision.Current.Reflection?.Authorship`
-in `DecideInjection`. The label is still not a control on the model, and no part of this is a control on tool calls:
+A host that wants to treat model-authored records some other way can read `decision.ModelAuthored` in
+`DecideInjection`: the provider's verdict on the re-read record, which counts unconfirmed content too (a context
+built without it defaults to `true`). Do not decide
+on `decision.Current.Reflection?.Authorship`, which is what the record declares and what a party that can write the
+store controls. The label is still not a control on the model, and no part of this is a control on tool calls:
 the approval boundary below is.
 
 ## Labeling is not a security control
