@@ -35,12 +35,13 @@ namespace AgentExperience.Storage.Postgres;
 /// </para>
 /// <para>
 /// <b>The authorship exclusion</b> (<see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>, story 14.4) reads
-/// <c>0021</c>'s plaintext flag, so it runs before the limit in both modes. It leaves out records the flag marks
-/// model-authored and keeps those it does not know: a sealed row stored without its flag -- sealed before <c>0021</c>,
-/// whose payload the migration could not open, sealed during a rolling deploy by an instance still on the previous
-/// build, or written by any writer that left the flag out -- is still returned by an excluding search even when a
-/// model wrote it. That is the one documented exception to the port's contract; Core's retrieval service excludes
-/// such a record once it is opened. docs/guide/postgres-schema.md gives the query that finds them.
+/// <c>0021</c>'s plaintext flag, so it runs before the limit in both modes. It keeps only records the flag marks
+/// deterministic and fails closed on the rest (story 17.1): a sealed row stored without its flag -- sealed before
+/// <c>0021</c>, whose payload the migration could not open, sealed during a rolling deploy by an instance still on the
+/// previous build, or written by any writer that left the flag out -- is left out of an excluding search as if a model
+/// wrote it, and takes no place in its window. The owner-run
+/// <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/> opens such rows and writes their flag, so
+/// a deterministic one is found again. Without the exclusion nothing changes.
 /// </para>
 /// <para>
 /// This source reads and never writes. It needs <c>SELECT</c> on
@@ -128,17 +129,19 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     /// <summary>
     /// The authorship exclusion (story 14.4), <c>0021</c>'s flag, applied before the limit like the status filter and
-    /// the confidence floor. It leaves out <c>true</c> only: <c>NULL</c> is a sealed row stored without its flag, whose
-    /// authorship SQL cannot read, and it stays a candidate for the consumer to check once it is opened. It is
-    /// <see cref="ModelAuthoredPredicate"/>, unqualified, which resolves to <c>r</c> here as every column does.
+    /// the confidence floor. It keeps <c>false</c> only: <c>NULL</c> is a sealed row stored without its flag, whose
+    /// authorship SQL cannot read, and it fails closed (story 17.1) -- left out like <c>true</c>, until the owner's
+    /// backfill writes its flag. It is <see cref="ModelAuthoredPredicate"/>, unqualified, which resolves to <c>r</c>
+    /// here as every column does.
     /// </summary>
     private const string ExcludingSearchFilters = SearchFilterHead + "AND " + ModelAuthoredPredicate + " " + SearchFilterTail;
 
     /// <summary>
-    /// "this record's reflection was not written by a model, as far as the row says": <c>0021</c>'s flag is not
-    /// <c>true</c>. Shared with the vectors package's search, which qualifies the column itself.
+    /// "the row says this record's reflection was not written by a model": <c>0021</c>'s flag is <c>false</c>, so an
+    /// unknown (<c>NULL</c>) flag counts as model-authored. Shared with the vectors package's search, which qualifies
+    /// the column itself.
     /// </summary>
-    internal const string ModelAuthoredPredicate = PostgresExperienceRecordStore.ModelAuthoredColumn + " IS NOT TRUE";
+    internal const string ModelAuthoredPredicate = PostgresExperienceRecordStore.ModelAuthoredColumn + " IS FALSE";
 
     private const string SearchSql =
         SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "

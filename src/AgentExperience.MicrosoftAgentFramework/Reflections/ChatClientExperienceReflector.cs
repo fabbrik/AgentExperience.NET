@@ -80,7 +80,7 @@ public sealed class ChatClientExperienceReflector : IExperienceReflector, IRefle
     public const string ReflectorVersion = "1.0.0";
 
     /// <summary>The start of every <see cref="Reflection.Producer"/> this reflector writes; the model follows in parentheses.</summary>
-    public const string ProducerPrefix = "AgentExperience.ChatClientExperienceReflector/" + ReflectorVersion;
+    public const string ProducerPrefix = ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix + ReflectorVersion;
 
     /// <summary>The model named in <see cref="Reflection.Producer"/> when neither the response nor the options name one.</summary>
     public const string UnknownModel = "unknown";

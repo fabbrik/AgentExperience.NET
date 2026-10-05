@@ -305,7 +305,8 @@ What to know:
   verified runs; the first two matter to a host that calls the reflector directly.)
 - **Marked as model-authored.** Every reflection it returns has `Authorship = ReflectionAuthorship.Model`, which
   finalization stores as it is. That is what turns on the [content guard](#limits-of-model-authored-lessons) and the
-  injection label; it is never inferred from `Producer`. It also implements `IReflectionRunContent`, so the guard
+  injection label. Its `Producer` prefix is recognised too, so a record it wrote before it declared authorship
+  still counts as model-authored (story 17.1). It also implements `IReflectionRunContent`, so the guard
   compares links with exactly the captured text it sent: the task text (or the task ID when there is none), the check
   IDs its header lists, and the tool names, results and errors of the attempts it kept, each cut where its quoted span
   is cut (by the same clipping code), plus the environment metadata keys it writes itself.
@@ -362,14 +363,17 @@ boundary remains the control for anything a lesson induces: it denies a tool cal
 would for any other text. The content guard below is a **best-effort filter, not a boundary**.
 
 **1. It is marked, by the reflector.** `Reflection.Authorship` says who wrote the free text:
-`ReflectionAuthorship.Deterministic` (the default) or `Model`. Authorship is **self-declared**: nothing infers it, and
-never from `Producer`. `ChatClientExperienceReflector` sets `Model`; **a host's own model-backed `IExperienceReflector`
-must set `Authorship = Model` itself**, or its lessons read as deterministic and escape both the guard and the label.
+`ReflectionAuthorship.Deterministic` (the default) or `Model`. Authorship is **self-declared**, with one exception:
+the library's own `ChatClientExperienceReflector` sets `Model`, and a reflection whose `Producer` starts with its
+prefix, `AgentExperience.ChatClientExperienceReflector/` (ordinal), counts as model-authored whatever authorship it
+declares. No other producer is read: **a host's own model-backed `IExperienceReflector` must set `Authorship = Model`
+itself**, or its lessons read as deterministic and escape both the guard and the label.
 It should also implement `IReflectionRunContent` to say what it sent the model. Finalization records authorship
 exactly as the reflector returned it. Both stores persist it (PostgreSQL as an optional member of the version-1
 reflection payload, written only when it is not `Deterministic`). An undefined value is refused by screening as
 `UndefinedAuthorship` and by a store as `Invalid`. Anything other than `Deterministic` read back counts as
-model-authored, for the guard, the label and `Exclude` alike.
+model-authored, as does the library reflector's producer, for the guard, the label and `Exclude` alike: Core, the MAF
+adapter and both stores decide it by one shared rule, and PostgreSQL's migration `0022` states it again in SQL.
 
 **Neither authorship nor the free text is signed.** [Provenance signing](#signing-provenance) covers the record's
 finalization claims only. A party that can write the store (an application role with `AllowSealing` over a plaintext
@@ -454,24 +458,13 @@ sentence with no space after its full stop, quarantines the record. What you can
 injection.
 
 **Upgrading from story 14.2.** Records the `ChatClientExperienceReflector` wrote before authorship existed were not
-marked: they read back as `Deterministic`, are not relabelled, and `Exclude` does not cover them. A host that used it
-and wants them out should take them out of reuse itself: revoke them through the lifecycle service (a `Validated` or
-`Reinforced` record cannot move to `Quarantined`, but any status can move to `Revoked`), or erase them. They can be
-found by their producer, which starts with `ChatClientExperienceReflector.ProducerPrefix` without the version
-(`AgentExperience.ChatClientExperienceReflector/`):
-
-```csharp
-// For each scope you own (QueryAsync returns at most 500 records per call, newest first), find the 14.2 records,
-// then revoke or erase each one.
-var page = await recordStore.QueryAsync(authorization, new ExperienceRecordQuery(scope, [ExperienceStatus.Validated, ExperienceStatus.Reinforced], Limit: 100), ct);
-var modelWritten = page.Records.Where(record =>
-    record.Reflection?.Producer.StartsWith("AgentExperience.ChatClientExperienceReflector/", StringComparison.Ordinal) == true
-    && record.Reflection.Authorship == ReflectionAuthorship.Deterministic);
-```
-
-With a plaintext PostgreSQL payload, the same filter in SQL is
-`payload -> 'reflection' ->> 'producer' LIKE 'AgentExperience.ChatClientExperienceReflector/%'` on
-`agent_experience.experience_records`; a crypto-shredded payload can only be read through the store.
+marked: they read back as `Deterministic`. Since story 17.1 they are recognised by their producer, which starts with
+`AgentExperience.ChatClientExperienceReflector/`, and count as model-authored everywhere: the injection label and
+fence, `Exclude`, retrieval's exclusion check, and both stores' excluding searches. PostgreSQL's migration `0022`
+recomputes the flag of every such plaintext row; a sealed row whose flag is unknown is classified by the owner-run
+`BackfillSealedAuthorshipAsync` (see
+[Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading)). Nothing has to be
+revoked or rewritten.
 
 ## Signing provenance
 

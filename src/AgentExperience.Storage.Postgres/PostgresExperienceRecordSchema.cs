@@ -295,8 +295,9 @@ public static class PostgresExperienceRecordSchema
     /// A trigger derives the flag from every unsealed payload whenever the row is written, the store writes it from the
     /// reflection when it seals a record, and a tombstone carries the fixed <c>false</c>. A sealed row stored without
     /// the flag -- sealed before this script, or by an instance on the previous build during a rolling deploy -- keeps
-    /// <c>NULL</c>, which an excluding search keeps as a candidate: the residual the script's header and
-    /// docs/guide/postgres-schema.md describe, with the query that finds those records.
+    /// <c>NULL</c>. Since story 17.1 an excluding search leaves <c>NULL</c> out as well (unknown counts as model-authored),
+    /// and <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext, AgentExperience.Abstractions.Scope, int, ScopeMatch, Guid?, CancellationToken)"/> writes the flag from each such row's
+    /// opened payload; docs/guide/postgres-schema.md describes both.
     /// </para>
     /// <para>
     /// The application role's manifest is unchanged: its table-level <c>INSERT</c> and <c>SELECT</c> cover the column,
@@ -307,6 +308,19 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ReflectionAuthorshipScriptName = "0021_reflection_authorship.sql";
 
+    /// <summary>
+    /// The script that makes the library's own model-backed reflector count as model-authored in SQL (story 17.1):
+    /// it replaces <c>0021</c>'s <c>payload_reflection_model_authored</c> so a plaintext payload whose reflection's
+    /// producer starts with <c>AgentExperience.ChatClientExperienceReflector/</c> is <c>true</c>, whatever authorship it
+    /// declares, and recomputes the flag on every live plaintext row that differs.
+    /// </summary>
+    /// <remarks>
+    /// It adds no table, column, index or function signature, so the application role's manifest is unchanged. It
+    /// cannot read a sealed row: those whose flag is unknown are classified by the owner-run
+    /// <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext, AgentExperience.Abstractions.Scope, int, ScopeMatch, Guid?, CancellationToken)"/>, which opens each with its record key.
+    /// </remarks>
+    public const string LibraryReflectorAuthorshipScriptName = "0022_library_reflector_authorship.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -314,7 +328,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c>, <c>0021</c> and <c>0022</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -336,6 +350,7 @@ public static class PostgresExperienceRecordSchema
         EvidenceAdmissionScriptName,
         RowLevelSecurityScriptName,
         ReflectionAuthorshipScriptName,
+        LibraryReflectorAuthorshipScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

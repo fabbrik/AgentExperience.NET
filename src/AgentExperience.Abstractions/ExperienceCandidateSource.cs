@@ -88,7 +88,9 @@ public sealed record ExperienceCandidateQuery(
     /// <summary>
     /// <see langword="true"/> to leave out every model-authored record: one whose <see cref="ExperienceRecord.Reflection"/>
     /// exists and whose <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>,
-    /// so an undefined or future value counts as model-authored. A record with no reflection is not model-authored.
+    /// so an undefined or future value counts as model-authored, or whose <see cref="Reflection.Producer"/> starts with
+    /// <c>AgentExperience.ChatClientExperienceReflector/</c> (ordinal): the library's own model-backed reflector wrote it,
+    /// whatever authorship it declared. A record with no reflection is not model-authored.
     /// <see langword="false"/> (the default) leaves the search exactly as it is without this property.
     /// </summary>
     /// <remarks>
@@ -96,17 +98,16 @@ public sealed record ExperienceCandidateQuery(
     /// The exclusion is a filter like <see cref="EligibleStatuses"/> and <see cref="MinimumConfidence"/>, applied
     /// <em>before</em> <see cref="Limit"/>: an excluding search returns up to <see cref="Limit"/> of the strongest
     /// records that are not model-authored, never fewer because model-authored records filled the window. Authorship is
-    /// read from the stored reflection, never inferred from <see cref="Reflection.Producer"/>.
+    /// read from the stored reflection; the producer counts only when it is the library's own model-backed reflector's,
+    /// never a third-party reflector's.
     /// </para>
     /// <para>
     /// An implementation that cannot honour it must not ignore it: it answers
     /// <see cref="ExperienceStoreOutcome.Invalid"/>, with an error naming this property, rather than returning a page
-    /// that may hold model-authored records. The store conformance suite checks the exclusion. The PostgreSQL candidate
-    /// source has one documented residual: a sealed row stored without its authorship flag -- sealed before its
-    /// <c>0021</c> migration, sealed during a rolling deploy by an instance still on the previous build, or written by
-    /// any writer that left the flag out -- has no authorship SQL can read, so it stays a candidate. A consumer that must
-    /// never see a model-authored record therefore still checks what it receives, as Core's retrieval service and the
-    /// injection provider do.
+    /// that may hold model-authored records. The store conformance suite checks the exclusion. A record whose authorship
+    /// the source cannot read counts as model-authored: the PostgreSQL candidate source leaves out a sealed row stored
+    /// without its authorship flag (story 17.1) until the owner's backfill writes it. A consumer that must never see a
+    /// model-authored record still checks what it receives, as Core's retrieval service and the injection provider do.
     /// </para>
     /// </remarks>
     public bool ExcludeModelAuthored { get; init; }

@@ -48,7 +48,9 @@ public class ErasureDiagnosticsAgreementTests
         "GrantPurge",
         "GrantAccessPurge",
         "RecordSeal",
+        "AuthorshipBackfill",
         "SealedCountAttribute",
+        "BackfilledCountAttribute",
         "ErasedCountAttribute",
         "InterruptedAttribute",
         "ScopeMatchAttribute",
@@ -96,13 +98,14 @@ public class ErasureDiagnosticsAgreementTests
 
         Assert.NotEmpty(coreOperations);
         Assert.Equal(
-            ["delete", "retention.sweep", "grant.purge", "grant.access.purge", "record.seal"],
-            [ErasureDiagnostics.Delete, ErasureDiagnostics.RetentionSweep, ErasureDiagnostics.GrantPurge, ErasureDiagnostics.GrantAccessPurge, ErasureDiagnostics.RecordSeal]);
+            ["delete", "retention.sweep", "grant.purge", "grant.access.purge", "record.seal", "record.authorship.backfill"],
+            [ErasureDiagnostics.Delete, ErasureDiagnostics.RetentionSweep, ErasureDiagnostics.GrantPurge, ErasureDiagnostics.GrantAccessPurge, ErasureDiagnostics.RecordSeal, ErasureDiagnostics.AuthorshipBackfill]);
         Assert.DoesNotContain(ErasureDiagnostics.Delete, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.RetentionSweep, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.GrantPurge, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.GrantAccessPurge, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.RecordSeal, coreOperations);
+        Assert.DoesNotContain(ErasureDiagnostics.AuthorshipBackfill, coreOperations);
     }
 
     /// <summary>The classification tables agree, arm for arm, including the two-token arm the adapter never exercises itself.</summary>

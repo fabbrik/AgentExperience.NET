@@ -1,5 +1,6 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Diagnostics;
+using AgentExperience.Core.Reflections;
 
 namespace AgentExperience.Core.Retrieval;
 
@@ -730,11 +731,10 @@ public sealed class ExperienceRetrievalService
             }
 
             // Story 14.4: the sources leave model-authored records out before their limits; this catches what one still
-            // returned -- a source that does not honour the request, or a PostgreSQL row sealed without its flag, which
-            // only now reads back opened. Fail closed on authorship; a record with no reflection is kept.
-            if (request.ExcludeModelAuthored
-                && record.Reflection is { } reflection
-                && reflection.Authorship != ReflectionAuthorship.Deterministic)
+            // returned -- a source that does not honour the request. Fail closed on authorship, by the one shared rule
+            // (story 17.1: the library's own model-backed reflector counts whatever authorship it declared); a record
+            // with no reflection is kept.
+            if (request.ExcludeModelAuthored && ReflectionAuthorshipRule.IsModelAuthored(record.Reflection))
             {
                 excluded.Add(new ExcludedExperience(record.ExperienceId, RetrievalExclusionReason.ModelAuthored));
                 continue;

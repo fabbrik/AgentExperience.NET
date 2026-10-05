@@ -45,7 +45,8 @@ namespace AgentExperience.Storage.Postgres.Vectors;
 /// <para>
 /// <b>The authorship exclusion</b> (<see cref="ExperienceVectorQuery.ExcludeModelAuthored"/>, story 14.4) is a
 /// predicate on the record side of the join, before the limit, on the same <c>0021</c> flag the text channel reads;
-/// like that channel, it keeps a sealed row stored without its flag. Under the out-of-band HNSW index pgvector applies
+/// like that channel, it fails closed on a sealed row stored without its flag (story 17.1), and so do the compatibility
+/// probes an excluding search runs. Under the out-of-band HNSW index pgvector applies
 /// it, like every other filter here, to the neighbours the index walk produced, so a search can return fewer than its
 /// limit; docs/guide/indexing.md names the host's levers.
 /// </para>
@@ -227,8 +228,8 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
 
     /// <summary>
     /// The authorship exclusion on the record side of the join: the text channel's own predicate, qualified with
-    /// <c>r</c>. It leaves out <c>0021</c>'s <c>true</c> only, so a sealed row stored without its flag stays a candidate
-    /// here exactly as it does there.
+    /// <c>r</c>. It keeps <c>0021</c>'s <c>false</c> only, so a sealed row stored without its flag is left out here
+    /// exactly as it is there (story 17.1).
     /// </summary>
     private const string RecordModelAuthoredPredicate = "r." + PostgresExperienceCandidateSource.ModelAuthoredPredicate;
 

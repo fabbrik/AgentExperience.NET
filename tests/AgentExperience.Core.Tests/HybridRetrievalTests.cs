@@ -197,6 +197,23 @@ public class HybridRetrievalTests
     }
 
     [Fact]
+    public async Task Core_excludes_a_legacy_record_of_the_library_s_model_reflector_and_never_reads_a_third_party_producer()
+    {
+        // Story 17.1: one rule decides authorship. The library's own model-backed reflector counts as model-authored by
+        // its producer, whatever authorship it declared; any other producer is never read.
+        var legacy = Produced(Authored(Record(Id(1)), ReflectionAuthorship.Deterministic), "AgentExperience.ChatClientExperienceReflector/1.0.0 (some-model)");
+        var thirdParty = Produced(Authored(Record(Id(2)), ReflectionAuthorship.Deterministic), "Contoso.ModelReflector/1.0 (some-model)");
+        var service = Service(text: [Candidate(legacy, 0.9), Candidate(thirdParty, 0.5)], vector: []);
+
+        var excluding = await service.RetrieveAsync(Request() with { ExcludeModelAuthored = true });
+        var including = await service.RetrieveAsync(Request());
+
+        Assert.Equal([Id(2)], excluding.Records.Select(r => r.Record.ExperienceId));
+        Assert.Equal([new ExcludedExperience(Id(1), RetrievalExclusionReason.ModelAuthored)], excluding.Excluded);
+        Assert.Equal(2, including.Records.Count);
+    }
+
+    [Fact]
     public async Task A_record_the_expiry_or_environment_check_removes_is_excluded_whichever_channel_found_it()
     {
         var expired = Record(Id(1), updatedAt: Now - TimeSpan.FromDays(8));
@@ -628,6 +645,12 @@ public class HybridRetrievalTests
         Assert.Single(result.Records).Components.Single(c => c.Kind == RankingComponentKind.Relevance).Value;
 
     private static ExperienceCandidate Candidate(ExperienceRecord record, double relevance) => new(record, relevance);
+
+    /// <summary>The record with its reflection's producer replaced.</summary>
+    private static ExperienceRecord Produced(ExperienceRecord record, string producer) => record with
+    {
+        Reflection = record.Reflection! with { Producer = producer },
+    };
 
     /// <summary>The record with a reflection of the given authorship.</summary>
     private static ExperienceRecord Authored(ExperienceRecord record, ReflectionAuthorship authorship) => record with

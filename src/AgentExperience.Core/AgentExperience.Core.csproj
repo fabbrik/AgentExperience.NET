@@ -38,6 +38,9 @@
     <!-- Shared source (story 14.3): the model-authored content guard's patterns, linked into Core and the MAF
          adapter so both agree on what a link is. -->
     <Compile Include="..\Shared\ModelTextPatterns.Shared.cs" Link="Shared\ModelTextPatterns.Shared.cs" />
+    <!-- Story 17.1: the one rule that decides whether a reflection counts as model-authored, shared by Core, the MAF
+         adapter and both stores so every authorship decision agrees. -->
+    <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />
   </ItemGroup>
 
 </Project>

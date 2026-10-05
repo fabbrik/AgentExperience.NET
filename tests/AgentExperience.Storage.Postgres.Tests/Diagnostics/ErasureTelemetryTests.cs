@@ -535,6 +535,51 @@ public sealed class ErasureTelemetryTests(PostgresFixture fixture)
     }
 
     /// <summary>
+    /// Story 17.1: the owner-run authorship backfill is its own operation, <c>record.authorship.backfill</c>, one span
+    /// per batch, carrying a count and how wide it reached -- never which records, which flag, or anything they hold.
+    /// </summary>
+    [Fact]
+    public async Task The_authorship_backfill_is_one_span_per_batch_carrying_only_its_count_and_reach()
+    {
+        var tenant = $"tenant-{Marker}-{Guid.NewGuid():N}";
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant, team: $"team-{Marker}");
+        var encryption = new ExperienceEncryption(new EnvelopeExperienceKeyStore(
+            LocalExperienceKeyEncryptionKey.Generate("kek-1"), new InMemoryExperienceWrappedKeyRepository()));
+        var writer = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: encryption);
+        await SeedMarkedAsync(writer, auth, scope, ColumnTime);
+        await using (var unset = _fixture.OwnerDataSource.CreateCommand(
+            $"UPDATE agent_experience.experience_records SET reflection_model_authored = NULL WHERE tenant_id = '{tenant}'"))
+        {
+            Assert.Equal(1, await unset.ExecuteNonQueryAsync());
+        }
+
+        var owner = new PostgresExperienceRecordStore(_fixture.OwnerDataSource, encryption: encryption);
+
+        using var probe = TelemetryProbe.All();
+
+        Assert.Equal(1, (await owner.BackfillSealedAuthorshipAsync(auth, scope, 10, ScopeMatch.Exact, CancellationToken.None)).SetCount);
+        Assert.Equal(
+            ExperienceStoreOutcome.Denied,
+            (await owner.BackfillSealedAuthorshipAsync(Authorize(NewTenant()), scope, 10, ScopeMatch.Subtree, CancellationToken.None)).Outcome);
+
+        var spans = probe.Spans("agentexperience.record.authorship.backfill");
+        Assert.Equal(2, spans.Count);
+        Assert.Equal(nameof(ExperienceStoreOutcome.Committed), spans[0].GetTagItem(OutcomeAttribute));
+        Assert.Equal(1, Convert.ToInt32(spans[0].GetTagItem("agentexperience.backfilled_count"), System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(nameof(ScopeMatch.Exact), spans[0].GetTagItem(ScopeMatchAttribute));
+        Assert.Equal(nameof(ExperienceStoreOutcome.Denied), spans[1].GetTagItem(OutcomeAttribute));
+        Assert.Equal(nameof(ScopeMatch.Subtree), spans[1].GetTagItem(ScopeMatchAttribute));
+        Assert.Equal(2, probe.For(CountInstrument, "record.authorship.backfill").Count);
+
+        Assert.All(probe.EverySpanValue, value => Assert.DoesNotContain(Marker, value, StringComparison.Ordinal));
+        Assert.All(probe.EveryMeasurementValue, value => Assert.DoesNotContain(Marker, value, StringComparison.Ordinal));
+        Assert.All(
+            spans.SelectMany(span => span.TagObjects).Select(tag => tag.Key),
+            key => Assert.Contains(key, AllowedSpanAttributes.Append("agentexperience.backfilled_count")));
+    }
+
+    /// <summary>
     /// Rule 6 against a hostile host: every listener callback throws, on span start, span stop and every
     /// measurement. An irreversible erasure that succeeded must still be reported as the result it
     /// reached, and one that failed must still throw its own exception, never the listener's.

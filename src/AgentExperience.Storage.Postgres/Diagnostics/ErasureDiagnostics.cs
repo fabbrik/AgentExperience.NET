@@ -64,6 +64,12 @@ internal static class ErasureDiagnostics
     /// <summary>One bounded crypto-shredding upgrade batch (<c>PostgresExperienceRecordStore.SealPlaintextRecordsAsync</c>).</summary>
     internal const string RecordSeal = "record.seal";
 
+    /// <summary>One bounded sealed-authorship backfill batch (<c>PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync</c>).</summary>
+    internal const string AuthorshipBackfill = "record.authorship.backfill";
+
+    /// <summary>How many sealed records an authorship backfill batch wrote a flag for. A count: which ones, and what flag, stays on the database.</summary>
+    internal const string BackfilledCountAttribute = "agentexperience.backfilled_count";
+
     /// <summary>How many plaintext records an upgrade batch sealed. A count: which ones stays on the database.</summary>
     internal const string SealedCountAttribute = "agentexperience.sealed_count";
 

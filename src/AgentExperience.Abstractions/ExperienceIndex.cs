@@ -548,7 +548,8 @@ public sealed record ExperienceVectorQuery(
     /// <summary>
     /// <see langword="true"/> to leave out every model-authored record, before <see cref="Limit"/>, exactly as
     /// <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/> does for the text channel: a record whose reflection
-    /// exists and whose <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>.
+    /// exists and whose <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>,
+    /// or whose <see cref="Reflection.Producer"/> names the library's own model-backed reflector.
     /// <see langword="false"/> (the default) leaves the search exactly as it is without this property. An implementation
     /// that cannot honour it answers <see cref="ExperienceVectorSearchOutcome.Invalid"/> rather than ignoring it.
     /// </summary>

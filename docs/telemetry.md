@@ -97,7 +97,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 
 | Dimension | Values |
 | --- | --- |
-| `operation` | one of the nineteen values in [Operations](#operations) |
+| `operation` | one of the twenty values in [Operations](#operations) |
 | `outcome` | an enum member name from that operation's own outcome enum, verbatim, or `Faulted` when it threw. See [Operations](#operations) |
 | `error.class` | `Cancelled`, `Timeout`, `Infrastructure`, `Unexpected`. See [`error.class`](#errorclass). Only on `agentexperience.operation.failures` |
 | `nested` | `true` or `false` (a boolean). See [`nested`](#nested) |
@@ -172,8 +172,9 @@ These are the only span attributes the library writes.
 | `agentexperience.retracted_count` | integer: how many withdrawal notices the injected block carried, for records delivered earlier in the session. The IDs stay on the typed result | `inject`, only when the count is not zero (session tracking) |
 | `agentexperience.erased_count` | integer: how many records the sweep erased, how many grants the purge removed, or how many access rows the access purge removed. Which ones stays in the database | `retention.sweep`, `grant.purge`, `grant.access.purge`, on every returned result (0 on a refusal); `retention.sweep` also when it threw `ExperienceRetentionSweepInterruptedException`, taken from its `Partial` |
 | `agentexperience.interrupted` | boolean: whether the sweep stopped before the end of its batch | `retention.sweep`, where `erased_count` is written |
-| `agentexperience.scope_match` | `Exact` or `Subtree`: how wide the call was asked to reach (the `ScopeMatch` member's name, never the scope) | `retention.sweep`, `grant.access.purge`, `record.seal`, whenever the caller passed a defined `ScopeMatch`; the five-argument `SweepExpiredAsync` reports `Exact` |
+| `agentexperience.scope_match` | `Exact` or `Subtree`: how wide the call was asked to reach (the `ScopeMatch` member's name, never the scope) | `retention.sweep`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, whenever the caller passed a defined `ScopeMatch`; the five-argument `SweepExpiredAsync` reports `Exact` |
 | `agentexperience.sealed_count` | integer: how many plaintext records the upgrade batch sealed. Which ones stays in the database | `record.seal`, on every returned result (0 on a refusal) |
+| `agentexperience.backfilled_count` | integer: how many sealed records the authorship backfill batch wrote a flag for. Which ones, and which flag, stay in the database | `record.authorship.backfill`, on every returned result (0 on a refusal) |
 
 Identifiers that come from the request are written before the operation runs, so they are present on a span that
 threw as well.
@@ -193,7 +194,8 @@ every identifier from a request, it is written before the operation runs, so it 
 Core operations on that record already emitted. `retention.sweep`, `grant.purge` and `grant.access.purge` carry a
 count, and a sweep also a flag; the sweep and the access purge also say whether they reached `Exact` or `Subtree`.
 `record.seal`, the crypto-shredding upgrade, carries only its `sealed_count` and `scope_match`; a key store's failure
-reaches a span as its exception type and `error.class`, never its message. In crypto-shredding mode a `delete` span
+reaches a span as its exception type and `error.class`, never its message. `record.authorship.backfill` carries only
+its `backfilled_count` and `scope_match`, never which records were flagged or how. In crypto-shredding mode a `delete` span
 looks exactly as it does in plaintext mode: whether a key was destroyed is not a telemetry value.
 None of them writes a scope identifier, a task ID, record content, the IDs of swept records, purged grants or purged
 access rows, a grant's reason or recipient scope, a reading principal, or an administrator principal. `ErasureTelemetryTests` plants a marker
@@ -202,8 +204,8 @@ record was erased is out of the library's reach: see KL-2.
 
 ## Operations
 
-There are nineteen `operation` values: thirteen emitted on `AgentExperience.Core`, one on
-`AgentExperience.MicrosoftAgentFramework`, and five on `AgentExperience.Storage.Postgres`. The set is closed: adding
+There are twenty `operation` values: thirteen emitted on `AgentExperience.Core`, one on
+`AgentExperience.MicrosoftAgentFramework`, and six on `AgentExperience.Storage.Postgres`. The set is closed: adding
 a value is a deliberate change that widens every instrument's cardinality.
 
 | `operation` | Emitted by | `outcome` values (besides `Faulted`) | Span attributes beyond the common ones | Nested operations it emits |
@@ -227,6 +229,7 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `grant.purge` | `PostgresExperienceGrantStore.PurgeExpiredAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count` | — |
 | `grant.access.purge` | `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` (including a cutoff inside the 30-day minimum retention, which the database refuses) | `erased_count`, `scope_match` | — |
 | `record.seal` | `PostgresExperienceRecordStore.SealPlaintextRecordsAsync` (the crypto-shredding upgrade; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` (including a store with no `ExperienceEncryption`) | `sealed_count`, `scope_match` | — |
+| `record.authorship.backfill` | `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` (the owner-run authorship backfill; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` (including a store with no `ExperienceEncryption`) | `backfilled_count`, `scope_match` | — |
 
 Notes:
 

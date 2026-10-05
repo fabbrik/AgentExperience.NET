@@ -186,6 +186,25 @@ scripts are never edited, so this and the similar forward references in `0007`â€
 [the schema guide](guide/postgres-schema.md#script-comments-that-were-written-before-the-work-they-point-at-shipped)
 instead.
 
+## Narrowed after `0.1.0-preview.6`
+
+- **KL-18** (model-authored lessons) is **narrowed** by story 17.1. Two of its clauses were removable by code, and
+  are gone. A PostgreSQL row sealed without its authorship flag (sealed before migration `0021`, sealed during a
+  rolling deploy by an instance on the previous build, or written without the flag) is no longer returned by an
+  excluding search: both PostgreSQL channels now keep only rows whose flag is `false`, so unknown authorship counts as
+  model-authored and takes no place in the candidate window, and the owner-run
+  `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` opens each such row with its record key and writes its
+  flag. And records the library's own `ChatClientExperienceReflector` wrote before it declared authorship are no
+  longer treated as deterministic: one rule, shared by Core, the MAF adapter and both stores, counts a reflection as
+  model-authored when its authorship is anything but `Deterministic` or its producer starts with
+  `AgentExperience.ChatClientExperienceReflector/`, and migration `0022` applies the same rule to plaintext rows in
+  SQL. The reflector shipped in `0.1.0-preview.5`, the same release that made it declare `Model`, so no published
+  release wrote one of its records as `Deterministic`, plaintext or sealed: the removed clause is gone for every
+  database only published releases wrote, and the rule covers builds between stories 14.2 and 14.3 as well. Authorship from a third-party reflector is still what it declares, and the content guard and the unsigned
+  reflection are unchanged; that is what the row still says. See
+  [0022: library reflector authorship](guide/postgres-schema.md#0022-library-reflector-authorship) and
+  [Backfilling authorship flags](guide/crypto-shredding.md#backfilling-authorship-flags-after-upgrading).
+
 ## How the project got here
 
 The work was planned in four epics, all implemented and tested before `0.1.0-preview.1`:

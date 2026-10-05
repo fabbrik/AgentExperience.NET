@@ -122,8 +122,10 @@ public sealed class UpgradeFromPublishedPreviewsTests
             // Story 14.4: a plaintext payload with authorship = Model, which no published preview could write (none had a
             // model-backed reflector that declared it), so the test writes it: a copy of a-validated with that one member
             // set, and an untouched copy beside it, in a project of their own so no item the manifest lists sees them.
-            // 0021's backfill must flag the first, and only the first. A sealed payload cannot be edited in place, so
-            // the encrypted case has none; its check is that every sealed row stays unknown.
+            // 0021's backfill must flag the first, and only the first. Story 17.1: a third copy whose producer is the
+            // library's model-backed reflector, still declaring Deterministic, which 0022 must flag too. A sealed payload
+            // cannot be edited in place, so the encrypted case has none; its check is that every sealed row stays unknown
+            // until the owner's backfill opens it.
             if (!encrypted)
             {
                 await using var inDatabase = NpgsqlDataSource.Create(ConnectionString(container, Database, username: null));
@@ -132,6 +134,7 @@ public sealed class UpgradeFromPublishedPreviewsTests
                 {
                     (Verification.AuthorshipModelId, "jsonb_set(payload, '{reflection,authorship}', '\"Model\"')"),
                     (Verification.AuthorshipTwinId, "payload"),
+                    (Verification.AuthorshipLegacyReflectorId, $"jsonb_set(payload, '{{reflection,producer}}', '\"{Verification.LegacyReflectorProducer}\"')"),
                 })
                 {
                     await ExecuteAsync(
@@ -293,6 +296,15 @@ internal sealed class Verification
 
     /// <summary>The untouched copy of a-validated beside it.</summary>
     internal static readonly Guid AuthorshipTwinId = Guid.Parse("14040000-0000-0000-0000-000000000002");
+
+    /// <summary>
+    /// The copy of a-validated whose reflection's producer is the library's model-backed reflector, as one written
+    /// before it declared authorship (story 17.1): still Deterministic, flagged by <c>0022</c>.
+    /// </summary>
+    internal static readonly Guid AuthorshipLegacyReflectorId = Guid.Parse("17010000-0000-0000-0000-000000000001");
+
+    /// <summary>The producer that copy carries.</summary>
+    internal const string LegacyReflectorProducer = "AgentExperience.ChatClientExperienceReflector/1.0.0 (some-model)";
 
     private const string EmbeddingModel = "upgrade-test-model";
 
@@ -651,11 +663,13 @@ internal sealed class Verification
     }
 
     /// <summary>
-    /// Story 14.4: <c>0021</c>'s backfill. Every live seeded row is unknown when the preview sealed it, and
-    /// deterministic otherwise, and every tombstone carries the fixed false. The test-written plaintext copy that says
-    /// <c>Model</c> is flagged and left out of an excluding search, and its untouched twin is not. Every text search the
-    /// manifest lists answers the same with the exclusion on: the seeded records are deterministic, or (sealed) unknown
-    /// and so kept by the source.
+    /// Story 14.4: <c>0021</c>'s backfill, and story 17.1's <c>0022</c> and owner-run sealed backfill. Every live seeded
+    /// row is unknown when the preview sealed it, and deterministic otherwise, and every tombstone carries the fixed
+    /// false. The test-written plaintext copies that say <c>Model</c>, or name the library's model-backed reflector, are
+    /// flagged and left out of an excluding search, and their untouched twin is not. A sealed unknown row is left out of
+    /// an excluding search (unknown counts as model-authored) until the owner's backfill opens it and writes its flag;
+    /// then every text search the manifest lists answers the same with the exclusion on, because the seeded records are
+    /// deterministic.
     /// </summary>
     private async Task AuthorshipAsync()
     {
@@ -670,10 +684,51 @@ internal sealed class Verification
         if (_context.Encrypted)
         {
             _report.Check(live > 0 && unknown == live && flagged == 0, "the sealed records' authorship", $"{unknown} of {live} live sealed records are unknown and {flagged} flagged; every one must be unknown");
+
+            // Unknown fails closed: before the backfill, no excluding search returns a sealed record.
+            var first = Items("searches").First();
+            var before = await _candidates.SearchAsync(
+                Auth,
+                new ExperienceCandidateQuery(first["scope"].Deserialize<Scope>(UpgradeReport.Json)!, (string)first["text"]!, Eligible, MinimumConfidence: 0) { ExcludeModelAuthored = true },
+                CancellationToken.None);
+            _report.Check(before.Candidates.Count == 0, "an excluding search before the authorship backfill", $"it returned {before.Candidates.Count} records whose authorship is unknown");
+
+            // The owner's backfill, as the upgrade runbook says, over every project the seeded records live in.
+            var owner = new PostgresExperienceRecordStore(_context.Owner, encryption: _encryption);
+            var roots = Items("records")
+                .Select(item => item["scope"].Deserialize<Scope>(UpgradeReport.Json)!)
+                .Select(scope => new Scope(scope.TenantId, scope.ApplicationId, scope.ProjectId))
+                .Distinct();
+            var set = 0;
+            var skipped = 0;
+            foreach (var root in roots)
+            {
+                ExperienceAuthorshipBackfillResult batch;
+                Guid? cursor = null;
+                do
+                {
+                    batch = await owner.BackfillSealedAuthorshipAsync(Auth, root, PostgresExperienceRecordStore.MaxSweepBatchSize, ScopeMatch.Subtree, cursor, CancellationToken.None);
+                    _report.Check(batch.Outcome == ExperienceStoreOutcome.Committed, "the sealed authorship backfill", $"a batch answered {batch.Outcome}");
+                    set += batch.SetCount;
+                    skipped += batch.SkippedCount;
+                    cursor = batch.ResumeAfter;
+                }
+                while (batch.MoreRemain);
+            }
+
+            _report.Check(skipped == 0, "the sealed authorship backfill", $"it skipped {skipped} records whose key is destroyed or whose payload cannot be opened");
+
+            var (liveAfter, unknownAfter, flaggedAfter) = await CountsAsync(
+                "SELECT count(*), count(*) FILTER (WHERE reflection_model_authored IS NULL), count(*) FILTER (WHERE reflection_model_authored) " +
+                "FROM agent_experience.experience_records WHERE deleted_at IS NULL");
+            _report.Check(
+                set == live && unknownAfter == 0 && flaggedAfter == 0 && liveAfter == live,
+                "the sealed authorship backfill",
+                $"it set {set} of {live} flags; {unknownAfter} remain unknown and {flaggedAfter} are flagged; every seeded record is deterministic");
         }
         else
         {
-            _report.Check(live > 0 && unknown == 0 && flagged == 1, "the plaintext records' authorship", $"{unknown} of {live} live plaintext records are unknown and {flagged} flagged; expected none unknown and only the test's copy flagged");
+            _report.Check(live > 0 && unknown == 0 && flagged == 2, "the plaintext records' authorship", $"{unknown} of {live} live plaintext records are unknown and {flagged} flagged; expected none unknown and only the test's two copies flagged");
 
             var scope = Record("a-validated")["scope"].Deserialize<Scope>(UpgradeReport.Json)! with { ProjectId = AuthorshipProject };
             var text = (string)Items("searches").First()["text"]!;
@@ -683,8 +738,9 @@ internal sealed class Verification
                 Auth, new ExperienceCandidateQuery(scope, text, Eligible, MinimumConfidence: 0), CancellationToken.None);
             _report.Check(
                 excluding.Candidates.Select(c => c.Record.ExperienceId).SequenceEqual([AuthorshipTwinId])
-                    && including.Candidates.Select(c => c.Record.ExperienceId).Order().SequenceEqual(new[] { AuthorshipModelId, AuthorshipTwinId }.Order())
-                    && including.Candidates.Single(c => c.Record.ExperienceId == AuthorshipModelId).Record.Reflection?.Authorship == ReflectionAuthorship.Model,
+                    && including.Candidates.Select(c => c.Record.ExperienceId).Order().SequenceEqual(new[] { AuthorshipModelId, AuthorshipTwinId, AuthorshipLegacyReflectorId }.Order())
+                    && including.Candidates.Single(c => c.Record.ExperienceId == AuthorshipModelId).Record.Reflection?.Authorship == ReflectionAuthorship.Model
+                    && including.Candidates.Single(c => c.Record.ExperienceId == AuthorshipLegacyReflectorId).Record.Reflection?.Authorship == ReflectionAuthorship.Deterministic,
                 "the backfilled authorship",
                 $"an excluding search returned [{string.Join(", ", excluding.Candidates.Select(c => c.Record.ExperienceId))}], expected only the twin; " +
                 $"without the exclusion [{string.Join(", ", including.Candidates.Select(c => c.Record.ExperienceId))}]");
