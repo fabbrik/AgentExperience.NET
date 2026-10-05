@@ -471,7 +471,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 recheckOutcome.Withdrawn,
                 session?.RemainingBytes,
                 _retrieval.IsContentConfirmed,
-                _options.FailureDetail);
+                _options.FailureDetail,
+                _options.Rendering);
         }
         catch (Exception ex)
         {
@@ -516,9 +517,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         var injectedRecords = payload.ExperienceIds.Count > 0;
 
-        // A user-role message, not a system one: the block is reference material the model may read,
-        // never an instruction from the host. MAF merges it with the invocation's own messages. Built
-        // before the report so that nothing which could throw remains after the span has been closed.
+        // A user-role message by default, not a system one: the block is reference material the model may read,
+        // never an instruction from the host. A host can choose the system role (MessageRole); the text is the same.
+        // MAF merges it with the invocation's own messages. Built before the report so that nothing which could
+        // throw remains after the span has been closed.
         var properties = new AdditionalPropertiesDictionary
         {
             [HistoricalReferenceKey] = true,
@@ -533,7 +535,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             Messages =
             [
-                new ChatMessage(ChatRole.User, payload.Text)
+                new ChatMessage(_options.MessageRole == HistoricalReferenceMessageRole.System ? ChatRole.System : ChatRole.User, payload.Text)
                 {
                     AdditionalProperties = properties,
                 },
@@ -638,7 +640,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             // Written on first use, even with nothing to inject, so that later invocations find the key
             // and never have to tell "absent" from "present as another type" again.
-            return new SessionTracker(agentSession, _stateKey, state, limits, dirty: true);
+            return new SessionTracker(agentSession, _stateKey, state, limits, _options.Rendering, dirty: true);
         }
 
         // A stage staged within the in-flight window is left pending: its invocation may still be running, and it
@@ -654,6 +656,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             _stateKey,
             current,
             limits,
+            _options.Rendering,
             dirty: legacy || current.Pending.Count != state.Pending.Count);
     }
 
@@ -1637,6 +1640,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         string key,
         InjectionSessionState state,
         ExperienceInjectionSessionLimits limits,
+        HistoricalReferenceRendering rendering,
         bool dirty)
     {
         private bool _dirty = dirty;
@@ -1666,8 +1670,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 (long)limits.MaxRecords - State.RecordsUsed,
                 ExperienceInjectionSessionLimits.MaxTrackedRecords - State.Delivered.Count));
 
-        /// <summary>Whether the budget cannot take another record at all, so retrieval need not run.</summary>
-        public bool Exhausted => RemainingRecords == 0 || RemainingBytes <= HistoricalReferenceWriter.BlockOverheadBytes;
+        /// <summary>
+        /// Whether the budget cannot take another record at all, so retrieval need not run: measured against the block
+        /// overhead of the rendering in use, since the budget applies to the block as rendered.
+        /// </summary>
+        public bool Exhausted => RemainingRecords == 0 || RemainingBytes <= HistoricalReferenceWriter.OverheadBytes(rendering);
 
         /// <summary>Stages this invocation's delivery, to be settled when MAF reports how it ended.</summary>
         public void Stage(PendingDelivery pending)

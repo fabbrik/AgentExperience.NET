@@ -112,7 +112,7 @@ public class ModelAuthoredInjectionTests
     [Fact]
     public async Task A_deterministic_entry_is_pinned_byte_for_byte()
     {
-        var harness = new Harness();
+        var harness = new Harness { Rendering = HistoricalReferenceRendering.Verbose };
         harness.World.Publish(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic));
 
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
@@ -460,7 +460,7 @@ public class ModelAuthoredInjectionTests
             },
             "key-1",
             SigningKey);
-        var harness = new Harness { Signing = SigningRing() };
+        var harness = new Harness { Signing = SigningRing(), Rendering = HistoricalReferenceRendering.Verbose };
         harness.World.Publish(record);
 
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
@@ -511,8 +511,8 @@ public class ModelAuthoredInjectionTests
     public async Task An_unconfirmed_record_with_no_reflection_is_fenced_whole_or_excluded_as_unconfirmed()
     {
         var bare = SignedRecords.SignV1(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic) with { Reflection = null }, "key-1", SigningKey);
-        var include = new Harness { Signing = SigningRing() };
-        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude };
+        var include = new Harness { Signing = SigningRing(), Rendering = HistoricalReferenceRendering.Verbose };
+        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude, Rendering = HistoricalReferenceRendering.Verbose };
         foreach (var harness in new[] { include, exclude })
         {
             harness.World.Publish(bare);
@@ -672,7 +672,7 @@ public class ModelAuthoredInjectionTests
         var unconfirmed = HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default, null, _ => false);
         Assert.Contains(HistoricalReferenceWriter.ModelAuthoredLine, unconfirmed.Text, StringComparison.Ordinal);
         Assert.Contains(HistoricalReferenceWriter.UnconfirmedTaskNotice, unconfirmed.Text, StringComparison.Ordinal);
-        Assert.Throws<ArgumentNullException>(() => HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default, null, null!));
+        Assert.Throws<ArgumentNullException>(() => HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default, null, (Func<ExperienceRecord, bool>)null!));
     }
 
     private static void PublishFiveModelAboveThreeDeterministic(FakeExperienceWorld world)
@@ -711,6 +711,9 @@ public class ModelAuthoredInjectionTests
         public ModelAuthoredLessonPolicy Policy { get; init; } = ModelAuthoredLessonPolicy.Include;
 
         public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
+
+        /// <summary>The block layout; the library default unless a test pins the verbose text.</summary>
+        public HistoricalReferenceRendering Rendering { get; init; } = HistoricalReferenceRendering.Compact;
 
         public List<Guid>? Decided { get; set; }
 
@@ -765,6 +768,7 @@ public class ModelAuthoredInjectionTests
                     TimeProvider = clock,
                     ModelAuthoredLessons = Policy,
                     Limits = Limits,
+                    Rendering = Rendering,
                     DecideInjection = decision =>
                     {
                         Decided?.Add(decision.Current.ExperienceId);

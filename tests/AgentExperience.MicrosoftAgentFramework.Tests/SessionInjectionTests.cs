@@ -313,7 +313,7 @@ public class SessionInjectionTests
         Assert.Equal([fresh], harness.Last.InjectedExperienceIds);
         Assert.Equal([old], harness.Last.RetractedExperienceIds);
         var block = FreshBlock(harness.Client.LastMessages!);
-        Assert.True(block.IndexOf(HistoricalReferenceWriter.RetractionEnd, StringComparison.Ordinal) < block.IndexOf("--- RECORD 1 ---", StringComparison.Ordinal));
+        Assert.True(block.IndexOf(HistoricalReferenceWriter.RetractionEnd, StringComparison.Ordinal) < block.IndexOf("--- RECORD 1", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -333,7 +333,8 @@ public class SessionInjectionTests
         wide.World.Replace(wide.World.Stored[second] with { Status = ExperienceStatus.Revoked, Revision = 2 });
         wide.World.Publish(InjectionRecords.Record(fresh, TestScope), relevance: 0.5d);
 
-        var narrow = new Harness { World = wide.World, Limits = new ExperienceInjectionLimits(8, HistoricalReferenceWriter.RetractionBlockBytes) };
+        // Verbose: RetractionBlockBytes is the verbose block's size, and this budget must hold exactly one notice.
+        var narrow = new Harness { World = wide.World, Limits = new ExperienceInjectionLimits(8, HistoricalReferenceWriter.RetractionBlockBytes), Rendering = HistoricalReferenceRendering.Verbose };
         var agent = narrow.Agent();
 
         await agent.RunAsync("refund ticket stuck on a lock", session);
@@ -1337,7 +1338,8 @@ public class SessionInjectionTests
     [Fact]
     public async Task A_spent_byte_budget_skips_retrieval_too()
     {
-        var probe = new Harness { Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 } };
+        // Verbose, whose overhead is BlockOverheadBytes exactly.
+        var probe = new Harness { Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 }, Rendering = HistoricalReferenceRendering.Verbose };
         probe.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
         await probe.Agent().RunAsync("refund ticket stuck on a lock");
         var oneBlock = probe.Last.PayloadBytes;
@@ -1346,6 +1348,7 @@ public class SessionInjectionTests
         var harness = new Harness
         {
             Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+            Rendering = HistoricalReferenceRendering.Verbose,
             SessionLimits = new ExperienceInjectionSessionLimits(32, oneBlock + HistoricalReferenceWriter.BlockOverheadBytes),
         };
         harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 1d);
@@ -2199,6 +2202,9 @@ public class SessionInjectionTests
 
         public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
 
+        /// <summary>The block layout; the library default unless a test pins the verbose text.</summary>
+        public HistoricalReferenceRendering Rendering { get; init; } = HistoricalReferenceRendering.Compact;
+
         public ExperienceInjectionSessionLimits? SessionLimits { get; init; } = ExperienceInjectionSessionLimits.Default;
 
         public Scope Reader { get; init; } = TestScope;
@@ -2238,6 +2244,7 @@ public class SessionInjectionTests
                     "refund ticket stuck on a lock",
                     CorrelationId: CorrelationId)),
                 Limits = Limits,
+                Rendering = Rendering,
                 SessionLimits = SessionLimits,
                 SessionStateKey = SessionStateKey,
                 TimeProvider = Clock,

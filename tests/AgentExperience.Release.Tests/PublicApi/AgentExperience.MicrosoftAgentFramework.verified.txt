@@ -130,9 +130,11 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; init; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?> ResolveRequest { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; init; }
         public string SessionStateKey { get; init; }
@@ -179,6 +181,11 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public int RecordsUsed { get; init; }
         public int TrackedRecords { get; init; }
     }
+    public enum HistoricalReferenceMessageRole
+    {
+        User = 0,
+        System = 1,
+    }
     public sealed class HistoricalReferencePayload : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload>
     {
         public HistoricalReferencePayload(string Text, int ByteCount, System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted) { }
@@ -188,6 +195,18 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
         public System.Collections.Generic.IReadOnlyList<System.Guid> RetractedExperienceIds { get; init; }
         public string Text { get; init; }
+    }
+    public enum HistoricalReferenceRendering
+    {
+        Compact = 0,
+        Verbose = 1,
+    }
+    public sealed class HistoricalReferenceWriteSettings : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceWriteSettings>
+    {
+        public HistoricalReferenceWriteSettings() { }
+        public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; init; }
+        public System.Func<AgentExperience.Abstractions.ExperienceRecord, bool>? IsContentConfirmed { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
     }
     public static class HistoricalReferenceWriter
     {
@@ -201,6 +220,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string BlockBegin = "=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===";
         public const string BlockEnd = "=== END HISTORICAL REFERENCE ===";
         public const string ClampedName = "[...]";
+        public const string MatchedWithoutRanking = "no ranking data";
         public const int MaxApproachArgumentsLength = 512;
         public const int MaxApproachToolNames = 20;
         public const int MaxArgumentValueLength = 64;
@@ -225,6 +245,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public static int RetractionBlockBytes { get; }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments) { }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments, AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceWriteSettings settings) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferencePayload Write(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankedExperience> records, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits limits, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, System.Collections.Generic.IReadOnlyList<string>>>? approachArguments, System.Func<AgentExperience.Abstractions.ExperienceRecord, bool> isContentConfirmed) { }
     }
     public sealed class InjectionDecision : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>
