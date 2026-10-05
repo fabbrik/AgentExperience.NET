@@ -206,7 +206,10 @@ public sealed class ChatClientExperienceReflector : IExperienceReflector, IRefle
                 Abandon(call, callCancellation);
                 throw;
             }
-            catch (TimeoutException) when (call is not null && !call.IsCompleted)
+            // WaitAsync's own timeout, whether or not the token's timer has already cancelled the call in the meantime
+            // (both fire at the timeout, in either order). A TimeoutException the client itself faulted with is not
+            // ours: it is a failed call, below.
+            catch (TimeoutException ex) when (call is not null && !(call.IsFaulted && ReferenceEquals(call.Exception?.InnerException, ex)))
             {
                 Abandon(call, callCancellation);
                 throw new ReflectionFailedException(ReflectionFailureKind.TimedOut);

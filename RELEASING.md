@@ -37,7 +37,8 @@ The version is deliberately not `1.0.0`. With no version property at all, `dotne
 stability promise this codebase declines to make while it still ships documented breaking changes between previews.
 
 To cut the next preview, bump the suffix (for example `preview.2` → `preview.3`) in `Directory.Build.props`, add
-that version's section to `CHANGELOG.md` (step 10's release notes are built from it), and nothing else.
+that version's section to `CHANGELOG.md` (step 10's release notes are built from it), and nothing else. Once it is
+published, move the package-validation baseline to it ([after the release](#after-the-release-move-the-package-validation-baseline)).
 
 ## Decision: known limits and documented boundaries
 
@@ -243,6 +244,12 @@ eng/probe-floating-dependencies.sh   # must print "... PASSED" and exit 0; recor
 
 ### 7. Pack, and verify the packages themselves
 
+Packing also runs the SDK's package validation: each package is compared with the same package at the last
+published preview (`AgentExperiencePackageValidationBaseline` in `Directory.Build.props`, which step 2's restore
+downloads into the NuGet cache), and any binary break that no `src/<Project>/CompatibilitySuppressions.xml` declares
+fails the pack. A release test (step 3) checks that a declared break has a CHANGELOG bullet or heading starting with
+**Breaking**, and that the baseline is the last release in the CHANGELOG.
+
 Assertions are made against the built `.nupkg` and `.snupkg` files, not the csproj files: twelve artifacts (six packages, six symbol packages) at
 `0.1.0-preview.N`; license, readme, tags, and repository metadata with the SourceLink commit; "Preview" in the
 description, release notes, and readme; exactly the `net10.0` build under `lib/`, and the **exact** dependency
@@ -378,6 +385,11 @@ that has never been pushed is owned by nobody yet. Whether nuget.org lets a Trus
 ID depends on the account's policy, so a release that carries a new ID is checked, not assumed. The first release
 with `AgentExperience.Storage.InMemory` (story 11.2) is one.
 
+A new package also has no published version for package validation to compare with, and restore would fail trying to
+download one. Until its first release, its csproj sets `<DisablePackageBaselineValidation>true</DisablePackageBaselineValidation>`
+(the only package-validation property a project may set; a release test holds the rest to `Directory.Build.props`), and
+the post-release step below removes it.
+
 1. Before tagging, sign in to nuget.org as `fabbrik76`, open the **Trusted Publishing** policy described above, and
    confirm it covers new package IDs as well as the existing five. If the policy page names the packages it applies to,
    add `AgentExperience.Storage.InMemory`.
@@ -423,3 +435,35 @@ boundaries tables pasted into its notes.
 
 That key lives with the maintainer, never in this repository or its secrets. Revoke it on nuget.org once it has
 been used.
+
+## After the release: move the package-validation baseline
+
+Not a release check: a follow-up pull request, once the release is out. When nuget.org lists all six packages at the
+new version (it can take an hour after the push; until then a restore of that version fails with `NU1102`), set
+`AgentExperiencePackageValidationBaseline` in `Directory.Build.props` to it, delete every
+`src/*/CompatibilitySuppressions.xml` (they declared breaks against the previous release, which the new baseline already
+contains), and remove `DisablePackageBaselineValidation` from a package that has just shipped for the first time.
+Restore again before packing: the new baseline has to be downloaded. Until the next release, packing compares each
+package with the published package of the same version; that is intended, and it passes while nothing has broken.
+Forgetting the move is caught when the next version's CHANGELOG section is added: the release test then finds a
+release between the baseline and the version being built, and `release.yml` runs it before it packs.
+
+```bash
+# Run before the move: the version just published is still the one Directory.Build.props builds.
+( version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+  ok=true
+  for project in src/*/*.csproj; do
+    id="$(basename "$project" .csproj | tr '[:upper:]' '[:lower:]')"
+    index="$(curl -fsS "https://api.nuget.org/v3-flatcontainer/$id/index.json")" || { echo "FAILED: could not read $id from nuget.org"; ok=false; continue; }
+    grep -qF "\"$version\"" <<<"$index" && echo "listed: $id $version" || { echo "NOT YET: $id $version"; ok=false; }
+  done
+  $ok && echo "All packages listed: move the baseline to $version" || echo "FAILED: wait, then run this again" )
+
+# Run after the move, before opening the pull request.
+( baseline="$(sed -nE 's/.*<AgentExperiencePackageValidationBaseline>([^<]+)<.*/\1/p' Directory.Build.props)"
+  version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+  left="$(find src -mindepth 2 -maxdepth 2 -name CompatibilitySuppressions.xml; grep -l DisablePackageBaselineValidation src/*/*.csproj)"
+  if [ "$baseline" != "$version" ]; then echo "FAILED: the baseline is $baseline, the published version $version"
+  elif [ -n "$left" ]; then echo "FAILED: still declared against the previous release: $left"
+  else echo "Baseline OK: $baseline"; fi )
+```

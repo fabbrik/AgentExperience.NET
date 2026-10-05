@@ -309,6 +309,25 @@ public class ChatClientExperienceReflectorTests
     }
 
     [Fact]
+    public async Task A_model_call_that_fails_with_its_own_timeout_is_a_failed_call_not_a_reflection_timeout()
+    {
+        var reflector = new ChatClientExperienceReflector(new ScriptedReflectionClient
+        {
+            // Faulted after an await, so the fault reaches the reflector through WaitAsync, as a client's would.
+            Reply = async (_, _, _) =>
+            {
+                await Task.Yield();
+                throw new TimeoutException("MODEL-TEXT");
+            },
+        });
+
+        var ex = await Assert.ThrowsAsync<ReflectionFailedException>(() => reflector.ReflectAsync(Request(TaskVerificationStatus.Verified, [Attempt(1, result: "ok")])));
+
+        Assert.Equal(ReflectionFailureKind.ModelCallFailed, ex.Kind);
+        Assert.Equal(typeof(TimeoutException).FullName, ex.CauseType);
+    }
+
+    [Fact]
     public async Task A_model_that_cancels_on_its_own_is_a_failed_call_not_a_cancellation()
     {
         var reflector = new ChatClientExperienceReflector(new ScriptedReflectionClient
