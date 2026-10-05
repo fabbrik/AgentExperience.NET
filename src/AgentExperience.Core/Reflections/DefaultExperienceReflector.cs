@@ -14,7 +14,7 @@ namespace AgentExperience.Core.Reflections;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Lesson</b> (since template 1.1.0, story 18.1): <c>"{Verified|Did not verify|Unverified} after {n} attempt(s)."</c>
+/// <b>Lesson</b> (since template 1.1.0): <c>"{Verified|Did not verify|Unverified} after {n} attempt(s)."</c>
 /// (for a Verified, Failed or Unknown verdict), then <c>" Failed: attempt {k} — {error class}."</c> for each attempt
 /// that ended with an error when there are at most two, or <c>" Failed: {count} attempts; last: attempt {k} — {error
 /// class}."</c> when there are more; then, for a verified run whose final attempt ended without one,

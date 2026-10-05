@@ -129,7 +129,7 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
 
     /// <inheritdoc />
     /// <remarks>
-    /// This port member is handed no <see cref="AuthorizationContext"/>, so with row-level security on (story 15.1) it
+    /// This port member is handed no <see cref="AuthorizationContext"/>, so with row-level security on it
     /// declares, for each group of rows, the recipient scope those rows name. A null field of that scope declares the
     /// field unrestricted, so the declaration can be wider than the rows themselves; what bounds the append is the insert
     /// policy, which admits a row only when a live grant names exactly its grant ID, record, owner columns and recipient

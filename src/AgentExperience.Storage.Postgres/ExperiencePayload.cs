@@ -254,17 +254,17 @@ internal static class ExperiencePayload
 
     /// <summary>The version-1 payload.</summary>
     /// <remarks>
-    /// <c>ClosedRoundId</c> was added within version 1 (story 6.6): it is optional, omitted when null, and
+    /// <c>ClosedRoundId</c> was added within version 1: it is optional, omitted when null, and
     /// absent from every payload written before it, which reads back as no closed round. An older reader
-    /// ignores it. <c>Origin</c> and the provenance's <c>ExposedTo</c> were added the same way (story 7.3):
+    /// ignores it. <c>Origin</c> and the provenance's <c>ExposedTo</c> were added the same way:
     /// <c>Origin</c> is written only for a finalized record and reads back as <c>HostWritten</c> when absent;
     /// <c>ExposedTo</c> is written only when the run was exposed to something and reads back as empty when
     /// absent. Both are identifiers only, and in crypto-shredding mode they are sealed with the rest of the
     /// payload, so the application role -- which cannot <c>UPDATE payload</c> -- cannot rewrite them either way, except
     /// through <c>0016</c>'s sealing function while the host grants <c>AllowSealing</c>.
-    /// <c>ProvenanceSignature</c> was added the same way (story 13.1): written only when finalization signed the
+    /// <c>ProvenanceSignature</c> was added the same way: written only when finalization signed the
     /// record, read back as none when absent, its value base64. It is sealed with the rest in crypto-shredding
-    /// mode, and needs no migration. The reflection's <c>Authorship</c> was added the same way (story 14.3):
+    /// mode, and needs no migration. The reflection's <c>Authorship</c> was added the same way:
     /// written only for a model-authored reflection, read back as <c>Deterministic</c> when absent.
     /// </remarks>
     internal sealed record PayloadV1(

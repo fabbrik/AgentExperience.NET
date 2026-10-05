@@ -75,19 +75,19 @@ public sealed record HistoricalReferencePayload(
 /// <see cref="AttemptFailureDetail.Excerpt"/>) and evidence <em>detail</em> are never serialized here,
 /// and neither is any tool <em>argument</em> the host did not allowlist, so a raw captured payload
 /// cannot reach a model through injection. The ordered tool <em>names</em> of the verified approach
-/// are -- that was added in story 4.6 because a lesson that cannot say <em>what was done</em> teaches
+/// are -- that was added because a lesson that cannot say <em>what was done</em> teaches
 /// a later agent nothing, and it amended an earlier promise that attempts and tool calls were never
-/// serialized at all. Story 6.2 amends it once more, just as precisely: an argument's value is
+/// serialized at all. A later change amends it once more, just as precisely: an argument's value is
 /// serialized when, and only when, the host named that argument key for that tool name in
 /// <see cref="ExperienceInjectionOptions.ApproachArguments"/>, the record is the reader's own, and
 /// the value is a string, a number or a boolean -- and it is the value the capture-time sanitizer
 /// stored, bounded as <see cref="MaxArgumentValueLength"/> and
 /// <see cref="MaxApproachArgumentsLength"/> describe. With no allowlist the block is byte for byte
-/// what it was before, arguments included: none. Story 7.1 widens exactly two things: an allowlisted key
+/// what it was before, arguments included: none. A further change widens exactly two things: an allowlisted key
 /// may be a dotted path to a scalar inside an object- or array-valued argument (only that scalar is shown,
 /// never the container), and a borrowed record may show a value when its grant is
 /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> and both sides named the key.
-/// Story 18.1 widens it to every attempt of a record in the reader's own scope, not only the verified final one:
+/// After <c>0.1.0-preview.6</c> it widens to every attempt of a record in the reader's own scope, not only the verified final one:
 /// each attempt's tool names (and allowlisted values) on a <c>Tried:</c> line, whether it ended with an error, and
 /// that error's <em>class</em> -- tokens this library recognises, never other text from the error -- plus a
 /// <c>Worked:</c> line naming the verified final attempt. The error's first line crosses only when the host opts into
@@ -304,7 +304,7 @@ public static class HistoricalReferenceWriter
     public const string ApproachWithheld = " The grant withholds this lesson's attempts.";
 
     /// <summary>
-    /// What a record's <c>Source:</c> line says in place of its task ID when its content is unconfirmed (story 17.2):
+    /// What a record's <c>Source:</c> line says in place of its task ID when its content is unconfirmed:
     /// the task ID is then written as a <c>Task:</c> line inside the model-authored fence. Fixed text.
     /// </summary>
     public const string UnconfirmedTaskNotice = "; task given below, with the unconfirmed content";
@@ -485,7 +485,7 @@ public static class HistoricalReferenceWriter
 
     /// <summary>
     /// Renders <paramref name="records"/> as the three-argument overload does, deciding authorship as
-    /// <see cref="ExperienceContextProvider"/> does (story 17.2): a record whose content
+    /// <see cref="ExperienceContextProvider"/> does: a record whose content
     /// <paramref name="isContentConfirmed"/> does not confirm is rendered as model-authored whatever it declares, with
     /// every line drawn from it inside the fence -- its task ID (a <c>Task:</c> line, the <c>Source:</c> line saying
     /// <see cref="UnconfirmedTaskNotice"/>), its <c>Recorded:</c>, <c>Environment:</c>, <c>Verification:</c> and
@@ -589,7 +589,7 @@ public static class HistoricalReferenceWriter
     /// </param>
     /// <param name="isContentConfirmed">
     /// Whether a record's content is confirmed: the provider passes its retrieval service's
-    /// <see cref="ExperienceRetrievalService.IsContentConfirmed"/> (story 17.2). A record whose content is not confirmed
+    /// <see cref="ExperienceRetrievalService.IsContentConfirmed"/>. A record whose content is not confirmed
     /// is rendered as model-authored, with every line drawn from it inside the fence.
     /// <see langword="null"/> confirms every record, deciding on the reflection alone.
     /// </param>
@@ -1709,7 +1709,7 @@ public static class HistoricalReferenceWriter
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Invisible also covers, since story 14.1, a variation selector (U+FE00-FE0F, U+E0100-E01EF), the
+    /// Invisible also covers, since <c>0.1.0-preview.5</c>, a variation selector (U+FE00-FE0F, U+E0100-E01EF), the
     /// combining grapheme joiner (U+034F), a Hangul filler (U+115F, U+1160, U+3164, U+FFA0) and the blank
     /// braille pattern (U+2800); the line and paragraph separators (U+2028, U+2029) always become spaces; and
     /// a run of more than four combining marks is cut to four, the rest removed. This is the rule Core's
@@ -1838,11 +1838,11 @@ public static class HistoricalReferenceWriter
     /// goes through -- so a bidirectional override or isolate, a zero-width character, a TAG character
     /// or any other control, format, private-use or unassigned code point, and a lone surrogate, becomes a
     /// space: a name can then neither use a bidirectional control to reorder the rest of the line when it
-    /// is displayed nor carry text in a code point of those categories. Since story 14.1 the same goes for
+    /// is displayed nor carry text in a code point of those categories. Since <c>0.1.0-preview.5</c> the same goes for
     /// the code points that are letters, marks or symbols by category but render as nothing or as blank
     /// space -- variation selectors, the combining grapheme joiner, Hangul fillers, the blank braille pattern
     /// -- and a run of more than four combining marks is cut to four, exactly as in an argument value. A
-    /// name that holds none of them renders exactly as it did before story 8.2.
+    /// name that holds none of them renders exactly as it did before this rule existed.
     /// </para>
     /// <para>
     /// <b>A marker split by an invisible character is still a marker.</b> Turning an invisible character into

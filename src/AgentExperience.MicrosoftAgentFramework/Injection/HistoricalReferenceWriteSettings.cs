@@ -20,7 +20,7 @@ public sealed record HistoricalReferenceWriteSettings
     public AttemptFailureDetail FailureDetail { get; init; } = AttemptFailureDetail.ErrorClass;
 
     /// <summary>
-    /// Whether a record's content is confirmed (story 17.2); pass <see cref="ExperienceRetrievalService.IsContentConfirmed"/>
+    /// Whether a record's content is confirmed; pass <see cref="ExperienceRetrievalService.IsContentConfirmed"/>
     /// to fence as the provider does. <see langword="null"/> (the default) confirms every record, deciding authorship on
     /// the reflection alone.
     /// </summary>

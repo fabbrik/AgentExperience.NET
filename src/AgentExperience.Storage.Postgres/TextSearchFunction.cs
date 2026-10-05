@@ -3,7 +3,7 @@ using Npgsql;
 namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
-/// <c>agent_experience.search_experience_text</c> (story 17.7, <c>0024</c>): the text channel's search behind row-level
+/// <c>agent_experience.search_experience_text</c> (<c>0024</c>): the text channel's search behind row-level
 /// security, run as the owner so the planner can use the GIN indexes. A test holds the script equal to <see cref="Ddl"/>,
 /// and the privileges call refuses to enable row-level security unless the catalog's function is exactly this one.
 /// </summary>

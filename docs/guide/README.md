@@ -1,7 +1,8 @@
 # AgentExperience.NET guide
 
 These pages explain each part of the library in depth. Start with the [root README](../../README.md) for what the
-project is and a quick start; come here when you need the exact behaviour, the options, or the caveats.
+project is and a quick start; come here when you need the exact behaviour, the options, or the caveats. New to the
+library? Read [Concepts in five minutes](concepts.md) first: the whole model in one diagram.
 
 AgentExperience.NET is a **preview**. Read [Known limits and documented boundaries](../known-limits.md) before you
 rely on any guarantee described here.
@@ -13,6 +14,8 @@ for values you build as in the [explicit wiring](deployment.md#explicit-wiring).
 uses the [one-call setup](deployment.md#the-one-call-setup), which builds them for you.
 
 ## The learning loop, page by page
+
+[Concepts in five minutes](concepts.md) walks the loop end to end; these pages take one step each.
 
 | Step | What happens | Page |
 | --- | --- | --- |

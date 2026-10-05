@@ -96,7 +96,7 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
-    /// Validates an authorship backfill (story 17.1): the scope, the scope match, the batch bound, and that the store
+    /// Validates an authorship backfill: the scope, the scope match, the batch bound, and that the store
     /// has the key store it needs to open a sealed record.
     /// </summary>
     public static IReadOnlyList<StoreValidationError> ValidateAuthorshipBackfill(Scope scope, int batchSize, ScopeMatch match, bool encryptionConfigured)

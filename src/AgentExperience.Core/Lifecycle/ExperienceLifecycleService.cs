@@ -491,7 +491,7 @@ public sealed class ExperienceLifecycleService
     /// <see cref="ApplyConfidenceEvidenceRequest.AssessmentToken"/> minted by
     /// <see cref="AssessmentTokenIssuer"/> for this scope, run, reviewer, kind and record, which has not
     /// expired. The store spends the token's assessment once per record, atomically with the evidence.
-    /// Last, the run must have been exposed to the record (story 7.3): its provenance, on its finalized record or
+    /// Last, the run must have been exposed to the record: its provenance, on its finalized record or
     /// on the run the capture service holds, must name the record at or before the revision this call read.
     /// Any failure is <see cref="ConfidenceUpdateOutcome.Unverified"/> with
     /// <see cref="ApplyConfidenceEvidenceResult.Refusal"/> naming it, and nothing written. What this cannot

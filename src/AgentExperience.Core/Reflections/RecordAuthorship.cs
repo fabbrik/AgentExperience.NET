@@ -5,7 +5,7 @@ namespace AgentExperience.Core.Reflections;
 
 /// <summary>
 /// The one Core entry point that decides whether a stored record's lesson counts as model-authored, given the
-/// provenance signing configuration (story 17.2). Retrieval's exclusion re-check calls it, and injection reaches it
+/// provenance signing configuration. Retrieval's exclusion re-check calls it, and injection reaches it
 /// through <c>ExperienceRetrievalService.IsModelAuthored</c> and <c>ExperienceRetrievalService.IsContentConfirmed</c>.
 /// </summary>
 internal static class RecordAuthorship

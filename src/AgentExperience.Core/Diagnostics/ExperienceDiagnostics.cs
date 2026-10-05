@@ -247,7 +247,7 @@ internal static class ExperienceDiagnostics
     /// </summary>
     /// <remarks>
     /// Every tag site in the library goes through here rather than calling <c>SetTag</c> directly, so
-    /// that frozen rule 6 -- "instrumentation failure is never propagated to the caller" -- holds by
+    /// that the rule "instrumentation failure is never propagated to the caller" holds by
     /// construction instead of by inspection. A listener's <c>ActivityStopped</c> callback, a sampler,
     /// or a future tag expression that threw would otherwise be able to turn an operation that already
     /// ran -- in the worst case one that already committed a durable write -- into an exception.

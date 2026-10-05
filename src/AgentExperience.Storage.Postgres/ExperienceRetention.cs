@@ -50,7 +50,7 @@ public sealed record ExperienceSealingResult(
 
 /// <summary>
 /// The result of one call to <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/>, the owner-run
-/// job that writes the authorship flag of sealed records stored without it (story 17.1).
+/// job that writes the authorship flag of sealed records stored without it.
 /// </summary>
 /// <param name="Outcome">
 /// <see cref="ExperienceStoreOutcome.Committed"/> when the batch ran -- including when it found nothing to set -- or

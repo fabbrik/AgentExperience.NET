@@ -326,7 +326,7 @@ Given options of its own, it signs with those instead, and its constructor refus
 ring holds their current key under the same ID, because a record signed under a key the checker lacks would vouch
 for nothing.
 
-- **What is signed.** Finalization signs claims version 2 (story 17.2) with HMAC-SHA256 under `CurrentKeyId`, and
+- **What is signed.** Finalization signs claims version 2 with HMAC-SHA256 under `CurrentKeyId`, and
   stores the algorithm as `HMAC-SHA256.aexp-prov.v2` (`ExperienceProvenanceSignature.HmacSha256ClaimsV2`), so a
   verifier never guesses the version. The claims are a canonical encoding, tagged `aexp-prov:v2`, of:
   - its `ExperienceId`;
@@ -349,7 +349,7 @@ for nothing.
 
   The signature is stored with the record as `ExperienceRecord.ProvenanceSignature` (key ID, algorithm and value) in
   the same create. Status, counters and timestamps change through the lifecycle and are not signed. Both stores refuse
-  a scope field that is not well-formed UTF-16. Signatures made before story 17.2 carry `HMAC-SHA256`
+  a scope field that is not well-formed UTF-16. Signatures made by `0.1.0-preview.6` and earlier carry `HMAC-SHA256`
   (`ExperienceProvenanceSignature.HmacSha256`): claims version 1, the same encoding tagged `aexp-prov:v1` with no
   content digest. They still verify for those claims.
 - **Content decides authorship.** With signing configured, a record's content is *confirmed* only when it carries a
@@ -372,7 +372,7 @@ for nothing.
   vouch for text nobody checked. A record a host writes through `CreateAsync` is unsigned, so it is fenced too unless
   it is in the cutover set, and a listed unsigned record is trusted as it stands, so its content stays editable.
   Without signing configured, nothing changes.
-- **Rolling deploys.** A node on a build before story 17.2 refuses a version 2 signature as one it cannot check, so its
+- **Rolling deploys.** A node on `0.1.0-preview.6` or earlier refuses a version 2 signature as one it cannot check, so its
   records would vouch for nothing there. While older nodes still verify, set `SignClaimsVersion = 1` (default 2; only
   1 or 2 is accepted): finalization then signs version 1, exactly as before, and switch it back once every node runs
   this build. Records signed version 1 meanwhile have unconfirmed content, as any version 1 record does. Verification

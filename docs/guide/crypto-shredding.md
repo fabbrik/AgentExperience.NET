@@ -44,7 +44,7 @@ below.
 | The dead heap tuple, before `VACUUM` | **Readable**: it still holds the text | Holds only ciphertext nobody can open |
 | Backups, replicas, WAL, `pg_dump`, replication streams | **Readable** in every copy made before the erasure | Hold only ciphertext nobody can open |
 | The derived search data: `search_vector_sealed` (the task ID, summary and lesson as lexemes with positions — words as stems, an identifier-like task ID whole) and the vectors package's embedding vector | Deleted from live rows; readable in every copy | **The same as plaintext mode**: deleted from live rows, readable in every copy. PostgreSQL has to read these in the clear to search, so they are never sealed |
-| The embedding's content hash (`experience_embeddings.content_hash`) | Deleted from live rows; readable in every copy, and confirms a guessed summary | Deleted from live rows; every copy holds only an HMAC under a subkey of the destroyed key, which no longer confirms a guessed summary (story 17.5); it is deterministic per record, so two copies still show whether the summary changed between them. A hash written in the clear before the upgrade stays in the copies made before its record was re-embedded |
+| The embedding's content hash (`experience_embeddings.content_hash`) | Deleted from live rows; readable in every copy, and confirms a guessed summary | Deleted from live rows; every copy holds only an HMAC under a subkey of the destroyed key, which no longer confirms a guessed summary; it is deterministic per record, so two copies still show whether the summary changed between them. A hash written in the clear before the upgrade stays in the copies made before its record was re-embedded |
 | Identifiers and metadata (IDs — record, run, round, event, evidence, grant, feedback and assessment IDs — scope, statuses, scores and counters, timestamps, principal, reviewer, evaluator and administrator identities, measure kinds and values, trial labels, disclosure levels) | Deleted from live rows (the tombstone keeps its IDs and scope); readable in every copy | The same as plaintext mode: never sealed |
 | Rows written before the deployment switched to encrypted mode | — | Record payloads: sealed by the upgrade job, but every copy made *before* it ran is plaintext. Append-only ledger rows (lifecycle reasons, evidence detail, feedback rationale, grant events) and grant reasons written before the switch: **stay plaintext**, in live rows until erased and in every copy |
 | Exported telemetry, the server's own logs, external artifacts a record named | Out of reach | Out of reach. The text is sent to the server as statement parameters (the full-text vector is computed there), so a server that logs parameters (`log_statement`, `log_min_duration_statement`, `auto_explain`) writes them to its own log |
@@ -114,8 +114,8 @@ Rules for the production key store, each of which the property depends on:
   transaction and return the connection to the pool, and only then make **one** `GetKeysAsync` call for every sealed
   row they returned (plaintext rows and tombstones never reach the key store), so a slow KMS holds no reader,
   transaction or pooled connection. The rows buffered in memory are bounded by the candidate limit for the two
-  searches and by the ID list given for `GetManyAsync`. The vectors package's re-index scan does the same (story
-  17.5): its rows, at most the scan's limit, are read and released first, then one `GetKeysAsync` call fetches the key
+  searches and by the ID list given for `GetManyAsync`. The vectors package's re-index scan does the same:
+  its rows, at most the scan's limit, are read and released first, then one `GetKeysAsync` call fetches the key
   of every sealed row and of every row with a stored embedding. Other reads — a single `GetAsync`, a query,
   history, grants — still make one call per sealed record, with their reader open.
 - **The envelope store unwraps a batch concurrently.** `EnvelopeExperienceKeyStore` answers `GetKeysAsync` by looking
@@ -180,7 +180,7 @@ So encrypted mode keeps them, and the residual above is exactly them:
   `coalesce(search_vector_sealed, search_vector)`. Erasure clears `search_vector_sealed` (a `0016` trigger on the
   tombstone transition).
 - **Vectors.** The embedding is computed from the summary the re-index scan opens in process with the record's key,
-  and stored as before. Its content hash is not needed to search, so it is **not** written in the clear (story 17.5):
+  and stored as before. Its content hash is not needed to search, so it is **not** written in the clear:
   the write stores `keyed:` and base64 of HMAC-SHA256 of the SHA-256 content hash, under a subkey derived from the
   record's data key with HKDF-SHA256 and the fixed label `aexp:embedding-content-hash:v1`. The re-index scan recomputes
   the plain hash from the opened summary, keys it and compares in constant time, so an unchanged record is still
@@ -257,7 +257,7 @@ So encrypted mode keeps them, and the residual above is exactly them:
 A sealed record carries `0021`'s `reflection_model_authored` flag in the clear, so a search that excludes
 model-authored lessons (`ModelAuthoredLessons = Exclude`) can leave them out in SQL. A sealed row stored **without**
 it — sealed before `0021`, which cannot open it, or sealed during a rolling deploy by an instance on an earlier build —
-has `NULL`. Since story 17.1 an excluding search fails closed on `NULL` and leaves such a row out, as if a model wrote
+has `NULL`. After `0.1.0-preview.6` an excluding search fails closed on `NULL` and leaves such a row out, as if a model wrote
 it: a deterministic record among them is not injected under `Exclude` until its flag is written. Searches without the
 exclusion are unchanged.
 

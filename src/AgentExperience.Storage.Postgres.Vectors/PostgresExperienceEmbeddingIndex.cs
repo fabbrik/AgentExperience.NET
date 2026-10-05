@@ -43,9 +43,9 @@ namespace AgentExperience.Storage.Postgres.Vectors;
 /// match.
 /// </para>
 /// <para>
-/// <b>The authorship exclusion</b> (<see cref="ExperienceVectorQuery.ExcludeModelAuthored"/>, story 14.4) is a
+/// <b>The authorship exclusion</b> (<see cref="ExperienceVectorQuery.ExcludeModelAuthored"/>) is a
 /// predicate on the record side of the join, before the limit, on the same <c>0021</c> flag the text channel reads;
-/// like that channel, it fails closed on a sealed row stored without its flag (story 17.1), and so do the compatibility
+/// like that channel, it fails closed on a sealed row stored without its flag, and so do the compatibility
 /// probes an excluding search runs. Under the out-of-band HNSW index pgvector applies
 /// it, like every other filter here, to the neighbours the index walk produced, so a search can return fewer than its
 /// limit; docs/guide/indexing.md names the host's levers.
@@ -228,7 +228,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     private static readonly string CompatibilityProbeSql = CompatibilityProbe(ReadableJoinScopePredicate, excludeModelAuthored: false);
 
     /// <summary>
-    /// The probes for an excluding search (story 14.4): they see exactly what that search saw, so a scope whose only
+    /// The probes for an excluding search: they see exactly what that search saw, so a scope whose only
     /// comparable embeddings belong to model-authored records reports an empty match, not a mismatch.
     /// </summary>
     private static readonly string ExcludingCompatibilityProbeExactSql = CompatibilityProbe(ExactJoinScopePredicate, excludeModelAuthored: true);
@@ -238,7 +238,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// <summary>
     /// The authorship exclusion on the record side of the join: the text channel's own predicate, qualified with
     /// <c>r</c>. It keeps <c>0021</c>'s <c>false</c> only, so a sealed row stored without its flag is left out here
-    /// exactly as it is there (story 17.1).
+    /// exactly as it is there.
     /// </summary>
     private const string RecordModelAuthoredPredicate = "r." + PostgresExperienceCandidateSource.ModelAuthoredPredicate;
 
@@ -274,7 +274,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// The clock this index stamps a stored vector's <c>created_at</c> and <c>updated_at</c> from --
     /// its own reading of when the row landed, never a caller's. Defaults to
     /// <see cref="TimeProvider.System"/>. It is here for the same reason the record and feedback stores
-    /// took one in story 4.5: a store that stamps rows from <c>DateTimeOffset.UtcNow</c> cannot be
+    /// take one: a store that stamps rows from <c>DateTimeOffset.UtcNow</c> cannot be
     /// driven to a known instant by a test, and every other timestamp this library writes is now
     /// controllable.
     /// </param>
@@ -283,7 +283,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// re-index scan, and the sealed records a search returns. <see langword="null"/> -- the default -- is
     /// plaintext mode. The vectors themselves are never sealed (PostgreSQL has to read them to search), so a
     /// stored embedding is the residual docs/guide/crypto-shredding.md names. Its content hash is stored keyed
-    /// under the record's key instead of in the clear (story 17.5), so once the key is destroyed it no longer confirms a
+    /// under the record's key instead of in the clear, so once the key is destroyed it no longer confirms a
     /// guessed summary (two copies still show whether the summary changed between them).
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="dataSource"/> is <see langword="null"/>.</exception>
@@ -974,7 +974,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// <summary>
     /// Turns the scan's rows into re-index targets. Plaintext mode reports each row exactly as stored. Encrypted
     /// mode looks up, in <em>one</em> key-store call (<see cref="ExperienceEncryption.ForReadManyAsync"/>, read-only),
-    /// the key of every sealed row and of every row that has a stored embedding (story 17.5):
+    /// the key of every sealed row and of every row that has a stored embedding:
     /// <list type="bullet">
     /// <item>a row whose key was destroyed is erased (or mid-erasure) and yields no target, sealed or not, so its text
     /// is never sent to a provider again;</item>

@@ -185,7 +185,7 @@ What to know:
   instruction-override phrasing, credential-shaped text or a mixed-script word, but it is a best-effort filter, not a
   boundary: content echoed from the run, a poisoned tool result included, passes by design. The controls to rely on
   are injection's label around every model-written field and `ModelAuthoredLessons = Exclude`, plus your approval
-  boundary. Its records written before story 14.3 read as deterministic; see the upgrade note in the guide.
+  boundary. Its records written before `0.1.0-preview.5` read as deterministic; see the upgrade note in the guide.
 
 Details: [Model-backed reflection](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/finalization.md#model-backed-reflection).
 

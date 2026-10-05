@@ -7,7 +7,7 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// Declares an operation's authorization bounds to PostgreSQL for the length of its transaction, which is what
-/// <c>0019</c>'s row-level security policies read (story 15.1).
+/// <c>0019</c>'s row-level security policies read.
 /// </summary>
 /// <remarks>
 /// <para>

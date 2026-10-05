@@ -106,7 +106,7 @@ public sealed record ExperienceCandidateQuery(
     /// <see cref="ExperienceStoreOutcome.Invalid"/>, with an error naming this property, rather than returning a page
     /// that may hold model-authored records. The store conformance suite checks the exclusion. A record whose authorship
     /// the source cannot read counts as model-authored: the PostgreSQL candidate source leaves out a sealed row stored
-    /// without its authorship flag (story 17.1) until the owner's backfill writes it. A consumer that must never see a
+    /// without its authorship flag until the owner's backfill writes it. A consumer that must never see a
     /// model-authored record still checks what it receives, as Core's retrieval service and the injection provider do.
     /// </para>
     /// </remarks>

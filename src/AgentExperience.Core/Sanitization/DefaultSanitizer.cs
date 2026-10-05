@@ -29,8 +29,7 @@ namespace AgentExperience.Core.Sanitization;
 /// silently work around by claiming broader coverage than name-based classification can offer.
 /// </para>
 /// <para>
-/// Traversal order fixes two gaps Story 1.7's proof-only demo deliberately left open (see that
-/// story's own doc comments): a secret-classified field's value is classified <em>before</em> any
+/// Traversal order closes two gaps an earlier proof-only demo deliberately left open: a secret-classified field's value is classified <em>before</em> any
 /// container recursion is attempted, so a secret field holding a dictionary or list is redacted as
 /// one unit and never walked into; and lists are recursed just like dictionaries, so a list of
 /// nested dictionaries has its own secret-classified sub-fields redacted too.

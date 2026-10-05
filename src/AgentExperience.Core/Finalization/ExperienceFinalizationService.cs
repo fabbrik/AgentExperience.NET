@@ -113,7 +113,7 @@ public sealed class ExperienceFinalizationService
     /// counted once and never again, so any gap between them would surface as a jump on the first piece
     /// of evidence a record received. It stays a <see langword="const"/> rather than becoming a computed
     /// <see langword="static" /> <see langword="readonly"/>, because changing that is a binary break for
-    /// an out-of-tree consumer and this story promised none.
+    /// an out-of-tree consumer and none was promised.
     /// </remarks>
     public const double InitialValidatedReuseConfidence = 2d / 3d;
 

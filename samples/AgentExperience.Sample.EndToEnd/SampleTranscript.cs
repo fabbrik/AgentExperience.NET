@@ -18,7 +18,7 @@ public enum SampleStorageMode
 /// One of the sample's seven stages: what it did, and the library's own outcome values for it.
 /// </summary>
 /// <param name="Number">The stage's position, 1 through 7.</param>
-/// <param name="Name">The stage name from the story's frozen narrative: <c>capture</c>, <c>verify</c>, <c>finalize</c>, <c>retrieve</c>, <c>inject</c>, or <c>feedback</c>.</param>
+/// <param name="Name">The stage name: <c>capture</c>, <c>verify</c>, <c>finalize</c>, <c>retrieve</c>, <c>inject</c>, or <c>feedback</c>.</param>
 /// <param name="Summary">One line saying what this stage showed.</param>
 /// <param name="Outcomes">The library's own outcome values, as <c>EnumType.Value</c>, in the order they were produced.</param>
 /// <param name="Details">Supporting lines: identifiers, counts, and budgets. Content-free.</param>
@@ -108,7 +108,7 @@ public sealed record SampleTranscript(
         Line(text, "What it does not demonstrate: anything at all about model quality. The model here is a");
         Line(text, "scripted fixture with no credentials and no network, the clock and the identifiers are");
         Line(text, "fixtures too, and the reuse feedback claims no benefit because none was measured.");
-        Line(text, "Measuring what reuse does to a real model is story 4.4's job, not this sample's.");
+        Line(text, "Measuring what reuse does to a real model is the reuse baseline's job, not this sample's.");
 
         return text.ToString();
     }

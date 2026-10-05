@@ -81,7 +81,7 @@ public sealed record ExperienceInjectionSessionLimits(int MaxRecords, int MaxByt
     public static TimeSpan DefaultInFlightStageWindow => TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// How long a delivery an invocation staged and has not yet settled is treated as still in flight (story 17.4),
+    /// How long a delivery an invocation staged and has not yet settled is treated as still in flight,
     /// measured from when it was staged on the provider's <see cref="ExperienceInjectionOptions.TimeProvider"/>.
     /// Within it, every other invocation on the session counts the stage as delivered: its records are not delivered
     /// again. Past it, the stage is taken as abandoned -- a stream its consumer stopped reading before MAF reported,

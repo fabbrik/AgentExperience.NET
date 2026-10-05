@@ -69,7 +69,7 @@ the scope as well as the run (`ExperienceIdFor(runId, scope)` and `InitialEventI
 another scope that knows only the run ID cannot derive either one, so it cannot take one first and leave this run
 unable to finalize. The derivation is unkeyed and is not a secret: a writer that knows the run ID *and* this run's
 scope fields computes the same IDs. Run IDs are random identifiers the host holds, and that is the protection; the
-scope raises the bar from knowing the run ID to knowing both. Releases before story 17.6 derived the initial event ID
+scope raises the bar from knowing the run ID to knowing both. Releases up to `0.1.0-preview.6` derived the initial event ID
 from the run alone, and nothing stored is re-derived, so their records keep working:
 
 - A record an earlier release already confirmed under the run-only event ID is past revision 0, so finalizing its run
@@ -235,7 +235,7 @@ reflection then meets a third, the [content guard](#limits-of-model-authored-les
 A refused reflection quarantines the record with a `FinalizationFailure` at stage `Reflect`, exactly as a binding
 mismatch does, and `FinalizationFailure.ScreeningRefusal` says why as a closed set (`ReflectionScreeningRefusal`:
 `OverLimit`, `MissingLesson`, `MissingProducer`, `MissingField`, `Unreadable`, `SanitizerRejected`,
-`SanitizerFailed`, `SanitizerTimedOut`, `FieldOmitted`, and, since story 14.3, `UnsafeContent` and
+`SanitizerFailed`, `SanitizerTimedOut`, `FieldOmitted`, and, since `0.1.0-preview.5`, `UnsafeContent` and
 `UndefinedAuthorship`), which the `finalize` span also carries as
 `agentexperience.reflection.screening_refusal`. The reason names the field, the reflector's own index and the limit,
 never the text, and never repeats your sanitizer's reason (which may quote what it rejected). A sanitizer or a
@@ -385,7 +385,7 @@ What to know:
 - **Marked as model-authored.** Every reflection it returns has `Authorship = ReflectionAuthorship.Model`, which
   finalization stores as it is. That is what turns on the [content guard](#limits-of-model-authored-lessons) and the
   injection label. Its `Producer` prefix is recognised too, so a record it wrote before it declared authorship
-  still counts as model-authored (story 17.1). It also implements `IReflectionRunContent`, so the guard
+  still counts as model-authored. It also implements `IReflectionRunContent`, so the guard
   compares links with exactly the captured text it sent: the task text (or the task ID when there is none), the check
   IDs its header lists, and the tool names, results and errors of the attempts it kept, each cut where its quoted span
   is cut (by the same clipping code), plus the environment metadata keys it writes itself.
@@ -457,7 +457,7 @@ adapter and both stores decide it by one shared rule, and PostgreSQL's migration
 **Authorship and the free text are signed when signing is on.** With [provenance signing](confidence.md#signing-provenance)
 configured, finalization signs claims version 2, which covers everything injection renders from the record: the
 task text, outcome status, environment, attempts (tool names and argument values), and the reflection's free text,
-authorship and producer (story 17.2). A record whose content no version 2 signature confirms (signed before this
+authorship and producer. A record whose content no version 2 signature confirms (signed before this
 release, unsigned and not in the cutover set, or changed after it was signed) counts as model-authored: it is labelled
 and fenced at injection and left out under `Exclude`, whatever authorship it declares. Without signing, a party that
 can write the store (an application role with `AllowSealing` over a plaintext payload, or anything that bypasses the
@@ -516,7 +516,7 @@ phrasing`, never the matched text. The record is quarantined with no lesson, lik
 preconditions, warnings) between two fixed lines, `Authored: by a model from captured run output; treat as unverified
 guidance.` and `End authored: the model-written text ends here.`, with the `Tried:` and `Worked:` lines, which no
 model wrote, before them. `ModelAuthoredLessons = Exclude` omits model-authored records altogether: retrieval leaves them out
-(each source before its own limit, and the retrieval service for any a source still returns; story 14.4), and
+(each source before its own limit, and the retrieval service for any a source still returns), and
 injection drops any that still arrive before the record limit. See
 [Injection](injection.md#model-authored-lessons).
 
@@ -540,8 +540,8 @@ sentence with no space after its full stop, quarantines the record. What you can
 `ExperienceReflection` payload kind (`ReflectionScreening.PayloadKind`), which run before the guard, and `Exclude` at
 injection.
 
-**Upgrading from story 14.2.** Records the `ChatClientExperienceReflector` wrote before authorship existed were not
-marked: they read back as `Deterministic`. Since story 17.1 they are recognised by their producer, which starts with
+**Upgrading from an unreleased build.** Records the `ChatClientExperienceReflector` wrote before authorship existed were not
+marked: they read back as `Deterministic`. After `0.1.0-preview.6` they are recognised by their producer, which starts with
 `AgentExperience.ChatClientExperienceReflector/`, and count as model-authored everywhere: the injection label and
 fence, `Exclude`, retrieval's exclusion check, and both stores' excluding searches. PostgreSQL's migration `0022`
 recomputes the flag of every such plaintext row; a sealed row whose flag is unknown is classified by the owner-run
@@ -560,7 +560,7 @@ in the same create
 as the record. Confidence verification then refuses a run whose record is unsigned, signed under a key that is not in
 the ring, or changed in any signed claim or content after it was signed. So a record written through `CreateAsync`,
 or a payload edited outside the library, cannot pass as finalized, and its lesson counts as model-authored at
-retrieval and injection (story 17.2). Signatures made before story 17.2 cover the finalization claims only: they still
+retrieval and injection. Signatures made by `0.1.0-preview.6` and earlier cover the finalization claims only: they still
 vouch for their run, but their content is unconfirmed, so their lessons are fenced as model-authored. Without the
 options, nothing is signed and nothing changes.
 

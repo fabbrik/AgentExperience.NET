@@ -11,7 +11,7 @@ namespace AgentExperience.Sample.EndToEnd.Doubles;
 /// It exists so the sample runs on a fresh clone with no Docker and no database. It stays under
 /// <c>samples/</c>, <see langword="internal"/> and unchanged, so the sample's golden transcript does not move.
 /// This used to say that no in-memory store would ever be published, because one would invite
-/// someone to run it in production. Story 11.2 reversed that, by the maintainer's decision: an
+/// someone to run it in production. <c>0.1.0-preview.3</c> reversed that, by the maintainer's decision: an
 /// in-memory store you can use outside the sample is the <c>AgentExperience.Storage.InMemory</c>
 /// package, which is complete, passes the same store conformance suite as the PostgreSQL adapter, and
 /// registers only through <c>AddAgentExperienceInMemoryStorageForDevelopment</c>, which refuses a
@@ -44,7 +44,7 @@ namespace AgentExperience.Sample.EndToEnd.Doubles;
 /// vectors package. The sample cannot call it, so <see cref="SampleRecordValidation"/> restates the
 /// subset the sample's records can violate and says so here rather than implying full fidelity. Nor
 /// does it keep the adapter's evidence ledger: it writes whatever counters Core submits, so the
-/// independence key and an assessment's single use (story 6.6) are the adapter's to enforce, not this
+/// independence key and an assessment's single use are the adapter's to enforce, not this
 /// double's -- the sample submits no attributed feedback, so it never relies on either.
 /// </para>
 /// </remarks>

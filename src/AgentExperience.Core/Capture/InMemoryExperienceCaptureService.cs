@@ -27,13 +27,13 @@ namespace AgentExperience.Core.Capture;
 /// Arguments/Result/Error":</b> an attempt's own <see cref="AppendAttemptRequest.Result"/>/
 /// <see cref="AppendAttemptRequest.Error"/> are sanitized too, under the same <see cref="SanitizationKinds.ToolResult"/>
 /// <c>Kind</c> as a tool call's -- both are the same kind of thing (sanitized, tool-produced
-/// textual output), just at a different granularity, and the epic's own policy-before-persistence
+/// textual output), just at a different granularity, and the library's policy-before-persistence
 /// requirement ("sanitize task context, tool arguments, tool results, and evidence before anything
 /// is persisted") does not carve out attempt-level text as an exception. <see cref="ExperienceRun"/>
 /// fields set only by <see cref="StartRun"/> (<c>TaskDescription</c>, <c>Scope</c>,
-/// <c>Environment</c>, <c>Provenance</c>) are deliberately left out of scope here: Story 1.2's own
-/// frozen Boundaries name only "every tool call's Arguments/Result/Error", and <c>StartRun</c>'s
-/// task description is exactly the "task context" the epic assigns no owner for in this story.
+/// <c>Environment</c>, <c>Provenance</c>) are deliberately left out of scope here: the sanitization contract
+/// names only every tool call's arguments, result and error, and <c>StartRun</c>'s task
+/// description is task context the caller owns.
 /// </para>
 /// <para>
 /// <b>A finalized run accepts no further attempts:</b> <see cref="AppendAttemptAsync"/> checks

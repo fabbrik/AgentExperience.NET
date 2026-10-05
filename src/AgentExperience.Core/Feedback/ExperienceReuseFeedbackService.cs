@@ -690,7 +690,7 @@ public sealed class ExperienceReuseFeedbackService
 
     /// <summary>
     /// Everything that can be decided from the submission's own shape, settled before the ledger is
-    /// touched. The attribution rules are here rather than in the store because they are the story's
+    /// touched. The attribution rules are here rather than in the store because they are the feature's
     /// whole point: what counts as evidence is a Core decision, and an adapter must never be able to
     /// promote a claim into one.
     /// </summary>

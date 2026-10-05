@@ -69,4 +69,4 @@ that the exposure is recorded.
 What it does not demonstrate: anything at all about model quality. The model here is a
 scripted fixture with no credentials and no network, the clock and the identifiers are
 fixtures too, and the reuse feedback claims no benefit because none was measured.
-Measuring what reuse does to a real model is story 4.4's job, not this sample's.
+Measuring what reuse does to a real model is the reuse baseline's job, not this sample's.

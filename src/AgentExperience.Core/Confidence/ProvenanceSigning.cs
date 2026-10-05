@@ -15,7 +15,7 @@ namespace AgentExperience.Core.Confidence;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What is signed.</b> Claims version 2 (story 17.2, <see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>):
+/// <b>What is signed.</b> Claims version 2 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>):
 /// a record's finalization claims -- its <see cref="ExperienceRecord.ExperienceId"/>, its
 /// <see cref="ExperienceRecord.Scope"/> (all six fields), its <see cref="ExperienceRecord.SourceRunId"/>,
 /// <see cref="ExperienceRecord.ClosedRoundId"/> and <see cref="ExperienceRecord.Origin"/>, and the exposures in its
@@ -25,7 +25,7 @@ namespace AgentExperience.Core.Confidence;
 /// values, through their JSON form, numbers canonicalized by exact decimal value), and its reflection's free text,
 /// evidence count, <see cref="Reflection.Authorship"/> and <see cref="Reflection.Producer"/>. Lifecycle status,
 /// counters and timestamps change through the lifecycle and stay unsigned. A version 1 signature (<see cref="ExperienceProvenanceSignature.HmacSha256"/>),
-/// made before story 17.2, still verifies for the finalization claims it covers.
+/// made by <c>0.1.0-preview.6</c> and earlier, still verifies for the finalization claims it covers.
 /// </para>
 /// <para>
 /// <b>What it does to authorship.</b> With these options registered, a record's content is <em>confirmed</em> only
@@ -140,7 +140,7 @@ public sealed class ExperienceProvenanceSigningOptions
     /// <para>
     /// A listed record's content (everything a version 2 signature would cover: its task ID and summary, outcome status
     /// and evidence count, environment, attempts with their tool names and argument values, and its reflection's free
-    /// text, evidence count, authorship and producer) counts as confirmed too (story 17.2), so its authorship is what it
+    /// text, evidence count, authorship and producer) counts as confirmed too, so its authorship is what it
     /// declares. Being unsigned, that content stays editable by a party that can write the store.
     /// </para>
     /// </remarks>
@@ -156,7 +156,7 @@ public sealed class ExperienceProvenanceSigningOptions
 
     /// <summary>
     /// The claims version finalization signs new records with: 2 (the default) signs the finalization claims and a
-    /// digest of the record's content; 1 signs the finalization claims only, as releases before story 17.2 did.
+    /// digest of the record's content; 1 signs the finalization claims only, as <c>0.1.0-preview.6</c> and earlier did.
     /// Verification accepts both whatever this says.
     /// </summary>
     /// <remarks>
@@ -183,7 +183,7 @@ public sealed class ExperienceProvenanceSigningOptions
 
     /// <summary>
     /// A transition setting: when <see langword="true"/>, a version 1 signature that verifies also confirms its
-    /// record's content, so records signed before story 17.2 are judged by the authorship they declare instead of
+    /// record's content, so records signed by <c>0.1.0-preview.6</c> and earlier are judged by the authorship they declare instead of
     /// being fenced as model-authored. <see langword="false"/> (the default) confirms content only through a
     /// version 2 signature or <see cref="TrustUnsignedRecordIds"/>.
     /// </summary>
@@ -197,7 +197,7 @@ public sealed class ExperienceProvenanceSigningOptions
     /// <summary>
     /// The per-record alternative to <see cref="ConfirmV1Content"/>: the IDs of records whose content a host has
     /// reviewed and accepts as it stands, which count as confirmed whatever their signature version -- a version 1
-    /// signature (made before story 17.2, or during a <see cref="SignClaimsVersion"/> = 1 rollout) or none. Empty (the
+    /// signature (made by <c>0.1.0-preview.6</c> or earlier, or during a <see cref="SignClaimsVersion"/> = 1 rollout) or none. Empty (the
     /// default) lists none. Copied when set.
     /// </summary>
     /// <remarks>

@@ -53,7 +53,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     private readonly HashSet<(Guid ExperienceId, string Key)> _countedIndependenceKeys = [];
 
     /// <summary>
-    /// The keys host-trusted evidence recorded without counting (story 17.3) rode in on an event under: a later
+    /// The keys host-trusted evidence recorded without counting rode in on an event under: a later
     /// recorded-only submission for one of them is a duplicate, exactly as a counted key's would be.
     /// </summary>
     private readonly HashSet<(Guid ExperienceId, string Key)> _recordedOnlyIndependenceKeys = [];

@@ -205,7 +205,7 @@ public static class PostgresExperienceRecordSchema
     /// so the audit trail names the assessment behind a counted human update.
     /// </summary>
     /// <remarks>
-    /// The rest of verified independence (story 6.6) needs no schema: the run and the round are checked by
+    /// The rest of verified independence needs no schema: the run and the round are checked by
     /// Core against finalized records, whose closed round travels in the payload. It adds no table, so the
     /// application role's manifest is unchanged. See the script's header for the <c>CONCURRENTLY</c>
     /// runbook for its one index.
@@ -254,7 +254,7 @@ public static class PostgresExperienceRecordSchema
     /// <summary>
     /// The script that records which verification mode admitted each piece of confidence evidence:
     /// <c>confidence_evidence.admission</c> and <c>lifecycle_events.confidence_admission</c>, <c>Verified</c> or
-    /// <c>HostTrusted</c>, <c>NULL</c> on rows written before it (story 7.3).
+    /// <c>HostTrusted</c>, <c>NULL</c> on rows written before it.
     /// </summary>
     /// <remarks>
     /// Exposure-bound evidence itself needs no schema: a run's exposures and a record's origin travel in the
@@ -265,7 +265,7 @@ public static class PostgresExperienceRecordSchema
     public const string EvidenceAdmissionScriptName = "0018_evidence_admission.sql";
 
     /// <summary>
-    /// The script that creates the opt-in row-level security policies (story 15.1): an <c>rls_*</c> policy per
+    /// The script that creates the opt-in row-level security policies: an <c>rls_*</c> policy per
     /// command on every table the application role reads or writes by scope, and the helper functions they read.
     /// </summary>
     /// <remarks>
@@ -285,7 +285,7 @@ public static class PostgresExperienceRecordSchema
     public const string RowLevelSecurityScriptName = "0019_row_level_security.sql";
 
     /// <summary>
-    /// The script that records each record's reflection authorship beside its payload (story 14.4):
+    /// The script that records each record's reflection authorship beside its payload:
     /// <c>experience_records.reflection_model_authored</c>, backfilled from every live plaintext payload, so an
     /// excluding search (<see cref="AgentExperience.Abstractions.ExperienceCandidateQuery.ExcludeModelAuthored"/>) can
     /// leave model-authored records out in SQL, before its limit.
@@ -295,7 +295,7 @@ public static class PostgresExperienceRecordSchema
     /// A trigger derives the flag from every unsealed payload whenever the row is written, the store writes it from the
     /// reflection when it seals a record, and a tombstone carries the fixed <c>false</c>. A sealed row stored without
     /// the flag -- sealed before this script, or by an instance on the previous build during a rolling deploy -- keeps
-    /// <c>NULL</c>. Since story 17.1 an excluding search leaves <c>NULL</c> out as well (unknown counts as model-authored),
+    /// <c>NULL</c>. After <c>0.1.0-preview.6</c> an excluding search leaves <c>NULL</c> out as well (unknown counts as model-authored),
     /// and <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext, AgentExperience.Abstractions.Scope, int, ScopeMatch, Guid?, CancellationToken)"/> writes the flag from each such row's
     /// opened payload; docs/guide/postgres-schema.md describes both.
     /// </para>
@@ -309,7 +309,7 @@ public static class PostgresExperienceRecordSchema
     public const string ReflectionAuthorshipScriptName = "0021_reflection_authorship.sql";
 
     /// <summary>
-    /// The script that makes the library's own model-backed reflector count as model-authored in SQL (story 17.1):
+    /// The script that makes the library's own model-backed reflector count as model-authored in SQL:
     /// it replaces <c>0021</c>'s <c>payload_reflection_model_authored</c> so a plaintext payload whose reflection's
     /// producer starts with <c>AgentExperience.ChatClientExperienceReflector/</c> is <c>true</c>, whatever authorship it
     /// declares, and recomputes the flag on every live plaintext row that differs.
@@ -322,8 +322,8 @@ public static class PostgresExperienceRecordSchema
     public const string LibraryReflectorAuthorshipScriptName = "0022_library_reflector_authorship.sql";
 
     /// <summary>
-    /// The script that lets host-trusted evidence be recorded on a lifecycle event without moving the record (story
-    /// 17.3, <c>ExperienceIndependenceOptions.HostTrustedEvidence = RecordedOnly</c>): it replaces <c>0007</c>'s
+    /// The script that lets host-trusted evidence be recorded on a lifecycle event without moving the record
+    /// (<c>ExperienceIndependenceOptions.HostTrustedEvidence = RecordedOnly</c>): it replaces <c>0007</c>'s
     /// <c>confidence_evidence_event_only_when_counted</c> with a CHECK that also admits an uncounted row carrying an
     /// event when its admission is <c>HostTrusted</c> and its score did not move, and adds the matching CHECK on
     /// <c>lifecycle_events</c> (no counter moved means host-trusted, same score, same status), and a partial index on
@@ -338,7 +338,7 @@ public static class PostgresExperienceRecordSchema
     public const string RecordedOnlyEvidenceScriptName = "0023_recorded_only_evidence.sql";
 
     /// <summary>
-    /// The script that keeps the text index usable under row-level security (story 17.7): it creates
+    /// The script that keeps the text index usable under row-level security: it creates
     /// <c>agent_experience.search_experience_text</c>, a <c>SECURITY DEFINER</c> function that runs the text channel's
     /// search as the owner -- so the planner can use the GIN indexes, which the read policy's security barrier keeps
     /// <c>@@</c> from using -- while applying the read policy's own admission, through <c>0019</c>'s helpers, and every

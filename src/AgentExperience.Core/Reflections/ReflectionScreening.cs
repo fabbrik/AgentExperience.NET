@@ -294,7 +294,7 @@ public static class ReflectionScreening
     /// cannot bury the text around them.
     /// </para>
     /// <para>
-    /// The same rule the Historical Reference writer applies to a tool name (story 8.2), and a cross-check
+    /// The same rule the Historical Reference writer applies to a tool name, and a cross-check
     /// test holds the two to it code point by code point. It is reimplemented here rather than shared
     /// because Core grants its internals to no other assembly.
     /// </para>

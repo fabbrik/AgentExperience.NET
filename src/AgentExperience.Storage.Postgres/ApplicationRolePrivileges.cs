@@ -250,7 +250,7 @@ internal static class ApplicationRolePrivileges
     }
 
     /// <summary>
-    /// Before row-level security is enabled: the text search function (story 17.7) is exactly <see cref="TextSearchFunction"/>
+    /// Before row-level security is enabled: the text search function is exactly <see cref="TextSearchFunction"/>
     /// -- <c>SECURITY DEFINER</c>, PL/pgSQL, <c>STABLE</c>, not leakproof, the pinned <c>search_path</c> alone, owned by the
     /// tables' owner, the canonical arguments and result, and the canonical body byte for byte. Unlike the helpers it is
     /// never re-created here: it runs with the owner's rights, so one altered by hand is refused, not quietly replaced.

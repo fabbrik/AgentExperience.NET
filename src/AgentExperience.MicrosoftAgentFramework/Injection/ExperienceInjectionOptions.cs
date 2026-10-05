@@ -313,7 +313,7 @@ public sealed record ExperienceInjectionDecisionContext(
     /// model-authored, fenced and labelled. That is when its reflection's authorship is anything but
     /// <see cref="ReflectionAuthorship.Deterministic"/>, its producer names the library's own model-backed reflector,
     /// or, with provenance signing configured, its content is unconfirmed
-    /// (<see cref="ExperienceRetrievalService.IsModelAuthored"/>, story 17.2). Decide on this, never on
+    /// (<see cref="ExperienceRetrievalService.IsModelAuthored"/>). Decide on this, never on
     /// <c>Current.Reflection.Authorship</c>: the declared value is what a party that can write the store controls.
     /// The provider always sets it; a context built without it defaults to <see langword="true"/> (fail closed).
     /// </summary>
@@ -533,19 +533,19 @@ public sealed class ExperienceInjectionOptions
     /// This, and the label, are the controls to rely on for model-authored lessons; finalization's content guard is a
     /// best-effort filter. Authorship is what the reflector declared, except that a record the library's own
     /// <see cref="Reflections.ChatClientExperienceReflector"/> wrote counts as model-authored by its producer, including
-    /// one written before that reflector declared authorship (story 17.1). A third-party model-backed reflector that does
+    /// one written before that reflector declared authorship. A third-party model-backed reflector that does
     /// not declare it reads as deterministic.
     /// </para>
     /// <para>
     /// With <see cref="ModelAuthoredLessonPolicy.Exclude"/>, the provider sets
-    /// <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/> on the resolved request (story 14.4), so every
+    /// <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/> on the resolved request, so every
     /// candidate source leaves model-authored records out before its own limit and the candidate window
     /// (<see cref="RetrieveExperienceRequest.Limit"/>, or the policy's candidate limit) is filled with deterministic
     /// records. The retrieval service then excludes any model-authored record a source still returned, as
     /// <see cref="RetrievalExclusionReason.ModelAuthored"/> in the result's <see cref="ExperienceInjectionResult.Excluded"/>:
     /// a source that does not honour the request, or a stored authorship flag that disagrees with the opened record,
     /// which takes a place in that source's candidate window but never a result slot. (A PostgreSQL row sealed without
-    /// its authorship flag is left out by the source itself, story 17.1.) The provider still checks every candidate before the
+    /// its authorship flag is left out by the source itself.) The provider still checks every candidate before the
     /// <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, and the re-read record again before the capability gate
     /// and <see cref="DecideInjection"/>, and omits a model-authored one as <see cref="InjectionOmissionReason.ModelAuthored"/>:
     /// an omitted record is never re-read (unless it changed between the two checks), shown to the host's decision,
