@@ -114,6 +114,10 @@ layer in every mode.
 | Storage.Postgres.Vectors.Tests | `HybridRetrievalIntegrationTests.A_vector_delivery_records_the_grants_disclosure_level_and_retrieval_carries_none` | The vector channel records the permitting grant's level on its access row **(DB)** |
 | Core.Tests | `ExperienceIndexingServiceTests.A_scope_outside_the_authorization_is_denied_before_anything_is_read_or_embedded` | Indexing |
 | Core.Tests | `ExperienceFinalizationServiceTests.Another_scope_cannot_block_a_run_by_taking_the_id_it_will_finalize_under` | The cross-scope ID squat (deferred item 1, fixed by story 4.5) cannot block a run from finalizing |
+| Core.Tests | `ExperienceFinalizationServiceTests.Another_scope_cannot_block_a_run_by_committing_an_event_under_its_initial_event_id` | The cross-scope initial event ID squat (fixed by story 17.6) cannot block a run's initial commit, under the run-only ID earlier releases derived or the ID another scope derives |
+| Storage.Postgres.Tests | `PostgresFinalizationTests.Another_scope_committing_events_under_this_runs_initial_event_ids_cannot_block_it` | The same against the globally unique `lifecycle_events` key **(DB)** |
+| Core.Tests | `ExperienceFinalizationServiceTests.A_derived_initial_event_id_is_distinct_per_scope_and_from_the_run_only_id_of_earlier_releases` | The initial event ID differs for every scope field and from the run-only ID 0.1.0-preview.6 derived (pinned by a golden vector) |
+| Storage.Postgres.Tests | `PostgresFinalizationTests.The_same_run_id_finalized_in_two_scopes_commits_under_two_different_initial_event_ids` | Two scopes finalizing the same run ID each commit under their own initial event ID **(DB)** |
 
 ## 2. Sanitization — unsafe content never reaches storage, a model, or telemetry
 

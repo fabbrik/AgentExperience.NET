@@ -317,8 +317,8 @@ public sealed class ExperienceFinalizationService
 
     /// <summary>
     /// The <see cref="ExperienceRecord.ExperienceId"/> finalizing <paramref name="runId"/> in
-    /// <paramref name="scope"/> issues, derived from both so a retry re-derives the same ID and no other
-    /// scope can derive it at all.
+    /// <paramref name="scope"/> issues, derived from both so a retry re-derives the same ID and a writer
+    /// in another scope cannot derive it from the run ID alone.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -328,8 +328,9 @@ public sealed class ExperienceFinalizationService
     /// taken ID reveals nothing about the scope that holds it. Derived from the run alone, the ID a run
     /// will finalize under was predictable by anyone who knew the run ID, in any scope: writing a record
     /// under it first left the real run unable to finalize, permanently and undiagnosably. Mixing the
-    /// scope in means a squatter must already be inside the scope it is blocking, where it could simply
-    /// write the record anyway.
+    /// scope in raises the bar from knowing the run ID to knowing the run ID <em>and</em> the victim's
+    /// scope fields. The derivation is unkeyed and is not a secret: a writer that knows both computes the
+    /// same ID. Run IDs are random identifiers the host holds, and that is the protection.
     /// </para>
     /// <para>
     /// Every scope field takes part, each length-prefixed, so no two different scopes can hash to the
@@ -367,9 +368,47 @@ public sealed class ExperienceFinalizationService
         return Derive(runId, ExperienceIdTag, scope);
     }
 
-    /// <summary>The <see cref="LifecycleEvent.EventId"/> of the record's initial event, derived from the run so a retry cannot commit a second initial confirmation.</summary>
+    /// <summary>
+    /// The <see cref="LifecycleEvent.EventId"/> of the initial event of the record <paramref name="runId"/>
+    /// finalizes into in <paramref name="scope"/>, derived from both so a retry cannot commit a second
+    /// initial confirmation and a writer in another scope cannot derive it from the run ID alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the scope is mixed in.</b> A <see cref="LifecycleEvent.EventId"/> is unique across every
+    /// scope, exactly as a record ID is. Derived from the run alone, the initial event ID was predictable by
+    /// anyone who knew the run ID, in any scope: committing an event of their own under it first made this
+    /// run's initial commit a <see cref="ExperienceStoreOutcome.Conflict"/> on every attempt, the same
+    /// squat <see cref="ExperienceIdFor(Guid, Scope)"/> closed for the record ID. It is derived the same way
+    /// (the same namespace, and every scope field length-prefixed), with the same limit: it raises the bar
+    /// from knowing the run ID to knowing the run ID <em>and</em> the victim's scope fields. The derivation
+    /// is unkeyed and is not a secret, so a writer that knows both still computes this ID and can take it
+    /// first. Run IDs are random identifiers the host holds, and that is the protection.
+    /// </para>
+    /// <para>
+    /// <b>This replaces a one-argument <c>InitialEventIdFor(Guid)</c>, with no compatible overload</b>, as
+    /// the record-ID change did and for the same reason: an <c>[Obsolete]</c> overload would have to go on
+    /// deriving the squattable ID. A caller passes the same <see cref="Scope"/> it finalizes the run under.
+    /// </para>
+    /// <para>
+    /// <b>Records finalized by an earlier release keep working.</b> Nothing persisted is re-derived: an
+    /// event's ID is stored. A record an earlier release already confirmed, under the run-only ID, is past
+    /// revision 0, so finalizing its run again is the ordinary <see cref="FinalizationOutcome.AlreadyFinalized"/>
+    /// replay, decided from the record's revision and never from the event's ID. The same holds when an
+    /// earlier release's commit lands between this call's read and its commit: the commit under the new ID
+    /// is refused as stale, the record is re-read past revision 0, and the outcome is again
+    /// <see cref="FinalizationOutcome.AlreadyFinalized"/>, with no second initial event. A record an earlier
+    /// release created but never confirmed (still at revision 0) is confirmed under the new ID.
+    /// </para>
+    /// </remarks>
     /// <param name="runId">The captured run.</param>
-    public static Guid InitialEventIdFor(Guid runId) => Derive(runId, InitialEventIdTag);
+    /// <param name="scope">The record's <see cref="ExperienceRecord.Scope"/>, which is the scope the run named in the <see cref="FinalizeAsync"/> request was captured under.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="scope"/> is <see langword="null"/>.</exception>
+    public static Guid InitialEventIdFor(Guid runId, Scope scope)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        return Derive(runId, InitialEventIdTag, scope);
+    }
 
     /// <summary>The <see cref="Reflection.ReflectionId"/> finalizing <paramref name="runId"/> asks the reflector to stamp, derived from the run so a retry reflects under the same identity.</summary>
     /// <param name="runId">The captured run.</param>
@@ -961,7 +1000,7 @@ public sealed class ExperienceFinalizationService
         // prior-status guard, not a null-prior self-transition.
         var targetStatus = TargetStatusFor(record);
         var transition = new CommitLifecycleTransitionRequest(
-            EventId: InitialEventIdFor(run.RunId),
+            EventId: InitialEventIdFor(run.RunId, record.Scope),
             ExperienceId: record.ExperienceId,
             Scope: record.Scope,
             PriorStatus: CreatedStatus,
@@ -1293,19 +1332,17 @@ public sealed class ExperienceFinalizationService
     }
 
     /// <summary>
-    /// Derives a stable identifier from a run ID, a per-purpose tag, and -- for a record ID -- the scope
-    /// the record will live in: SHA-256 over a fixed namespace, the run ID, the tag, and each scope field
-    /// length-prefixed, stamped with the RFC 9562 custom version (8) and variant. Same inputs in, same
-    /// identifier out, which is what makes replaying finalization safe.
+    /// Derives a stable identifier from a run ID, a per-purpose tag, and -- for the record ID and the
+    /// initial event ID -- the scope the record will live in: SHA-256 over a fixed namespace, the run ID,
+    /// the tag, and each scope field length-prefixed, stamped with the RFC 9562 custom version (8) and
+    /// variant. Same inputs in, same identifier out, which is what makes replaying finalization safe.
     /// <para>
-    /// The scope takes part for the <em>record</em> ID only. The reflection ID is carried inside the
-    /// record's own payload and is unique by construction once the record ID is. The initial event ID is
-    /// the one remaining run-derived identifier that is globally unique across scopes: a writer in
-    /// another scope that commits an event under it first makes this run's initial commit a
-    /// <see cref="ExperienceStoreOutcome.Conflict"/>, which is the same shape of dead end mixing the
-    /// scope into the record ID just closed. It is left as it is deliberately rather than by oversight --
-    /// the story that changed this derivation changed exactly what it set out to -- and is recorded as
-    /// open work rather than described here as solved.
+    /// The scope takes part for the two run-derived identifiers that are globally unique across scopes:
+    /// the record ID and the initial event ID. Derived from the run alone, either could be taken first by a
+    /// writer in another scope that knew only the run ID, leaving this run's create or initial commit
+    /// refused on every attempt; with the scope mixed in, that writer must know the scope fields too. The
+    /// reflection ID is carried inside the record's own payload, never stored under a unique key of its
+    /// own, and is unique by construction once the record ID is, so it stays run-only.
     /// </para>
     /// </summary>
     private static Guid Derive(Guid runId, byte tag, Scope? scope = null)

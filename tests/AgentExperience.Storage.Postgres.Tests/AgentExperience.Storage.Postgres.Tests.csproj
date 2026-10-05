@@ -24,6 +24,7 @@
          test project references another. -->
     <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
     <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
+    <Compile Include="..\Shared\LegacyInitialEventIds.cs" Link="Shared\LegacyInitialEventIds.cs" />
   </ItemGroup>
 
   <ItemGroup>
