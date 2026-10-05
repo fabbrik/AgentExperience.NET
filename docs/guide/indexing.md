@@ -117,7 +117,7 @@ third party — its vector could never be returned anyway.
 | `experience_id` | Primary key, `REFERENCES experience_records … ON DELETE CASCADE` |
 | `tenant_id` … `user_id` | The record's scope, **copied from the record row** inside the write, never from caller input |
 | `model_id`, `dimension` | What decides comparability. A query vector is only ever compared with vectors from the same model at the same width |
-| `content_hash` | SHA-256 over the model ID and the normalized summary, so an unchanged record can be skipped without calling a provider |
+| `content_hash` | SHA-256 over the model ID and the normalized summary, so an unchanged record can be skipped without calling a provider. With crypto-shredding, stored keyed under the record's key instead (`keyed:` and an HMAC, below) |
 | `source_revision` | The record revision the summary was read at — what makes every write conditional |
 | `embedding` | An **unconstrained** `vector`. The dimension belongs to whichever model a host configured, and `CHECK (vector_dims(embedding) = dimension)` keeps the two from ever disagreeing |
 | `created_at`, `updated_at` | UTC, truncated to whole microseconds like the rest of the schema |
@@ -130,14 +130,40 @@ search predicate. A record whose score drops below the floor stops being returne
 re-embedded; the number the search compares is the one the join reads from `experience_records`, so it is never
 stale.
 
-**Crypto-shredding does not seal this table.** With an `ExperienceEncryption` (see
+**Crypto-shredding does not seal this table, but it keys the content hash.** With an `ExperienceEncryption` (see
 [Crypto-shredding](crypto-shredding.md)), pass the same instance to `PostgresExperienceEmbeddingIndex`: the re-index
 scan then opens a sealed record's task ID, summary and lesson in process with the record's key, so the summary, its
 hash and its vector are exactly what the plaintext record would have produced, and a record whose key was destroyed
-is never scanned, embedded or returned again. But pgvector has to read a vector in the clear to search it, so
-`embedding` and `content_hash` are stored as before. They are derived from the erased text, erasure deletes them from
-the live table, and every copy made before the erasure — backups, replicas, WAL, the dead tuple — still holds them.
-That is part of the KL-2 boundary in [Known limits and documented boundaries](../known-limits.md#documented-boundaries).
+is never scanned, embedded or returned again. pgvector has to read a vector in the clear to search it, so `embedding`
+is stored as before: it is derived from the erased text, erasure deletes it from the live table, and every copy made
+before the erasure — backups, replicas, WAL, the dead tuple — still holds it. That is part of the KL-2 boundary in
+[Known limits and documented boundaries](../known-limits.md#documented-boundaries).
+
+The content hash is not needed to search, so since story 17.5 an encrypted deployment does not write it in the clear.
+The write stores `keyed:` followed by base64 of HMAC-SHA256 of the plain hash, under a subkey derived from the
+record's data key with HKDF-SHA256 and the fixed label `aexp:embedding-content-hash:v1`. It looks the key up first and
+creates one only for a live plaintext record in exactly the write's scope (written before the upgrade), so an unknown
+ID, another scope or a tombstone leaves no key behind; a destroyed key is `Missing`. The scan looks up, in one
+key-store call, the key of every sealed row and every row with a stored embedding, recomputes the plain hash from the
+opened summary and the stored model ID, keys it, and compares the two in constant time: equal, it reports the plain
+hash and the record is skipped exactly as before; anything else is reported as a value no computed hash equals, and
+the record is re-embedded. A row whose key was destroyed, sealed or not, yields no target, so its text never reaches
+a provider again. Once erasure destroys the key, the value a copy holds no longer confirms a guessed summary; it is
+deterministic per record, though, so two copies still show whether the record's summary changed between them.
+Plaintext mode stores and reports the plain SHA-256 exactly as before.
+
+**After upgrading, expect one re-embed per keyed record.** A hash stored in the clear for a record that has a key —
+written by an earlier release, by a process in plaintext mode, or before the deployment switched modes, on a record
+since sealed — is reported as unconfirmed, so the first re-index pass in encrypted mode re-embeds it once (one
+provider call per record, batched as usual) and stores its hash keyed; the next pass skips it. A plaintext record
+written before the upgrade that has no key keeps its clear hash, reported as stored, until it is sealed or its text
+changes. Run a full `ReindexAsync` after sealing to pay that cost when you choose;
+[Crypto-shredding](crypto-shredding.md#upgrading-a-plaintext-deployment) has the query that confirms no clear hash
+remains.
+
+**Do not run a plaintext-mode and an encrypted-mode indexer against the same database.** The encrypted one reports
+the other's clear hashes as unconfirmed and the plaintext one cannot confirm keyed ones, so each re-embeds the other's
+rows on every pass, and every plaintext-mode write puts a clear hash back.
 
 ## Writes are conditional, in SQL
 

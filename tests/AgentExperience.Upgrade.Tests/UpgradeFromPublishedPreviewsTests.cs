@@ -353,6 +353,7 @@ internal sealed class Verification
             ("the shared reads", SharedReadsAsync),
             ("the grant access log", AccessLogAsync),
             ("the embeddings", EmbeddingsAsync),
+            ("the re-index of the embeddings", ReindexEmbeddingsAsync),
             ("the storage mode", StorageModeAsync),
             ("the reflection authorship", AuthorshipAsync),
 
@@ -608,7 +609,19 @@ internal sealed class Verification
             _report.Check(target?.Stored is not null, $"embedding {name} ({id})", $"the scan found no stored embedding (outcome {scan.Outcome})");
             if (target is not null)
             {
-                _report.Compare($"embedding {name} ({id})", item["target"], target);
+                // Story 17.5: in encrypted mode a content hash the preview stored in the clear is reported as unconfirmed,
+                // so the next re-index re-embeds the record once and stores its hash keyed. Everything else is unchanged.
+                var expected = item["target"]?.DeepClone();
+                if (_encryption is not null && expected?["stored"] is JsonObject expectedStored)
+                {
+                    _report.Check(
+                        target.Stored?.ContentHash == KeyedContentHash.Unconfirmed,
+                        $"embedding {name} ({id})",
+                        $"a content hash stored in the clear must read as unconfirmed in encrypted mode, but read {target.Stored?.ContentHash}");
+                    expectedStored["contentHash"] = KeyedContentHash.Unconfirmed;
+                }
+
+                _report.Compare($"embedding {name} ({id})", expected, target);
             }
 
             // No API returns a stored vector, so it is read from the table, as the application role, and must be
@@ -633,6 +646,47 @@ internal sealed class Verification
                 item["searchHits"],
                 search.Candidates.Select(c => new SearchHit(c.Record.ExperienceId, c.Relevance, c.SharedByGrant, c.PermittingGrantId)).ToList());
         }
+    }
+
+    /// <summary>
+    /// Story 17.5: a re-index after the upgrade. In encrypted mode each embedding whose content hash the preview stored in
+    /// the clear is re-embedded once and its hash stored keyed, and the next pass skips it; in plaintext mode it is
+    /// skipped at once.
+    /// </summary>
+    private async Task ReindexEmbeddingsAsync()
+    {
+        var indexing = new Core.Indexing.ExperienceIndexingService(_index, new FixedEmbeddingGenerator());
+        foreach (var item in Items("embeddings"))
+        {
+            var (name, scope, id) = Identify(item);
+            var first = await indexing.IndexAsync(Auth, scope, id, CancellationToken.None);
+            var expectedFirst = _encryption is null ? Core.Indexing.ExperienceIndexingOutcome.Skipped : Core.Indexing.ExperienceIndexingOutcome.Indexed;
+            _report.Check(first.Outcome == expectedFirst, $"re-index of embedding {name} ({id})", $"the first pass was {first.Outcome}, expected {expectedFirst}");
+
+            var stored = await RowLevelSecurityMode.DeclaredScalarAsync<string>(
+                _context.Application,
+                scope.TenantId,
+                "SELECT content_hash FROM agent_experience.experience_embeddings WHERE experience_id = @id",
+                new NpgsqlParameter<Guid>("id", id));
+            _report.Check(
+                stored.StartsWith(KeyedContentHash.Prefix, StringComparison.Ordinal) == (_encryption is not null),
+                $"re-index of embedding {name} ({id})",
+                $"the stored content hash is {(stored.StartsWith(KeyedContentHash.Prefix, StringComparison.Ordinal) ? "keyed" : "in the clear")}");
+
+            var second = await indexing.IndexAsync(Auth, scope, id, CancellationToken.None);
+            _report.Check(second.Outcome == Core.Indexing.ExperienceIndexingOutcome.Skipped, $"re-index of embedding {name} ({id})", $"the second pass was {second.Outcome}");
+        }
+    }
+
+    /// <summary>A deterministic generator under the model the seeders used.</summary>
+    private sealed class FixedEmbeddingGenerator : IExperienceEmbeddingGenerator
+    {
+        public string ModelId => EmbeddingModel;
+
+        public int Dimension => 4;
+
+        public Task<ReadOnlyMemory<float>> GenerateAsync(string text, CancellationToken cancellationToken) =>
+            Task.FromResult<ReadOnlyMemory<float>>(new float[] { 0.8f, 0.6f, 0f, 0f });
     }
 
     /// <summary>In crypto-shredding mode every live row is sealed, and in plaintext mode none is.</summary>

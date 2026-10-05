@@ -286,6 +286,41 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   cannot unread a block. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
   [Reused sessions](docs/guide/injection.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
 
+### The embedding's content hash stops confirming a guessed summary after erasure (story 17.5)
+
+- **The problem it fixes.** Each `experience_embeddings` row stored `content_hash` as a plain SHA-256 over the model
+  ID and the normalized summary. With crypto-shredding on, erasing a record destroyed its key, but the hash survived
+  in every backup, replica and WAL segment and still let anyone confirm a guessed summary against it (KL-2).
+- **Keyed in encrypted mode.** With an `ExperienceEncryption`, `PostgresExperienceEmbeddingIndex` now writes
+  `keyed:` followed by base64 of HMAC-SHA256 of the plain hash, under a subkey derived from the record's data key
+  with HKDF-SHA256 and the fixed label `aexp:embedding-content-hash:v1`. It looks the key up first; it creates one only
+  for a live plaintext record in exactly the write's scope (written before the upgrade), so an unknown ID, another
+  scope or a tombstone leaves no key behind. A destroyed key is `Missing`, as before. Once the key is destroyed, the
+  stored value no longer confirms a guessed summary; it is deterministic per record, so two copies still show whether
+  the summary changed between them.
+- **Action for a host:** the key store identity the vectors index runs under needs permission to create keys, for
+  plaintext records written before the upgrade.
+- **The scan translates it back.** `ScanAsync` reads its rows (at most the scan's limit) into memory, releases its
+  connection, and then looks up in one `GetKeysAsync` call the key of every sealed row and of every row with a
+  stored embedding; it no longer makes one key-store call per sealed row with its reader open. A row whose key is
+  destroyed, sealed or not, yields no target, so its text never reaches a provider again. The scan recomputes the
+  plain hash from the opened summary and the stored model ID, keys it and compares in constant time: a match is
+  reported as the plain hash, so Core skips the record exactly as before; anything else is reported as a value no
+  computed hash equals, so Core re-embeds it. A plaintext row whose key the store never held reports a clear hash as
+  stored and does not fail the scan. Core, `ExperienceEmbeddingDescriptor.ComputeContentHash`, the schema and
+  plaintext mode are unchanged; no migration.
+- **Behaviour change: one re-embed per keyed record after upgrading.** In encrypted mode a content hash stored in the
+  clear for a record that has a key (by an earlier release, by a process in plaintext mode, or before the deployment
+  switched modes, on a record since sealed) is reported as unconfirmed, so the next re-index pass re-embeds it once,
+  one provider call each (batched as usual), and stores its hash keyed; the following pass skips it. Run a full
+  `ReindexAsync` after sealing, then `VACUUM agent_experience.experience_embeddings`;
+  [Crypto-shredding](docs/guide/crypto-shredding.md#upgrading-a-plaintext-deployment) has the query that confirms no
+  clear hash remains. Do not run a plaintext-mode and an encrypted-mode indexer against the same database: each
+  re-embeds the other's rows, and plaintext-mode writes put clear hashes back.
+- **KL-2** drops the content hash from what confirms a guessed summary in every copy after erasure; the embedding
+  vector and the full-text vector remain. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  [Crypto-shredding](docs/guide/crypto-shredding.md#search-and-why-the-residual-is-what-it-is).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

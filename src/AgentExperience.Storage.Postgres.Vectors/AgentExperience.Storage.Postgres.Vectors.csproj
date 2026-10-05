@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors.Tests" />
+    <InternalsVisibleTo Include="AgentExperience.Upgrade.Tests" />
   </ItemGroup>
 
   <ItemGroup>

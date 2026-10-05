@@ -5,8 +5,9 @@ replica and WAL segment still holds its text. **Crypto-shredding** fixes that by
 each record gets its own random key, held in a key store *outside* the database, and every free-text column erasure
 removes is encrypted (AES-256-GCM) under it. Deleting the record destroys the key, so every copy of the ciphertext,
 anywhere, becomes unreadable. It is opt-in. Two things stay readable in old copies because PostgreSQL has to search
-them in the clear: the full-text search data and the embedding. And the guarantee is only as good as your key
-store's custody.
+them in the clear: the full-text search data and the embedding vector (the embedding's content hash is keyed under the
+record's key, so once the key is gone it no longer confirms a guessed summary). And the guarantee is only as good as
+your key store's custody.
 
 Packages: `AgentExperience.Abstractions` (`IExperienceKeyStore`), `AgentExperience.Core` (`EnvelopeExperienceKeyStore`),
 `AgentExperience.Storage.Postgres` (`ExperienceEncryption`), and `AgentExperience.Storage.Postgres.Vectors`. This is
@@ -42,7 +43,8 @@ below.
 | Live rows in this database | Erased: the tombstone and the list in [Deletion and retention](deletion-and-retention.md#what-is-retained-after-a-delete-exhaustively) | Erased, the same way |
 | The dead heap tuple, before `VACUUM` | **Readable**: it still holds the text | Holds only ciphertext nobody can open |
 | Backups, replicas, WAL, `pg_dump`, replication streams | **Readable** in every copy made before the erasure | Hold only ciphertext nobody can open |
-| The derived search data: `search_vector_sealed` (the task ID, summary and lesson as lexemes with positions — words as stems, an identifier-like task ID whole) and the vectors package's embedding and its content hash | Deleted from live rows; readable in every copy | **The same as plaintext mode**: deleted from live rows, readable in every copy. PostgreSQL has to read these in the clear to search, so they are never sealed |
+| The derived search data: `search_vector_sealed` (the task ID, summary and lesson as lexemes with positions — words as stems, an identifier-like task ID whole) and the vectors package's embedding vector | Deleted from live rows; readable in every copy | **The same as plaintext mode**: deleted from live rows, readable in every copy. PostgreSQL has to read these in the clear to search, so they are never sealed |
+| The embedding's content hash (`experience_embeddings.content_hash`) | Deleted from live rows; readable in every copy, and confirms a guessed summary | Deleted from live rows; every copy holds only an HMAC under a subkey of the destroyed key, which no longer confirms a guessed summary (story 17.5); it is deterministic per record, so two copies still show whether the summary changed between them. A hash written in the clear before the upgrade stays in the copies made before its record was re-embedded |
 | Identifiers and metadata (IDs — record, run, round, event, evidence, grant, feedback and assessment IDs — scope, statuses, scores and counters, timestamps, principal, reviewer, evaluator and administrator identities, measure kinds and values, trial labels, disclosure levels) | Deleted from live rows (the tombstone keeps its IDs and scope); readable in every copy | The same as plaintext mode: never sealed |
 | Rows written before the deployment switched to encrypted mode | — | Record payloads: sealed by the upgrade job, but every copy made *before* it ran is plaintext. Append-only ledger rows (lifecycle reasons, evidence detail, feedback rationale, grant events) and grant reasons written before the switch: **stay plaintext**, in live rows until erased and in every copy |
 | Exported telemetry, the server's own logs, external artifacts a record named | Out of reach | Out of reach. The text is sent to the server as statement parameters (the full-text vector is computed there), so a server that logs parameters (`log_statement`, `log_min_duration_statement`, `auto_explain`) writes them to its own log |
@@ -112,8 +114,10 @@ Rules for the production key store, each of which the property depends on:
   transaction and return the connection to the pool, and only then make **one** `GetKeysAsync` call for every sealed
   row they returned (plaintext rows and tombstones never reach the key store), so a slow KMS holds no reader,
   transaction or pooled connection. The rows buffered in memory are bounded by the candidate limit for the two
-  searches and by the ID list given for `GetManyAsync`. Other reads — a single `GetAsync`, a query, history, grants,
-  the re-index scan — still make one call per sealed record, with their reader open.
+  searches and by the ID list given for `GetManyAsync`. The vectors package's re-index scan does the same (story
+  17.5): its rows, at most the scan's limit, are read and released first, then one `GetKeysAsync` call fetches the key
+  of every sealed row and of every row with a stored embedding. Other reads — a single `GetAsync`, a query,
+  history, grants — still make one call per sealed record, with their reader open.
 - **The envelope store unwraps a batch concurrently.** `EnvelopeExperienceKeyStore` answers `GetKeysAsync` by looking
   up and unwrapping at most 16 keys at a time by default (`maxConcurrentKeyLookups` in its constructor). That bound is
   **per call**: one injection can have the text search, the vector search and the re-read in flight, and a host runs
@@ -175,8 +179,22 @@ So encrypted mode keeps them, and the residual above is exactly them:
   plaintext row and `search_vector_sealed` for a sealed one, through two GIN indexes, and ranks on
   `coalesce(search_vector_sealed, search_vector)`. Erasure clears `search_vector_sealed` (a `0016` trigger on the
   tombstone transition).
-- **Vectors.** The embedding is computed from the summary the re-index scan opens in process with the record's key;
-  it and its SHA-256 content hash are stored as before. See [Indexing](indexing.md#what-is-embedded-and-what-is-stored).
+- **Vectors.** The embedding is computed from the summary the re-index scan opens in process with the record's key,
+  and stored as before. Its content hash is not needed to search, so it is **not** written in the clear (story 17.5):
+  the write stores `keyed:` and base64 of HMAC-SHA256 of the SHA-256 content hash, under a subkey derived from the
+  record's data key with HKDF-SHA256 and the fixed label `aexp:embedding-content-hash:v1`. The re-index scan recomputes
+  the plain hash from the opened summary, keys it and compares in constant time, so an unchanged record is still
+  skipped without a provider call. Once erasure destroys the key, the value a copy holds no longer confirms a guessed
+  summary; two copies still show whether a record's summary changed between them. A row whose key is destroyed,
+  sealed or not, is never scanned or embedded again. A content hash stored in the clear for a record that has a key
+  (by an earlier release, or before the deployment switched modes) does not match, so that record is re-embedded
+  **once** and the hash keyed. See [Indexing](indexing.md#what-is-embedded-and-what-is-stored).
+- **The vectors index needs key creation.** For a live plaintext record written before the upgrade, which has no key,
+  the index creates one (`CreateKeyAsync`) the first time it writes that record's embedding, as a lifecycle append on
+  it would; for every other record it only looks keys up. Give the key store identity the vectors index runs under
+  permission to create keys, not only to read them.
+- **One mode per database.** Do not run a plaintext-mode and an encrypted-mode indexer against the same database: each
+  re-embeds the other's rows on every pass, and every plaintext-mode write puts a clear content hash back.
 
 ## Upgrading a plaintext deployment
 
@@ -213,10 +231,24 @@ So encrypted mode keeps them, and the residual above is exactly them:
    delete that did not commit) is erased instead, finishing that delete, which needs `AllowErasure`. A record that
    cannot be sealed stops the batch with an exception; the records sealed before it stay sealed, and a re-run starts
    from it. It is the `record.seal` telemetry operation.
-6. **Take `AllowSealing` away again** on the next deploy: re-apply the same options without it.
-7. **Deal with the copies the job cannot reach**: every backup, replica, WAL archive and dump taken before step 5
-   still holds the plaintext, and so does each sealed record's dead tuple until `VACUUM`. Run `VACUUM` on
-   `agent_experience.experience_records`, and age out the pre-upgrade backups on your normal schedule. Ledger rows
+6. **Re-index** with the vectors package, if you use it: `ReindexAsync` re-embeds, once, every sealed record whose
+   content hash was stored in the clear, and stores it keyed (see [Search](#search-and-why-the-residual-is-what-it-is)).
+   Then check that no clear hash is left on a live row (expected: `0`; the owner role reads past row-level security):
+
+   ```sql
+   SELECT count(*)
+   FROM agent_experience.experience_embeddings e
+   JOIN agent_experience.experience_records r ON r.experience_id = e.experience_id
+   WHERE r.deleted_at IS NULL AND e.content_hash NOT LIKE 'keyed:%';
+   ```
+
+   A row it counts belongs to a record the job has not sealed yet, or one skipped by the pass (its status or
+   confidence makes it ineligible); seal it and re-index again.
+7. **Take `AllowSealing` away again** on the next deploy: re-apply the same options without it.
+8. **Deal with the copies the job cannot reach**: every backup, replica, WAL archive and dump taken before step 5
+   still holds the plaintext, and so does each sealed record's dead tuple until `VACUUM`; so does each re-embedded
+   row's dead tuple hold its clear content hash. Run `VACUUM` on `agent_experience.experience_records` and
+   `agent_experience.experience_embeddings`, and age out the pre-upgrade backups on your normal schedule. Ledger rows
    and grant reasons written before step 3 stay plaintext until their record is erased; the library does not open
    an `UPDATE` path on its append-only audit trail to re-encrypt them.
 

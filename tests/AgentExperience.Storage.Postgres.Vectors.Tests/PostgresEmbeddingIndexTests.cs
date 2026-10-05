@@ -125,9 +125,11 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         Assert.Equal(4, stored.Dimension);
         Assert.Equal(0, stored.SourceRevision);
         Assert.Equal(
-            ExperienceEmbeddingDescriptor.ComputeContentHash(
-                "topic-embed-v1",
-                ExperienceRetrievalSummary.For("refund-ticket", "Resolve a refund ticket", "Release the lock before retrying")),
+            await world.ExpectedStoredContentHashAsync(
+                id,
+                ExperienceEmbeddingDescriptor.ComputeContentHash(
+                    "topic-embed-v1",
+                    ExperienceRetrievalSummary.For("refund-ticket", "Resolve a refund ticket", "Release the lock before retrying"))),
             stored.ContentHash);
 
         // The scope columns are copied from the record row inside the conditional write, never from
@@ -202,7 +204,7 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         Assert.Equal(ExperienceIndexOutcome.Stale, loser.Outcome);
 
         var stored = await world.ReadEmbeddingAsync(id);
-        Assert.Equal("newer-hash", stored.ContentHash);
+        Assert.Equal(await world.ExpectedStoredContentHashAsync(id, "newer-hash"), stored.ContentHash);
         Assert.Equal(5, stored.SourceRevision);
     }
 
