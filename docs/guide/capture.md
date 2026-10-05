@@ -20,7 +20,8 @@ using Microsoft.Agents.AI;
 
 IExperienceCaptureService capture = new InMemoryExperienceCaptureService(
     new DefaultSanitizer(sanitizationOptions),
-    captureLimits);
+    captureLimits,
+    TimeProvider.System);   // the clock completed-run retention is measured on
 
 AIAgent agent = chatClientAgent
     .AsBuilder()
@@ -99,7 +100,8 @@ unreachable through this adapter.
 
 Opt out by naming the run the invocation continues and saying when the run is finished. **One retry cycle is one
 run**: mint its identifier when the cycle starts, and a fresh one for the next cycle. A completed run is final, so an
-identifier reused after its run closed is refused and every later invocation naming it runs uncaptured.
+identifier reused after its run closed is refused and every later invocation naming it runs uncaptured, for as long
+as the capture service still holds that run (see [How long runs are kept](#how-long-runs-are-kept)).
 
 ```csharp
 Guid? currentRun = null;   // the run of the retry cycle in progress
@@ -147,15 +149,16 @@ running several at once keeps each cycle's identifier with that task's own state
 - A continuation ID that names a run with a **different task ID or scope**, or a run that has **already been
   completed**, is a conflict: that invocation runs uncaptured and the refusal is reported through `OnCaptureFailure`
   at the `StartRun` stage, exactly as a colliding identifier always has been. A run finalizes once and is never
-  reopened.
+  reopened. Once the capture service has dropped a completed run (see [How long runs are kept](#how-long-runs-are-kept)),
+  though, its ID names no run, so the next point applies: a new run is opened under it.
 - A continuation ID that names **no run at all** simply opens a new run under it. An all-zeros ID (`Guid.Empty`) is
   refused at the `ResolveRun` stage: it is a default-valued field, not a run, and accepting it would pile every
   invocation onto one run.
 - **A continuation joins a run; it never rewrites it.** The run keeps the task description, environment, provenance
   (its `CorrelationId` included) and start time it was *opened* with, and the continuing invocation's own are dropped.
   So an ID reused by accident, with the same task and scope, is merged rather than refused, and the two invocations
-  are reflected on as one run. Matching task and scope is the only check, and the capture service keeps its runs for
-  the process lifetime, so the collision window is that long. Minting the ID per cycle is what prevents it.
+  are reflected on as one run. Matching task and scope is the only check, and the capture service keeps an open run
+  until it completes, so the collision window is that long. Minting the ID per cycle is what prevents it.
 - **Two invocations cannot capture on one run at once** — including while the invocation that *opened* the run is
   still in flight, since its ID is readable from the session the moment the run exists. The second is refused and
   runs uncaptured, rather than interleaving a second half-recorded attempt.
@@ -210,6 +213,57 @@ running several at once keeps each cycle's identifier with that task's own state
   too: a hung invocation's, and one whose finalization failed.
 - The run this registration is holding open belongs to that registration. Build the agent once and reuse it; two
   independently built agents do not share continuations.
+
+## How long runs are kept
+
+The default capture service (`InMemoryExperienceCaptureService`) holds runs in process memory, so it bounds how many
+*completed* runs it keeps:
+
+- **By age.** A completed run is dropped once it is older than `CaptureLimits.CompletedRunRetention` (default 24
+  hours), measured from when the service recorded the completion, on the `TimeProvider`'s monotonic timestamp, so a
+  wall-clock change does not move it. Through `AddAgentExperienceCore` the service uses the registered
+  `TimeProvider` (or `TimeProvider.System` when none is registered); constructed directly, it uses the one you pass
+  (`TimeProvider.System` with the two-argument constructor).
+- **By count.** Once more than `CaptureLimits.MaxRetainedCompletedRuns` (default 10,000) completed runs are held, the
+  earliest completed is dropped first.
+- **Only when the service is called.** No timer runs: the bounds are applied at the start of every call to the
+  service, before it answers. An idle host keeps what it held until its next capture call.
+- **Finalization does not drop a run.** While a run is held, retrying its finalization still returns
+  `AlreadyFinalized`, and reusing its ID is still a conflict.
+
+```csharp
+services.AddAgentExperienceCore(sanitizationOptions, new CaptureLimits(MaxAttemptsPerRun: 10, MaxToolCallsPerAttempt: 50, MaxResultLength: 4_000, MaxErrorLength: 4_000)
+{
+    MaxRetainedCompletedRuns = 500,     // about 4 GB in the worst case with these limits (see below)
+    CompletedRunRetention = TimeSpan.FromHours(6),
+});
+```
+
+A dropped run answers every call exactly as a run that never existed: `TryGetRun` returns `false`, the other calls
+report `RunNotFound`, and `StartRun` with its ID opens a new run. So anything that needs the captured run must happen
+while it is held:
+
+- **Finalize, and retry finalization, within the window.** After the run is dropped a retry returns `RunNotFound`
+  (the stored record is unaffected), and a continuation that reuses the ID opens a new run.
+- **Use a fresh run ID for every run.** A continuation that reuses the ID of a run already dropped opens a new run,
+  but finalizing that run returns `AlreadyFinalized` for the earlier record (the record ID derives from the run ID
+  and scope), so the new run's content is not stored.
+- **Evidence naming a run that has not been finalized must arrive within the window.** Confidence verification
+  answers from the finalized record when there is one, and falls back to the captured run only for a run with no
+  record yet; once such a run is dropped, evidence naming it can no longer be verified against it.
+
+**Sizing `MaxRetainedCompletedRuns`.** The stored text of one run is bounded by `CaptureLimits`: at most
+`MaxAttemptsPerRun × (1 + MaxToolCallsPerAttempt) × (MaxResultLength + MaxErrorLength)` characters of results and
+errors (two bytes each in .NET), plus tool-call arguments and the attempt requests kept to recognise a retried
+append, neither of which `CaptureLimits` caps in length. With the example above that is up to
+`10 × 51 × 8,000` = 4.08 million characters, about 8 MB, per run, so the example's 500 runs come to about 4 GB at
+worst; at the default of 10,000 the same limits allow about 80 GB at worst. Most runs are far smaller. Set the count
+to what your memory budget allows at the worst case, or at a realistic per-run size you have measured, and high
+enough to cover the completed runs that finish within the time your host takes to finalize them.
+
+**Open runs are never dropped by these bounds.** The MAF adapter bounds them itself: it completes a run left open for
+`MaxOpenRunDuration` (see above). A caller that uses `IExperienceCaptureService` directly has no such bound and must
+complete every run it opens, or it keeps it in memory for the process lifetime.
 
 ## Supported agent types
 

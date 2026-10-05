@@ -147,6 +147,31 @@ public class CoreServiceRegistrationTests
     }
 
     [Fact]
+    public async Task A_host_registered_TimeProvider_is_the_clock_capture_retention_measures_with()
+    {
+        // With TimeProvider.System, a completed run would outlive this test by a day; with the host's clock
+        // it ages out as soon as that clock passes the retention.
+        var clock = new SteppingClock(new DateTimeOffset(2026, 10, 5, 12, 0, 0, TimeSpan.Zero));
+        var services = new ServiceCollection();
+        services.AddSingleton<TimeProvider>(clock);
+        services.AddSingleton<IExperienceRecordStore>(new StubStore());
+        services.AddAgentExperienceCore(CallerOptions, CallerLimits with { CompletedRunRetention = TimeSpan.FromMinutes(1) });
+
+        using var provider = services.BuildServiceProvider();
+        var capture = provider.GetRequiredService<IExperienceCaptureService>();
+        var runId = Guid.NewGuid();
+        Assert.Equal(StartRunOutcome.Started, capture.StartRun(
+            runId, "task-1", null, new Scope("tenant-1", "app-1", "project-1"),
+            new EnvironmentFingerprint("host-1", "net10.0", "test-os", null, new Dictionary<string, string>()),
+            new Provenance("unit-tests", "1.0.0", clock.GetUtcNow(), null), clock.GetUtcNow()).Outcome);
+        Assert.Equal(CompleteRunOutcome.Recorded, (await capture.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, clock.GetUtcNow())).Outcome);
+
+        Assert.True(capture.TryGetRun(runId, out _));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.False(capture.TryGetRun(runId, out _));
+    }
+
+    [Fact]
     public void Retrieval_without_a_candidate_source_fails_to_resolve_rather_than_retrieving_nothing()
     {
         var services = new ServiceCollection();
@@ -216,6 +241,25 @@ public class CoreServiceRegistrationTests
                 ExperienceStoreOutcome.Found,
                 [.. records.Select(record => new ExperienceCandidate(record, 1d))],
                 []));
+    }
+
+    /// <summary>A host clock that moves only when told to.</summary>
+    private sealed class SteppingClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+        private long _timestamp;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void Advance(TimeSpan by)
+        {
+            _now += by;
+            _timestamp += by.Ticks;
+        }
     }
 
     /// <summary>A clock frozen at a known instant, standing in for a host's own <see cref="TimeProvider"/>.</summary>

@@ -29,9 +29,11 @@
     public sealed class CaptureLimits : System.IEquatable<AgentExperience.Core.Capture.CaptureLimits>
     {
         public CaptureLimits(int MaxAttemptsPerRun, int MaxToolCallsPerAttempt, int MaxResultLength, int MaxErrorLength) { }
+        public System.TimeSpan CompletedRunRetention { get; init; }
         public int MaxAttemptsPerRun { get; init; }
         public int MaxErrorLength { get; init; }
         public int MaxResultLength { get; init; }
+        public int MaxRetainedCompletedRuns { get; init; }
         public int MaxToolCallsPerAttempt { get; init; }
     }
     public enum CompleteRunOutcome
@@ -58,6 +60,7 @@
     public sealed class InMemoryExperienceCaptureService : AgentExperience.Core.Capture.IExperienceCaptureService
     {
         public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits) { }
+        public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default) { }
         public AgentExperience.Core.Capture.RecordExposureResult RecordExposure(System.Guid runId, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.RunExposure> exposures) { }

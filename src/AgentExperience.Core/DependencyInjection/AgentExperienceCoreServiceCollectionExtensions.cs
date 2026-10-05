@@ -105,7 +105,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         services.TryAddSingleton<ISanitizer>(_ => new DefaultSanitizer(sanitizationOptions));
         services.TryAddSingleton<IExperienceCaptureService>(provider => new InMemoryExperienceCaptureService(
             provider.GetRequiredService<ISanitizer>(),
-            captureLimits));
+            captureLimits,
+            provider.GetService<TimeProvider>() ?? TimeProvider.System));
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
         // Both hooks are resolved through an explicit factory rather than by constructor selection,
         // because the optional ExperienceIndexingService has to come back as null when nothing

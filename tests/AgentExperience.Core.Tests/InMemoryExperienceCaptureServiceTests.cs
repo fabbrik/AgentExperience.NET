@@ -825,6 +825,316 @@ public class InMemoryExperienceCaptureServiceTests
         Assert.Single(MustGetRun(service, runId).Attempts);
     }
 
+    // -- Story 16.1: bounding the completed runs held --
+
+    private static InMemoryExperienceCaptureService CreateRetainingService(ManualClock clock, int maxRetained = 10_000, TimeSpan? retention = null) =>
+        new(
+            new DefaultSanitizer(PermissiveOptions),
+            GenerousLimits() with
+            {
+                MaxRetainedCompletedRuns = maxRetained,
+                CompletedRunRetention = retention ?? TimeSpan.FromHours(24),
+            },
+            clock);
+
+    private static async Task<Guid> StartAndCompleteAsync(InMemoryExperienceCaptureService service, ManualClock clock, Guid? runId = null)
+    {
+        var id = runId ?? Guid.NewGuid();
+        StartTestRun(service, id);
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(id, Guid.NewGuid(), RunExecutionStatus.Completed, clock.GetUtcNow())).Outcome);
+        return id;
+    }
+
+    [Fact]
+    public void CaptureLimits_retention_bounds_default_to_ten_thousand_runs_and_twenty_four_hours()
+    {
+        var limits = GenerousLimits();
+
+        Assert.Equal(10_000, limits.MaxRetainedCompletedRuns);
+        Assert.Equal(TimeSpan.FromHours(24), limits.CompletedRunRetention);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void CaptureLimits_rejects_a_non_positive_retained_run_count(int value)
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => GenerousLimits() with { MaxRetainedCompletedRuns = value });
+        Assert.Equal(nameof(CaptureLimits.MaxRetainedCompletedRuns), ex.ParamName);
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public void CaptureLimits_rejects_a_non_positive_retention(long ticks)
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => GenerousLimits() with { CompletedRunRetention = TimeSpan.FromTicks(ticks) });
+        Assert.Equal(nameof(CaptureLimits.CompletedRunRetention), ex.ParamName);
+    }
+
+    [Fact]
+    public void The_service_rejects_a_null_time_provider()
+    {
+        Assert.Throws<ArgumentNullException>(() => new InMemoryExperienceCaptureService(new DefaultSanitizer(PermissiveOptions), GenerousLimits(), null!));
+    }
+
+    [Fact]
+    public async Task A_completed_run_older_than_the_retention_is_dropped_on_the_next_call_while_open_runs_stay()
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, retention: TimeSpan.FromMinutes(10));
+        var completed = await StartAndCompleteAsync(service, clock);
+        var open = Guid.NewGuid();
+        StartTestRun(service, open);
+
+        clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromTicks(1));
+        Assert.True(service.TryGetRun(completed, out _));
+
+        clock.Advance(TimeSpan.FromTicks(1));
+        Assert.False(service.TryGetRun(completed, out _));
+        await AssertAnswersAsUnknownAsync(service, completed, Guid.NewGuid());
+
+        // The open run is older still, and is never dropped by the retention bound.
+        clock.Advance(TimeSpan.FromDays(30));
+        Assert.True(service.TryGetRun(open, out _));
+        Assert.Equal(AppendAttemptOutcome.Recorded, (await service.AppendAttemptAsync(open, MakeAttemptRequest())).Outcome);
+    }
+
+    public static TheoryData<string> ServiceMethods => new() { "TryGetRun", "AppendAttempt", "CompleteRun", "RecordExposure", "StartRun" };
+
+    [Theory]
+    [MemberData(nameof(ServiceMethods))]
+    public async Task An_expired_run_is_dropped_whichever_method_is_the_first_call_after_it_expires(string method)
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, retention: TimeSpan.FromMinutes(10));
+        var runId = await StartAndCompleteAsync(service, clock);
+        Assert.True(service.TryGetRun(runId, out _));
+
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        // While held, every one of these calls would answer Conflict / Found; dropped, each answers as for an unknown run.
+        switch (method)
+        {
+            case "TryGetRun":
+                Assert.False(service.TryGetRun(runId, out _));
+                break;
+            case "AppendAttempt":
+                Assert.Equal(AppendAttemptOutcome.RunNotFound, (await service.AppendAttemptAsync(runId, MakeAttemptRequest())).Outcome);
+                break;
+            case "CompleteRun":
+                Assert.Equal(CompleteRunOutcome.RunNotFound, (await service.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, DateTimeOffset.UtcNow)).Outcome);
+                break;
+            case "RecordExposure":
+                Assert.Equal(RecordExposureOutcome.RunNotFound, service.RecordExposure(runId, [new RunExposure(Guid.NewGuid(), 1)]).Outcome);
+                break;
+            case "StartRun":
+                var restarted = StartTestRunResult(service, runId);
+                Assert.Equal(StartRunOutcome.Started, restarted.Outcome);
+                Assert.Empty(restarted.Run!.Attempts);
+                Assert.Null(restarted.Run.ExecutionStatus);
+                return;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(method), method, null);
+        }
+
+        Assert.False(service.TryGetRun(runId, out _));
+    }
+
+    [Fact]
+    public async Task A_held_completed_run_is_still_refused_on_reuse_and_on_a_second_completion()
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, retention: TimeSpan.FromMinutes(10));
+        var runId = await StartAndCompleteAsync(service, clock);
+
+        clock.Advance(TimeSpan.FromMinutes(9));
+
+        Assert.Equal(StartRunOutcome.Conflict, StartTestRunResult(service, runId).Outcome);
+        Assert.Equal(CompleteRunOutcome.Conflict, (await service.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, DateTimeOffset.UtcNow)).Outcome);
+        Assert.Equal(AppendAttemptOutcome.Conflict, (await service.AppendAttemptAsync(runId, MakeAttemptRequest())).Outcome);
+    }
+
+    [Fact]
+    public async Task Age_is_measured_from_when_the_service_saw_the_completion_not_from_the_run_s_own_timestamps()
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, retention: TimeSpan.FromMinutes(10));
+        var runId = Guid.NewGuid();
+        StartTestRunResult(service, runId, startedAt: DateTimeOffset.UnixEpoch);
+
+        clock.Advance(TimeSpan.FromHours(5));   // open for hours: not counted
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Failed, DateTimeOffset.UnixEpoch)).Outcome);
+
+        clock.Advance(TimeSpan.FromMinutes(9));
+        Assert.True(service.TryGetRun(runId, out _));
+    }
+
+    [Fact]
+    public async Task A_wall_clock_step_back_or_forward_does_not_change_when_a_completed_run_is_dropped()
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, retention: TimeSpan.FromMinutes(10));
+
+        var first = await StartAndCompleteAsync(service, clock);
+        clock.StepWallClock(TimeSpan.FromHours(-3));            // wall clock jumps back: age is not reset
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var second = await StartAndCompleteAsync(service, clock);
+        clock.StepWallClock(TimeSpan.FromDays(2));              // wall clock jumps forward: nothing expires early
+
+        clock.Advance(TimeSpan.FromMinutes(8) - TimeSpan.FromTicks(1));
+        Assert.True(service.TryGetRun(first, out _));
+        Assert.True(service.TryGetRun(second, out _));
+
+        clock.Advance(TimeSpan.FromTicks(1));                   // 10 minutes after `first` completed
+        Assert.False(service.TryGetRun(first, out _));
+        Assert.True(service.TryGetRun(second, out _));
+
+        clock.StepWallClock(TimeSpan.FromHours(-5));
+        clock.Advance(TimeSpan.FromMinutes(2));                 // 10 minutes after `second` completed
+        Assert.False(service.TryGetRun(second, out _));
+    }
+
+    [Fact]
+    public async Task Past_the_count_bound_the_earliest_completed_run_is_dropped_first_and_open_runs_are_untouched()
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, maxRetained: 3);
+        var open = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToArray();
+        foreach (var id in open)
+        {
+            StartTestRun(service, id);
+        }
+
+        var completed = new List<Guid>();
+        for (var i = 0; i < 5; i++)
+        {
+            completed.Add(await StartAndCompleteAsync(service, clock));
+        }
+
+        Assert.False(service.TryGetRun(completed[0], out _));
+        Assert.False(service.TryGetRun(completed[1], out _));
+        Assert.All(completed.Skip(2), id => Assert.True(service.TryGetRun(id, out _)));
+        Assert.All(open, id => Assert.True(service.TryGetRun(id, out _)));
+        await AssertAnswersAsUnknownAsync(service, completed[0], Guid.NewGuid());
+
+        // Completing an open run counts it from then on, and pushes the next-earliest completed out.
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(open[0], Guid.NewGuid(), RunExecutionStatus.Completed, DateTimeOffset.UtcNow)).Outcome);
+        Assert.False(service.TryGetRun(completed[2], out _));
+        Assert.True(service.TryGetRun(open[0], out _));
+    }
+
+    [Fact]
+    public async Task An_id_reused_after_its_run_was_dropped_is_retained_as_its_own_new_run()
+    {
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, retention: TimeSpan.FromMinutes(10));
+        var reused = await StartAndCompleteAsync(service, clock);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.False(service.TryGetRun(reused, out _));
+
+        // Same ID, a new run, completed later: only its own completion time counts.
+        clock.Advance(TimeSpan.FromMinutes(5));
+        await StartAndCompleteAsync(service, clock, reused);
+        clock.Advance(TimeSpan.FromMinutes(6));
+
+        Assert.True(service.TryGetRun(reused, out _));
+    }
+
+    [Fact]
+    public async Task Soak_fifty_thousand_runs_never_hold_more_completed_runs_than_the_bound_and_open_runs_stay_intact()
+    {
+        const int Bound = 500;
+        const int Runs = 50_000;
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, maxRetained: Bound, retention: TimeSpan.FromMinutes(30));
+
+        // Open runs held throughout: older than the retention many times over by the end.
+        var open = Enumerable.Range(0, 20).Select(_ => Guid.NewGuid()).ToArray();
+        foreach (var id in open)
+        {
+            StartTestRun(service, id);
+            Assert.Equal(AppendAttemptOutcome.Recorded, (await service.AppendAttemptAsync(id, MakeAttemptRequest())).Outcome);
+        }
+
+        var completed = new List<Guid>(Runs);
+        for (var i = 1; i <= Runs; i++)
+        {
+            completed.Add(await StartAndCompleteAsync(service, clock));
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+
+            if (i % 2_500 == 0)
+            {
+                Assert.InRange(completed.Count(id => service.TryGetRun(id, out _)), 1, Bound);
+            }
+        }
+
+        Assert.Equal(Bound, completed.Count(id => service.TryGetRun(id, out _)));
+        Assert.True(service.TryGetRun(completed[^1], out _));
+
+        // And the age bound empties what is left once it has all aged out.
+        clock.Advance(TimeSpan.FromMinutes(30));
+        Assert.DoesNotContain(completed, id => service.TryGetRun(id, out _));
+
+        foreach (var id in open)
+        {
+            var run = MustGetRun(service, id);
+            Assert.Single(run.Attempts);
+            Assert.Null(run.ExecutionStatus);
+            Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(id, Guid.NewGuid(), RunExecutionStatus.Completed, DateTimeOffset.UtcNow)).Outcome);
+        }
+    }
+
+    [Fact]
+    public async Task Concurrent_completions_across_many_runs_stay_within_the_bound()
+    {
+        const int Bound = 64;
+        var clock = new ManualClock();
+        var service = CreateRetainingService(clock, maxRetained: Bound);
+        var ids = new System.Collections.Concurrent.ConcurrentBag<Guid>();
+
+        await Parallel.ForEachAsync(Enumerable.Range(0, 4_000), async (_, _) => ids.Add(await StartAndCompleteAsync(service, clock)));
+
+        Assert.Equal(Bound, ids.Count(id => service.TryGetRun(id, out _)));
+    }
+
+    /// <summary>A dropped run must get, on every method, the answer an ID the service never saw gets.</summary>
+    private static async Task AssertAnswersAsUnknownAsync(InMemoryExperienceCaptureService service, Guid dropped, Guid unknown)
+    {
+        foreach (var id in new[] { dropped, unknown })
+        {
+            Assert.False(service.TryGetRun(id, out _));
+            Assert.Equal(AppendAttemptOutcome.RunNotFound, (await service.AppendAttemptAsync(id, MakeAttemptRequest())).Outcome);
+            Assert.Equal(CompleteRunOutcome.RunNotFound, (await service.CompleteRunAsync(id, Guid.NewGuid(), RunExecutionStatus.Completed, DateTimeOffset.UtcNow)).Outcome);
+            Assert.Equal(RecordExposureOutcome.RunNotFound, service.RecordExposure(id, [new RunExposure(Guid.NewGuid(), 1)]).Outcome);
+        }
+    }
+
+    /// <summary>
+    /// A clock that moves only when told to: <see cref="Advance"/> moves both the wall clock and the
+    /// monotonic timestamp; <see cref="StepWallClock"/> moves only the wall clock, as an NTP or manual
+    /// clock change would.
+    /// </summary>
+    private sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);
+        private long _timestamp;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void Advance(TimeSpan by)
+        {
+            _now += by;
+            _timestamp += by.Ticks;
+        }
+
+        public void StepWallClock(TimeSpan by) => _now += by;
+    }
+
     private sealed class AlwaysRejectSanitizer : ISanitizer
     {
         private static readonly IReadOnlyDictionary<string, object?> EmptyFields = new Dictionary<string, object?>();

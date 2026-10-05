@@ -32,7 +32,8 @@ using Microsoft.Agents.AI;
 
 IExperienceCaptureService capture = new InMemoryExperienceCaptureService(
     new DefaultSanitizer(sanitizationOptions),
-    captureLimits);
+    captureLimits,
+    TimeProvider.System);   // the clock completed-run retention is measured on (DI uses the registered one)
 
 AIAgent agent = chatClientAgent
     .AsBuilder()

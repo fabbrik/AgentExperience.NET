@@ -6,7 +6,21 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### The in-memory capture service bounds the finished runs it keeps (story 16.1)
+
+- **The problem it fixes.** `InMemoryExperienceCaptureService`, the default `IExperienceCaptureService`, kept every
+  run it had ever captured, so a long-lived host grew without bound until it ran out of memory.
+- **Retention bounds.** Completed runs are dropped after `CaptureLimits.CompletedRunRetention` (new, default 24 hours)
+  or once more than `CaptureLimits.MaxRetainedCompletedRuns` (new, default 10,000) are held, earliest completed first.
+  Both are optional `init` properties; the positional constructor is unchanged. Open runs are never dropped. The
+  bounds are applied on the service's own calls (no timer). Age is measured on the `TimeProvider`'s monotonic
+  timestamp, so wall-clock changes do not move it; the service gains a constructor overload taking a `TimeProvider`,
+  and `AddAgentExperienceCore` passes the registered one.
+- **Behaviour change.** A dropped run answers exactly as an unknown run: finalizing it (or retrying finalization)
+  returns `RunNotFound`, a continuation naming it opens a new run, and evidence naming a run that was never finalized
+  must arrive while the run is held. While a run is held, nothing changes: a finalization retry still returns
+  `AlreadyFinalized`. A reused ID of a dropped run finalizes as `AlreadyFinalized` for the earlier record, so use a
+  fresh run ID per run. See [How long runs are kept](docs/guide/capture.md#how-long-runs-are-kept).
 
 ## 0.1.0-preview.6
 
