@@ -1966,4 +1966,8 @@ Found by the 2026-10-05 architecture review.
 
 ### Story 19.3: Replace Fixed Waits in Tests With Signals
 
-**Acceptance Criteria:** tests that assert absence after a fixed delay or hope a statement reached a lock wait on a deterministic signal instead (`pg_locks`, completion hooks, a fake clock), and central package management removes version drift.
+**Acceptance Criteria:** tests that assert absence after a fixed delay or hope a statement reached a lock wait on a deterministic signal instead (`pg_locks`, completion hooks, a fake clock).
+
+### Story 19.4: Guard Against Package Version Drift
+
+**Acceptance Criteria:** a release test fails when two projects reference different versions of the same package (the upgrade seeders exempt). Replaces adopting central package management, which the floating-dependency probe and the per-project pin checks rely on not having (decided 2026-10-05).

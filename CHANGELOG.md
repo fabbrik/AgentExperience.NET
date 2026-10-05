@@ -38,6 +38,13 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   security-sensitive internals as public API or duplicating them, so the access stays, and the project file says what
   the vectors package depends on and why.
 
+### One version per package across the repository (story 19.4)
+
+- A release test now fails when two projects anywhere in the repository (tests, sample, experiments, proof)
+  reference different versions of the same package; the upgrade seeders, which pin older published versions on
+  purpose, are exempt. This replaces adopting central package management, which the floating-dependency probe and the
+  per-project pin checks rely on not having. Tests only.
+
 ## 0.1.0-preview.7
 
 This preview makes the library easier to adopt and more useful once adopted. One call sets it up

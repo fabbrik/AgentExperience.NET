@@ -46,7 +46,7 @@ dotnet test --filter "FullyQualifiedName!~PostgresVectorProof&FullyQualifiedName
 
 No test anywhere needs model credentials: every model and embedding in the suite is a deterministic in-test fake.
 
-Package versions are locked with `packages.lock.json`. Commit lock-file changes together with the `PackageReference` change that caused them.
+Package versions are locked with `packages.lock.json`. Commit lock-file changes together with the `PackageReference` change that caused them. Versions are declared in each project (no central package management: the floating-dependency probe rewrites them per project), so a release test fails when two projects reference different versions of the same package; bump a package everywhere at once.
 
 ## Repository layout
 
