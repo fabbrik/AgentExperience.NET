@@ -1,5 +1,6 @@
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Core.Finalization;
+using AgentExperience.Core.Reflections;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using Microsoft.Agents.AI;
@@ -218,6 +219,119 @@ public sealed class AgentExperienceSetupTests
         collection.AddAgentExperience(options => options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller));
         Assert.Throws<InvalidOperationException>(() =>
             collection.AddAgentExperience(options => options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller)));
+    }
+
+    [Fact]
+    public async Task Under_ReuseEvidence_a_verified_run_that_was_given_a_lesson_raises_its_confidence()
+    {
+        var host = new Host();
+        await using var services = host.Build(options =>
+        {
+            options.Verify = Passing;
+            options.ReuseEvidence = ReuseEvidenceMode.SameTask;
+        });
+        var (agent, _) = AgentOver(services);
+
+        await agent.RunAsync("Reconcile the ledger for invoice 7731 and close it");
+        var lesson = Assert.Single(host.Finalized).ExperienceId!.Value;
+        Assert.Empty(host.Finalized[0].ReuseEvidence);
+
+        await agent.RunAsync("Reconcile the ledger for invoice 7731");
+
+        Assert.Empty(host.Failures);
+        Assert.Equal([lesson], host.Injections[1].InjectedExperienceIds);
+        var applied = Assert.Single(host.Finalized[1].ReuseEvidence);
+        Assert.Equal(lesson, applied.ExperienceId);
+        Assert.Equal(ConfidenceEvidenceKind.Supporting, applied.Kind);
+        Assert.Equal(AgentExperience.Core.Lifecycle.ConfidenceUpdateOutcome.Applied, applied.Outcome);
+        Assert.True(applied.Counted);
+
+        var stored = (await services.GetRequiredService<IExperienceRecordStore>()
+            .GetAsync(Caller.Authorization, Caller.Scope, lesson, CancellationToken.None)).Record!;
+        Assert.Equal(2, stored.SupportingValidations);
+        Assert.Equal(3d / 4d, stored.ReuseConfidence, precision: 12);
+
+        var finalization = services.GetRequiredService<ExperienceFinalizationService>().Options;
+        Assert.Equal(ReuseEvidenceMode.SameTask, finalization.ReuseEvidence);
+        Assert.False(finalization.ContradictOnFailure);
+    }
+
+    [Fact]
+    public async Task By_default_a_run_that_was_given_a_lesson_submits_no_evidence_about_it()
+    {
+        var host = new Host();
+        await using var services = host.Build(options => options.Verify = Passing);
+        var (agent, _) = AgentOver(services);
+
+        await agent.RunAsync("Reconcile the ledger for invoice 7731 and close it");
+        await agent.RunAsync("Reconcile the ledger for invoice 7731");
+
+        Assert.Equal(InjectionOutcome.Injected, host.Injections[1].Outcome);
+        Assert.Empty(host.Finalized[1].ReuseEvidence);
+        Assert.Same(ExperienceFinalizationOptions.Default, services.GetRequiredService<ExperienceFinalizationService>().Options);
+    }
+
+    [Fact]
+    public async Task ReuseEvidence_is_carried_onto_an_ExperienceFinalizationOptions_registered_first_and_an_undefined_mode_is_refused()
+    {
+        var limits = ReflectionLimits.Default with { MaxListItems = 40 };
+        var collection = new ServiceCollection();
+        collection.AddSingleton(new ExperienceFinalizationOptions { ReflectionLimits = limits });
+        collection
+            .AddAgentExperience(options =>
+            {
+                options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller);
+                options.ReuseEvidence = ReuseEvidenceMode.SameTask;
+                options.ContradictOnFailure = true;
+            })
+            .UseInMemoryStorageForDevelopment();
+        await using var services = collection.BuildServiceProvider();
+
+        var registered = Assert.Single(services.GetServices<ExperienceFinalizationOptions>());
+        Assert.Same(limits, registered.ReflectionLimits);
+        Assert.Equal(ReuseEvidenceMode.SameTask, registered.ReuseEvidence);
+        Assert.True(registered.ContradictOnFailure);
+        Assert.Same(registered, services.GetRequiredService<ExperienceFinalizationService>().Options);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ServiceCollection().AddAgentExperience(options =>
+        {
+            options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller);
+            options.ReuseEvidence = (ReuseEvidenceMode)7;
+        }));
+
+        var contradictAlone = Assert.Throws<ArgumentException>(() => new ServiceCollection().AddAgentExperience(options =>
+        {
+            options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller);
+            options.ContradictOnFailure = true;
+        }));
+        Assert.Contains("no effect", contradictAlone.Message, StringComparison.Ordinal);
+
+        var factory = new ServiceCollection();
+        factory.AddSingleton(_ => new ExperienceFinalizationOptions());
+        Assert.Throws<InvalidOperationException>(() => factory.AddAgentExperience(options =>
+        {
+            options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller);
+            options.ReuseEvidence = ReuseEvidenceMode.SameTask;
+        }));
+    }
+
+    [Fact]
+    public async Task An_ExperienceFinalizationOptions_registered_after_AddAgentExperience_that_disagrees_is_refused_when_an_agent_is_built()
+    {
+        var collection = new ServiceCollection();
+        collection
+            .AddAgentExperience(options =>
+            {
+                options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(Caller);
+                options.Verify = Passing;
+                options.ReuseEvidence = ReuseEvidenceMode.SameTask;
+            })
+            .UseInMemoryStorageForDevelopment();
+        collection.AddSingleton(new ExperienceFinalizationOptions());
+        await using var services = collection.BuildServiceProvider();
+
+        var refused = Assert.Throws<InvalidOperationException>(() => AgentOver(services));
+        Assert.Contains("registered after AddAgentExperience", refused.Message, StringComparison.Ordinal);
     }
 
     [Fact]

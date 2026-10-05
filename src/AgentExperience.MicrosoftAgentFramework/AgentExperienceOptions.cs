@@ -1,6 +1,7 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
 using AgentExperience.Core.DependencyInjection;
+using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Sanitization;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework.Injection;
@@ -249,6 +250,30 @@ public sealed class AgentExperienceOptions
     /// </summary>
     public TimeProvider? TimeProvider { get; set; }
 
+    /// <summary>
+    /// Whether finalizing a run that was given stored lessons submits confidence evidence about them, so verified reuse
+    /// moves their confidence on its own. Defaults to <see cref="ReuseEvidenceMode.Off"/>. See
+    /// <see cref="ExperienceFinalizationOptions.ReuseEvidence"/>.
+    /// </summary>
+    /// <remarks>
+    /// Under <see cref="ReuseEvidenceMode.SameTask"/>, a run that <see cref="Verify"/> verified submits supporting
+    /// evidence about each lesson it was given on the same task identifier. It sets the registered
+    /// <see cref="ExperienceFinalizationOptions"/>: when one was registered before <c>AddAgentExperience</c>, this
+    /// replaces it with a copy carrying this setting; an <see cref="ExperienceFinalizationOptions"/> registered after
+    /// <c>AddAgentExperience</c> would replace it, so building an agent with <c>UseAgentExperience</c> then throws
+    /// <see cref="InvalidOperationException"/> when the finalization service's options disagree with this one. Set it
+    /// here, not on a registered <see cref="ExperienceFinalizationOptions"/>.
+    /// </remarks>
+    public ReuseEvidenceMode ReuseEvidence { get; set; } = ReuseEvidenceMode.Off;
+
+    /// <summary>
+    /// Under <see cref="ReuseEvidence"/>, whether a run that failed verification submits contradicting evidence about the
+    /// lessons it was given. Defaults to <see langword="false"/>, because a failure is not necessarily the lesson's
+    /// fault. Setting it while <see cref="ReuseEvidence"/> is <see cref="ReuseEvidenceMode.Off"/> is refused, since it
+    /// would have no effect. See <see cref="ExperienceFinalizationOptions.ContradictOnFailure"/>.
+    /// </summary>
+    public bool ContradictOnFailure { get; set; }
+
     /// <summary>Throws when the options cannot work.</summary>
     internal void Validate()
     {
@@ -274,6 +299,19 @@ public sealed class AgentExperienceOptions
         if (IdentityTimeout <= TimeSpan.Zero || IdentityTimeout.TotalMilliseconds > uint.MaxValue - 1)
         {
             throw new ArgumentOutOfRangeException(nameof(IdentityTimeout), IdentityTimeout, $"{nameof(IdentityTimeout)} must be positive and at most {uint.MaxValue - 1} milliseconds.");
+        }
+
+        if (!Enum.IsDefined(ReuseEvidence))
+        {
+            throw new ArgumentOutOfRangeException(nameof(ReuseEvidence), ReuseEvidence, $"{nameof(AgentExperienceOptions)}.{nameof(ReuseEvidence)} is not a defined {nameof(ReuseEvidenceMode)}.");
+        }
+
+        if (ContradictOnFailure && ReuseEvidence == ReuseEvidenceMode.Off)
+        {
+            throw new ArgumentException(
+                $"{nameof(AgentExperienceOptions)}.{nameof(ContradictOnFailure)} has no effect while {nameof(ReuseEvidence)} is {nameof(ReuseEvidenceMode.Off)}: "
+                + $"set {nameof(ReuseEvidence)} to {nameof(ReuseEvidenceMode.SameTask)} as well, or leave {nameof(ContradictOnFailure)} unset.",
+                nameof(ContradictOnFailure));
         }
 
         ArgumentNullException.ThrowIfNull(Sanitization, nameof(Sanitization));

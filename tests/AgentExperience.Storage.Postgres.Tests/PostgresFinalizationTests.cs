@@ -456,6 +456,65 @@ public sealed class PostgresFinalizationTests
         OccurredAt: record.CreatedAt,
         ExpectedRevision: 0);
 
+    [Fact]
+    public async Task Under_ReuseEvidence_three_verified_runs_given_a_lesson_on_its_task_raise_its_confidence_every_time()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var auth = Authorize(tenant);
+        var capture = NewCapture();
+        var finalization = new ExperienceFinalizationService(
+            capture,
+            new DefaultExperienceReflector(),
+            _store,
+            new ExperienceLifecycleService(_store, indexingService: null, new AgentExperience.Core.Confidence.ExperienceIndependenceOptions(), capture),
+            indexingService: null,
+            indexingTimeout: null,
+            provenanceSigning: null,
+            reflectionSanitizer: null,
+            new ExperienceFinalizationOptions { ReuseEvidence = ReuseEvidenceMode.SameTask });
+
+        var lessonRun = await CaptureRunAsync(scope, capture: capture);
+        var lesson = await finalization.FinalizeAsync(Request(lessonRun, auth), CancellationToken.None);
+        Assert.Equal(FinalizationOutcome.Validated, lesson.Outcome);
+        Assert.Empty(lesson.ReuseEvidence);
+        var lessonId = lesson.ExperienceId!.Value;
+
+        var confidences = new List<double> { lesson.Record!.ReuseConfidence };
+        FinalizeExperienceResult? last = null;
+        for (var run = 0; run < 3; run++)
+        {
+            var current = (await _store.GetAsync(auth, scope, lessonId, CancellationToken.None)).Record!;
+            var runId = await CaptureRunAsync(scope, capture: capture, exposures: [new RunExposure(lessonId, current.Revision)]);
+            last = await finalization.FinalizeAsync(Request(runId, auth), CancellationToken.None);
+
+            Assert.Equal(FinalizationOutcome.Validated, last.Outcome);
+            var applied = Assert.Single(last.ReuseEvidence);
+            Assert.Equal(lessonId, applied.ExperienceId);
+            Assert.Equal(ConfidenceUpdateOutcome.Applied, applied.Outcome);
+            Assert.True(applied.Counted);
+            confidences.Add((await _store.GetAsync(auth, scope, lessonId, CancellationToken.None)).Record!.ReuseConfidence);
+        }
+
+        for (var i = 1; i < confidences.Count; i++)
+        {
+            Assert.True(confidences[i] > confidences[i - 1], $"confidence did not rise at run {i}: {string.Join(", ", confidences)}");
+        }
+
+        Assert.Equal(5d / 6d, confidences[^1], precision: 12);
+
+        // A replay of the last run resubmits the same evidence: reported, not counted again.
+        var replay = await finalization.FinalizeAsync(Request(last!.Record!.SourceRunId, auth), CancellationToken.None);
+        Assert.Equal(FinalizationOutcome.AlreadyFinalized, replay.Outcome);
+        var replayed = Assert.Single(replay.ReuseEvidence);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replayed.Outcome);
+        Assert.True(replayed.Replay);
+        Assert.False(replayed.Counted);
+        var stored = (await _store.GetAsync(auth, scope, lessonId, CancellationToken.None)).Record!;
+        Assert.Equal(4, stored.SupportingValidations);
+        Assert.Equal(5d / 6d, stored.ReuseConfidence, precision: 12);
+    }
+
     private static Evidence Evidence(CheckResult result) => new(
         EvidenceId: Guid.NewGuid(),
         VerificationRoundId: Round.RoundId,
@@ -477,7 +536,11 @@ public sealed class PostgresFinalizationTests
         StorageDecision: StorageDecision.Permit,
         FinalizedAt: ColumnTime);
 
-    private async Task<Guid> CaptureRunAsync(Scope scope, Guid? fixedRunId = null, InMemoryExperienceCaptureService? capture = null)
+    private async Task<Guid> CaptureRunAsync(
+        Scope scope,
+        Guid? fixedRunId = null,
+        InMemoryExperienceCaptureService? capture = null,
+        IReadOnlyList<RunExposure>? exposures = null)
     {
         var runId = fixedRunId ?? Guid.NewGuid();
         capture ??= _capture;
@@ -490,6 +553,11 @@ public sealed class PostgresFinalizationTests
             provenance: new Provenance("integration-tests", "1.0.0", PayloadTime, "trace-1"),
             startedAt: PayloadTime);
         Assert.Equal(StartRunOutcome.Started, started.Outcome);
+
+        if (exposures is { Count: > 0 })
+        {
+            Assert.Equal(RecordExposureOutcome.Recorded, capture.RecordExposure(runId, exposures).Outcome);
+        }
 
         var appended = await capture.AppendAttemptAsync(runId, new AppendAttemptRequest(
             AttemptId: Guid.NewGuid(),

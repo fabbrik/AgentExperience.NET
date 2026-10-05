@@ -35,9 +35,18 @@ services.AddAgentExperience(options =>
     // options.TimeProvider = ...;             the clock; the container's, else the system clock (a different
     //                                         instance from a registered TimeProvider throws)
     // options.IdentityTimeout = ...;          how long ResolveIdentity may take; 5 seconds
+    // options.ReuseEvidence = ReuseEvidenceMode.SameTask;  let verified reuse move confidence; Off by default
+    // options.ContradictOnFailure = true;     with it, a failed run contradicts what it was given; false by default
 })
 .UsePostgres(appConnectionString);   // or .UsePostgres(dataSource), or .UseInMemoryStorageForDevelopment()
 ```
+
+`ReuseEvidence` and `ContradictOnFailure` are carried onto `ExperienceFinalizationOptions` (see
+[Letting reuse move confidence](confidence.md#letting-reuse-move-confidence)); `ContradictOnFailure` without
+`ReuseEvidence` is refused, since it would do nothing. Set them here, not on a registered `ExperienceFinalizationOptions`.
+One registered as an instance *before* `AddAgentExperience` is kept, with the two values carried onto a copy; one
+registered through a factory or a type is refused; and one registered *after* `AddAgentExperience` replaces the
+library's, so building an agent with `UseAgentExperience` throws when its values disagree with these.
 
 What the library fills in, so the host does not:
 

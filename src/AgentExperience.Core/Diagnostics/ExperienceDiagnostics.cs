@@ -134,6 +134,12 @@ internal static class ExperienceDiagnostics
     /// <summary>Why finalization's screening refused a reflection: a <c>ReflectionScreeningRefusal</c> member name. A closed set.</summary>
     internal const string ScreeningRefusalAttribute = "agentexperience.reflection.screening_refusal";
 
+    /// <summary>
+    /// How many records finalization's reuse-evidence step submitted confidence evidence for (an integer; the records
+    /// themselves stay on the typed result). Written on a durable <c>finalize</c> only while the step is on.
+    /// </summary>
+    internal const string ReuseEvidenceSubmittedAttribute = "agentexperience.reuse_evidence.submitted";
+
     /// <summary>The <c>outcome</c> value every faulted path reports, so a thrown operation is still counted and timed alongside the ones that returned.</summary>
     internal const string FaultedOutcome = "Faulted";
 

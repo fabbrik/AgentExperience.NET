@@ -1,5 +1,6 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.DependencyInjection;
+using AgentExperience.Core.Finalization;
 using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -69,6 +70,7 @@ public static class AgentExperienceServiceCollectionExtensions
         }
 
         services.AddAgentExperienceCore(options.Sanitization, options.CaptureLimits);
+        ApplyFinalizationOptions(services, options);
         services.AddAgentExperienceRetrieval();
         services.TryAddSingleton(provider => AgentExperienceRegistration.From(provider).CreateContextProvider(provider));
         services.TryAddSingleton<AgentExperienceLifetimes>();
@@ -94,6 +96,50 @@ public static class AgentExperienceServiceCollectionExtensions
 
         AgentExperienceRegistration.From(services);
         return services.GetRequiredService<ExperienceContextProvider>();
+    }
+
+    /// <summary>
+    /// Carries <see cref="AgentExperienceOptions.ReuseEvidence"/> and <see cref="AgentExperienceOptions.ContradictOnFailure"/>
+    /// onto the registered <see cref="ExperienceFinalizationOptions"/>. At their defaults nothing is registered or replaced.
+    /// </summary>
+    private static void ApplyFinalizationOptions(IServiceCollection services, AgentExperienceOptions options)
+    {
+        if (options.ReuseEvidence == ReuseEvidenceMode.Off && !options.ContradictOnFailure)
+        {
+            return;
+        }
+
+        var registrations = services
+            .Where(descriptor => descriptor.ServiceType == typeof(ExperienceFinalizationOptions) && !descriptor.IsKeyedService)
+            .ToList();
+        var registered = registrations.LastOrDefault();
+        ExperienceFinalizationOptions baseline;
+        if (registered is null)
+        {
+            baseline = ExperienceFinalizationOptions.Default;
+        }
+        else if (registered.ImplementationInstance is ExperienceFinalizationOptions instance)
+        {
+            baseline = instance;
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"{nameof(AgentExperienceOptions)}.{nameof(AgentExperienceOptions.ReuseEvidence)} or {nameof(AgentExperienceOptions.ContradictOnFailure)} is set, "
+                + $"but an {nameof(ExperienceFinalizationOptions)} is already registered through a factory or a type, which this cannot carry them onto. "
+                + "Register it as an instance, or set the two on it instead.");
+        }
+
+        foreach (var registration in registrations)
+        {
+            services.Remove(registration);
+        }
+
+        services.AddSingleton(baseline with
+        {
+            ReuseEvidence = options.ReuseEvidence,
+            ContradictOnFailure = options.ContradictOnFailure,
+        });
     }
 
     private sealed class AgentExperienceBuilder(IServiceCollection services) : IAgentExperienceBuilder

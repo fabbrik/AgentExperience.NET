@@ -16,7 +16,8 @@ before relying on independence.
 
 `ExperienceLifecycleService.ApplyEvidenceAsync` is how the number moves after finalization: submit what happened when
 the lesson was reused, and the evidence, the counters, the score, any status change, and the audit entry are
-committed in one transaction.
+committed in one transaction. Finalization can also submit it for you, when a run that was given a lesson verifies on
+the same task (see [Letting reuse move confidence](#letting-reuse-move-confidence)).
 
 ```csharp
 var result = await lifecycle.ApplyEvidenceAsync(
@@ -61,6 +62,84 @@ there while its counters keep moving. Supporting evidence never changes a status
 keeps being reinforced through its counters even though `Validated → Reinforced` happens only once (see
 [Lifecycle](lifecycle.md#the-transition-table)). Retrieval does apply a confidence floor
 (`RetrievalPolicy.MinimumConfidence`, 0.5 by default), so a low score stops a record being *returned*.
+
+## Letting reuse move confidence
+
+Without help, every record stays at 2/3: the score moves only when a host submits evidence itself. Finalization can
+do it for you. It is opt-in:
+
+```csharp
+services.AddSingleton(new ExperienceFinalizationOptions
+{
+    ReuseEvidence = ReuseEvidenceMode.SameTask,   // default: Off
+    ContradictOnFailure = false,                  // the default: a failed run contradicts nothing
+});
+// Under the one-call setup: options.ReuseEvidence = ReuseEvidenceMode.SameTask; (and options.ContradictOnFailure).
+```
+
+**What counts.** When a run finalizes into a durable record, finalization looks at the records that run was given
+(its `Provenance.ExposedTo`, which the MAF adapter records for every lesson it injects). For each one that is readable
+in the run's own scope, is on the **same task** (the same `TaskId`, compared ordinally), and did not come from this
+run, it submits machine evidence through `ApplyEvidenceAsync`:
+
+- **supporting**, when the run verified;
+- **contradicting**, when the run failed verification and `ContradictOnFailure` is set;
+- nothing, when the run failed without `ContradictOnFailure`, when its verification was inconclusive, or when its
+  finalization closed no round.
+
+What decides the kind is the run's verification, not its own record's status: a verified run whose own record was
+quarantined because its reflection failed or was screened out still supports the lessons it was given. The run
+verified; its own lesson being refused says nothing about the lessons it used.
+
+The evidence names the run and the round its finalization closed, so it is one independence key per run and record,
+and everything above applies unchanged: the run must be known, the round must be its own, and the run must have been
+exposed to the record at or before its current revision. Its evidence and event IDs are derived from the run, its
+scope, the record and the kind (`ExperienceFinalizationService.ReuseEvidenceIdFor` and `ReuseEventIdFor`; the scope is
+mixed in as for the initial event ID, so a writer in another scope cannot take them first), its `Producer` is
+`ExperienceFinalizationService.ReuseEvidenceProducer`, and its time is the run's finalization time. Repeated
+exposures, empty IDs and the run's own record are dropped first, and then at most `RunExposure.MaxPerRun` records are
+considered.
+
+**Why the same task.** A lesson given to a run on another task says little about whether that lesson holds: the run's
+verdict is about its own task. Records on another task get no evidence.
+
+**Why not a lesson shared by a grant.** A record this scope reads only through a sharing grant belongs to the lending
+scope, and so does its confidence: a grant confers reading, never writing, so the borrower's runs never move it.
+Such records are skipped.
+
+**Why contradiction is opt-in.** A run can fail for reasons that have nothing to do with the lesson it was given: a
+flaky check, a changed environment, a harder variant of the task. Counting every such failure against every lesson the
+run saw would contest good lessons, and a contested record leaves reuse at once. Turn it on when a failed run on the
+same task really is evidence against what it was told.
+
+**It never changes finalization.** The step runs after the record is durable and after indexing, within the caller's
+cancellation token and bounded by `ExperienceFinalizationOptions.ReuseEvidenceTimeout` (10 seconds by default). Every
+record the run's provenance names gets one `ReuseEvidenceResult` on `FinalizeExperienceResult.ReuseEvidence`:
+
+- **Submitted:** the `ConfidenceUpdateOutcome`, whether it `Counted`, the `IndependenceRefusal` when there is one, and
+  the reason. A refusal (`Unverified`, a duplicate, `StaleRevision`, `Ineligible`, ...) is reported and never retried.
+- **`Skipped`:** not submitted, with the reason: the record could not be read in the run's scope (whatever the read
+  answered, `NotFound` included, is named), it is shared by a grant, it is on another task, or it came from this run.
+- **Failed:** reading or applying threw. `Outcome` is `null` and `ExceptionType` names the exception, never its
+  message.
+
+A cancellation or the timeout stops the step: the last entry says so ("Cancelled before ..." or "Timed out ..."), the
+records after it are not reported, and `ReuseEvidenceTruncated` is `true`. The outcome, the record and `IsDurable` stay
+what they were.
+
+**Recovering lost evidence.** Evidence a refusal, an exception, a cancellation or the timeout lost is recovered by
+finalizing the run again, while the capture service still holds it. The replay (`AlreadyFinalized`) resubmits the same
+evidence under the same IDs: what already landed is reported with `Replay = true` and `Counted = false`, so a sum of
+`Counted` over every call counts each piece once, and what had not landed is applied now. The same call backfills a run
+finalized while the option was off. A replay reports `Ineligible` for a lesson that has since been revoked, quarantined
+or superseded, even when the original evidence did land (see the ordering note under [Outcomes](#outcomes)).
+
+**Telemetry.** Each submission is an ordinary `confidence.apply` operation, nested in `finalize`, and a durable
+`finalize` carries `agentexperience.reuse_evidence.submitted`, how many records it submitted for, while the option is
+on.
+
+**What it does not prove.** Exactly what [verification does not prove](#what-verification-does-not-prove): a verified
+run that was given a lesson is one supporting key, whether or not the lesson helped it.
 
 ## Replacing the engine
 
