@@ -38,6 +38,12 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 13: 13.1.
 - Epic 14: 14.1 → 14.2 → 14.3 → 14.4.
 - Epic 15: 15.1.
+- Epic 16: 16.1 → 16.4 → 16.2 → 16.3.
+- Epic 17: 17.1 → 17.2 → 17.3 → 17.4 → 17.5 → 17.6 → 17.7.
+- Epic 18: 18.1 → 18.2 → 18.3 → 18.4 → 18.5 → 18.6 → 18.7.
+- Epic 19: 19.1 → 19.2 → 19.3.
+
+Epics 16–19 were added on 2026-10-05 from a review of the documented boundaries, the developer experience, and the architecture.
 
 Epics 5–9 and Story 3.6 were added on 2026-09-26, reconstructed from the merged pull requests (each story names its PR); they record what was delivered rather than a plan made in advance.
 
@@ -1705,3 +1711,231 @@ So that a SQL-level mistake cannot read or write another tenant's rows.
 **Given** RLS enabled through the application-role privilege step
 **When** the stores run as the application role
 **Then** every store sets the authorized scope for its transaction, policies confine reads and writes to it (grant-shared reads included), a query without the scope sees nothing, SECURITY DEFINER purges keep working, and the whole store suite passes with RLS on; with RLS off, nothing changes.
+
+## Epic 16: Hold Up Under Sustained Load
+
+Found by the 2026-10-05 architecture review: risks in long-lived hosts that the existing suites do not exercise.
+
+### Story 16.1: Release Finished Runs From the Capture Service
+
+**Traces:** NFR3 · **Depends on:** 2.2
+
+As an operator of a long-lived agent host,
+I want the in-memory capture service to drop a run once it is finalized, abandoned or past a retention bound,
+So that memory does not grow with every invocation the host has ever served.
+
+**Acceptance Criteria:**
+
+**Given** `InMemoryExperienceCaptureService` under a stream of runs
+**When** runs finalize, are abandoned, or exceed a configurable retention bound (time and count)
+**Then** their state is removed, a late call for a removed run gets the same answer as an unknown run, and a soak test shows a stable run count after many thousands of runs.
+
+### Story 16.2: Bound the Whole Pre-Model Path, Not Only Retrieval
+
+**Traces:** NFR3 · **Depends on:** 5.6
+
+As a host developer,
+I want the eligibility re-read after retrieval bounded the same way retrieval is,
+So that a slow store cannot delay the model call by seconds.
+
+**Acceptance Criteria:**
+
+**Given** a store that is slow or ignores cancellation during the eligibility re-read
+**When** the context provider injects
+**Then** the re-read is hard-bounded and abandoned like retrieval, the per-candidate fallback is bounded by the same budget, the default timeout is reduced, and the docs state one end-to-end pre-model budget.
+
+### Story 16.3: Unwrap Record Keys in Batches
+
+**Traces:** NFR3, NFR5 · **Depends on:** 6.4
+
+As an operator using crypto-shredding with a remote KMS,
+I want retrieval to unwrap the keys of a result set in one batched call, and only for rows that can be returned,
+So that encrypted retrieval does not time out once each unwrap takes milliseconds.
+
+**Acceptance Criteria:**
+
+**Given** encryption on and a key store with simulated per-call latency
+**When** retrieval reads up to its candidate window
+**Then** keys are fetched through a batch call (with a default that loops for existing implementations), the reader is not held open across unwraps, a destroyed key is never served afterwards, and a benchmark covers encrypted retrieval.
+
+### Story 16.4: Bound Runs That Are Never Completed
+
+**Traces:** NFR3 · **Depends on:** 16.1
+
+As an operator of a host that calls the capture service directly,
+I want runs that are started but never completed to be bounded too,
+So that memory stays bounded without the MAF adapter's open-run timer.
+
+**Acceptance Criteria:**
+
+**Given** `InMemoryExperienceCaptureService` used without the MAF adapter
+**When** runs are started and never completed
+**Then** an optional open-run age bound (off by default, measured on the monotonic clock) completes them as abandoned so the completed-run bounds then apply, a count bound refuses new runs with a typed outcome once too many are open, and the MAF adapter's behaviour is unchanged.
+
+## Epic 17: Close the Boundary Residuals a Code Change Can Remove
+
+Found by the 2026-10-05 review of the documented boundaries: clauses that a code change can remove, which by the rule in `docs/known-limits.md` must not stay boundaries.
+
+### Story 17.1: Fail Closed on Unknown Authorship and Backfill It
+
+**Traces:** FR5 · **Depends on:** 14.4
+
+**Acceptance Criteria:**
+
+**Given** `ModelAuthoredLessons = Exclude`
+**When** a PostgreSQL row's authorship flag is unknown (sealed before `0021`, or written by an older instance)
+**Then** the candidate query treats it as model-authored, an owner-run backfill restores the flag for sealed rows, records written by the library's own model-backed reflector before 14.3 are recognized as model-authored by their producer, and KL-18's text drops these clauses.
+
+### Story 17.2: Sign the Reflection Too
+
+**Traces:** FR5, NFR1 · **Depends on:** 13.1
+
+**Acceptance Criteria:**
+
+**Given** provenance signing configured
+**When** finalization signs a record
+**Then** the claims (version 2) include a digest of the task text, the reflection's free text, authorship and producer; verification accepts version 1; a record whose content or authorship changed after signing is treated as unverified and model-authored; and KL-18's store-tampering clause is removed.
+
+### Story 17.3: Keep Host-Trusted Evidence Out of the Ranked Score
+
+**Traces:** FR7 · **Depends on:** 6.6, 13.1
+
+**Acceptance Criteria:**
+
+**Given** a host that opted out with `TrustHostSuppliedIdentifiers`
+**When** host-trusted evidence is recorded
+**Then** both stores keep it in separate counters, an option ranks and filters on the verified-only score, existing evidence is backfilled from the lifecycle history, the conformance suite asserts it, and KL-11's clause (3) is narrowed accordingly.
+
+### Story 17.4: Serialize Session Tracking Within a Process
+
+**Traces:** FR6 · **Depends on:** 6.5
+
+**Acceptance Criteria:**
+
+**Given** concurrent invocations on one session in one process
+**When** they inject
+**Then** session state is updated under a per-session lock with per-invocation pending stages, a race can only over-notify and never repeat or lose a delivery, version 1 state still loads, and KL-12 keeps only the cross-process and host-storage clauses.
+
+### Story 17.5: Make the Content Hash Unlinkable After Erasure
+
+**Traces:** NFR5 · **Depends on:** 16.3
+
+**Acceptance Criteria:**
+
+**Given** encryption on
+**When** an embedding's content hash is written
+**Then** it is keyed under the record's key so it cannot confirm a guessed summary once the key is destroyed, existing hashes migrate with at most one re-embed, and KL-2's text says so.
+
+### Story 17.6: Put the Scope Into the Initial Lifecycle Event ID
+
+**Traces:** NFR1 · **Depends on:** 4.5
+
+**Acceptance Criteria:**
+
+**Given** two scopes finalizing
+**When** finalization derives the first lifecycle event ID
+**Then** the scope is part of the derivation, a writer in another scope cannot make a run's first commit conflict, and a replay of an event under the old ID is still recognized.
+
+### Story 17.7: Keep the Text Index Usable Under Row-Level Security
+
+**Traces:** NFR1, NFR3 · **Depends on:** 15.1
+
+**Acceptance Criteria:**
+
+**Given** row-level security on
+**When** the text channel searches
+**Then** it goes through an owner-run function that applies the declared scope bounds itself and can use the GIN index, the RLS suite still passes, a security review of the function is recorded, and KL-17's index clause is removed; the clauses that stay (caller-chosen global IDs, unchecked exposures) get an accurate written reason.
+
+## Epic 18: Inject Lessons an Agent Can Act On
+
+Found by the 2026-10-05 consumer review: the default pipeline stores and injects lessons with almost no task knowledge, and setup takes about 80 lines.
+
+### Story 18.1: Say What Failed and What Worked
+
+**Traces:** FR5, FR6 · **Depends on:** 14.1
+
+As an agent receiving a lesson,
+I want the record to say which approaches failed (and how) and which worked,
+So that I can avoid a known dead end instead of rediscovering it.
+
+**Acceptance Criteria:**
+
+**Given** a run with failed and successful attempts
+**When** the default reflector reflects it and the writer renders it
+**Then** the lesson names the failing step and its error class and the step that worked, failed and successful approaches are rendered bounded and sanitized, model-authored text keeps its fence, and nothing the guard would refuse is rendered.
+
+### Story 18.2: A Compact Rendering by Default
+
+**Traces:** FR6 · **Depends on:** 18.1
+
+**Acceptance Criteria:**
+
+**Given** the default injection options
+**When** a block is rendered
+**Then** it drops IDs, ranking arithmetic, timestamps and host detail, carries a short preamble and a one-line reason each record matched, keeps the trust labels, the current verbose rendering stays available as an option, the message role is configurable, and a test measures the token reduction.
+
+### Story 18.3: Derive the Task Text From the Conversation
+
+**Traces:** FR6 · **Depends on:** 5.1
+
+**Acceptance Criteria:**
+
+**Given** no host-supplied request resolver
+**When** the context provider injects or capture starts a run
+**Then** the task text is derived from the invocation's latest user messages (bounded and sanitized) and stored as the task description, so retrieval matches on what the task was about.
+
+### Story 18.4: Async Resolvers
+
+**Traces:** FR4, FR6
+
+**Acceptance Criteria:**
+
+**Given** `ResolveFinalization` and `ResolveRequest`
+**When** a host needs async work (running checks, reading CI) to answer
+**Then** async overloads taking a `CancellationToken` exist and are preferred, the sync forms still work, and the docs use the async form.
+
+### Story 18.5: One-Call Setup
+
+**Traces:** FR10 · **Depends on:** 18.3, 18.4
+
+**Acceptance Criteria:**
+
+**Given** a new host
+**When** it calls `services.AddAgentExperience(...)` with an in-memory or PostgreSQL store and `UseAgentExperience` on the agent builder
+**Then** capture, injection and finalization are wired from DI with safe defaults (sanitization, limits, clock, IDs), the README quick start fits in about 20 lines, and the existing explicit wiring still works.
+
+### Story 18.6: Let Verified Reuse Move Confidence
+
+**Traces:** FR7 · **Depends on:** 17.3
+
+**Acceptance Criteria:**
+
+**Given** opt-in automatic reuse evidence
+**When** a run that was given a lesson finalizes Verified or Failed on the same task
+**Then** supporting or contradicting machine evidence bound to that run's closed round is submitted for each exposed record, independence rules still apply, and a test shows confidence moving across a sequence of runs.
+
+### Story 18.7: Concepts in Five Minutes and a Leaner README
+
+**Traces:** FR10 · **Depends on:** 18.1, 18.2, 18.5
+
+**Acceptance Criteria:**
+
+**Given** a reader new to the library
+**When** they open the README
+**Then** it shows the short quick start, a real rendered lesson, which reflector to choose and why, links to a concepts page, keeps status and limits short with a link to known-limits, and no user-facing text refers to internal story numbers.
+
+## Epic 19: Keep the Codebase Easy to Change
+
+Found by the 2026-10-05 architecture review.
+
+### Story 19.1: Track the Public API
+
+**Acceptance Criteria:** public API analyzer baselines exist for every package, CI fails on an undeclared change, and package validation runs against the last published preview.
+
+### Story 19.2: Split the PostgreSQL Record Store
+
+**Acceptance Criteria:** `PostgresExperienceRecordStore` is split into cohesive collaborators (decoding, lifecycle commit, erasure and retention, sealing), the Vectors package no longer needs `InternalsVisibleTo` from the shipped store, and every suite passes unchanged.
+
+### Story 19.3: Replace Fixed Waits in Tests With Signals
+
+**Acceptance Criteria:** tests that assert absence after a fixed delay or hope a statement reached a lock wait on a deterministic signal instead (`pg_locks`, completion hooks, a fake clock), and central package management removes version drift.
