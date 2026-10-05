@@ -151,6 +151,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private readonly IReadOnlyList<string> _stateKeys;
 
     /// <summary>
+    /// How many eligibility re-reads this provider has abandoned that are still running against the
+    /// store: incremented when a read is abandoned, decremented exactly once when it finally ends. At
+    /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> no new read is started (story 16.5).
+    /// </summary>
+    private int _abandonedReads;
+
+    /// <summary>
     /// Creates a provider over Core's retrieval service, the record store its final eligibility check
     /// re-reads through, and the host's configuration.
     /// </summary>
@@ -841,7 +848,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                     .ConfigureAwait(false);
                 if (read.TimedOut)
                 {
-                    return CheckOutcome.TimedOut(timeout);
+                    return CheckOutcome.TimedOut(timeout, read.Saturated ? _options.Limits.MaxAbandonedReads : null);
                 }
 
                 // A store that answered null has answered no position: every candidate is unreadable
@@ -888,7 +895,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                         .ConfigureAwait(false);
                     if (read.TimedOut)
                     {
-                        return CheckOutcome.TimedOut(timeout);
+                        return CheckOutcome.TimedOut(timeout, read.Saturated ? _options.Limits.MaxAbandonedReads : null);
                     }
 
                     // A null answer is not the record: it is omitted as unreadable below, as before.
@@ -1119,7 +1126,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                     .ConfigureAwait(false);
                 if (read.TimedOut)
                 {
-                    return CheckOutcome.TimedOut(timeout);
+                    return CheckOutcome.TimedOut(timeout, read.Saturated ? _options.Limits.MaxAbandonedReads : null);
                 }
 
                 // A null answer stands for no record: every held record is withdrawn below, as before.
@@ -1338,9 +1345,20 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return BoundedRead<T>.Expired;
         }
 
+        // Too many earlier reads were abandoned and are still running against the store (story 16.5):
+        // another would only add to the pile, so the check times out here without calling the store. Not
+        // atomic with the start below, so concurrent checks can overshoot the cap by their own number.
+        if (Volatile.Read(ref _abandonedReads) >= _options.Limits.MaxAbandonedReads)
+        {
+            return BoundedRead<T>.Refused;
+        }
+
         // Cancelled only once the read is abandoned (it carries no timer of its own), so a token-honouring
-        // store can never race a cancellation failure ahead of the timeout report.
-        var inner = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // store can never race a cancellation failure ahead of the timeout report. Its own source, tied to
+        // the caller's token by a registration rather than linked to it, so an abandoned read is detached
+        // from the caller's token at once (see Abandon) rather than when it ends -- for a hung store, never.
+        var inner = new CancellationTokenSource();
+        var registration = cancellationToken.Register(CancelSource, inner);
 
         // Task.Run also bounds a store that blocks or throws synchronously before handing back its task.
         var work = Task.Run(() => read(inner.Token), CancellationToken.None);
@@ -1355,7 +1373,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 if (left <= TimeSpan.Zero)
                 {
                     abandoned = true;
-                    Abandon(work, inner);
+                    Abandon(work, inner, registration);
                     return BoundedRead<T>.Expired;
                 }
 
@@ -1368,13 +1386,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 // The wait's own timeout, not one the store threw: report first, then let the read run
                 // itself down in the background.
                 abandoned = true;
-                Abandon(work, inner);
+                Abandon(work, inner, registration);
                 return BoundedRead<T>.Expired;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 abandoned = true;
-                Abandon(work, inner);
+                Abandon(work, inner, registration);
                 throw;
             }
         }
@@ -1382,15 +1400,18 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             if (!abandoned)
             {
+                // The registration first, so the caller's token can no longer reach a disposed source.
+                registration.Dispose();
                 inner.Dispose();
             }
         }
     }
 
     /// <summary>
-    /// Hands an abandoned read off to run itself down in the background: cancel its token, then -- once
-    /// both the read and the cancellation have actually finished -- observe any exception it faulted with
-    /// and dispose the token source. The same hand-off retrieval makes for an abandoned search.
+    /// Hands an abandoned read off to run itself down in the background: detach it from the caller's
+    /// token, count it as abandoned, cancel its token, then -- once both the read and the cancellation
+    /// have actually finished -- observe any exception it faulted with, stop counting it, and dispose the
+    /// token source. The same hand-off retrieval makes for an abandoned search.
     /// </summary>
     /// <remarks>
     /// The cancellation deliberately does not run on the caller's thread. A cancellation callback can be
@@ -1398,9 +1419,18 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// statement -- so cancelling inline would let the check overrun the very bound it is reporting.
     /// Disposal waits for both tasks, because disposing earlier would tear the token out from under a
     /// read or a callback still using it. Until the cancel lands, the read may keep a pooled connection.
+    /// The registration on the caller's token is released at once, though: a read against a hung store
+    /// may never end. It is unregistered rather than disposed, because disposing waits for a callback
+    /// already running (the caller cancelling, and with it the read's own cancellation callbacks).
     /// </remarks>
-    private static void Abandon(Task task, CancellationTokenSource source)
+    private void Abandon(Task task, CancellationTokenSource source, CancellationTokenRegistration registration)
     {
+        registration.Unregister();
+
+        // Counted before the continuation is attached, so a read that has already ended is still counted
+        // and uncounted exactly once.
+        Interlocked.Increment(ref _abandonedReads);
+
         var cancelling = Task.Run(
             async () =>
             {
@@ -1421,6 +1451,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 _ = completed.Exception;
                 _ = task.Exception;
                 source.Dispose();
+                Interlocked.Decrement(ref _abandonedReads);
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
@@ -1432,10 +1463,34 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <see langword="null"/> when <see cref="TimedOut"/> is set, and also when a store broke its contract
     /// by answering null; every caller treats that null exactly as it did before reads were bounded.
     /// </summary>
-    private readonly record struct BoundedRead<T>(T? Value, bool TimedOut)
+    /// <remarks>
+    /// <see cref="Saturated"/> marks a timeout reported without starting the read at all, because too many
+    /// earlier reads were abandoned and are still running (see <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/>).
+    /// </remarks>
+    private readonly record struct BoundedRead<T>(T? Value, bool TimedOut, bool Saturated = false)
         where T : class
     {
         public static BoundedRead<T> Expired => new(null, TimedOut: true);
+
+        public static BoundedRead<T> Refused => new(null, TimedOut: true, Saturated: true);
+    }
+
+    /// <summary>How many abandoned eligibility re-reads are still running against the store. For tests.</summary>
+    internal int AbandonedReads => Volatile.Read(ref _abandonedReads);
+
+    /// <summary>Cancels a read's token source when the caller's token is cancelled.</summary>
+    private static void CancelSource(object? state)
+    {
+        try
+        {
+            ((CancellationTokenSource)state!).Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The read was abandoned as the caller cancelled: Unregister could not stop this callback,
+            // and the read then ended and its source was disposed. Nothing is left to cancel, and the
+            // caller's own Cancel() must not throw for it.
+        }
     }
 
     /// <summary>
@@ -1448,9 +1503,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         public static CheckOutcome Failed(InjectionFailure failure) => new([], [], failure);
 
-        public static CheckOutcome TimedOut(TimeSpan timeout) => Failed(
+        public static CheckOutcome TimedOut(TimeSpan timeout, int? abandonedReadCap = null) => Failed(
             new InjectionFailure(
-                $"The final eligibility check exceeded its {timeout} bound, so nothing was injected.",
+                abandonedReadCap is { } cap
+                    ? $"The final eligibility check was not started because the experience store has too many abandoned reads still running (at least {cap}), so nothing was injected."
+                    : $"The final eligibility check exceeded its {timeout} bound, so nothing was injected.",
                 Exception: null));
     }
 

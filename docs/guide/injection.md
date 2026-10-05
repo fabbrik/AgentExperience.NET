@@ -71,7 +71,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.Messages` may be empty — read it with `LastOrDefault`, never `Last()`. |
-| `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records) and the bound on the final eligibility re-check. |
+| `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records), the bound on the final eligibility re-check, and `MaxAbandonedReads` (default 16), the cap on its abandoned reads still running (see [Pre-model latency budget](#pre-model-latency-budget)). |
 | `SessionLimits` | 32 records, 64 KB (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
 | `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Approach:` line may show. See [Showing selected argument values](#showing-selected-argument-values). |
@@ -490,6 +490,18 @@ counts against `EligibilityCheckTimeout`; one synchronous call is not cut short,
 returns past the bound. Store reads are hard-bounded: one still running when its bound runs out is abandoned, keeps
 running in the background, and may hold a pooled database connection until its cancellation lands. The bounds are
 released by `TimeProvider` timers, so a starved thread pool can still release them late.
+
+Abandoned reads are capped, so a store that hangs on every call cannot pile them up until the connection or thread
+pool runs out. Retrieval stops starting searches while `RetrievalPolicy.MaxAbandonedSearches` (default 16) of its
+abandoned ones are still running, and the provider stops starting eligibility re-reads while
+`Limits.MaxAbandonedReads` (default 16, counted per provider across the batch, fallback and scope-check reads) of its
+own are. A read abandoned because the caller cancelled counts too, until it ends. Over the cap the step is not
+started and ends at once without calling the store: retrieval reports `RetrievalTimedOut` with a `Failure` whose
+reason names the cap (a real timeout carries none), and the check reports `Failed` with a reason that names
+`MaxAbandonedReads`. Nothing is injected. The count drops as the abandoned reads end. Both counts are per instance,
+so the caps only engage when the retrieval service and the provider are shared and long-lived (for example DI
+singletons); a provider or service built per request never reaches them. An abandoned read is detached from the caller's cancellation token as
+soon as it is abandoned.
 
 ## Records shared by a grant
 

@@ -197,7 +197,12 @@ public enum RetrievalOutcome
     /// <summary>The search ran inside the timeout and the result holds every eligible record it found, ranked.</summary>
     Completed,
 
-    /// <summary>The call exceeded the policy's timeout. The result is empty; nothing about it is an error.</summary>
+    /// <summary>
+    /// The call exceeded the policy's timeout, or was refused without running because the service already had
+    /// <see cref="RetrievalPolicy.MaxAbandonedSearches"/> abandoned searches still running. The result is empty;
+    /// nothing about it is an error. Only the refused case carries a <see cref="ExperienceRetrievalResult.Failure"/>,
+    /// whose reason names the cap.
+    /// </summary>
     TimedOut,
 
     /// <summary>The request scope lies outside the host-established authorization. No search was issued.</summary>
@@ -299,7 +304,13 @@ public sealed record VectorChannelFallback(TextOnlyReason Reason, string Detail,
 /// </param>
 /// <param name="CorrelationId">The request's correlation identifier, echoed back on every outcome including <see cref="RetrievalOutcome.TimedOut"/>.</param>
 /// <param name="Elapsed">How long the call took, measured with the service's <see cref="TimeProvider"/>.</param>
-/// <param name="Failure">Why the call failed, when <see cref="Outcome"/> is <see cref="RetrievalOutcome.Failed"/>; otherwise <see langword="null"/>.</param>
+/// <param name="Failure">
+/// Why the call failed, when <see cref="Outcome"/> is <see cref="RetrievalOutcome.Failed"/>. On
+/// <see cref="RetrievalOutcome.TimedOut"/> it is <see langword="null"/> for a real timeout and set only when the
+/// call was refused without running at the abandoned-search cap
+/// (<see cref="RetrievalPolicy.MaxAbandonedSearches"/>), with a reason that names the cap. Otherwise
+/// <see langword="null"/>.
+/// </param>
 /// <param name="VectorFallback">
 /// Why the vector channel contributed nothing, when it did not; <see langword="null"/> when both
 /// channels ran. Present even on a perfectly good text-only answer, because "this deployment has no
@@ -318,9 +329,10 @@ public sealed record ExperienceRetrievalResult(
     VectorChannelFallback? VectorFallback = null)
 {
     /// <summary>
-    /// The timeout signal: <see langword="true"/> exactly when the call ran out of time. A timeout is
-    /// never an exception and is never reported as a failure, so a host can tell "too slow this time"
-    /// from "something is broken".
+    /// The timeout signal: <see langword="true"/> exactly when the call ran out of time, or was refused
+    /// without running at the abandoned-search cap (<see cref="RetrievalPolicy.MaxAbandonedSearches"/>; only
+    /// then is <see cref="Failure"/> set, naming the cap). A timeout is never an exception and never has the
+    /// <see cref="RetrievalOutcome.Failed"/> outcome, so a host can tell "too slow this time" from "something is broken".
     /// </summary>
     public bool TimedOut => Outcome is RetrievalOutcome.TimedOut;
 

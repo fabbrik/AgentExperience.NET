@@ -2125,6 +2125,294 @@ public class ExperienceInjectionTests
         await hung.Cancelled();
     }
 
+    // ---- Story 16.5: abandoned eligibility re-reads are capped ------------------------------------
+
+    [Fact]
+    public async Task Against_a_hung_store_the_check_stops_starting_reads_once_the_abandoned_ones_reach_the_cap()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50), MaxAbandonedReads = 2 },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        harness.World.GetDelay = _ =>
+        {
+            // Ignores its token and never returns until the test releases it: a store hung on every call.
+            Interlocked.Increment(ref entered);
+            return gate.Task;
+        };
+        var provider = harness.Provider();
+        var agent = harness.Agent(provider);
+
+        try
+        {
+            for (var i = 1; i <= 2; i++)
+            {
+                var run = agent.RunAsync("refund ticket stuck on a lock");
+                await WaitUntil(() => Volatile.Read(ref entered) == i);
+                await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+                await run;
+            }
+
+            Assert.Equal(2, provider.AbandonedReads);
+            Assert.All(harness.Results, result => Assert.Equal(
+                "The final eligibility check exceeded its 00:00:00.0500000 bound, so nothing was injected.",
+                result.Failure!.Reason));
+
+            // The third times out at once -- the clock never moves -- without reaching the store.
+            var refused = await agent.RunAsync("refund ticket stuck on a lock").WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal("Hello, world", refused.Text);
+            Assert.Null(harness.InjectedText());
+            Assert.Equal(3, harness.Results.Count);
+            var result = harness.Results[2];
+            Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+            Assert.Empty(result.InjectedExperienceIds);
+            Assert.Contains("too many abandoned reads", result.Failure!.Reason, StringComparison.Ordinal);
+            Assert.Null(result.Failure.Exception);
+            Assert.Equal(2, harness.World.BatchReads.Count);
+            Assert.Equal(2, Volatile.Read(ref entered));
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task Once_the_abandoned_reads_end_the_check_reaches_the_store_again()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50), MaxAbandonedReads = 2 },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        harness.World.GetDelay = _ =>
+        {
+            Interlocked.Increment(ref entered);
+            return gate.Task;
+        };
+        var provider = harness.Provider();
+        var agent = harness.Agent(provider);
+
+        for (var i = 1; i <= 2; i++)
+        {
+            var run = agent.RunAsync("refund ticket stuck on a lock");
+            await WaitUntil(() => Volatile.Read(ref entered) == i);
+            await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+            await run;
+        }
+
+        await agent.RunAsync("refund ticket stuck on a lock").WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Contains("too many abandoned reads", harness.Results[2].Failure!.Reason, StringComparison.Ordinal);
+
+        // The hung reads finally answer: each is uncounted exactly once.
+        gate.SetResult();
+        await WaitUntil(() => provider.AbandonedReads == 0);
+
+        await agent.RunAsync("refund ticket stuck on a lock").WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(InjectionOutcome.Injected, harness.Results[3].Outcome);
+        Assert.Equal([InjectionRecords.Id(1)], harness.Results[3].InjectedExperienceIds);
+        Assert.Equal(3, harness.World.BatchReads.Count);
+        Assert.Equal(0, provider.AbandonedReads);
+    }
+
+    [Fact]
+    public async Task An_abandoned_read_is_detached_from_the_callers_token_at_once()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        var hung = new HungRead();
+        harness.World.GetDelay = hung.Enter;
+        var provider = harness.Provider();
+        using var caller = new CancellationTokenSource();
+
+        var run = harness.Agent(provider).RunAsync("refund ticket stuck on a lock", cancellationToken: caller.Token);
+        await hung.Entered.Task;
+        await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+        await run;
+
+        Assert.Contains("eligibility check exceeded", Assert.Single(harness.Results).Failure!.Reason, StringComparison.Ordinal);
+        Assert.Equal(1, provider.AbandonedReads);
+
+        // The read never ends, yet the long-lived caller token holds nothing for it any more, so
+        // cancelling it afterwards can no longer reach the abandoned read's source. Polled: the bound's own
+        // wait releases its registration just after the check resumes.
+        await WaitUntil(() => RegisteredCallbacks(caller) == 0);
+        await hung.Cancelled();
+    }
+
+    [Fact]
+    public async Task Reads_that_complete_in_time_are_never_counted_as_abandoned()
+    {
+        var harness = new Harness();
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        var provider = harness.Provider();
+        var agent = harness.Agent(provider);
+        using var caller = new CancellationTokenSource();
+
+        for (var i = 0; i < 3; i++)
+        {
+            await agent.RunAsync("refund ticket stuck on a lock", cancellationToken: caller.Token);
+        }
+
+        Assert.All(harness.Results, result => Assert.Equal(InjectionOutcome.Injected, result.Outcome));
+        Assert.Equal(3, harness.World.BatchReads.Count);
+        Assert.Equal(0, provider.AbandonedReads);
+        await WaitUntil(() => RegisteredCallbacks(caller) == 0);
+    }
+
+    [Fact]
+    public async Task A_shared_provider_reports_retrieval_refused_at_the_abandoned_search_cap_as_RetrievalTimedOut_with_the_reason()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Policy = RetrievalPolicy.Default with { Timeout = TimeSpan.FromMilliseconds(50), MaxAbandonedSearches = 1 },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        var hung = new HungRead();
+        harness.World.SearchDelay = hung.Enter;
+        var agent = harness.Agent(harness.Provider());
+
+        var run = agent.RunAsync("refund ticket stuck on a lock");
+        await hung.Entered.Task;
+        await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+        await run;
+
+        Assert.Equal(InjectionOutcome.RetrievalTimedOut, harness.Results[0].Outcome);
+        Assert.Null(harness.Results[0].Failure); // a real timeout carries no failure
+
+        // The clock never moves: the second invocation is refused at once, without a search.
+        await agent.RunAsync("refund ticket stuck on a lock").WaitAsync(TimeSpan.FromSeconds(10));
+
+        var refused = harness.Results[1];
+        Assert.Equal(InjectionOutcome.RetrievalTimedOut, refused.Outcome);
+        Assert.Contains("too many abandoned searches", refused.Failure!.Reason, StringComparison.Ordinal);
+        Assert.Null(harness.InjectedText());
+        Assert.Equal(1, harness.World.Searches);
+    }
+
+    [Fact]
+    public async Task A_session_scope_check_refused_at_the_abandoned_read_cap_reports_the_cap()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50), MaxAbandonedReads = 1 },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        var provider = harness.Provider();
+        var agent = harness.Agent(provider);
+        var session = await agent.CreateSessionAsync();
+
+        // The session is given the record; from now on it is only re-checked, by the scope-check read.
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal(InjectionOutcome.Injected, harness.Results[0].Outcome);
+
+        var entered = 0;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.World.ScopeCheckDelay = _ =>
+        {
+            Interlocked.Increment(ref entered);
+            return gate.Task;
+        };
+
+        try
+        {
+            var run = agent.RunAsync("refund ticket stuck on a lock", session);
+            await WaitUntil(() => Volatile.Read(ref entered) == 1);
+            await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+            await run;
+            Assert.Equal(1, provider.AbandonedReads);
+
+            await agent.RunAsync("refund ticket stuck on a lock", session).WaitAsync(TimeSpan.FromSeconds(10));
+
+            var refused = harness.Results[2];
+            Assert.Equal(InjectionOutcome.Failed, refused.Outcome);
+            Assert.Equal(
+                "The final eligibility check was not started because the experience store has too many abandoned reads still running (at least 1), so nothing was injected.",
+                refused.Failure!.Reason);
+            Assert.Empty(refused.InjectedExperienceIds);
+            Assert.Empty(refused.RetractedExperienceIds);
+            Assert.Equal(1, Volatile.Read(ref entered));
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public void The_abandoned_read_cap_must_be_strictly_positive_and_defaults_to_16()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => ExperienceInjectionLimits.Default with { MaxAbandonedReads = 0 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => ExperienceInjectionLimits.Default with { MaxAbandonedReads = -1 });
+        Assert.Equal(1, (ExperienceInjectionLimits.Default with { MaxAbandonedReads = 1 }).MaxAbandonedReads);
+        Assert.Equal(16, ExperienceInjectionLimits.DefaultMaxAbandonedReads);
+        Assert.Equal(16, ExperienceInjectionLimits.Default.MaxAbandonedReads);
+        Assert.Equal(16, new ExperienceInjectionLimits(1, ExperienceInjectionLimits.DefaultMaxBytes).MaxAbandonedReads);
+    }
+
+    /// <summary>Polls, on the real clock, until <paramref name="condition"/> holds.</summary>
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        for (var attempt = 0; !condition() && attempt < 2_000; attempt++)
+        {
+            await Task.Delay(5);
+        }
+
+        Assert.True(condition(), "The condition never held.");
+    }
+
+    /// <summary>
+    /// How many callbacks are registered on <paramref name="source"/>'s token. Read through the runtime's
+    /// private fields, because no public API exposes it and it is the only direct evidence that a
+    /// registration was released; a runtime that renames them fails the test loudly rather than passing.
+    /// </summary>
+    private static int RegisteredCallbacks(CancellationTokenSource source)
+    {
+        const System.Reflection.BindingFlags Fields =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        static System.Reflection.FieldInfo Field(Type type, string name)
+        {
+            var field = type.GetField(name, Fields);
+            Assert.True(field is not null, $"The runtime no longer has {type.FullName}.{name}; update this helper.");
+            return field;
+        }
+
+        var registrations = Field(typeof(CancellationTokenSource), "_registrations").GetValue(source);
+        if (registrations is null)
+        {
+            return 0;
+        }
+
+        var callbacks = Field(registrations.GetType(), "Callbacks");
+        var count = 0;
+        for (var node = callbacks.GetValue(registrations); node is not null; node = Field(node.GetType(), "Next").GetValue(node))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
     /// <summary>A clock whose timestamps move only when a test moves them, and whose timers never fire: a timer callback delayed indefinitely.</summary>
     private sealed class NeverFiringClock : TimeProvider
     {
@@ -2185,6 +2473,9 @@ public class ExperienceInjectionTests
         }
 
         public ChatClientAgent Agent() => new(Client, new ChatClientAgentOptions { AIContextProviders = [Provider()] });
+
+        /// <summary>An agent over a provider the test holds, so its state lasts across runs.</summary>
+        public ChatClientAgent Agent(ExperienceContextProvider provider) => new(Client, new ChatClientAgentOptions { AIContextProviders = [provider] });
 
         public string? InjectedText() => Client.LastMessages
             ?.FirstOrDefault(m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true)

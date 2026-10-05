@@ -135,6 +135,14 @@ public sealed class ExperienceRetrievalService
     private readonly ConfidenceDecayPolicy? _confidenceDecay;
 
     /// <summary>
+    /// How many searches this service has abandoned on a timeout (or a cancellation) that are still
+    /// running against the store: incremented when a search is abandoned, decremented exactly once when
+    /// it finally ends. At <see cref="RetrievalPolicy.MaxAbandonedSearches"/> no new search is started
+    /// (story 16.5).
+    /// </summary>
+    private int _abandonedSearches;
+
+    /// <summary>
     /// Creates a text-only retrieval service over a candidate source, its policy, its weights, and the
     /// clock it measures with. Every result it produces is flagged
     /// <see cref="ExperienceRetrievalResult.TextOnly"/> with
@@ -259,6 +267,9 @@ public sealed class ExperienceRetrievalService
     /// <summary>The policy this service runs under.</summary>
     public RetrievalPolicy Policy => _policy;
 
+    /// <summary>How many abandoned searches are still running against the store. For tests.</summary>
+    internal int AbandonedSearches => Volatile.Read(ref _abandonedSearches);
+
     /// <summary>The weights this service ranks with.</summary>
     public RankingWeights Weights => _weights;
 
@@ -376,9 +387,31 @@ public sealed class ExperienceRetrievalService
             ExcludeModelAuthored = request.ExcludeModelAuthored,
         };
 
+        // Too many earlier searches were abandoned and are still running against the store (story 16.5).
+        // Starting another would only add one more to the pile, so the call ends here as the timeout it
+        // would almost certainly become, without touching the store or either channel. The check and the
+        // start are not one atomic step, so concurrent callers can overshoot the cap by at most their own
+        // number; the cap bounds the pile, not each search.
+        if (Volatile.Read(ref _abandonedSearches) >= _policy.MaxAbandonedSearches)
+        {
+            return Empty(
+                RetrievalOutcome.TimedOut,
+                request,
+                unrestricted,
+                startedAt,
+                new RetrievalFailure(
+                    $"The candidate store has too many abandoned searches still running (at least {_policy.MaxAbandonedSearches}), so no search was started.",
+                    Exception: null),
+                EndedEarly());
+        }
+
         // Cancelled only after a timeout has been reported (it carries no timer of its own), so a
-        // token-honouring source can never race a cancellation failure ahead of the timeout report.
-        var inner = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // token-honouring source can never race a cancellation failure ahead of the timeout report. Its
+        // own source, tied to the caller's token by a registration rather than linked to it, so that an
+        // abandoned search can be detached from the caller's token at once (see Abandon) instead of
+        // holding a registration on it until the search ends -- which, for a hung store, is never.
+        var inner = new CancellationTokenSource();
+        var registration = cancellationToken.Register(CancelSource, inner);
 
         // Task.Run also bounds a source that blocks or throws synchronously. Both channels start here
         // and run concurrently, so the one timeout below bounds the pair rather than each in turn.
@@ -399,21 +432,21 @@ public sealed class ExperienceRetrievalService
             {
                 // Report first, so a token-honouring source's cancellation cannot be reported in its place.
                 abandoned = true;
-                Abandon(work, inner);
+                Abandon(work, inner, registration);
                 return Empty(RetrievalOutcome.TimedOut, request, unrestricted, startedAt, failure: null, EndedEarly());
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 // The caller cancelled. Distinct from the timeout in kind and in reporting: it propagates.
                 abandoned = true;
-                Abandon(work, inner);
+                Abandon(work, inner, registration);
                 throw;
             }
             catch (OperationCanceledException ex)
             {
                 // Neither the caller nor the timeout: a channel cancelled for its own reasons. Fail-closed.
                 abandoned = true;
-                Abandon(work, inner);
+                Abandon(work, inner, registration);
                 return Empty(
                     RetrievalOutcome.Failed,
                     request,
@@ -437,6 +470,9 @@ public sealed class ExperienceRetrievalService
         {
             if (!abandoned)
             {
+                // The registration first: once it is gone the caller's token can no longer reach the
+                // source, so disposing the source cannot race a late cancellation.
+                registration.Dispose();
                 inner.Dispose();
             }
         }
@@ -979,9 +1015,10 @@ public sealed class ExperienceRetrievalService
     }
 
     /// <summary>
-    /// Hands an abandoned search off to run itself down in the background: cancel its token, then --
-    /// once both the search and the cancellation have actually finished -- observe any exception it
-    /// faulted with and dispose the token source.
+    /// Hands an abandoned search off to run itself down in the background: detach it from the caller's
+    /// token, count it as abandoned, cancel its token, then -- once both the search and the cancellation
+    /// have actually finished -- observe any exception it faulted with, stop counting it, and dispose the
+    /// token source.
     /// </summary>
     /// <remarks>
     /// The cancellation deliberately does not run on the caller's thread. A cancellation callback can
@@ -989,10 +1026,20 @@ public sealed class ExperienceRetrievalService
     /// running statement -- so cancelling inline would let the call overrun the very timeout it is in
     /// the middle of reporting, exactly when the bound matters most. Disposal waits for both tasks,
     /// because disposing earlier would tear the token out from under a search or a callback still
-    /// reading it.
+    /// reading it. The registration on the caller's token, by contrast, is released at once: a search
+    /// against a hung store may never end, and a long-lived caller token would otherwise keep one
+    /// registration per such search for ever. It is unregistered rather than disposed, because disposing
+    /// waits for a callback already running -- the caller cancelling, and with it this search's own
+    /// cancellation callbacks -- and nothing here may wait on those.
     /// </remarks>
-    private static void Abandon(Task task, CancellationTokenSource source)
+    private void Abandon(Task task, CancellationTokenSource source, CancellationTokenRegistration registration)
     {
+        registration.Unregister();
+
+        // Counted before the continuation below is attached, so even a search that has already ended is
+        // counted and then uncounted exactly once.
+        Interlocked.Increment(ref _abandonedSearches);
+
         var cancelling = Task.Run(
             async () =>
             {
@@ -1013,10 +1060,26 @@ public sealed class ExperienceRetrievalService
                 _ = completed.Exception;
                 _ = task.Exception;
                 source.Dispose();
+                Interlocked.Decrement(ref _abandonedSearches);
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    /// <summary>Cancels the per-search token source when the caller's token is cancelled.</summary>
+    private static void CancelSource(object? state)
+    {
+        try
+        {
+            ((CancellationTokenSource)state!).Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The read was abandoned as the caller cancelled: Unregister could not stop this callback,
+            // and the read then ended and its source was disposed. Nothing is left to cancel, and the
+            // caller's own Cancel() must not throw for it.
+        }
     }
 
     private ExperienceRetrievalResult Empty(

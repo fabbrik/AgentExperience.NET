@@ -60,6 +60,29 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   timeout is reported. The bound is released by a `TimeProvider` timer, so a starved thread pool can still release it
   late. See [Pre-model latency budget](docs/guide/injection.md#pre-model-latency-budget).
 
+### Abandoned reads against a hung store are capped (story 16.5)
+
+- **The problem it fixes.** Retrieval and the injection provider's eligibility re-read abandon a timed-out store read
+  and let it keep running. Against a store that hangs on every call, each invocation added another running read, so
+  they piled up without limit and could exhaust the connection or thread pool. An abandoned read also kept a
+  registration on the caller's cancellation token until it ended, which for a hung read was never.
+- **Running-count cap.** `RetrievalPolicy.MaxAbandonedSearches` and `ExperienceInjectionLimits.MaxAbandonedReads`
+  (new `init` properties, default 16 each, must be positive; `DefaultMaxAbandonedSearches` and
+  `DefaultMaxAbandonedReads` are new). Each retrieval service and each provider counts its own abandoned reads still
+  running, whether they were abandoned on a timeout or because the caller cancelled. At the cap no new read is
+  started: retrieval returns `TimedOut` at once, the same empty result as a timeout, but with a `Failure` whose reason
+  names the cap (a real timeout still carries no `Failure`; injection reports it as `RetrievalTimedOut` with that
+  reason), and the eligibility check is not started and reports a `Failed` injection result whose reason names
+  `MaxAbandonedReads`. Neither touches the store. The count drops as the abandoned reads end. There is no
+  circuit-breaker state, probe or timer.
+- **Shared instances only.** The counts are per `ExperienceRetrievalService` and per `ExperienceContextProvider`
+  instance, so the caps engage only when those are shared and long-lived (for example DI singletons); one built per
+  request never reaches them.
+- **Detached at once.** An abandoned read is now unregistered from the caller's token the moment it is abandoned; its
+  own token source is still cancelled off the caller's thread and disposed only once the read ends. Reads that finish
+  in time, and caller cancellation, behave as before. See
+  [Pre-model latency budget](docs/guide/injection.md#pre-model-latency-budget).
+
 ### Retrieval unwraps record keys in one batch (story 16.3)
 
 - **The problem it fixes.** With crypto-shredding on, every sealed row a read returned cost one key-store call, made

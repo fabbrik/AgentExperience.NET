@@ -814,6 +814,7 @@ namespace AgentExperience.Core.Retrieval
     public sealed class RetrievalPolicy : System.IEquatable<AgentExperience.Core.Retrieval.RetrievalPolicy>
     {
         public const int DefaultCandidateLimit = 50;
+        public const int DefaultMaxAbandonedSearches = 16;
         public const double DefaultMinimumConfidence = 0.5D;
         public const int MaxCandidateLimit = 199;
         public static readonly System.TimeSpan DefaultRecencyHalfLife;
@@ -821,6 +822,7 @@ namespace AgentExperience.Core.Retrieval
         public static readonly System.TimeSpan MaxTimeout;
         public RetrievalPolicy(System.TimeSpan Timeout, double MinimumConfidence, System.TimeSpan? MaxAge, System.TimeSpan RecencyHalfLife, int CandidateLimit) { }
         public int CandidateLimit { get; init; }
+        public int MaxAbandonedSearches { get; init; }
         public System.TimeSpan? MaxAge { get; init; }
         public double MinimumConfidence { get; init; }
         public System.TimeSpan RecencyHalfLife { get; init; }

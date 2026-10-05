@@ -68,6 +68,12 @@ public sealed record ExperienceInjectionLimits(int MaxRecords, int MaxBytes)
     /// </summary>
     public static readonly TimeSpan DefaultEligibilityCheckTimeout = TimeSpan.FromMilliseconds(500);
 
+    /// <summary>
+    /// The default bound on abandoned eligibility re-reads still running against the store: 16 (see
+    /// <see cref="MaxAbandonedReads"/>).
+    /// </summary>
+    public const int DefaultMaxAbandonedReads = 16;
+
     /// <summary>The largest permitted <see cref="EligibilityCheckTimeout"/>: one day, matching <see cref="RetrievalPolicy.MaxTimeout"/>.</summary>
     public static readonly TimeSpan MaxEligibilityCheckTimeout = RetrievalPolicy.MaxTimeout;
 
@@ -99,6 +105,25 @@ public sealed record ExperienceInjectionLimits(int MaxRecords, int MaxBytes)
         get;
         init => field = EnsureTimeout(value);
     } = DefaultEligibilityCheckTimeout;
+
+    /// <summary>
+    /// How many abandoned eligibility re-reads one provider may have still running against the store before
+    /// it stops starting new ones. A read is abandoned when it runs past <see cref="EligibilityCheckTimeout"/>
+    /// or when the caller cancels; it is not stopped but keeps running in the background until it ends, and
+    /// counts against this cap until then. So against a store that hangs on every call each invocation
+    /// would otherwise add another running read and they would pile up until the connection or thread pool
+    /// ran out. At this many, the check is not started: it fails at once, without calling the store, as
+    /// <see cref="InjectionOutcome.Failed"/> with a reason that names this cap; nothing is injected.
+    /// Once abandoned reads finish, the count drops and checks reach the store again. Counted per provider
+    /// instance, so the cap only engages when one provider is shared and long-lived (for example a DI
+    /// singleton); a provider built per request starts every count at zero and never reaches it. Counted across every read of the check (the batch, its per-record fallback and the session's
+    /// scope check). Defaults to <see cref="DefaultMaxAbandonedReads"/>; must be strictly positive.
+    /// </summary>
+    public int MaxAbandonedReads
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(MaxAbandonedReads));
+    } = DefaultMaxAbandonedReads;
 
     private static int EnsurePositive(int value, string paramName) =>
         value > 0

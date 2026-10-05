@@ -103,12 +103,14 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     }
     public sealed class ExperienceInjectionLimits : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits>
     {
+        public const int DefaultMaxAbandonedReads = 16;
         public const int DefaultMaxBytes = 16384;
         public const int DefaultMaxRecords = 8;
         public static readonly System.TimeSpan DefaultEligibilityCheckTimeout;
         public static readonly System.TimeSpan MaxEligibilityCheckTimeout;
         public ExperienceInjectionLimits(int MaxRecords, int MaxBytes) { }
         public System.TimeSpan EligibilityCheckTimeout { get; init; }
+        public int MaxAbandonedReads { get; init; }
         public int MaxBytes { get; init; }
         public int MaxRecords { get; init; }
         public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Default { get; }

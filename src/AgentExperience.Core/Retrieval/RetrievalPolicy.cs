@@ -85,6 +85,12 @@ public sealed record RetrievalPolicy(
     public const int MaxCandidateLimit = ExperienceCandidateQuery.MaxLimit - 1;
 
     /// <summary>
+    /// The default bound on abandoned searches still running against the store: 16 (see
+    /// <see cref="MaxAbandonedSearches"/>).
+    /// </summary>
+    public const int DefaultMaxAbandonedSearches = 16;
+
+    /// <summary>
     /// The documented defaults: a 500 ms timeout, a 0.5 confidence threshold, no expiry, a 30-day
     /// recency half-life, and at most 50 candidates per search.
     /// </summary>
@@ -130,6 +136,27 @@ public sealed record RetrievalPolicy(
         init => field = EnsureCandidateLimit(value);
     } = EnsureCandidateLimit(CandidateLimit);
 
+    /// <summary>
+    /// How many abandoned searches one retrieval service may have still running against the store before
+    /// it stops starting new ones. A search is abandoned when it runs past <see cref="Timeout"/>, when the
+    /// caller cancels, or when a channel cancels it for its own reasons; it is not stopped but keeps running
+    /// in the background until it ends, and counts against this cap until then. So
+    /// against a store that hangs on every call each retrieval would otherwise add another running search
+    /// and they would pile up until the connection or thread pool ran out. At this many, a retrieval
+    /// returns <see cref="RetrievalOutcome.TimedOut"/> at once, without calling the store or either
+    /// channel, and its <see cref="ExperienceRetrievalResult.Failure"/> says why; once abandoned searches
+    /// finish, the count drops and retrievals reach the store again. Counted per service instance, so the cap
+    /// only engages when one instance is shared and long-lived (for example a DI singleton); a service built
+    /// per request starts every count at zero and never reaches it. Defaults
+    /// to <see cref="DefaultMaxAbandonedSearches"/>; must be strictly positive. This is a running-count
+    /// cap, not a circuit breaker: there is no open state, probe or timer.
+    /// </summary>
+    public int MaxAbandonedSearches
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(MaxAbandonedSearches));
+    } = DefaultMaxAbandonedSearches;
+
     private static TimeSpan EnsurePositive(TimeSpan value, string paramName) =>
         value > TimeSpan.Zero
             ? value
@@ -144,6 +171,11 @@ public sealed record RetrievalPolicy(
             ? value
             : throw new ArgumentOutOfRangeException(nameof(Timeout), value, $"The retrieval timeout must be at most {MaxTimeout}.");
     }
+
+    private static int EnsurePositive(int value, string paramName) =>
+        value > 0
+            ? value
+            : throw new ArgumentOutOfRangeException(paramName, value, "Retrieval counts must be strictly positive.");
 
     private static double EnsureUnitInterval(double value, string paramName) =>
         value >= 0d && value <= 1d

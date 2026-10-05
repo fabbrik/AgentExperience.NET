@@ -140,7 +140,12 @@ public enum InjectionOutcome
     /// <summary>The resolver returned <see langword="null"/>: this invocation opted out of injection. Not a failure.</summary>
     Skipped,
 
-    /// <summary>Retrieval exceeded its own timeout. Nothing was injected; the timeout is reported, never thrown.</summary>
+    /// <summary>
+    /// Retrieval exceeded its own timeout, or was refused without running because the retrieval service already
+    /// had <see cref="RetrievalPolicy.MaxAbandonedSearches"/> abandoned searches still running. Nothing was
+    /// injected; the timeout is reported, never thrown. Only the refused case carries a
+    /// <see cref="ExperienceInjectionResult.Failure"/>, whose reason names the cap.
+    /// </summary>
     RetrievalTimedOut,
 
     /// <summary>The request scope lay outside the host-established authorization, so retrieval refused it. Nothing was injected.</summary>
@@ -213,7 +218,13 @@ public sealed record InjectionFailure(string Reason, Exception? Exception);
 /// <param name="EnvironmentUnrestricted"><see langword="true"/> when the request named no required environment attributes, copied from the retrieval result, so every candidate passed that check unconditionally.</param>
 /// <param name="PayloadBytes">The UTF-8 size of the injected block, at most <see cref="ExperienceInjectionLimits.MaxBytes"/>; 0 when nothing was injected. A block that carries only withdrawal notices counts too.</param>
 /// <param name="CorrelationId">The retrieval request's correlation identifier, echoed back on every outcome including a timeout.</param>
-/// <param name="Failure">Why the attempt failed, on <see cref="InjectionOutcome.RetrievalFailed"/> or <see cref="InjectionOutcome.Failed"/>; otherwise <see langword="null"/>.</param>
+/// <param name="Failure">
+/// Why the attempt failed, on <see cref="InjectionOutcome.RetrievalFailed"/> or <see cref="InjectionOutcome.Failed"/>
+/// (including an eligibility check refused at <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/>, whose reason
+/// names the cap). On <see cref="InjectionOutcome.RetrievalTimedOut"/> it is set only when retrieval was refused
+/// without running at <see cref="RetrievalPolicy.MaxAbandonedSearches"/>, with a reason that names that cap; a real
+/// timeout carries none. Otherwise <see langword="null"/>.
+/// </param>
 /// <param name="VectorFallback">
 /// Why the vector channel contributed nothing to the retrieval this block was built from, when it
 /// did not; copied from the retrieval result and <see langword="null"/> when both channels ran. A
