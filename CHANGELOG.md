@@ -6,7 +6,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Packing checks compatibility with the last published preview (story 19.1)
+
+- `dotnet pack` now runs the SDK's package validation for all six packages against the last published preview
+  (`AgentExperiencePackageValidationBaseline` in `Directory.Build.props`, `0.1.0-preview.7`), so a binary break —
+  a removed or re-shaped member, `init` changed to `set` — fails CI and the release unless the project's
+  `CompatibilitySuppressions.xml` declares it and this changelog labels it as breaking. A release test holds the
+  baseline to the last release. Restore now downloads the baseline packages from nuget.org. No behaviour or API
+  change.
 
 ## 0.1.0-preview.7
 

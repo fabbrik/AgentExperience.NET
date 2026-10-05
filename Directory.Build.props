@@ -58,6 +58,19 @@
     <AgentExperienceShippingProject Condition="$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/').StartsWith('src/'))">true</AgentExperienceShippingProject>
   </PropertyGroup>
 
+  <!-- Package validation: `dotnet pack` compares each shipping package with the same package at the last published
+       preview, and fails on any binary break (a removed or re-shaped member, init to set, ...) that is not declared.
+       The public API snapshots in AgentExperience.Release.Tests record the source shape; this records compatibility
+       with what consumers already have. An intentional break is declared in the project's CompatibilitySuppressions.xml
+       (regenerate it with -p:ApiCompatGenerateSuppressionFile=true, review the diff, and label the break in the
+       CHANGELOG). After each release, set the baseline to that release and delete the suppression files (RELEASING.md);
+       a release test holds this version to the CHANGELOG. Restore downloads the baseline packages from nuget.org. -->
+  <PropertyGroup Condition="'$(AgentExperienceShippingProject)' == 'true'">
+    <AgentExperiencePackageValidationBaseline>0.1.0-preview.7</AgentExperiencePackageValidationBaseline>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageValidationBaselineVersion>$(AgentExperiencePackageValidationBaseline)</PackageValidationBaselineVersion>
+  </PropertyGroup>
+
   <!-- ContinuousIntegrationBuild maps source paths to /_/ so the shipped assemblies and PDBs do not depend
        on where the repository was cloned. It is applied to the SHIPPING projects only, and never passed as
        a global -p:ContinuousIntegrationBuild=true: test projects locate checked-in files through

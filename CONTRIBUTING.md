@@ -99,6 +99,18 @@ _sdlc/                                      product brief, PRD, architecture, ep
   `AGENTEXPERIENCE_ACCEPT_API_CHANGES=true dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~PublicApi"`
   and commit the resulting `PublicApi/*.verified.txt` diff with your change, so reviewers see it. The baseline never
   updates itself.
+- **Breaking what is already published is a declared diff too.** `dotnet pack` runs package validation against the
+  last published preview (`AgentExperiencePackageValidationBaseline` in `Directory.Build.props`; restore downloads it
+  from nuget.org into the NuGet cache) and fails on any binary break: a removed or renamed member, a changed
+  signature, `init` changed to `set`. If the break is deliberate, restore, then run
+  `dotnet pack src/<Project> -c Release -p:AgentExperienceReleaseBuild=true -p:ApiCompatGenerateSuppressionFile=true`.
+  It rewrites that project's `CompatibilitySuppressions.xml` with every break the package now has, so commit the whole
+  file and review its diff. Then add a CHANGELOG bullet starting with `**Breaking` that names the break; a release test
+  checks that one exists whenever a suppression file does. The two checks answer different questions: the snapshot
+  records the source shape of the whole surface, attributes and defaults included, so additions and attribute changes
+  are left to it (strict mode stays off); package validation records compatibility with what consumers already have.
+  The PublicApiAnalyzers `PublicAPI.Shipped.txt`/`Unshipped.txt` files are deliberately not used: they would record the
+  surface a second time, in two more files per project, without adding either.
 - **Moving a package pin** means updating `docs/compatibility-evidence.md` in the same PR; the release tests fail if
   the compatibility proof and the shipping packages disagree on a version. Releasing is described in
   [RELEASING.md](RELEASING.md).
