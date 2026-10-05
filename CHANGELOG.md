@@ -239,6 +239,53 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
   [Keeping host-trusted evidence out of the ranked score](docs/guide/confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score).
 
+### Session tracking is serialized within a process (story 17.4)
+
+- **The problem it fixes.** Session tracking (story 6.5) loaded a session's account, awaited retrieval, then staged one
+  pending delivery and saved it. Two invocations running concurrently on one session both read the same account, so
+  they could deliver the same record revision twice, and the second save overwrote the first one's stage: that
+  delivery was never charged, never tracked, and never withdrawn later (KL-12).
+- **A lock per account.** `ExperienceContextProvider` now holds a `SemaphoreSlim` per `AgentSession` instance and
+  state key (held in a `ConditionalWeakTable`, so it goes with the session, and shared by every provider in the
+  process) from loading the account to saving it, through retrieval and the final eligibility check, and around
+  settling in `InvokedCoreAsync`. It is never held across the model call. Waiting to inject honours the invocation's
+  cancellation token, and a cancelled wait propagates like any cancellation of the invocation; settling waits
+  regardless, so a cancelled invocation's stage is still discarded. Concurrent invocations on one session now queue
+  their pre-model latency (retrieval and the eligibility re-check) behind one another.
+- **Action for a host:** the lock is held while `DecideInjection` runs, so a `DecideInjection` callback must not run
+  any invocation that injects with the same session and the same state key. That invocation would wait for the lock
+  until its token is cancelled, and with a token that cannot be cancelled it waits indefinitely.
+- **One pending stage per in-flight invocation.** Each provider settles the stages its own account holds among the
+  blocks a context provider injected into the invocation; a block the request carries from the chat history, or one
+  the host sends again as input, settles nothing. Until settled, every decision counts a stage as delivered: it is
+  charged to the budget, its records are not delivered again and are re-checked for withdrawal, and its withdrawal
+  notices stay owed. At most eight stages stay pending; staging a ninth first commits the oldest as unsure, as a
+  single leftover stage was before. With one invocation at a time, the block, the charges and the notices are
+  unchanged.
+- **New option: `ExperienceInjectionSessionLimits.InFlightStageWindow`** (default `DefaultInFlightStageWindow`,
+  5 minutes, the capture adapter's default `MaxOpenRunDuration`; must be strictly positive). Each stage records when
+  it was staged, on the provider's `TimeProvider`. A pending stage is held as in flight only within the window; an
+  older one (or one dated further ahead than the window) is taken as abandoned and committed as unsure at the
+  session's next invocation, exactly as a leftover stage was before: charged, its records eligible again, its
+  notices still owed. MAF gives no signal for an abandoned stream, so its age is the only discriminator. Set the
+  window above your longest invocation: a stage that outlives it is committed as unsure while still running, so a
+  concurrent invocation can deliver its records again (charged and tracked, never lost). A successful invocation
+  whose settling is skipped (settling threw, say) is likewise committed as unsure after the window.
+- **Behaviour change: an abandoned stream's records are held for at most the window before becoming eligible
+  again.** A stream abandoned before MAF settled it was committed as unsure at the session's next invocation, so its
+  records were delivered again at once. Nothing tells it from an invocation still running, so an invocation within
+  `InFlightStageWindow` of the abandoned one now counts its records as delivered; one after the window commits it as
+  unsure and delivers them again, as before.
+- **State format version 2.** The account's `pending` member is now a list of stages (empty when none is pending),
+  each carrying `staged`, when it was staged. Version 1 still loads: its single stage recorded no staging time, so it
+  is committed as unsure on load, as before, and the state is saved back as version 2 at the session's next
+  invocation. **Rollback:** a build before this change reads version 2 as an unreadable state, so a session saved by
+  this build injects nothing there until the host removes its state key, which resets the session's account.
+- **KL-12** drops the clause that concurrent invocations on one session race on the tracking; what remains is two
+  processes resuming the same serialized session, the host deleting or replacing the state key, and a model that
+  cannot unread a block. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  [Reused sessions](docs/guide/injection.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

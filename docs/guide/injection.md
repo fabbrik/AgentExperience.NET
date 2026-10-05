@@ -72,7 +72,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | --- | --- | --- |
 | `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.Messages` may be empty — read it with `LastOrDefault`, never `Last()`. |
 | `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records), the bound on the final eligibility re-check, and `MaxAbandonedReads` (default 16), the cap on its abandoned reads still running (see [Pre-model latency budget](#pre-model-latency-budget)). |
-| `SessionLimits` | 32 records, 64 KB (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
+| `SessionLimits` | 32 records, 64 KB, 5-minute window (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices; `InFlightStageWindow` is how long an unsettled delivery counts as in flight. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
 | `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Approach:` line may show. See [Showing selected argument values](#showing-selected-argument-values). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. |
@@ -637,15 +637,53 @@ history that trims old messages: a trimmed block is one the model no longer has,
 
 **Where the account lives, and when it is charged.** In the session's `StateBag`, under
 `ExperienceInjectionOptions.SessionStateKey`, which defaults to `ExperienceContextProvider.SessionStateKey`
-(`"AgentExperience.InjectionSession"`): counters, and record IDs with their revisions — never content, never a scope.
+(`"AgentExperience.InjectionSession"`): counters, record IDs with their revisions, and the stages still in flight —
+never content, never a scope.
 It is written on the first invocation that resolves a request, and travels with MAF's
 `SerializeSessionAsync`/`DeserializeSessionAsync` like any other session state. A block's delivery is staged when it
 is handed to MAF and charged when MAF reports the invocation succeeded; a failed invocation — streaming or not — is
-not charged, its records are delivered again, and its notices stay owed. A stage nothing settled (a stream abandoned
-before MAF reported, or another invocation's that is still running) is charged at the session's next invocation —
-when unsure, the session is charged — but not trusted as delivered: its records are tracked, so they are still
-withdrawn if they stop standing, but are not deduplicated against and may be delivered again, and its notices stay
-owed. MAF keeps no history for an abandoned stream, so either shortcut would lose something.
+not charged, its records are delivered again, and its notices stay owed. Each invocation stages its delivery on its
+own, under its own stage ID, and settles only that stage, so a failure discards its own delivery and leaves every
+other invocation's alone. Until a stage is settled, every decision counts it as delivered: it is charged to the
+budget, its records are not delivered again and are re-checked and withdrawn like any other, and its notices stay
+owed, since its block may yet fail. MAF gives no signal for a stream its consumer abandoned before MAF reported, so a
+stage is held as in flight only within `SessionLimits.InFlightStageWindow` (default 5 minutes) of when it was staged,
+on the provider's `TimeProvider`. At the session's next invocation after that, the stage is taken as abandoned and
+committed as unsure — charged (when unsure, the session is charged), its records tracked so they are still withdrawn
+if they stop standing but not deduplicated against, so they are delivered again, and its notices still owed. MAF
+keeps no history for an abandoned stream, so either shortcut would lose something. So an abandoned stream's records
+are held for at most the window before they are eligible again. Set the window above your longest invocation: a
+stage older than it is committed as unsure even if its invocation is still running, and a concurrent invocation may
+then deliver its records again (charged and tracked, never lost). At most eight stages are kept pending: staging a
+ninth first commits the oldest the same way.
+
+**Concurrent invocations on one session** (since story 17.4). Within one process, the account is read, decided on
+and written back under a lock per `AgentSession` instance and state key, shared by every provider in the process and
+released when the session is collected; two providers with different keys never wait for each other. It is held from
+loading the account to saving it, through retrieval and the final eligibility check, and around settling — never
+across the model call. So a second invocation on the same session waits for the first to stage its delivery, then
+counts that delivery as held: a record is delivered once in total, both deliveries are charged when both succeed,
+and a failed one discards only its own stage. The cost is latency: concurrent invocations on one session queue their
+pre-model work (retrieval and the eligibility re-check) behind one another. Waiting to inject honours the
+invocation's cancellation token: a cancelled wait propagates as the invocation's cancellation, and nothing is
+written. Settling waits regardless of the token, so a cancelled invocation's stage is still discarded. A provider
+settles the stages its own account holds among the blocks a context provider injected into the invocation; a block
+the request carries from the chat history, or one the host sends again as its own input, settles nothing. A
+successful invocation whose settling is skipped (settling threw, say) stays pending, and is committed as unsure after
+the window like an abandoned one. A race can still cost an extra withdrawal notice — the second invocation re-sends
+a notice the first one's block carries until that block is settled — but within the window it never repeats a
+delivery or loses one.
+
+The lock is held while `DecideInjection` runs, so a `DecideInjection` callback must not run any invocation that
+injects with the same session and the same state key: that invocation would wait for the lock the callback's own
+invocation holds until its cancellation token is cancelled, and with a token that cannot be cancelled it waits
+indefinitely.
+
+A session restored from the version 1 format (before story 17.4) recorded no staging time for its pending stage, so
+that stage is committed as unsure on load, as it was before, and the state is saved back in version 2 at the
+session's next invocation. **Rolling back** to a build before 17.4: it reads version 2 as an unreadable state, so a
+session saved by this build injects nothing there until the host removes its state key, which resets the session's
+account.
 
 **Failure is closed.** The account is host-held data, parsed strictly: a value that does not validate (an unknown
 version, a negative counter, more than 200 entries, a duplicate or empty ID), and a value some in-process code set
@@ -654,9 +692,10 @@ under the key as another type, is neither trusted nor overwritten — the invoca
 `EligibilityCheckTimeout`, also injects nothing: a new record is not shown while the provider cannot tell whether an
 earlier one still stands, so a store that keeps failing for one held record keeps the session's injection off until
 it recovers or the key is removed. A re-read that throws never withdraws anything by itself. Removing the key resets
-the session's budget and forgets what it owes, so the account is only as trustworthy as your session storage. Two
-invocations running concurrently on one session race on it, as they do on MAF's own history; the race is resolved
-toward charging and toward sending a notice again, never toward losing one.
+the session's budget and forgets what it owes, so the account is only as trustworthy as your session storage. The
+lock is in-process: two processes that resume the same serialized session (two servers handling one conversation)
+each keep their own copy of the account, so each can deliver the same revision, and whichever saves last wins. Keep
+one conversation on one process at a time, or serialize it in your own session storage (the KL-12 boundary).
 
 **Access rows.** The withdrawal re-check is a `ScopeCheck` and writes none. The candidate re-read is still a
 delivery, so — like a record the byte budget or `DecideInjection` then drops — a borrowed record that turns out to be

@@ -31,7 +31,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// one block's framing for each invocation whose block carried notices and no record.
 /// </para>
 /// <para>
-/// Both values are validated at construction and on a <c>with</c> expression, as
+/// Every value is validated at construction and on a <c>with</c> expression, as
 /// <see cref="ExperienceInjectionLimits"/> is.
 /// </para>
 /// </remarks>
@@ -72,6 +72,33 @@ public sealed record ExperienceInjectionSessionLimits(int MaxRecords, int MaxByt
         get;
         init => field = EnsureBytes(value);
     } = EnsureBytes(MaxBytes);
+
+    /// <summary>
+    /// The documented default <see cref="InFlightStageWindow"/>: 5 minutes, the capture adapter's default
+    /// <c>MaxOpenRunDuration</c>.
+    /// </summary>
+    /// <remarks>A computed property, not a field, so it never depends on static initialization order: <see cref="Default"/> reads it.</remarks>
+    public static TimeSpan DefaultInFlightStageWindow => TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// How long a delivery an invocation staged and has not yet settled is treated as still in flight (story 17.4),
+    /// measured from when it was staged on the provider's <see cref="ExperienceInjectionOptions.TimeProvider"/>.
+    /// Within it, every other invocation on the session counts the stage as delivered: its records are not delivered
+    /// again. Past it, the stage is taken as abandoned -- a stream its consumer stopped reading before MAF reported,
+    /// which MAF never signals -- and is committed as unsure: charged, its withdrawal notices still owed, and its
+    /// records eligible again, because the model may never have received them. Must be strictly positive. Default
+    /// <see cref="DefaultInFlightStageWindow"/>; set it above the longest invocation you run.
+    /// </summary>
+    public TimeSpan InFlightStageWindow
+    {
+        get;
+        init => field = EnsureWindow(value);
+    } = DefaultInFlightStageWindow;
+
+    private static TimeSpan EnsureWindow(TimeSpan value) =>
+        value > TimeSpan.Zero
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(InFlightStageWindow), value, "The in-flight stage window must be strictly positive.");
 
     private static int EnsureRecords(int value) =>
         value is > 0 and <= MaxTrackedRecords
