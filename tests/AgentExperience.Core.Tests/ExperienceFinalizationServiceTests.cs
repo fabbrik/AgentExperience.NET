@@ -1,5 +1,6 @@
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Lifecycle;
+using AgentExperience.Tests.Shared;
 
 namespace AgentExperience.Core.Tests;
 
@@ -478,7 +479,7 @@ public class ExperienceFinalizationServiceTests
         var result = await harness.FinalizeAsync();
 
         Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope), result.ExperienceId);
-        Assert.Equal(ExperienceFinalizationService.InitialEventIdFor(harness.RunId), result.Event!.EventId);
+        Assert.Equal(ExperienceFinalizationService.InitialEventIdFor(harness.RunId, TestScope), result.Event!.EventId);
         Assert.Equal(ExperienceFinalizationService.ReflectionIdFor(harness.RunId), result.Record!.Reflection!.ReflectionId);
 
         // Derivation is stable across calls and distinct per purpose and per run.
@@ -487,7 +488,7 @@ public class ExperienceFinalizationServiceTests
             ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope));
         Assert.NotEqual(
             ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope),
-            ExperienceFinalizationService.InitialEventIdFor(harness.RunId));
+            ExperienceFinalizationService.InitialEventIdFor(harness.RunId, TestScope));
         Assert.NotEqual(
             ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope),
             ExperienceFinalizationService.ExperienceIdFor(Guid.NewGuid(), TestScope));
@@ -568,6 +569,169 @@ public class ExperienceFinalizationServiceTests
         Assert.True(result.IsDurable);
         Assert.Equal(ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope), result.ExperienceId);
         Assert.Single(harness.Store.Commits);
+    }
+
+    [Fact]
+    public void A_derived_initial_event_id_is_distinct_per_scope_and_from_the_run_only_id_of_earlier_releases()
+    {
+        var runId = Guid.NewGuid();
+        var mine = ExperienceFinalizationService.InitialEventIdFor(runId, TestScope);
+
+        Assert.Equal(mine, ExperienceFinalizationService.InitialEventIdFor(runId, TestScope));
+        Assert.NotEqual(mine, LegacyInitialEventIds.For(runId));
+
+        // The run-only ID these tests stand in for is the one 0.1.0-preview.6 really derived.
+        Assert.Equal(LegacyInitialEventIds.GoldenInitialEventId, LegacyInitialEventIds.For(LegacyInitialEventIds.GoldenRunId));
+        Assert.NotEqual(mine, ExperienceFinalizationService.ExperienceIdFor(runId, TestScope));
+        Assert.NotEqual(mine, ExperienceFinalizationService.InitialEventIdFor(Guid.NewGuid(), TestScope));
+
+        foreach (var other in new[]
+        {
+            new Scope("tenant-9", "app-1", "project-1"),
+            new Scope("tenant-1", "app-9", "project-1"),
+            new Scope("tenant-1", "app-1", "project-9"),
+            new Scope("tenant-1", "app-1", "project-1", TeamId: "team-1"),
+            new Scope("tenant-1", "app-1", "project-1", AgentId: "agent-1"),
+            new Scope("tenant-1", "app-1", "project-1", UserId: "user-1"),
+            new Scope("tenant-1", "app-1", "project-1", TeamId: string.Empty),
+        })
+        {
+            Assert.NotEqual(mine, ExperienceFinalizationService.InitialEventIdFor(runId, other));
+        }
+
+        Assert.NotEqual(
+            ExperienceFinalizationService.InitialEventIdFor(runId, new Scope("a", "bc", "p")),
+            ExperienceFinalizationService.InitialEventIdFor(runId, new Scope("ab", "c", "p")));
+
+        Assert.Throws<ArgumentNullException>(() => ExperienceFinalizationService.InitialEventIdFor(runId, null!));
+    }
+
+    [Fact]
+    public async Task Another_scope_cannot_block_a_run_by_committing_an_event_under_its_initial_event_id()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+
+        // Event IDs are unique across every scope. A writer in another scope commits events of its own
+        // under the run-only ID earlier releases derived, and under the ID it can derive for this run in
+        // its own scope. Before the scope was mixed in, the first of these made this run's initial
+        // commit a Conflict on every attempt.
+        var foreignScope = new Scope("tenant-9", "app-1", "project-1");
+        var foreignRecord = Guid.NewGuid();
+        harness.Store.Seed(TestRecord(foreignRecord, foreignScope));
+        harness.Store.SeedEvent(LegacyInitialEventIds.For(harness.RunId), foreignRecord);
+        harness.Store.SeedEvent(ExperienceFinalizationService.InitialEventIdFor(harness.RunId, foreignScope), foreignRecord);
+
+        var result = await harness.FinalizeAsync();
+
+        Assert.Equal(FinalizationOutcome.Validated, result.Outcome);
+        Assert.True(result.IsDurable);
+        Assert.Equal(ExperienceFinalizationService.InitialEventIdFor(harness.RunId, TestScope), result.Event!.EventId);
+        Assert.Single(harness.Store.Commits);
+    }
+
+    [Fact]
+    public async Task A_writer_that_knows_the_run_id_and_this_scope_can_still_take_the_initial_event_id()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+
+        // The residual the scope does not remove: the derivation is unkeyed, so a writer in another scope
+        // that knows both the run ID and this run's scope computes the same initial event ID. Committing an
+        // event of its own under it first still makes this run's initial commit a Conflict. What mixing the
+        // scope in buys is that knowing the run ID is no longer enough.
+        var foreignScope = new Scope("tenant-9", "app-1", "project-1");
+        var foreignRecord = Guid.NewGuid();
+        harness.Store.Seed(TestRecord(foreignRecord, foreignScope));
+        harness.Store.SeedEvent(ExperienceFinalizationService.InitialEventIdFor(harness.RunId, TestScope), foreignRecord);
+
+        var result = await harness.FinalizeAsync();
+
+        Assert.Equal(FinalizationOutcome.Failed, result.Outcome);
+        Assert.Equal(FinalizationStage.CommitInitialEvent, result.Stage);
+        Assert.False(result.IsDurable);
+        Assert.Contains("Conflict", result.Failure!.Reason, StringComparison.Ordinal);
+        Assert.Empty(harness.Store.Commits);
+    }
+
+    [Fact]
+    public async Task A_record_an_earlier_release_finalized_under_the_run_only_event_id_replays_as_AlreadyFinalized()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+
+        // An earlier release: the same record and the same initial event, under the run-only event ID.
+        harness.Store.RewriteCommit = e => e with { EventId = LegacyInitialEventIds.For(harness.RunId) };
+        var earlier = await harness.FinalizeAsync();
+        Assert.Equal(FinalizationOutcome.Validated, earlier.Outcome);
+        harness.Store.RewriteCommit = null;
+
+        var replay = await harness.FinalizeAsync(finalizedAt: Now.AddMinutes(5));
+
+        Assert.Equal(FinalizationOutcome.AlreadyFinalized, replay.Outcome);
+        Assert.True(replay.IsDurable);
+        Assert.Equal(ExperienceStatus.Validated, replay.Status);
+        Assert.Equal(1, replay.Revision);
+        Assert.Single(harness.Store.Creates);
+        Assert.Equal(LegacyInitialEventIds.For(harness.RunId), Assert.Single(harness.Store.Commits).EventId);
+    }
+
+    [Fact]
+    public async Task An_earlier_releases_initial_commit_landing_first_converges_on_AlreadyFinalized()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+        harness.Store.ThrowOnCommit = () => new ExperienceStoreException("commit unavailable");
+        var interrupted = await harness.FinalizeAsync();
+        Assert.Equal(FinalizationOutcome.Failed, interrupted.Outcome);
+        harness.Store.ThrowOnCommit = null;
+
+        // Between this retry's read (revision 0) and its commit, an earlier release's retry commits the
+        // identical initial event under the run-only ID. This call's commit under the scoped ID is then
+        // stale, and it converges on that record rather than appending a second initial event.
+        ExperienceStoreOutcome? landed = null;
+        harness.Store.RacingCommit = (store, scope, mine) =>
+        {
+            store.RacingCommit = null;
+            landed = store.CommitLifecycleEventAsync(
+                Authorization,
+                scope,
+                mine with { EventId = LegacyInitialEventIds.For(harness.RunId) },
+                CancellationToken.None).GetAwaiter().GetResult().Outcome;
+        };
+
+        var result = await harness.FinalizeAsync(finalizedAt: Now.AddMinutes(5));
+
+        // Asserted here, not inside the store, where a failed assertion would surface as a port failure.
+        Assert.Equal(ExperienceStoreOutcome.Committed, landed);
+        Assert.Equal(FinalizationOutcome.AlreadyFinalized, result.Outcome);
+        Assert.True(result.IsDurable);
+        Assert.Equal(1, result.Revision);
+        Assert.Equal(LegacyInitialEventIds.For(harness.RunId), Assert.Single(harness.Store.Commits).EventId);
+    }
+
+    [Fact]
+    public async Task A_Candidate_an_earlier_release_left_unconfirmed_whose_run_only_event_id_another_scope_took_is_confirmed_under_the_scoped_id()
+    {
+        var harness = await Harness.WithCompletedRunAsync();
+
+        // The victim this story exists for, seeded as 0.1.0-preview.6 left it rather than created through
+        // current code: a Candidate at revision 0 under this run's record ID (whose derivation did not
+        // change), whose initial commit never landed, while another scope took the run-only initial event
+        // ID that release would have committed under. That release could never have confirmed it.
+        harness.Store.Seed(TestRecord(ExperienceFinalizationService.ExperienceIdFor(harness.RunId, TestScope), TestScope)
+            with { SourceRunId = harness.RunId });
+        var foreignScope = new Scope("tenant-9", "app-1", "project-1");
+        var foreignRecord = Guid.NewGuid();
+        harness.Store.Seed(TestRecord(foreignRecord, foreignScope));
+        harness.Store.SeedEvent(LegacyInitialEventIds.For(harness.RunId), foreignRecord);
+
+        var resumed = await harness.FinalizeAsync(finalizedAt: Now.AddMinutes(5));
+
+        // The seeded record carries no reflection, so its initial event quarantines it.
+        Assert.Equal(FinalizationOutcome.Quarantined, resumed.Outcome);
+        Assert.True(resumed.IsDurable);
+        Assert.Equal(1, resumed.Revision);
+        Assert.Empty(harness.Store.Creates);
+        Assert.Equal(
+            ExperienceFinalizationService.InitialEventIdFor(harness.RunId, TestScope),
+            Assert.Single(harness.Store.Commits).EventId);
     }
 
     // A derived ID already taken *inside* this scope is not a squat and is not a failure: it is this
@@ -1140,10 +1304,32 @@ public class ExperienceFinalizationServiceTests
 
         public ExperienceLifecycleCommitResult? CommitResult { get; set; }
 
-        /// <summary>Runs just before a commit is applied, so a test can simulate a concurrent writer.</summary>
+        /// <summary>
+        /// Runs just before a commit is applied, so a test can simulate a concurrent writer. A commit runs its
+        /// hooks in this order: <see cref="ThrowOnCommit"/>, then this, then <see cref="RacingCommit"/>, then
+        /// <see cref="CommitResult"/>, then <see cref="RewriteCommit"/>, then the commit itself.
+        /// </summary>
         public Action<FakeStore>? BeforeCommit { get; set; }
 
+        /// <summary>Rewrites each committed event before it is applied, as an earlier release deriving its own event ID would. Runs last of the hooks (see <see cref="BeforeCommit"/>).</summary>
+        public Func<LifecycleEvent, LifecycleEvent>? RewriteCommit { get; set; }
+
+        /// <summary>
+        /// Runs just before a commit is applied, with the commit's scope and event, so a test can land a racing
+        /// commit; runs after <see cref="BeforeCommit"/> (see there for the order). A racer that commits through
+        /// this store re-enters every hook, so it clears itself first.
+        /// </summary>
+        public Action<FakeStore, Scope, LifecycleEvent>? RacingCommit { get; set; }
+
         public void Seed(ExperienceRecord record) => _records[record.ExperienceId] = record;
+
+        /// <summary>
+        /// Takes <paramref name="eventId"/> with an event of another writer's own, on <paramref name="experienceId"/>.
+        /// The seeded record's revision and status are deliberately left as they are: only the taken event ID
+        /// matters to the tests that use this, and a commit looks the event ID up before it reads any record.
+        /// </summary>
+        public void SeedEvent(Guid eventId, Guid experienceId) =>
+            _events[eventId] = (Event(experienceId, ExperienceStatus.Candidate, ExperienceStatus.Quarantined, 0) with { EventId = eventId }, 1);
 
         /// <summary>Erases a stored record the way the Postgres adapter does: its ID stays taken, and its own scope reads it as Deleted.</summary>
         public void Erase(Guid experienceId) => _erased.Add(experienceId);
@@ -1224,6 +1410,12 @@ public class ExperienceFinalizationServiceTests
             }
 
             BeforeCommit?.Invoke(this);
+            RacingCommit?.Invoke(this, scope, lifecycleEvent);
+
+            if (RewriteCommit is not null)
+            {
+                lifecycleEvent = RewriteCommit(lifecycleEvent);
+            }
 
             if (CommitResult is not null)
             {

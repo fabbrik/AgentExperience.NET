@@ -321,6 +321,29 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   vector and the full-text vector remain. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
   [Crypto-shredding](docs/guide/crypto-shredding.md#search-and-why-the-residual-is-what-it-is).
 
+### The initial lifecycle event ID is derived from the scope too (story 17.6)
+
+- **The problem it fixes.** `ExperienceFinalizationService.InitialEventIdFor(runId)` derived a record's initial
+  lifecycle event ID from the run alone, and event IDs are unique across every scope. A writer in another scope that
+  knew the run ID could commit an event of its own under that ID first, and this run's initial commit then failed as
+  a `Conflict` on every retry. Story 4.5 closed the same squat for the record ID.
+- **Breaking (preview): `InitialEventIdFor(Guid runId, Scope scope)`.** It replaces the one-argument overload, with
+  no compatible overload, as `ExperienceIdFor(Guid)` was replaced in story 4.5. An `[Obsolete]` overload would have to
+  keep deriving the ID any scope can take. Callers pass the same `Scope` they finalize the run under. The derivation
+  is the record ID's own: the fixed namespace, the run, the purpose tag and every scope field, length-prefixed. The
+  record ID and the reflection ID do not change, and there is no schema change. Like the record ID since story 4.5,
+  the derivation is unkeyed and is not a secret: it raises the bar from knowing the run ID to knowing the run ID and
+  the victim's scope fields, and a writer that knows both can still take the ID first. Run IDs are random identifiers
+  the host holds, and that is the protection.
+- **Records from earlier releases keep working.** An event's ID is stored and never re-derived. Finalizing a run whose
+  record an earlier release already confirmed under the run-only event ID returns `AlreadyFinalized`, with no second
+  initial event, including when that release's commit lands between this call's read and its commit. A record an
+  earlier release created but never confirmed is confirmed under the new ID, even when another scope took its
+  run-only ID. See [Why retrying is safe](docs/guide/finalization.md#why-retrying-is-safe).
+- **Migration note.** To find a record's initial event, read the first entry of its history (applied revision 1,
+  `ExpectedRevision` 0) instead of computing `InitialEventIdFor`, which matches nothing for a record finalized before
+  this release.
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

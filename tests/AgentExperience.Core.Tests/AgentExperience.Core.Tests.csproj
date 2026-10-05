@@ -34,6 +34,7 @@
   <ItemGroup>
     <!-- Story 17.2: the documented canonical encodings, written independently of Core's internal signer. -->
     <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
+    <Compile Include="..\Shared\LegacyInitialEventIds.cs" Link="Shared\LegacyInitialEventIds.cs" />
   </ItemGroup>
 
 </Project>

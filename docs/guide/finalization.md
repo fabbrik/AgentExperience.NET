@@ -60,9 +60,26 @@ else
 
 Three properties make retrying safe. The record is *created* as a `Candidate` and its initial lifecycle event
 performs the real transition, so a commit that never lands leaves nothing reusable behind. The record ID, the
-reflection ID, and the initial event ID are all derived from the run ID (and the record ID from the scope too), so a
-second call cannot create a second record or a second initial confirmation. And the initial event's fields are a pure
-function of the stored record, so a retry re-derives exactly the event the store already deduplicates on.
+reflection ID, and the initial event ID are all derived from the run ID, so a second call cannot create a second
+record or a second initial confirmation. And the initial event's fields are a pure function of the stored record, so
+a retry re-derives exactly the event the store already deduplicates on.
+
+Record IDs and event IDs are unique across every scope, so the record ID and the initial event ID are derived from
+the scope as well as the run (`ExperienceIdFor(runId, scope)` and `InitialEventIdFor(runId, scope)`). A writer in
+another scope that knows only the run ID cannot derive either one, so it cannot take one first and leave this run
+unable to finalize. The derivation is unkeyed and is not a secret: a writer that knows the run ID *and* this run's
+scope fields computes the same IDs. Run IDs are random identifiers the host holds, and that is the protection; the
+scope raises the bar from knowing the run ID to knowing both. Releases before story 17.6 derived the initial event ID
+from the run alone, and nothing stored is re-derived, so their records keep working:
+
+- A record an earlier release already confirmed under the run-only event ID is past revision 0, so finalizing its run
+  again returns `AlreadyFinalized` and appends no second initial event. This also holds when an earlier release's
+  commit lands between this call's read and its own commit: that commit is refused as stale, the record is read
+  again, and the result is `AlreadyFinalized`.
+- A record an earlier release created but never confirmed (still a `Candidate` at revision 0) is confirmed under the
+  new, scoped event ID, even when another scope has taken the run-only ID.
+- To find a record's initial event, read the first entry of its history (applied revision 1, `ExpectedRevision` 0)
+  rather than computing `InitialEventIdFor`, which matches nothing for a record confirmed by an earlier release.
 
 Finalization never re-sanitizes captured content — capture already rejected anything unsafe (see
 [Sanitization happens at capture](capture.md#sanitization-happens-at-capture)) — but it does screen the new text a

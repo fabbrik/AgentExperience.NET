@@ -284,7 +284,7 @@ namespace AgentExperience.Core.Finalization
         public AgentExperience.Core.Finalization.ExperienceFinalizationOptions Options { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Finalization.FinalizeExperienceResult> FinalizeAsync(AgentExperience.Core.Finalization.FinalizeExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public static System.Guid ExperienceIdFor(System.Guid runId, AgentExperience.Abstractions.Scope scope) { }
-        public static System.Guid InitialEventIdFor(System.Guid runId) { }
+        public static System.Guid InitialEventIdFor(System.Guid runId, AgentExperience.Abstractions.Scope scope) { }
         public static System.Guid ReflectionIdFor(System.Guid runId) { }
     }
     public sealed class FinalizationFailure : System.IEquatable<AgentExperience.Core.Finalization.FinalizationFailure>
