@@ -1,6 +1,7 @@
 using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Feedback;
 using AgentExperience.Core.Lifecycle;
+using AgentExperience.Tests.Shared;
 using Npgsql;
 using NpgsqlTypes;
 using static AgentExperience.Storage.Postgres.Tests.TestRecords;
@@ -26,14 +27,6 @@ public sealed class PostgresDeletionTests
 
     /// <summary>The literal <c>0010</c> writes into a tombstone's task_id, which cannot be blank.</summary>
     private const string TombstoneTaskId = "(deleted)";
-
-    /// <summary>
-    /// How long a concurrency test lets a second writer reach the row lock before the purge holding it
-    /// commits. It is not a correctness bound -- a writer that arrives late simply reads the committed
-    /// tombstone and loses for the other reason -- only a way of making the interesting interleaving the
-    /// usual one rather than the rare one.
-    /// </summary>
-    private static readonly TimeSpan OverlapWindow = TimeSpan.FromMilliseconds(300);
 
     private readonly PostgresFixture _fixture;
     private readonly PostgresExperienceRecordStore _store;
@@ -854,7 +847,9 @@ public sealed class PostgresDeletionTests
                 DateTimeOffset.UtcNow.AddDays(90)),
             CancellationToken.None);
 
-        await Task.Delay(OverlapWindow);
+        // Commit only once the grant is really parked on the purge's row lock, so the interleaving under
+        // test is the one that runs, not merely the likely one.
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, ExperienceRecordSql.RecordKeyShareLock, issuing);
         await transaction.CommitAsync();
 
         var issued = await issuing;
@@ -881,7 +876,7 @@ public sealed class PostgresDeletionTests
         var feedback = Feedback(scope, [record.ExperienceId]);
         var recording = _ledger.RecordAsync(auth, Submission(feedback), CancellationToken.None);
 
-        await Task.Delay(OverlapWindow);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, ExperienceRecordSql.RecordKeyShareLock, recording);
         await transaction.CommitAsync();
 
         var recorded = await recording;
@@ -918,7 +913,7 @@ public sealed class PostgresDeletionTests
             await PurgeInAsync(purging, transaction, first.ExperienceId, tenant, scope.TeamId);
 
             var concurrent = _store.DeleteAsync(auth, scope, second.ExperienceId, CancellationToken.None);
-            await Task.Delay(OverlapWindow);
+            await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, "purge_experience_record", concurrent);
             await transaction.CommitAsync();
 
             Assert.Equal(ExperienceStoreOutcome.Deleted, (await concurrent).Outcome);
@@ -1173,7 +1168,8 @@ public sealed class PostgresDeletionTests
         using var cancellation = new CancellationTokenSource();
         var sweeping = store.SweepExpiredAsync(auth, scope, TimeSpan.FromDays(90), 50, cancellation.Token);
 
-        await Task.Delay(OverlapWindow);
+        // The sweep has erased the older record once it is parked on the pinned one.
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, holding, "purge_experience_record", sweeping);
         await cancellation.CancelAsync();
 
         var partial = await sweeping;

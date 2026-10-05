@@ -176,6 +176,12 @@ internal sealed class RecordingCaptureService(IExperienceCaptureService inner) :
     /// <summary>Completed when a <see cref="HangHonoringToken"/> hang observes its token being cancelled.</summary>
     public TaskCompletionSource HangCancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>When set, a <see cref="HangHonoringToken"/> hang that observed its cancellation waits for this before it ends.</summary>
+    public TaskCompletionSource? HoldAfterCancellation { get; set; }
+
+    /// <summary>Completed when a <see cref="HangHonoringToken"/> hang has observed its cancellation and is about to end.</summary>
+    public TaskCompletionSource HangFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public CompleteRunOutcome? ForcedCompleteOutcome { get; set; }
 
     /// <summary>When set, <see cref="CompleteRunAsync"/> signals <see cref="CompleteEntered"/> and then waits on it.</summary>
@@ -327,6 +333,12 @@ internal sealed class RecordingCaptureService(IExperienceCaptureService inner) :
         catch (OperationCanceledException)
         {
             HangCancelled.TrySetResult();
+            if (HoldAfterCancellation is { } hold)
+            {
+                await hold.Task;
+            }
+
+            HangFinished.TrySetResult();
             throw;
         }
 

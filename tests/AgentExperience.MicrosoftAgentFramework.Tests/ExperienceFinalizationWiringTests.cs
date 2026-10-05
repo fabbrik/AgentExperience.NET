@@ -294,7 +294,7 @@ public class ExperienceFinalizationWiringTests
             },
         };
 
-        var run = harness.Capture(new ScriptedChatClient()).RunAsync("task-slow-evidence");
+        var run = harness.Capture(new ScriptedChatClient(), out var captureLifetime).RunAsync("task-slow-evidence");
         var token = await entered.Task;
         await clock.FireTimeoutsAsync();
 
@@ -304,7 +304,10 @@ public class ExperienceFinalizationWiringTests
 
         release.TrySetResult();
         await exited.Task;
-        await Task.Delay(50);
+
+        // The abandoned finalization has finished -- whatever it would have finalized or reported is in.
+        var registry = Assert.IsType<ExperienceCaptureMiddleware>(captureLifetime).OpenRuns;
+        await registry.BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         var failure = Assert.Single(harness.Failures);
         Assert.Equal(ExperienceCaptureFailureStage.Finalize, failure.Stage);

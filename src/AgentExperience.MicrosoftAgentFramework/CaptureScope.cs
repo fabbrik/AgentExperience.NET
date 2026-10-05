@@ -432,6 +432,7 @@ internal sealed class CaptureScope
         }
 
         CancellationTokenSource? timeoutSource = null;
+        Task? work = null;
         try
         {
             var timeProvider = _options.TimeProvider;
@@ -453,7 +454,7 @@ internal sealed class CaptureScope
             var token = timeoutSource.Token;
 
             // Task.Run also bounds a capture service that blocks or throws synchronously.
-            var work = Task.Run(() => FinalizeCoreAsync(request, completionEventId, status, endedAt, token), CancellationToken.None);
+            work = Task.Run(() => FinalizeCoreAsync(request, completionEventId, status, endedAt, token), CancellationToken.None);
             await work.WaitAsync(_options.FinalizationTimeout, timeProvider).ConfigureAwait(false);
 
             timeoutSource.Dispose();
@@ -462,6 +463,12 @@ internal sealed class CaptureScope
         {
             // Report first, so a token-honoring service's cancellation cannot be reported in its place.
             ReportFailure(ExperienceCaptureFailureStage.Finalize, $"Finalization did not finish within {_options.FinalizationTimeout}.", ex);
+
+            // Abandoned, not joined; tracked only so a test can tell when it has finished.
+            if (work is not null)
+            {
+                _registry.TrackAbandoned(work);
+            }
 
             // Leave the token source undisposed: the abandoned finalization may still observe its token.
             try

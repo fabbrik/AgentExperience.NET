@@ -407,13 +407,94 @@ public class OpenRunRegistryTests
         // The completion itself still lands (Dispose does not reach into the service) ...
         await Eventually(() => service.TryGetRun(runId, out var run) && run.ExecutionStatus is not null, "The close never completed the run.");
 
-        // ... and the close's report, which follows it on the same thread, is suppressed. The close
-        // is fire-and-forget with no handle to await, so this last check is a bounded wait.
-        await Task.Delay(200);
+        // ... and the close's report, which follows it on the same thread, is suppressed. Awaiting the
+        // close itself, so the check runs once the report would have been made, not after a guess.
+        await registry.BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, registry.ClosesStarted);
         lock (failures)
         {
             Assert.Empty(failures);
         }
+    }
+
+    /// <summary>Tracked work is held until it finishes, and work already finished when tracked is never held.</summary>
+    [Fact]
+    public async Task Tracked_work_is_held_only_until_it_finishes()
+    {
+        var (registry, _, _) = Create();
+
+        registry.TrackAbandoned(Task.CompletedTask);
+        Assert.Equal(0, registry.BackgroundWorkCount);
+        Assert.True(registry.BackgroundWorkSettledAsync().IsCompleted);
+
+        var work = new TaskCompletionSource();
+        registry.TrackAbandoned(work.Task);
+        Assert.Equal(1, registry.BackgroundWorkCount);
+        var settled = registry.BackgroundWorkSettledAsync();
+        Assert.False(settled.IsCompleted);
+
+        work.SetException(new InvalidOperationException("abandoned work may fault"));
+        await settled.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, registry.BackgroundWorkCount);
+    }
+
+    /// <summary>Work tracked while a settle is already waiting is waited for too, not missed by a snapshot.</summary>
+    [Fact]
+    public async Task Settling_waits_for_work_tracked_during_the_wait()
+    {
+        var (registry, _, _) = Create();
+        var first = new TaskCompletionSource();
+        var second = new TaskCompletionSource();
+
+        registry.TrackAbandoned(first.Task);
+        var settled = registry.BackgroundWorkSettledAsync();
+        registry.TrackAbandoned(second.Task);
+
+        // Completed off the test's synchronization context, where the settle's continuation runs inline: a
+        // settle that only waited for the work it saw when it started would be complete when SetResult returns.
+        var completedEarly = await Task.Run(() =>
+        {
+            first.SetResult();
+            return settled.IsCompleted;
+        });
+        Assert.False(completedEarly);
+
+        second.SetResult();
+        await settled.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, registry.BackgroundWorkCount);
+    }
+
+    /// <summary><see cref="OpenRunRegistry.ClosesStarted"/> counts a close a bound starts and one a release starts.</summary>
+    [Fact]
+    public async Task ClosesStarted_counts_a_bound_firing_and_a_CloseNow()
+    {
+        var (registry, service, clock) = Create();
+        var openedAt = clock.GetUtcNow();
+        var environment = new ExperienceCaptureOptions { ResolveRun = _ => null! }.Environment;
+
+        var bounded = Guid.NewGuid();
+        service.StartRun(bounded, "task", null, new Scope("tenant-1", "app-1", "project-1"), environment, new Provenance("tests", null, openedAt, null), openedAt);
+        var entry = registry.TryClaim(bounded, out _);
+        Assert.NotNull(entry);
+        registry.ArmAtOpen(entry, openedAt);
+        Assert.Equal(LeaveOpenResult.LeftOpen, registry.TryLeaveOpen(entry, openedAt));
+        Assert.Equal(0, registry.ClosesStarted);
+
+        Assert.Single(clock.Bounds).Fire();
+        Assert.Equal(1, registry.ClosesStarted);
+
+        var released = Guid.NewGuid();
+        service.StartRun(released, "task", null, new Scope("tenant-1", "app-1", "project-1"), environment, new Provenance("tests", null, openedAt, null), openedAt);
+        var held = registry.TryClaim(released, out _);
+        Assert.NotNull(held);
+        registry.CloseNow(held, atBound: false);
+        Assert.Equal(2, registry.ClosesStarted);
+
+        await registry.BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, registry.BackgroundWorkCount);
+        Assert.Equal(0, registry.Count);
+        Assert.True(service.TryGetRun(bounded, out var boundedRun) && boundedRun.ExecutionStatus is not null);
+        Assert.True(service.TryGetRun(released, out var releasedRun) && releasedRun.ExecutionStatus is not null);
     }
 
     private sealed class SynchronousDueNowTimeProvider : TimeProvider

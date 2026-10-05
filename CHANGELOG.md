@@ -21,6 +21,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   baseline to the last release. Restore now downloads the baseline packages from nuget.org. No behaviour or API
   change.
 
+### Race tests wait for signals, not for time (story 19.3)
+
+- The PostgreSQL race tests wait until the competing statement is really parked on the lock (`pg_blocking_pids`)
+  instead of sleeping, and the open-run tests assert a missing close the moment it is decided. For that, the MAF
+  adapter's `OpenRunRegistry` now counts the closes it starts and holds each background close, and each abandoned
+  finalization, until it finishes: an internal test seam, no behaviour or public API change. CONTRIBUTING's "Without
+  Docker" commands are per project, and a release test keeps them complete.
+
 ### PostgreSQL record store split (story 19.2)
 
 - **Internal refactor, no behaviour change.** `PostgresExperienceRecordStore` was one file of almost 3,900 lines. Its
