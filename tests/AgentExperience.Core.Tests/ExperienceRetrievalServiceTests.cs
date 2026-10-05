@@ -417,6 +417,186 @@ public class ExperienceRetrievalServiceTests
         Assert.Equal(TimeSpan.Zero, result.Elapsed);
     }
 
+    // ---------------------------------------------------------------- story 16.5: abandoned searches are capped
+
+    [Fact]
+    public async Task Against_a_hung_store_retrieval_stops_starting_searches_once_the_abandoned_ones_reach_the_cap()
+    {
+        var gate = new TaskCompletionSource<ExperienceCandidateSearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        var source = new FakeCandidateSource((_, _) =>
+        {
+            // Ignores its token and never returns until the test releases it: a store hung on every call.
+            Interlocked.Increment(ref entered);
+            return gate.Task;
+        });
+        var service = new ExperienceRetrievalService(
+            source,
+            RetrievalPolicy.Default with { Timeout = TimeSpan.FromMilliseconds(50), MaxAbandonedSearches = 2 },
+            RankingWeights.Default,
+            TimeProvider.System);
+
+        try
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                var timedOut = await service.RetrieveAsync(Request());
+                Assert.Equal(RetrievalOutcome.TimedOut, timedOut.Outcome);
+                Assert.Null(timedOut.Failure); // a real timeout is not a failure
+            }
+
+            Assert.Equal(2, service.AbandonedSearches);
+
+            // The third ends at once, as the timeout it would become, without reaching the store.
+            var refused = await service.RetrieveAsync(Request(correlationId: "corr-capped")).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(RetrievalOutcome.TimedOut, refused.Outcome);
+            Assert.True(refused.TimedOut);
+            Assert.Empty(refused.Records);
+            Assert.Empty(refused.Excluded);
+            Assert.False(refused.Truncated);
+            Assert.Equal("corr-capped", refused.CorrelationId);
+            Assert.Contains("too many abandoned searches", refused.Failure!.Reason, StringComparison.Ordinal);
+            Assert.Null(refused.Failure.Exception);
+            await WaitUntil(() => Volatile.Read(ref entered) == 2);
+            Assert.Equal(2, source.Queries.Count);
+        }
+        finally
+        {
+            gate.TrySetResult(Found());
+        }
+    }
+
+    [Fact]
+    public async Task Once_the_abandoned_searches_end_retrieval_reaches_the_store_again()
+    {
+        var gate = new TaskCompletionSource<ExperienceCandidateSearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = new FakeCandidateSource((_, _) => gate.Task);
+        var service = new ExperienceRetrievalService(
+            source,
+            RetrievalPolicy.Default with { Timeout = TimeSpan.FromMilliseconds(50), MaxAbandonedSearches = 2 },
+            RankingWeights.Default,
+            TimeProvider.System);
+
+        await service.RetrieveAsync(Request());
+        await service.RetrieveAsync(Request());
+        Assert.Equal(2, service.AbandonedSearches);
+        Assert.NotNull((await service.RetrieveAsync(Request())).Failure);
+
+        // The hung searches finally answer: each is uncounted exactly once.
+        gate.SetResult(Found(new ExperienceCandidate(Record(Id(1)), 1d)));
+        await WaitUntil(() => service.AbandonedSearches == 0);
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+        Assert.Single(result.Records);
+        Assert.Equal(3, source.Queries.Count);
+        Assert.Equal(0, service.AbandonedSearches);
+    }
+
+    [Fact]
+    public async Task An_abandoned_search_is_detached_from_the_callers_token_at_once()
+    {
+        var gate = new TaskCompletionSource<ExperienceCandidateSearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new ExperienceRetrievalService(
+            new FakeCandidateSource((_, _) => gate.Task),
+            RetrievalPolicy.Default with { Timeout = TimeSpan.FromMilliseconds(50) },
+            RankingWeights.Default,
+            TimeProvider.System);
+        using var caller = new CancellationTokenSource();
+
+        try
+        {
+            var result = await service.RetrieveAsync(Request(), caller.Token);
+
+            Assert.Equal(RetrievalOutcome.TimedOut, result.Outcome);
+            Assert.Equal(1, service.AbandonedSearches);
+
+            // The search never ends, yet the long-lived caller token holds nothing for it any more, so
+            // cancelling it afterwards can no longer reach the abandoned search's source. Polled: the timeout
+            // wait's own registration is released just after the call resumes.
+            await WaitUntil(() => RegisteredCallbacks(caller) == 0);
+        }
+        finally
+        {
+            gate.TrySetResult(Found());
+        }
+    }
+
+    [Fact]
+    public async Task Searches_that_complete_in_time_are_never_counted_as_abandoned()
+    {
+        var service = Service(Found(new ExperienceCandidate(Record(Id(1)), 1d)));
+        using var caller = new CancellationTokenSource();
+
+        for (var i = 0; i < 5; i++)
+        {
+            var result = await service.RetrieveAsync(Request(), caller.Token);
+            Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+            Assert.Single(result.Records);
+            Assert.Null(result.Failure);
+        }
+
+        Assert.Equal(0, service.AbandonedSearches);
+
+        // Polled: the timeout wait's own registration is released just after the call resumes.
+        await WaitUntil(() => RegisteredCallbacks(caller) == 0);
+    }
+
+    [Fact]
+    public void The_abandoned_search_cap_must_be_strictly_positive_and_defaults_to_16()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MaxAbandonedSearches = 0 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MaxAbandonedSearches = -1 });
+        Assert.Equal(1, (RetrievalPolicy.Default with { MaxAbandonedSearches = 1 }).MaxAbandonedSearches);
+        Assert.Equal(16, RetrievalPolicy.DefaultMaxAbandonedSearches);
+        Assert.Equal(16, RetrievalPolicy.Default.MaxAbandonedSearches);
+    }
+
+    /// <summary>Polls, on the real clock, until <paramref name="condition"/> holds.</summary>
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        for (var attempt = 0; !condition() && attempt < 2_000; attempt++)
+        {
+            await Task.Delay(5);
+        }
+
+        Assert.True(condition(), "The condition never held.");
+    }
+
+    /// <summary>
+    /// How many callbacks are registered on <paramref name="source"/>'s token. Read through the runtime's
+    /// private fields, because no public API exposes it and it is the only direct evidence that a
+    /// registration was released; a runtime that renames them fails the test loudly rather than passing.
+    /// </summary>
+    private static int RegisteredCallbacks(CancellationTokenSource source)
+    {
+        const System.Reflection.BindingFlags Fields =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        static System.Reflection.FieldInfo Field(Type type, string name)
+        {
+            var field = type.GetField(name, Fields);
+            Assert.True(field is not null, $"The runtime no longer has {type.FullName}.{name}; update this helper.");
+            return field;
+        }
+
+        var registrations = Field(typeof(CancellationTokenSource), "_registrations").GetValue(source);
+        if (registrations is null)
+        {
+            return 0;
+        }
+
+        var callbacks = Field(registrations.GetType(), "Callbacks");
+        var count = 0;
+        for (var node = callbacks.GetValue(registrations); node is not null; node = Field(node.GetType(), "Next").GetValue(node))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
     // ---------------------------------------------------------------- matrix: cancelled
 
     [Fact]

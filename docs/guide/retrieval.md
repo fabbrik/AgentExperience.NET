@@ -226,10 +226,24 @@ must tolerate concurrent use, and it may hold a pooled connection until its canc
 released by a `TimeProvider` timer, so a starved thread pool can still release it late. See
 [Pre-model latency budget](injection.md#pre-model-latency-budget).
 
+**Abandoned searches are capped.** Against a store that hangs on every call, each retrieval would add one more
+abandoned search to those already running, until the connection or thread pool ran out. So one
+`ExperienceRetrievalService` counts the searches it has abandoned that are still running, and while that count is at
+`RetrievalPolicy.MaxAbandonedSearches` (default 16, must be positive) it starts no new search: the call returns
+`TimedOut` at once — the same empty result as a real timeout — without touching the store or either channel, and
+`result.Failure.Reason` says the store has too many abandoned searches still running. As the abandoned searches end,
+the count drops and retrievals reach the store again; there is no breaker state, probe or timer. A search abandoned
+because the caller cancelled, or because a channel cancelled it, counts too, until it ends. The count is per service
+instance, so the cap only engages when one `ExperienceRetrievalService` is shared and long-lived (for example a DI
+singleton); a service built per request never reaches it. An abandoned search
+is also detached from the caller's cancellation token the moment it is abandoned, so a long-lived token does not
+collect one registration per search that never ends.
+
 | Situation | Outcome | Records |
 | --- | --- | --- |
 | Ran inside the timeout | `Completed` | Every eligible record among the candidates considered, ranked and cut to the request's limit. Check `result.Truncated`: `true` means more matched than were considered |
 | Exceeded the timeout | `TimedOut` (`result.TimedOut`), with the request's `CorrelationId` — never an exception | Empty |
+| `MaxAbandonedSearches` abandoned searches still running | `TimedOut` at once, with `result.Failure` saying why; no channel is issued a query | Empty |
 | Request scope outside the authorization | `Denied` | Empty; **neither channel is issued a query, and nothing is embedded** |
 | The **text** search failed, or a candidate from either channel could not be read, came back out of scope, or was returned twice | `Failed`, with `result.Failure` | Empty, never unfiltered |
 | The environment compatibility scorer threw | `Failed`, with `result.Failure` (a fixed reason; the scorer's own exception, passed through as is) | Empty, never a partial ranking |
