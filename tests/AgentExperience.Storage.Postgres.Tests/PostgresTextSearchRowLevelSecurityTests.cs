@@ -477,7 +477,7 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
 
     private static void AddSearchParameters(NpgsqlParameterCollection parameters, Scope scope, string text, bool exclude = false, bool withGrants = true)
     {
-        PostgresExperienceRecordStore.AddScopeParameters(parameters, scope);
+        ExperienceRecordParameters.AddScopeParameters(parameters, scope);
         parameters.Add(new NpgsqlParameter<string>("task_text", NpgsqlDbType.Text) { TypedValue = text });
         parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = [.. Eligible.Select(s => s.ToString())] });
         parameters.Add(new NpgsqlParameter<double>("min_confidence", 0d));

@@ -79,7 +79,7 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
     /// </summary>
     private const string QuerySql =
         $"SELECT {Columns} FROM {Table} " +
-        $"WHERE {PostgresExperienceRecordStore.ScopePredicate} " +
+        $"WHERE {ExperienceRecordSql.ScopePredicate} " +
         "AND (@experience_id IS NULL OR experience_id = @experience_id) " +
         "AND (@cursor_occurred_at IS NULL " +
         "OR (occurred_at, access_id) > (@cursor_occurred_at, @cursor_access_id)) " +
@@ -203,7 +203,7 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             recipientUserIds[i] = access.RecipientScope.UserId;
             principalIds[i] = access.PrincipalId;
             correlationIds[i] = access.CorrelationId;
-            occurredAt[i] = PostgresExperienceRecordStore.ToStoredTimestamp(access.OccurredAt);
+            occurredAt[i] = ExperienceRecordParameters.ToStoredTimestamp(access.OccurredAt);
 
             // Only a defined level is written by name. Null, or a value the enum does not define, goes
             // in as null, and 0011's experience_grant_access_disclosure_recorded refuses the row: a
@@ -279,9 +279,9 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
 
             await session.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant access audit", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant access audit", cancellationToken);
         }
     }
 
@@ -312,14 +312,14 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             await using var command = session.CreateCommand(QuerySql);
             var parameters = command.Parameters;
-            PostgresExperienceRecordStore.AddScopeParameters(parameters, query.RecordScope);
+            ExperienceRecordParameters.AddScopeParameters(parameters, query.RecordScope);
             parameters.Add(new NpgsqlParameter("experience_id", NpgsqlDbType.Uuid)
             {
                 Value = query.ExperienceId is { } id ? id : DBNull.Value,
             });
             parameters.Add(new NpgsqlParameter("cursor_occurred_at", NpgsqlDbType.TimestampTz)
             {
-                Value = query.StartAfter is { } cursor ? PostgresExperienceRecordStore.ToStoredTimestamp(cursor.OccurredAt) : DBNull.Value,
+                Value = query.StartAfter is { } cursor ? ExperienceRecordParameters.ToStoredTimestamp(cursor.OccurredAt) : DBNull.Value,
             });
             parameters.Add(new NpgsqlParameter("cursor_access_id", NpgsqlDbType.Uuid)
             {
@@ -344,9 +344,9 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
                 NoErrors,
                 rows.Count > 0 ? new ExperienceGrantAccessCursor(rows[^1].OccurredAt, rows[^1].AccessId) : null);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant access query", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant access query", cancellationToken);
         }
     }
 
@@ -474,9 +474,9 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
             await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             await using var command = session.CreateCommand(PurgeSql);
             var parameters = command.Parameters;
-            PostgresExperienceRecordStore.AddScopeParameters(parameters, recordScope);
+            ExperienceRecordParameters.AddScopeParameters(parameters, recordScope);
             parameters.Add(new NpgsqlParameter<bool>("subtree", match == ScopeMatch.Subtree));
-            parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", PostgresExperienceRecordStore.ToStoredTimestamp(cutoff)));
+            parameters.Add(new NpgsqlParameter<DateTimeOffset>("cutoff", ExperienceRecordParameters.ToStoredTimestamp(cutoff)));
             parameters.Add(new NpgsqlParameter<int>("limit", batchSize));
 
             string outcome;
@@ -509,9 +509,9 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
                 _ => throw new ExperienceStoreException("The access-log purge function reported an unrecognized outcome."),
             };
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant access purge", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant access purge", cancellationToken);
         }
     }
 
@@ -552,5 +552,5 @@ public sealed class PostgresExperienceGrantAccessLog : IExperienceGrantAccessLog
         PrincipalId: reader.GetString(16),
         CorrelationId: reader.IsDBNull(17) ? null : reader.GetString(17),
         OccurredAt: reader.GetFieldValue<DateTimeOffset>(18),
-        Disclosure: reader.IsDBNull(19) ? null : PostgresExperienceRecordStore.ParseDisclosure(reader.GetString(19)));
+        Disclosure: reader.IsDBNull(19) ? null : ExperienceRecordRows.ParseDisclosure(reader.GetString(19)));
 }

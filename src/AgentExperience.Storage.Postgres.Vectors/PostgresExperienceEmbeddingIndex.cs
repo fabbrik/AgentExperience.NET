@@ -66,13 +66,13 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     internal const string Table = "agent_experience.experience_embeddings";
 
     /// <summary>
-    /// <see cref="PostgresExperienceRecordStore.SelectColumns"/> qualified with the <c>r</c> alias.
+    /// <see cref="ExperienceRecordSql.SelectColumns"/> qualified with the <c>r</c> alias.
     /// Derived from the shared constant rather than retyped, so a column added there cannot silently
-    /// shift this reader's ordinals: <see cref="PostgresExperienceRecordStore.ReadRecord"/> still sees
+    /// shift this reader's ordinals: <see cref="ExperienceRecordRows.ReadRecord"/> still sees
     /// ordinals 0-17 in exactly the documented order, and the distance is appended after them.
     /// </summary>
     private static readonly string RecordColumns =
-        "r." + PostgresExperienceRecordStore.SelectColumns.Replace(", ", ", r.", StringComparison.Ordinal);
+        "r." + ExperienceRecordSql.SelectColumns.Replace(", ", ", r.", StringComparison.Ordinal);
 
     /// <summary>The alias the distance is selected under, read back by name rather than by ordinal.</summary>
     private const string DistanceColumn = "distance";
@@ -86,7 +86,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// predicates on the embeddings table are the trailing two columns.
     /// </summary>
     private static readonly string EmbeddingScopePredicate =
-        PostgresExperienceRecordStore.RecordScopePredicate.Replace("r.", "e.", StringComparison.Ordinal);
+        ExperienceRecordSql.RecordScopePredicate.Replace("r.", "e.", StringComparison.Ordinal);
 
     /// <summary>
     /// What the vector channel may return: the exact scope on both sides of the join, or an active
@@ -102,8 +102,8 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </para>
     /// </summary>
     private static readonly string ReadableJoinScopePredicate =
-        $"(({EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate}) " +
-        $"OR {PostgresExperienceRecordStore.ActiveGrantPredicate})";
+        $"(({EmbeddingScopePredicate} AND {ExperienceRecordSql.RecordScopePredicate}) " +
+        $"OR {ExperienceRecordSql.ActiveGrantPredicate})";
 
     /// <summary>
     /// The same rule for the one statement that must also <em>name</em> the grant it admitted a row
@@ -113,15 +113,15 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// nothing, keep <see cref="ReadableJoinScopePredicate"/>.
     /// </summary>
     private static readonly string ReadableJoinScopeWithNamedGrantPredicate =
-        $"(({EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate}) " +
-        $"OR {PostgresExperienceRecordStore.PermittingGrantFoundPredicate})";
+        $"(({EmbeddingScopePredicate} AND {ExperienceRecordSql.RecordScopePredicate}) " +
+        $"OR {ExperienceRecordSql.PermittingGrantFoundPredicate})";
 
     /// <summary>
     /// The same join predicate with the grant branch removed, for a database that has no
     /// <c>experience_grants</c> table or a role that may not read it.
     /// </summary>
     private static readonly string ExactJoinScopePredicate =
-        $"({EmbeddingScopePredicate} AND {PostgresExperienceRecordStore.RecordScopePredicate})";
+        $"({EmbeddingScopePredicate} AND {ExperienceRecordSql.RecordScopePredicate})";
 
     /// <summary>
     /// The conditional write. The target table is aliased <c>t</c> so the conflict action can name it
@@ -137,17 +137,17 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         "model_id, dimension, content_hash, source_revision, embedding, created_at, updated_at) " +
         "SELECT r.experience_id, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id, " +
         "@model_id, @dimension, @content_hash, @source_revision, CAST(@embedding AS vector), @now, @now " +
-        $"FROM {PostgresExperienceRecordStore.Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"FROM {ExperienceRecordSql.Table} r " +
+        $"WHERE r.experience_id = @experience_id AND {ExperienceRecordSql.RecordScopePredicate} " +
         // An erased record is never indexed: the erasure removes its vector, and an in-flight write that
         // landed afterwards would put a derived copy of a deleted record back into the table. The lock is
         // what makes that true under concurrency rather than only in the quiet case -- a stored vector is
         // a searchable derivative of exactly the summary and lesson the erasure was asked to destroy, so
         // this write must serialize against the purge and not against a snapshot it has already
-        // invalidated. See PostgresExperienceRecordStore.RecordKeyShareLock.
-        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        // invalidated. See ExperienceRecordSql.RecordKeyShareLock.
+        $"AND {ExperienceRecordSql.RecordLivePredicate} " +
         "AND r.revision = @source_revision " +
-        $"{PostgresExperienceRecordStore.RecordKeyShareLock} " +
+        $"{ExperienceRecordSql.RecordKeyShareLock} " +
         "ON CONFLICT (experience_id) DO UPDATE SET " +
         "model_id = EXCLUDED.model_id, dimension = EXCLUDED.dimension, content_hash = EXCLUDED.content_hash, " +
         "source_revision = EXCLUDED.source_revision, embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at " +
@@ -167,20 +167,20 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// this scope. Identical whichever scope actually owns the record, so it reveals nothing.
     /// </summary>
     private const string ProbeRevisionSql =
-        $"SELECT r.revision FROM {PostgresExperienceRecordStore.Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"SELECT r.revision FROM {ExperienceRecordSql.Table} r " +
+        $"WHERE r.experience_id = @experience_id AND {ExperienceRecordSql.RecordScopePredicate} " +
         // A tombstone is reported the way a record in another scope is: Missing, never Stale. There is
         // no revision to retry against, because no revision of an erased record can ever be indexed.
-        $"AND {PostgresExperienceRecordStore.RecordLivePredicate}";
+        $"AND {ExperienceRecordSql.RecordLivePredicate}";
 
     /// <summary>
     /// Whether a record is live in exactly this scope, and if so whether it is sealed: asked only in encrypted mode,
     /// before a key is created for a record that has none.
     /// </summary>
     private const string ProbePayloadVersionSql =
-        $"SELECT r.payload_version FROM {PostgresExperienceRecordStore.Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
-        $"AND {PostgresExperienceRecordStore.RecordLivePredicate}";
+        $"SELECT r.payload_version FROM {ExperienceRecordSql.Table} r " +
+        $"WHERE r.experience_id = @experience_id AND {ExperienceRecordSql.RecordScopePredicate} " +
+        $"AND {ExperienceRecordSql.RecordLivePredicate}";
 
     /// <summary>
     /// One statement, so a record's revision, the summary read at that revision, and the descriptor of
@@ -195,10 +195,10 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         // the three columns above read the placeholder and nulls for it; this adapter opens the seal in
         // process instead, with the record's key, and its own scope for the key reference.
         "r.payload_version, r.payload ->> 'sealed', r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id " +
-        $"FROM {PostgresExperienceRecordStore.Table} r " +
+        $"FROM {ExperienceRecordSql.Table} r " +
         $"LEFT JOIN {Table} e ON e.experience_id = r.experience_id " +
-        $"WHERE {PostgresExperienceRecordStore.RecordScopePredicate} " +
-        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        $"WHERE {ExperienceRecordSql.RecordScopePredicate} " +
+        $"AND {ExperienceRecordSql.RecordLivePredicate} " +
         // The search's own predicates, applied here too: a record whose vector could never be returned
         // is never embedded, so its summary and lesson never leave the database for a third party.
         "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence";
@@ -351,7 +351,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             {
                 var parameters = command.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", write.ExperienceId));
-                PostgresExperienceRecordStore.AddScopeParameters(parameters, write.Scope);
+                ExperienceRecordParameters.AddScopeParameters(parameters, write.Scope);
                 parameters.Add(new NpgsqlParameter<string>("model_id", NpgsqlDbType.Text) { TypedValue = write.Descriptor.ModelId });
                 parameters.Add(new NpgsqlParameter<int>("dimension", write.Descriptor.Dimension));
                 parameters.Add(new NpgsqlParameter<string>("content_hash", NpgsqlDbType.Text) { TypedValue = contentHash });
@@ -377,9 +377,9 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                 ? new(ExperienceIndexOutcome.Stale, revision, NoErrors)
                 : new(ExperienceIndexOutcome.Missing, 0, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "embedding write", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "embedding write", cancellationToken);
         }
     }
 
@@ -420,12 +420,12 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             await using var command = session.CreateCommand(ProbePayloadVersionSql);
             command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", write.ExperienceId));
-            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, write.Scope);
+            ExperienceRecordParameters.AddScopeParameters(command.Parameters, write.Scope);
             payloadVersion = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is int version ? version : null;
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "embedding write", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "embedding write", cancellationToken);
         }
 
         if (payloadVersion is null)
@@ -497,16 +497,16 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                 NoErrors,
                 lastRead);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "embedding scan", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "embedding scan", cancellationToken);
         }
     }
 
     /// <summary>The scan's parameters: its scope, eligibility filters, optional ID list and cursor, and limit.</summary>
     private static void AddScanParameters(NpgsqlParameterCollection parameters, ExperienceIndexScan scan)
     {
-        PostgresExperienceRecordStore.AddScopeParameters(parameters, scan.Scope);
+        ExperienceRecordParameters.AddScopeParameters(parameters, scan.Scope);
         parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text)
         {
             TypedValue = [.. scan.EligibleStatuses.Distinct().Select(status => status.ToString())],
@@ -587,9 +587,9 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             // their own), so a slow key store holds no connection.
             (result, disclosures) = await DecodeSearchRowsAsync(rows, emptyOutcome, _encryption, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "vector search", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "vector search", cancellationToken);
         }
 
         // Outside the read's own translation, and on its own connection: an audit failure is the host's
@@ -686,7 +686,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             await using var command = session.CreateCommand(RemoveSql);
             command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
-            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
+            ExperienceRecordParameters.AddScopeParameters(command.Parameters, scope);
 
             var removed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             await session.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -697,9 +697,9 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
                 removed > 0 ? ExperienceIndexRemoveOutcome.Removed : ExperienceIndexRemoveOutcome.NotIndexed,
                 NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "embedding removal", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "embedding removal", cancellationToken);
         }
     }
 
@@ -721,7 +721,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         await using (var command = new NpgsqlCommand(SearchSql(dimension, readable, query.ExcludeModelAuthored), connection, transaction))
         {
             var parameters = command.Parameters;
-            PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
+            ExperienceRecordParameters.AddScopeParameters(parameters, query.Scope);
             parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
             parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
             parameters.Add(new NpgsqlParameter<string>("model_id", NpgsqlDbType.Text) { TypedValue = query.ModelId });
@@ -757,7 +757,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     {
         var candidates = new List<ExperienceCandidate>();
         var disclosures = new List<ExperienceGrantDisclosure?>();
-        var records = await PostgresExperienceRecordStore.ReadRecordsAsync(rows, encryption, cancellationToken).ConfigureAwait(false);
+        var records = await ExperienceRecordRows.ReadRecordsAsync(rows, encryption, cancellationToken).ConfigureAwait(false);
         for (var i = 0; i < rows.Count; i++)
         {
             // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
@@ -770,9 +770,9 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             candidates.Add(new ExperienceCandidate(
                 record,
                 ReadRelevance(row),
-                PostgresExperienceRecordStore.ReadSharedByGrant(row),
-                PostgresExperienceRecordStore.ReadPermittingGrant(row)));
-            disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(row));
+                ExperienceRecordRows.ReadSharedByGrant(row),
+                ExperienceRecordRows.ReadPermittingGrant(row)));
+            disclosures.Add(ExperienceRecordRows.ReadPermittingDisclosure(row));
         }
 
         if (candidates.Count > 0)
@@ -811,28 +811,28 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         var width = dimension.ToString(CultureInfo.InvariantCulture);
         var scope = readable ? ReadableJoinScopeWithNamedGrantPredicate : ExactJoinScopePredicate;
         var shared = readable
-            ? PostgresExperienceRecordStore.SharedByGrantColumn + ", " + PostgresExperienceRecordStore.PermittingGrantColumn
-                + ", " + PostgresExperienceRecordStore.PermittingDisclosureColumn
-            : "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
-                + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
-                + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias;
+            ? ExperienceRecordSql.SharedByGrantColumn + ", " + ExperienceRecordSql.PermittingGrantColumn
+                + ", " + ExperienceRecordSql.PermittingDisclosureColumn
+            : "false AS " + ExperienceRecordSql.SharedByGrantAlias
+                + ", NULL::uuid AS " + ExperienceRecordSql.PermittingGrantAlias
+                + ", NULL::text AS " + ExperienceRecordSql.PermittingDisclosureAlias;
 
         // The lateral join both decides the grant branch and names the grant, so a candidate this
         // channel discloses carries the same ID its access row does, and the access row the same level.
         // It exposes only grant_id and disclosure, both read qualified, so every
         // unqualified name in the rest of the statement still resolves exactly as it did.
-        var grantJoin = readable ? " " + PostgresExperienceRecordStore.PermittingGrantJoin : string.Empty;
+        var grantJoin = readable ? " " + ExperienceRecordSql.PermittingGrantJoin : string.Empty;
 
         return $"SELECT {RecordColumns}, {shared}, " +
             $"(e.embedding::vector({width}) <=> CAST(@query_vector AS vector({width}))) AS {DistanceColumn} " +
             $"FROM {Table} e " +
-            $"JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id" +
+            $"JOIN {ExperienceRecordSql.Table} r ON r.experience_id = e.experience_id" +
             grantJoin + " " +
             // Both sides of the join carry the scope. The r-side is the authoritative one; the e-side is
             // what makes ix_experience_embeddings_scope_model usable (see EmbeddingScopePredicate).
             // An active grant is the alternative to that exact match, decided in SQL like the rest.
             $"WHERE {scope} " +
-            $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+            $"AND {ExperienceRecordSql.RecordLivePredicate} " +
             "AND r.status = ANY(@statuses) " +
             "AND r.reuse_confidence >= @min_confidence " +
             // Story 14.4: applied before the LIMIT, like the status filter and the floor, so model-authored records
@@ -855,10 +855,10 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     /// </summary>
     private static string CompatibilityProbe(string scope, bool excludeModelAuthored)
     {
-        var filters = $"WHERE {scope} AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        var filters = $"WHERE {scope} AND {ExperienceRecordSql.RecordLivePredicate} " +
             "AND r.status = ANY(@statuses) AND r.reuse_confidence >= @min_confidence" +
             (excludeModelAuthored ? " AND " + RecordModelAuthoredPredicate : string.Empty);
-        var from = $"SELECT 1 FROM {Table} e JOIN {PostgresExperienceRecordStore.Table} r ON r.experience_id = e.experience_id ";
+        var from = $"SELECT 1 FROM {Table} e JOIN {ExperienceRecordSql.Table} r ON r.experience_id = e.experience_id ";
         return $"SELECT EXISTS ({from}{filters}), EXISTS ({from}{filters} AND e.model_id = @model_id)";
     }
 
@@ -871,7 +871,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
     {
         await using var command = new NpgsqlCommand(ProbeRevisionSql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
-        PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
+        ExperienceRecordParameters.AddScopeParameters(command.Parameters, scope);
 
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return value is long revision ? revision : null;
@@ -894,7 +894,7 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             : (readable ? CompatibilityProbeSql : CompatibilityProbeExactSql);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         var parameters = command.Parameters;
-        PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
+        ExperienceRecordParameters.AddScopeParameters(parameters, query.Scope);
         parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
         parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
 

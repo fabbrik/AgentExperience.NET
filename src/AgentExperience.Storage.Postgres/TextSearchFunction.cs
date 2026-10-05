@@ -51,7 +51,7 @@ internal static class TextSearchFunction
 
     /// <summary>
     /// The columns it returns, as <c>pg_get_function_result</c> renders them inside <c>TABLE(...)</c>: the record columns
-    /// in <see cref="PostgresExperienceRecordStore.SelectColumns"/> order, then the relevance, the shared flag, and the
+    /// in <see cref="ExperienceRecordSql.SelectColumns"/> order, then the relevance, the shared flag, and the
     /// permitting grant's ID and level -- exactly the columns the store's own statement selects.
     /// </summary>
     internal const string Columns =
@@ -60,9 +60,9 @@ internal static class TextSearchFunction
         "supporting_validations integer, contradictions integer, revision bigint, created_at timestamp with time zone, " +
         "updated_at timestamp with time zone, payload_version integer, payload jsonb, " +
         PostgresExperienceCandidateSource.RelevanceColumn + " real, " +
-        PostgresExperienceRecordStore.SharedByGrantAlias + " boolean, " +
-        PostgresExperienceRecordStore.PermittingGrantAlias + " uuid, " +
-        PostgresExperienceRecordStore.PermittingDisclosureAlias + " text";
+        ExperienceRecordSql.SharedByGrantAlias + " boolean, " +
+        ExperienceRecordSql.PermittingGrantAlias + " uuid, " +
+        ExperienceRecordSql.PermittingDisclosureAlias + " text";
 
     /// <summary>What <c>pg_get_function_result</c> must say.</summary>
     internal const string Result = "TABLE(" + Columns + ")";

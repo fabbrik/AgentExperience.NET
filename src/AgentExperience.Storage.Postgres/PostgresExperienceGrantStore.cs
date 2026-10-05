@@ -75,22 +75,22 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// </para>
     /// </summary>
     private static readonly string InsertGrantSql =
-        $"INSERT INTO {PostgresExperienceRecordStore.GrantsTable} ({GrantColumns}) " +
+        $"INSERT INTO {ExperienceRecordSql.GrantsTable} ({GrantColumns}) " +
         "SELECT @grant_id, r.experience_id, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id, " +
         "@recipient_tenant_id, @recipient_application_id, @recipient_project_id, " +
         "@recipient_team_id, @recipient_agent_id, @recipient_user_id, " +
         "@reason, @administrator_principal_id, now(), " +
         "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL, @disclosure, @approach_arguments " +
-        $"FROM {PostgresExperienceRecordStore.Table} r " +
-        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"FROM {ExperienceRecordSql.Table} r " +
+        $"WHERE r.experience_id = @experience_id AND {ExperienceRecordSql.RecordScopePredicate} " +
         // An erased record is not a record a grant can name: there is nothing left to share, and a grant
         // over a tombstone would be a live permission over an ID the erasure spent. experience_grants has
         // no foreign key to experience_records (0005), so nothing parks this statement against a
         // concurrent erasure by itself -- without the lock it would decide against a snapshot taken
         // before the purge committed and issue a 90-day permission over a record that is already gone.
-        // See PostgresExperienceRecordStore.RecordKeyShareLock.
-        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
-        $"{PostgresExperienceRecordStore.RecordKeyShareLock} " +
+        // See ExperienceRecordSql.RecordKeyShareLock.
+        $"AND {ExperienceRecordSql.RecordLivePredicate} " +
+        $"{ExperienceRecordSql.RecordKeyShareLock} " +
         $"RETURNING {GrantColumns}";
 
     /// <summary>
@@ -99,21 +99,21 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// and neither can rewrite history.
     /// </summary>
     private static readonly string RevokeGrantSql =
-        $"UPDATE {PostgresExperienceRecordStore.GrantsTable} SET revoked_at = now(), revocation_reason = @reason " +
-        $"WHERE grant_id = @grant_id AND revoked_at IS NULL AND {PostgresExperienceRecordStore.ScopePredicate} " +
+        $"UPDATE {ExperienceRecordSql.GrantsTable} SET revoked_at = now(), revocation_reason = @reason " +
+        $"WHERE grant_id = @grant_id AND revoked_at IS NULL AND {ExperienceRecordSql.ScopePredicate} " +
         $"RETURNING {GrantColumns}";
 
     private static readonly string SelectGrantSql =
-        $"SELECT {GrantColumns} FROM {PostgresExperienceRecordStore.GrantsTable} " +
-        $"WHERE grant_id = @grant_id AND {PostgresExperienceRecordStore.ScopePredicate}";
+        $"SELECT {GrantColumns} FROM {ExperienceRecordSql.GrantsTable} " +
+        $"WHERE grant_id = @grant_id AND {ExperienceRecordSql.ScopePredicate}";
 
     /// <summary>
     /// Encrypted mode's first read of a revocation: which record the grant is over, so the revocation reason
     /// can be sealed under that record's key. Owner-scoped like every other grant read.
     /// </summary>
     private static readonly string SelectGrantRecordSql =
-        $"SELECT experience_id FROM {PostgresExperienceRecordStore.GrantsTable} " +
-        $"WHERE grant_id = @grant_id AND {PostgresExperienceRecordStore.ScopePredicate}";
+        $"SELECT experience_id FROM {ExperienceRecordSql.GrantsTable} " +
+        $"WHERE grant_id = @grant_id AND {ExperienceRecordSql.ScopePredicate}";
 
     /// <summary><see cref="GrantColumns"/> qualified with the <c>g</c> alias, for the joined listing.</summary>
     private const string JoinedGrantColumns =
@@ -130,10 +130,10 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// </summary>
     private static readonly string ListGrantsSql =
         $"SELECT {JoinedGrantColumns} " +
-        $"FROM {PostgresExperienceRecordStore.Table} r " +
-        $"LEFT JOIN {PostgresExperienceRecordStore.GrantsTable} g ON g.experience_id = r.experience_id " +
-        $"WHERE r.experience_id = @experience_id AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
-        $"AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        $"FROM {ExperienceRecordSql.Table} r " +
+        $"LEFT JOIN {ExperienceRecordSql.GrantsTable} g ON g.experience_id = r.experience_id " +
+        $"WHERE r.experience_id = @experience_id AND {ExperienceRecordSql.RecordScopePredicate} " +
+        $"AND {ExperienceRecordSql.RecordLivePredicate} " +
         "ORDER BY g.issued_at, g.grant_id LIMIT @limit";
 
     /// <summary>One grant's trail, oldest first, alongside the grant as it stands now.</summary>
@@ -164,7 +164,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "g.recipient_tenant_id, g.recipient_application_id, g.recipient_project_id, " +
         "g.recipient_team_id, g.recipient_agent_id, g.recipient_user_id, " +
         "@reason, @administrator_principal_id, @administrator_authorized_at, g.expires_at, now(), now(), g.disclosure " +
-        $"FROM {PostgresExperienceRecordStore.GrantsTable} g WHERE g.grant_id = @grant_id";
+        $"FROM {ExperienceRecordSql.GrantsTable} g WHERE g.grant_id = @grant_id";
 
     /// <summary>
     /// The expired-grant purge, created by <c>0010</c>. Bounded, scoped, and through the same
@@ -317,7 +317,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 var parameters = insert.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("grant_id", request.GrantId));
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", request.ExperienceId));
-                PostgresExperienceRecordStore.AddScopeParameters(parameters, request.RecordScope);
+                ExperienceRecordParameters.AddScopeParameters(parameters, request.RecordScope);
                 AddRecipientParameters(parameters, request.RecipientScope);
                 parameters.Add(new NpgsqlParameter<string>("reason", NpgsqlDbType.Text)
                 {
@@ -328,7 +328,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 // carries exactly the value a caller can compare against what it asked for.
                 parameters.Add(new NpgsqlParameter<DateTimeOffset>(
                     "expires_at",
-                    PostgresExperienceRecordStore.ToStoredTimestamp(request.ExpiresAt)));
+                    ExperienceRecordParameters.ToStoredTimestamp(request.ExpiresAt)));
                 parameters.Add(new NpgsqlParameter<TimeSpan>("max_lifetime", _policy.MaxLifetime));
                 // By name, never by ordinal: the validator has already refused a value the enum does
                 // not define, and the stored text is what the lateral join reads back.
@@ -424,9 +424,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceGrantOutcome.Created, grant, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant create", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant create", cancellationToken);
         }
     }
 
@@ -480,7 +480,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                 await using (var select = new NpgsqlCommand(SelectGrantRecordSql, connection, transaction))
                 {
                     select.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", revocation.GrantId));
-                    PostgresExperienceRecordStore.AddScopeParameters(select.Parameters, revocation.RecordScope);
+                    ExperienceRecordParameters.AddScopeParameters(select.Parameters, revocation.RecordScope);
                     experienceId = await select.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as Guid?;
                 }
 
@@ -508,7 +508,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                         ? revocation.Reason
                         : key.Seal(SealedText.GrantRevocationReasonColumn, revocation.GrantId, revocation.Reason),
                 });
-                PostgresExperienceRecordStore.AddScopeParameters(parameters, revocation.RecordScope);
+                ExperienceRecordParameters.AddScopeParameters(parameters, revocation.RecordScope);
 
                 revoked = Open(await ReadOneAsync(update, cancellationToken).ConfigureAwait(false), key);
             }
@@ -549,9 +549,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceGrantOutcome.Revoked, revoked, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant revoke", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant revoke", cancellationToken);
         }
     }
 
@@ -657,14 +657,14 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             await using var command = session.CreateCommand(PurgeExpiredGrantsSql);
             var parameters = command.Parameters;
-            PostgresExperienceRecordStore.AddScopeParameters(parameters, recordScope);
+            ExperienceRecordParameters.AddScopeParameters(parameters, recordScope);
 
             // This store's own clock decides which grants are past their expiry, the same way it decides
             // the maximum lifetime a new grant may be issued with. Whether a grant still *permits* a read
             // is always the database's clock_timestamp(), which no host can wind.
             parameters.Add(new NpgsqlParameter<DateTimeOffset>(
                 "now",
-                PostgresExperienceRecordStore.ToStoredTimestamp(_timeProvider.GetUtcNow())));
+                ExperienceRecordParameters.ToStoredTimestamp(_timeProvider.GetUtcNow())));
             parameters.Add(new NpgsqlParameter<int>("limit", batchSize));
 
             var purged = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is long count
@@ -677,9 +677,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             // different moment.
             return new(ExperienceStoreOutcome.Deleted, purged, purged >= batchSize, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant purge", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant purge", cancellationToken);
         }
     }
 
@@ -713,7 +713,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
             await using var command = session.CreateCommand(ListGrantsSql);
             command.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
-            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, recordScope);
+            ExperienceRecordParameters.AddScopeParameters(command.Parameters, recordScope);
             command.Parameters.Add(new NpgsqlParameter<int>("limit", limit));
 
             var grants = new List<ExperienceGrant>();
@@ -751,9 +751,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
             return new(ExperienceGrantOutcome.Found, grants, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant list", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant list", cancellationToken);
         }
     }
 
@@ -790,7 +790,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             await using (var command = session.CreateCommand(SelectGrantSql))
             {
                 command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", grantId));
-                PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, recordScope);
+                ExperienceRecordParameters.AddScopeParameters(command.Parameters, recordScope);
                 grant = await ReadOneAsync(command, cancellationToken).ConfigureAwait(false);
             }
 
@@ -832,9 +832,9 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
             return new(ExperienceGrantOutcome.Found, grant, events, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "grant history", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "grant history", cancellationToken);
         }
     }
 
@@ -877,7 +877,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         parameters.Add(new NpgsqlParameter<string>("administrator_principal_id", NpgsqlDbType.Text) { TypedValue = administration.AdministratorPrincipalId });
         parameters.Add(new NpgsqlParameter<DateTimeOffset>(
             "administrator_authorized_at",
-            PostgresExperienceRecordStore.ToStoredTimestamp(administration.AuthorizedAt)));
+            ExperienceRecordParameters.ToStoredTimestamp(administration.AuthorizedAt)));
 
         var written = await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         if (written != 1)
@@ -894,7 +894,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     {
         await using var command = new NpgsqlCommand(SelectGrantSql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter<Guid>("grant_id", revocation.GrantId));
-        PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, revocation.RecordScope);
+        ExperienceRecordParameters.AddScopeParameters(command.Parameters, revocation.RecordScope);
 
         return await ReadOneAsync(command, cancellationToken).ConfigureAwait(false);
     }
@@ -979,7 +979,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     }
 
     private static ExperienceGrantDisclosure DecodeDisclosure(string disclosure) =>
-        PostgresExperienceRecordStore.ParseDisclosure(disclosure)
+        ExperienceRecordRows.ParseDisclosure(disclosure)
             ?? throw new ExperienceStoreException("Stored sharing grant has an unrecognized disclosure level.");
 
     private static ExperienceGrantAction DecodeAction(string action) =>

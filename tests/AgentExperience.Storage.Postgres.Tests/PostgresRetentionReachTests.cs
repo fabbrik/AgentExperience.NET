@@ -111,7 +111,7 @@ public sealed class PostgresRetentionReachTests
         foreach (var (name, candidateTeam, candidateAgent, candidateUser) in Corpus)
         {
             var candidate = new Scope(tenant, "app-1", "project-1", candidateTeam, candidateAgent, candidateUser);
-            Assert.Equal(expectedNames.Contains(name), PostgresExperienceRecordStore.IsAtOrBeneath(candidate, root, ScopeMatch.Subtree));
+            Assert.Equal(expectedNames.Contains(name), ExperienceRecordParameters.IsAtOrBeneath(candidate, root, ScopeMatch.Subtree));
         }
     }
 
@@ -267,7 +267,7 @@ public sealed class PostgresRetentionReachTests
                 foreach (var (_, team, agent, user) in Corpus)
                 {
                     var candidate = new Scope(tenant, "app-1", "project-1", team, agent, user);
-                    if (PostgresExperienceRecordStore.IsAtOrBeneath(candidate, root, ScopeMatch.Subtree))
+                    if (ExperienceRecordParameters.IsAtOrBeneath(candidate, root, ScopeMatch.Subtree))
                     {
                         Assert.True(bound.Permits(candidate), $"{bound} permits {root} but not {candidate} beneath it.");
                     }
