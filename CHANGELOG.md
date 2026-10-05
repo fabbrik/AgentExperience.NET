@@ -6,6 +6,12 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### A reflection timeout is always reported as one
+
+- `ChatClientExperienceReflector` enforces its timeout twice (the call's token and a wait), and both fire at the
+  timeout. When the token won, the reflection failed as `ModelCallFailed` instead of `TimedOut`. Either order is now
+  `TimedOut`; a `TimeoutException` the chat client itself fails with is still `ModelCallFailed`.
+
 ### Packing checks compatibility with the last published preview (story 19.1)
 
 - `dotnet pack` now runs the SDK's package validation for all six packages against the last published preview
