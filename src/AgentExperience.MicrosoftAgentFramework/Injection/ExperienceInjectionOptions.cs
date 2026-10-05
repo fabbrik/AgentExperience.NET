@@ -52,18 +52,26 @@ public sealed record ExperienceInjectionLimits(int MaxRecords, int MaxBytes)
     public const int DefaultMaxBytes = 16 * 1024;
 
     /// <summary>
-    /// The default bound on the whole final eligibility re-check: 2 seconds. The check is one batched
-    /// store read of up to <see cref="MaxRecords"/> records (one round trip against the PostgreSQL
-    /// adapter; one read per record against a store that keeps the port's default) on the invocation's
-    /// critical path, so it needs a bound of its own -- retrieval's timeout has already been spent by
-    /// the time it starts.
+    /// The default bound on the whole final eligibility re-check: 500 milliseconds, matching
+    /// <see cref="RetrievalPolicy.DefaultTimeout"/>. The check is one batched store read of up to
+    /// <see cref="MaxRecords"/> records (one round trip against the PostgreSQL adapter; one read per
+    /// record against a store that keeps the port's default) on the invocation's critical path, so it
+    /// needs a bound of its own -- retrieval's timeout has already been spent by the time it starts.
+    /// Every read inside it is hard-bounded by what is left of this one budget and abandoned on expiry,
+    /// so the worst case before the model call is about the retrieval timeout plus this one (plus the
+    /// host's own resolver callback; time in the host's decision callback counts against this budget,
+    /// though one synchronous call is not cut short). The bound is released by a
+    /// <see cref="TimeProvider"/> timer, so a starved thread pool can still release it late. An abandoned
+    /// read keeps running against the store in the background until it observes its cancellation, so the
+    /// store must tolerate concurrent use, and a grant's access rows may be written after the timeout is
+    /// reported.
     /// </summary>
-    public static readonly TimeSpan DefaultEligibilityCheckTimeout = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan DefaultEligibilityCheckTimeout = TimeSpan.FromMilliseconds(500);
 
     /// <summary>The largest permitted <see cref="EligibilityCheckTimeout"/>: one day, matching <see cref="RetrievalPolicy.MaxTimeout"/>.</summary>
     public static readonly TimeSpan MaxEligibilityCheckTimeout = RetrievalPolicy.MaxTimeout;
 
-    /// <summary>The documented defaults: at most 8 records and 16 KB of UTF-8, re-checked within 2 seconds.</summary>
+    /// <summary>The documented defaults: at most 8 records and 16 KB of UTF-8, re-checked within 500 milliseconds.</summary>
     public static ExperienceInjectionLimits Default { get; } = new(DefaultMaxRecords, DefaultMaxBytes);
 
     /// <summary>The most records one injected block may carry (see the primary constructor's parameter doc).</summary>

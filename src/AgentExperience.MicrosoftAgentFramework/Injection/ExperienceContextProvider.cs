@@ -805,14 +805,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         var timeout = _options.Limits.EligibilityCheckTimeout;
         var started = _options.TimeProvider.GetTimestamp();
-        using var expiry = new CancellationTokenSource(timeout, _options.TimeProvider);
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
 
-        // The bound, as a fact about the clock rather than about a timer. The token above is what a store
-        // is handed, and it only flips when its timer callback has actually run -- which, on a starved
-        // thread pool, can be well after the deadline. The checks between records must not depend on that,
-        // so they compare the elapsed time as well.
-        bool Expired() => expiry.IsCancellationRequested || _options.TimeProvider.GetElapsedTime(started) >= timeout;
+        // The bound, as a fact about the clock rather than about a timer: a timer callback can run well
+        // after its deadline on a starved thread pool, so the checks between records compare the elapsed
+        // time itself. Every store read below is hard-bounded by what is left of it (story 16.2), so a
+        // store that ignores its token, or is slow to cancel, cannot hold the model call past the bound.
+        TimeSpan Remaining() => timeout - _options.TimeProvider.GetElapsedTime(started);
+        bool Expired() => Remaining() <= TimeSpan.Zero;
 
         var ids = new Guid[selected.Count];
         for (var i = 0; i < ids.Length; i++)
@@ -835,9 +834,19 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // is nothing to deliver and no read.
             if (ids.Length > 0)
             {
-                batch = await _store
-                    .GetManyAsync(request.Authorization, request.Scope, ids, readOptions, bounded.Token)
+                var read = await ReadWithinAsync(
+                        token => _store.GetManyAsync(request.Authorization, request.Scope, ids, readOptions, token),
+                        Remaining,
+                        cancellationToken)
                     .ConfigureAwait(false);
+                if (read.TimedOut)
+                {
+                    return CheckOutcome.TimedOut(timeout);
+                }
+
+                // A store that answered null has answered no position: every candidate is unreadable
+                // below, exactly as before the read was bounded.
+                batch = read.Value;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -846,10 +855,6 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // so a caller inspecting the exception sees the token it actually cancelled.
             cancellationToken.ThrowIfCancellationRequested();
             throw;
-        }
-        catch (OperationCanceledException) when (expiry.IsCancellationRequested)
-        {
-            return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
         }
         catch (Exception)
         {
@@ -874,18 +879,25 @@ public sealed class ExperienceContextProvider : AIContextProvider
             {
                 try
                 {
-                    result = await _store
-                        .GetAsync(request.Authorization, request.Scope, experienceId, readOptions, bounded.Token)
+                    // What is left of the one bound, not a fresh one per read: the failed batch and every
+                    // read before this one have already spent part of it.
+                    var read = await ReadWithinAsync(
+                            token => _store.GetAsync(request.Authorization, request.Scope, experienceId, readOptions, token),
+                            Remaining,
+                            cancellationToken)
                         .ConfigureAwait(false);
+                    if (read.TimedOut)
+                    {
+                        return CheckOutcome.TimedOut(timeout);
+                    }
+
+                    // A null answer is not the record: it is omitted as unreadable below, as before.
+                    result = read.Value;
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     throw;
-                }
-                catch (OperationCanceledException) when (expiry.IsCancellationRequested)
-                {
-                    return CheckOutcome.TimedOut(_options.Limits.EligibilityCheckTimeout);
                 }
                 catch (Exception ex)
                 {
@@ -1094,28 +1106,29 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 heldIds[i] = recheck[i].ExperienceId;
             }
 
-            ExperienceRecordGetManyResult held;
+            ExperienceRecordGetManyResult? held;
             try
             {
                 // A scope check, not a delivery: nothing of these records is handed to the model -- at
                 // most their ID, in a withdrawal notice -- so no access row claims otherwise.
-                held = await _store
-                    .GetManyAsync(
-                        request.Authorization,
-                        request.Scope,
-                        heldIds,
-                        new ExperienceReadOptions(ExperienceReadPurpose.ScopeCheck, request.CorrelationId),
-                        bounded.Token)
+                var scopeCheck = new ExperienceReadOptions(ExperienceReadPurpose.ScopeCheck, request.CorrelationId);
+                var read = await ReadWithinAsync(
+                        token => _store.GetManyAsync(request.Authorization, request.Scope, heldIds, scopeCheck, token),
+                        Remaining,
+                        cancellationToken)
                     .ConfigureAwait(false);
+                if (read.TimedOut)
+                {
+                    return CheckOutcome.TimedOut(timeout);
+                }
+
+                // A null answer stands for no record: every held record is withdrawn below, as before.
+                held = read.Value;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 throw;
-            }
-            catch (OperationCanceledException) when (expiry.IsCancellationRequested)
-            {
-                return CheckOutcome.TimedOut(timeout);
             }
             catch (Exception ex)
             {
@@ -1298,6 +1311,131 @@ public sealed class ExperienceContextProvider : AIContextProvider
             Session = session?.Usage(),
         });
         return new AIContext();
+    }
+
+    /// <summary>
+    /// Runs one store read of the final eligibility check, hard-bounded by <paramref name="remaining"/>
+    /// -- what is left of the check's one bound -- the way retrieval bounds its search: the read is
+    /// awaited with a timeout on the provider's clock rather than trusted to honour its token. On expiry
+    /// the read is abandoned (see <see cref="Abandon"/>) and reported as timed out; a remainder that is
+    /// already spent times out without starting the read at all. The caller's own cancellation
+    /// propagates, after abandoning the read; anything the read itself throws propagates unchanged.
+    /// </summary>
+    /// <remarks>
+    /// The wait is released by a <see cref="TimeProvider"/> timer, so on a starved thread pool it can still
+    /// fire late; the checks between records compare the elapsed time itself. An abandoned read keeps
+    /// running against the store in the background until it observes its cancellation.
+    /// </remarks>
+    private async Task<BoundedRead<T>> ReadWithinAsync<T>(
+        Func<CancellationToken, Task<T>> read,
+        Func<TimeSpan> remaining,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (remaining() <= TimeSpan.Zero)
+        {
+            return BoundedRead<T>.Expired;
+        }
+
+        // Cancelled only once the read is abandoned (it carries no timer of its own), so a token-honouring
+        // store can never race a cancellation failure ahead of the timeout report.
+        var inner = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        // Task.Run also bounds a store that blocks or throws synchronously before handing back its task.
+        var work = Task.Run(() => read(inner.Token), CancellationToken.None);
+        var abandoned = false;
+        try
+        {
+            try
+            {
+                // Measured again now the read has started, so the time spent scheduling it is not added
+                // on top of the bound.
+                var left = remaining();
+                if (left <= TimeSpan.Zero)
+                {
+                    abandoned = true;
+                    Abandon(work, inner);
+                    return BoundedRead<T>.Expired;
+                }
+
+                return new BoundedRead<T>(
+                    await work.WaitAsync(left, _options.TimeProvider, cancellationToken).ConfigureAwait(false),
+                    TimedOut: false);
+            }
+            catch (TimeoutException ex) when (!ReferenceEquals(ex, work.Exception?.InnerException))
+            {
+                // The wait's own timeout, not one the store threw: report first, then let the read run
+                // itself down in the background.
+                abandoned = true;
+                Abandon(work, inner);
+                return BoundedRead<T>.Expired;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                abandoned = true;
+                Abandon(work, inner);
+                throw;
+            }
+        }
+        finally
+        {
+            if (!abandoned)
+            {
+                inner.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Hands an abandoned read off to run itself down in the background: cancel its token, then -- once
+    /// both the read and the cancellation have actually finished -- observe any exception it faulted with
+    /// and dispose the token source. The same hand-off retrieval makes for an abandoned search.
+    /// </summary>
+    /// <remarks>
+    /// The cancellation deliberately does not run on the caller's thread. A cancellation callback can be
+    /// arbitrarily slow -- Npgsql's opens a <em>new</em> connection to the server to cancel the running
+    /// statement -- so cancelling inline would let the check overrun the very bound it is reporting.
+    /// Disposal waits for both tasks, because disposing earlier would tear the token out from under a
+    /// read or a callback still using it. Until the cancel lands, the read may keep a pooled connection.
+    /// </remarks>
+    private static void Abandon(Task task, CancellationTokenSource source)
+    {
+        var cancelling = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await source.CancelAsync().ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // A throwing cancellation callback must never affect the check's own result.
+                }
+            },
+            CancellationToken.None);
+
+        _ = Task.WhenAll(task, cancelling).ContinueWith(
+            completed =>
+            {
+                _ = completed.Exception;
+                _ = task.Exception;
+                source.Dispose();
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// One bounded store read's answer, or the fact that the bound ran out first. <see cref="Value"/> is
+    /// <see langword="null"/> when <see cref="TimedOut"/> is set, and also when a store broke its contract
+    /// by answering null; every caller treats that null exactly as it did before reads were bounded.
+    /// </summary>
+    private readonly record struct BoundedRead<T>(T? Value, bool TimedOut)
+        where T : class
+    {
+        public static BoundedRead<T> Expired => new(null, TimedOut: true);
     }
 
     /// <summary>

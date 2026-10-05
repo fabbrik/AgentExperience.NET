@@ -1465,7 +1465,9 @@ public class ExperienceInjectionTests
 
         Assert.Equal(8, ExperienceInjectionLimits.DefaultMaxRecords);
         Assert.Equal(16 * 1024, ExperienceInjectionLimits.DefaultMaxBytes);
-        Assert.Equal(TimeSpan.FromSeconds(2), ExperienceInjectionLimits.Default.EligibilityCheckTimeout);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), ExperienceInjectionLimits.Default.EligibilityCheckTimeout);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), ExperienceInjectionLimits.DefaultEligibilityCheckTimeout);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), new ExperienceInjectionOptions { ResolveRequest = _ => null }.Limits.EligibilityCheckTimeout);
     }
 
     [Fact]
@@ -1931,6 +1933,196 @@ public class ExperienceInjectionTests
         var result = Assert.Single(harness.Results);
         Assert.Equal(InjectionOutcome.Failed, result.Outcome);
         Assert.Contains("eligibility check exceeded", result.Failure!.Reason, StringComparison.Ordinal);
+    }
+
+    // ---- Story 16.2: every read of the check is hard-bounded by what is left of the one budget ------
+
+    [Fact]
+    public async Task A_batch_read_that_ignores_its_token_and_never_returns_times_the_check_out_within_the_bound()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        var hung = new HungRead();
+        harness.World.GetDelay = hung.Enter;
+
+        var run = harness.Agent().RunAsync("refund ticket stuck on a lock");
+        await hung.Entered.Task;
+        var moved = await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+
+        Assert.Equal("Hello, world", (await run).Text);
+        Assert.InRange(moved, TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(65));
+        Assert.Null(harness.InjectedText());
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.Equal("The final eligibility check exceeded its 00:00:00.0500000 bound, so nothing was injected.", result.Failure!.Reason);
+
+        // Abandoned, not forgotten: the read's token is cancelled in the background.
+        await hung.Cancelled();
+    }
+
+    [Fact]
+    public async Task A_fallback_read_that_hangs_after_a_failed_batch_times_out_within_what_is_left_of_the_bound()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+
+        // The batch spends 30 ms of the 50 ms bound and then fails, so the per-record fallback runs.
+        harness.World.OnGetMany = _ =>
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(30));
+            throw new ExperienceStoreException("the batch failed.");
+        };
+        var hung = new HungRead();
+        harness.World.GetDelay = hung.Enter;
+
+        var run = harness.Agent().RunAsync("refund ticket stuck on a lock");
+        await hung.Entered.Task;
+        var moved = await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+        await run;
+
+        // The 20 ms left, not a fresh 50 ms.
+        Assert.InRange(moved, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(35));
+        Assert.Null(harness.InjectedText());
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.Contains("eligibility check exceeded", result.Failure!.Reason, StringComparison.Ordinal);
+        await hung.Cancelled();
+    }
+
+    [Fact]
+    public async Task A_batch_read_that_throws_a_timeout_exception_of_its_own_falls_back_to_per_record_reads()
+    {
+        // The store's own TimeoutException is a failed batch, not the bound running out.
+        var harness = new Harness();
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), TestScope), relevance: 0.5d);
+        harness.World.OnGetMany = _ => throw new TimeoutException("the store's own timeout.");
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Injected, result.Outcome);
+        Assert.Equal([InjectionRecords.Id(1), InjectionRecords.Id(2)], result.InjectedExperienceIds);
+        Assert.Equal([InjectionRecords.Id(1), InjectionRecords.Id(2)], harness.World.Reads);
+    }
+
+    [Fact]
+    public async Task A_single_read_that_throws_a_timeout_exception_of_its_own_omits_only_that_record()
+    {
+        var harness = new Harness();
+        var (kept, lost) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(kept, TestScope), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(lost, TestScope), relevance: 0.5d);
+        harness.World.ThrowsFor.Add(lost);
+        harness.World.ThrowsForException = new TimeoutException("the store's own timeout.");
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Injected, result.Outcome);
+        Assert.Equal([kept], result.InjectedExperienceIds);
+        var omission = Assert.Single(result.Omitted);
+        Assert.Equal(lost, omission.ExperienceId);
+        Assert.Equal(InjectionOmissionReason.Unreadable, omission.Reason);
+        Assert.Equal("Re-reading the record threw System.TimeoutException.", omission.Detail);
+    }
+
+    [Fact]
+    public async Task A_batch_that_spends_the_whole_bound_and_then_throws_times_out_without_a_fallback_read()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        harness.World.OnGetMany = _ =>
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+            throw new ExperienceStoreException("the batch failed.");
+        };
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var result = Assert.Single(harness.Results);
+        Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+        Assert.Equal("The final eligibility check exceeded its 00:00:00.0500000 bound, so nothing was injected.", result.Failure!.Reason);
+        Assert.Null(harness.InjectedText());
+        Assert.Empty(harness.World.Reads);
+    }
+
+    [Fact]
+    public async Task A_store_read_that_blocks_synchronously_still_times_the_check_out_within_the_bound()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        using var gate = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.World.GetDelay = _ =>
+        {
+            // Blocks before handing back a task, ignoring the token: a synchronous driver call.
+            entered.TrySetResult();
+            gate.Wait();
+            return Task.CompletedTask;
+        };
+
+        try
+        {
+            var run = harness.Agent().RunAsync("refund ticket stuck on a lock");
+            await entered.Task;
+            var moved = await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+            await run;
+
+            Assert.InRange(moved, TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(65));
+            var result = Assert.Single(harness.Results);
+            Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+            Assert.Contains("eligibility check exceeded", result.Failure!.Reason, StringComparison.Ordinal);
+            Assert.Null(harness.InjectedText());
+        }
+        finally
+        {
+            gate.Set();
+        }
+    }
+
+    [Fact]
+    public async Task A_caller_that_cancels_during_a_read_that_ignores_its_token_gets_its_cancellation_and_the_read_is_abandoned()
+    {
+        var harness = new Harness
+        {
+            Clock = new ManualClock(InjectionRecords.Now),
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Never injected."));
+        var hung = new HungRead();
+        harness.World.GetDelay = hung.Enter;
+        using var cts = new CancellationTokenSource();
+
+        var run = harness.Agent().RunAsync("refund ticket stuck on a lock", cancellationToken: cts.Token);
+        await hung.Entered.Task;
+        await cts.CancelAsync();
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        Assert.Equal(cts.Token, thrown.CancellationToken);
+        Assert.Empty(harness.Results);
+        Assert.Null(harness.InjectedText());
+        await hung.Cancelled();
     }
 
     /// <summary>A clock whose timestamps move only when a test moves them, and whose timers never fire: a timer callback delayed indefinitely.</summary>

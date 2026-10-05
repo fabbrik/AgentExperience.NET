@@ -646,6 +646,77 @@ public class SessionInjectionTests
     }
 
     [Fact]
+    public async Task A_withdrawal_check_that_ignores_its_token_and_never_returns_times_out_within_the_bound()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        var (held, fresh) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(held, TestScope), relevance: 1d);
+
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        harness.World.Publish(InjectionRecords.Record(fresh, TestScope), relevance: 0.5d);
+        var hung = new HungRead();
+        harness.World.ScopeCheckDelay = hung.Enter;
+
+        var run = agent.RunAsync("refund ticket stuck on a lock", session);
+        await hung.Entered.Task;
+        var moved = await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+        await run;
+
+        Assert.InRange(moved, TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(65));
+        Assert.Equal(InjectionOutcome.Failed, harness.Last.Outcome);
+        Assert.Equal("The final eligibility check exceeded its 00:00:00.0500000 bound, so nothing was injected.", harness.Last.Failure!.Reason);
+        Assert.Empty(harness.Last.InjectedExperienceIds);
+        Assert.Empty(harness.Last.RetractedExperienceIds);
+        await hung.Cancelled();
+    }
+
+    [Fact]
+    public async Task A_withdrawal_check_that_never_returns_times_out_after_only_what_the_candidate_read_left_of_the_bound()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMilliseconds(50) },
+        };
+        var (held, fresh) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(held, TestScope), relevance: 1d);
+
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        // The candidate batch spends 30 ms of the 50 ms bound; the withdrawal check then hangs.
+        harness.World.Publish(InjectionRecords.Record(fresh, TestScope), relevance: 0.5d);
+        harness.World.GetDelay = _ =>
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(30));
+            return Task.CompletedTask;
+        };
+        var hung = new HungRead();
+        harness.World.ScopeCheckDelay = hung.Enter;
+
+        var run = agent.RunAsync("refund ticket stuck on a lock", session);
+        await hung.Entered.Task;
+        var moved = await clock.AdvanceUntilAsync(run, TimeSpan.FromMilliseconds(5));
+        await run;
+
+        Assert.InRange(moved, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(35));
+        Assert.Equal(InjectionOutcome.Failed, harness.Last.Outcome);
+        Assert.Equal("The final eligibility check exceeded its 00:00:00.0500000 bound, so nothing was injected.", harness.Last.Failure!.Reason);
+        Assert.Empty(harness.Last.InjectedExperienceIds);
+        await hung.Cancelled();
+    }
+
+    [Fact]
     public async Task A_candidate_read_that_throws_for_a_held_record_does_not_withdraw_it()
     {
         var harness = new Harness();
