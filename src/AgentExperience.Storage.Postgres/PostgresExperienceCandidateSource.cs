@@ -51,6 +51,13 @@ namespace AgentExperience.Storage.Postgres;
 /// search returns rather than failing it, and reports it once through the constructor's
 /// <c>onGrantsUnavailable</c> callback.
 /// </para>
+/// <para>
+/// <b>Under row-level security</b> (story 17.7) the search runs through <see cref="TextSearchFunction"/>,
+/// <c>agent_experience.search_experience_text</c>, which applies the read policy's admission and then exactly this
+/// statement's predicates as the owner, so the GIN indexes stay usable; it is used only while row-level security is
+/// enabled on <c>experience_records</c> and the role holds <c>EXECUTE</c> on it, which the privileges call grants
+/// exactly then. Otherwise the statement below runs, unchanged.
+/// </para>
 /// </remarks>
 public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSource
 {
@@ -68,7 +75,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// <see cref="PostgresExperienceRecordStore.SelectColumns"/> cannot silently shift the rank out
     /// from under this reader.
     /// </summary>
-    private const string RelevanceColumn = "relevance";
+    internal const string RelevanceColumn = "relevance";
 
     /// <summary>
     /// The columns, the relevance, and the shared-by-grant flag. The table is aliased <c>r</c> so the
@@ -125,7 +132,8 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         $"AND {MatchPredicate} " +
         $"ORDER BY {RelevanceColumn} DESC, experience_id LIMIT @limit";
 
-    private const string SearchFilters = SearchFilterHead + SearchFilterTail;
+    /// <summary>Every filter after the scope predicate, through the limit. Shared with <see cref="TextSearchFunction"/>.</summary>
+    internal const string SearchFilters = SearchFilterHead + SearchFilterTail;
 
     /// <summary>
     /// The authorship exclusion (story 14.4), <c>0021</c>'s flag, applied before the limit like the status filter and
@@ -134,7 +142,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// backfill writes its flag. It is <see cref="ModelAuthoredPredicate"/>, unqualified, which resolves to <c>r</c>
     /// here as every column does.
     /// </summary>
-    private const string ExcludingSearchFilters = SearchFilterHead + "AND " + ModelAuthoredPredicate + " " + SearchFilterTail;
+    internal const string ExcludingSearchFilters = SearchFilterHead + "AND " + ModelAuthoredPredicate + " " + SearchFilterTail;
 
     /// <summary>
     /// "the row says this record's reflection was not written by a model": <c>0021</c>'s flag is <c>false</c>, so an
@@ -143,36 +151,38 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// </summary>
     internal const string ModelAuthoredPredicate = PostgresExperienceRecordStore.ModelAuthoredColumn + " IS FALSE";
 
-    private const string SearchSql =
+    /// <summary>
+    /// The grant-aware statement up to and including its scope predicate: the select list, the <c>FROM</c> with the
+    /// lateral grant join, and the readable predicate. Shared with <see cref="TextSearchFunction"/>, which appends the
+    /// row-level security admission (story 17.7) between it and the filters.
+    /// </summary>
+    internal const string ReadableSearchHead =
         SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
         + PostgresExperienceRecordStore.PermittingGrantColumn + ", "
         + PostgresExperienceRecordStore.PermittingDisclosureColumn + SearchFromWithGrant
-        + PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate + SearchFilters;
+        + PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate;
+
+    /// <summary>The exact-scope statement up to and including its scope predicate. Shared with <see cref="TextSearchFunction"/>.</summary>
+    internal const string ExactSearchHead =
+        SearchSelect + "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
+        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
+        + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
+        + PostgresExperienceRecordStore.RecordScopePredicate;
+
+    private const string SearchSql = ReadableSearchHead + SearchFilters;
 
     /// <summary>
     /// The same search with the grant branch removed, for a database that has no
     /// <c>experience_grants</c> table or a role that may not read it. See
     /// <see cref="PostgresGrantSupport"/>.
     /// </summary>
-    private const string SearchExactSql =
-        SearchSelect + "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
-        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
-        + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
-        + PostgresExperienceRecordStore.RecordScopePredicate + SearchFilters;
+    private const string SearchExactSql = ExactSearchHead + SearchFilters;
 
     /// <summary><see cref="SearchSql"/> with the authorship exclusion. Nothing else differs.</summary>
-    private const string ExcludingSearchSql =
-        SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
-        + PostgresExperienceRecordStore.PermittingGrantColumn + ", "
-        + PostgresExperienceRecordStore.PermittingDisclosureColumn + SearchFromWithGrant
-        + PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate + ExcludingSearchFilters;
+    private const string ExcludingSearchSql = ReadableSearchHead + ExcludingSearchFilters;
 
     /// <summary><see cref="SearchExactSql"/> with the authorship exclusion. Nothing else differs.</summary>
-    private const string ExcludingSearchExactSql =
-        SearchSelect + "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
-        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
-        + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
-        + PostgresExperienceRecordStore.RecordScopePredicate + ExcludingSearchFilters;
+    private const string ExcludingSearchExactSql = ExactSearchHead + ExcludingSearchFilters;
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -245,14 +255,14 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         {
             try
             {
-                (result, disclosures) = await RunSearchAsync(_grants.Available ? Readable(query) : Exact(query), authorization, query, cancellationToken)
+                (result, disclosures) = await RunSearchAsync(_grants.Available, authorization, query, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (_grants.ShouldFallBack(ex, "candidate search", cancellationToken))
             {
                 // No grant table, or no permission to read it: search the exact scope only. Falling
                 // back narrows the answer and can never return a record this scope did not own.
-                (result, disclosures) = await RunSearchAsync(Exact(query), authorization, query, cancellationToken).ConfigureAwait(false);
+                (result, disclosures) = await RunSearchAsync(withGrants: false, authorization, query, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
@@ -334,8 +344,44 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             : new(ExperienceStoreOutcome.Found, NoCandidates, NoErrors);
     }
 
+    /// <summary>
+    /// Runs the search, through <see cref="TextSearchFunction"/> while row-level security is on and the role may call it
+    /// (story 17.7), and through the store's own statement otherwise. A call that fails as an undefined function or an
+    /// insufficient privilege re-detects the route: when the function is now gone or no longer granted -- the deployment
+    /// changed since the route was cached -- the store's own statement runs, which the policies confine exactly as before;
+    /// when it is still usable, the error came from inside it and is rethrown.
+    /// </summary>
     private async Task<(ExperienceCandidateSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> RunSearchAsync(
-        string sql,
+        bool withGrants,
+        AuthorizationContext authorization,
+        ExperienceCandidateQuery query,
+        CancellationToken cancellationToken)
+    {
+        var (found, stale) = await RunSearchAsync(withGrants, allowFunction: true, authorization, query, cancellationToken).ConfigureAwait(false);
+        if (found is { } answer)
+        {
+            return answer;
+        }
+
+        TextSearchRoute.Invalidate(_dataSource);
+        bool stillUsable;
+        await using (var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false))
+        {
+            stillUsable = await TextSearchRoute.UsesFunctionAsync(_dataSource, session, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (stillUsable)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(stale!);
+        }
+
+        return (await RunSearchAsync(withGrants, allowFunction: false, authorization, query, cancellationToken).ConfigureAwait(false)).Found!.Value;
+    }
+
+    /// <summary>The search, or the error of a function call that may have been refused as stale.</summary>
+    private async Task<((ExperienceCandidateSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)? Found, PostgresException? Stale)> RunSearchAsync(
+        bool withGrants,
+        bool allowFunction,
         AuthorizationContext authorization,
         ExperienceCandidateQuery query,
         CancellationToken cancellationToken)
@@ -347,6 +393,9 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         List<SnapshotRow> rows;
         await using (var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false))
         {
+            var useFunction = allowFunction
+                && await TextSearchRoute.UsesFunctionAsync(_dataSource, session, cancellationToken).ConfigureAwait(false);
+            var sql = useFunction ? TextSearchFunction.CallSql : withGrants ? Readable(query) : Exact(query);
             await using (var command = session.CreateCommand(sql))
             {
                 var parameters = command.Parameters;
@@ -357,9 +406,21 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
                 parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
                 parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
                 parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+                if (useFunction)
+                {
+                    parameters.Add(new NpgsqlParameter<bool>("exclude_model_authored", query.ExcludeModelAuthored));
+                    parameters.Add(new NpgsqlParameter<bool>("with_grants", withGrants));
+                }
 
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                rows = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    rows = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
+                }
+                catch (PostgresException ex) when (useFunction && TextSearchRoute.MayBeStale(ex, cancellationToken))
+                {
+                    return (null, ex);
+                }
             }
 
             await session.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -385,7 +446,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(row));
         }
 
-        return (new(ExperienceStoreOutcome.Found, candidates, NoErrors), disclosures);
+        return ((new(ExperienceStoreOutcome.Found, candidates, NoErrors), disclosures), null);
     }
 
     /// <summary>

@@ -296,6 +296,7 @@ then grants exactly this:
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
 | `seal_experience_record` (`0016`) | `EXECUTE` only with `AllowSealing` |
+| `search_experience_text` (`0024`) | `EXECUTE` only with `EnableRowLevelSecurity` (see [Enabling row-level security](#enabling-row-level-security)) |
 | `schema_versions` (the journal), its sequence, and anything else | nothing |
 
 Then it checks the role's **effective** privileges — which also see grants to `PUBLIC`, grants made by another
@@ -383,7 +384,7 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    first) or a table carries a policy the migrations did not create; when `experience_grants` is missing or the
    application role may not read it; or when a default for any `agent_experience.auth_*` setting is configured for the
    application role or the database (`ALTER ROLE … SET`, `ALTER DATABASE … SET`), which would admit rows to a
-   statement that declared nothing;
+   statement that declared nothing; or when `0024`'s text search function is missing;
 2. re-creates the five helper functions and every canonical policy from the definitions the migrations were written
    from, so a helper replaced or a policy altered by hand since the migration (`CREATE OR REPLACE FUNCTION …`,
    `ALTER POLICY … USING (true)`) is put back before anything is enabled;
@@ -393,8 +394,9 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    `experience_embeddings` when the vectors package created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
    permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
-   volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; no role the application role can reach
-   holding `BYPASSRLS` — and rolls everything back on a difference.
+   volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; the text search function exactly
+   `0024`'s (below); no role the application role can reach holding `BYPASSRLS` — and rolls everything back on a
+   difference.
 
 It never uses `FORCE ROW LEVEL SECURITY`, and puts back a table forced by hand. With `EnableRowLevelSecurity = false`
 the same call disables row-level security on those tables, so the setting is declarative. Enabling re-creates the
@@ -441,6 +443,57 @@ own scope argument first: while the calling transaction has declared bounds, a s
 holds `BYPASSRLS` — roles the policies do not bind either. With row-level security disabled, an undeclared caller is
 unaffected, as before.
 
+**Text search keeps its index** (story 17.7). Under the policies, `@@` — the full-text match — is not leakproof, so
+PostgreSQL would apply it only after the read policy and could not use the GIN indexes. So while row-level security is
+enabled on `experience_records` and the application role may execute it, the text channel runs its search through
+`agent_experience.search_experience_text` (`0024`), a `SECURITY DEFINER` function owned by the schema owner, and the
+planner uses `ix_experience_records_search` and `ix_experience_records_search_sealed` exactly as with row-level security
+off. With row-level security off the store sends its own statement, unchanged. There is no opt-out: enabling
+row-level security requires the function, and the privileges call refuses to enable it without. The candidate source
+detects which path applies once per data source and caches it until the next privileges call in the same process, or
+for at most five minutes, so a privileges call made by another process takes effect within that time. A call that fails
+because the function was revoked or dropped since falls back to the store's own statement under the policies; any
+other error from inside the function is reported as a failure.
+
+Its security review, recorded in full in `0024`'s header:
+
+- **Why `SECURITY DEFINER`.** The barrier belongs to the policy, and the only roles it does not bind are the owner, a
+  superuser and a `BYPASSRLS` role. Running this one query as the owner, inside a function the application role can
+  only call, drops the barrier for it alone; granting `BYPASSRLS` or marking a built-in leakproof would drop it for
+  every query, and neither is done.
+- **What it trusts.** The transaction-local `agent_experience.auth_*` settings, and nothing else — exactly what the
+  policies trust. A session that can run arbitrary SQL as the application role can declare any bounds and then read
+  through the function exactly what it could read through the policies.
+- **Why it cannot read more than the policies.** It returns no row unless `agent_experience.auth_set` is `on`, and none
+  unless the requested scope lies inside the declared bounds (`rls_scope_admits`, `AuthorizationContext.Permits`'
+  reading of a null bound). That scope selects the permitting grant, so a grant whose ID and disclosure level it
+  returns always has a recipient inside the bounds, one `rls_grants_select` would show the caller. Every row
+  it returns satisfies the read policy's own admission — the same expression, from the same source, over the same
+  helpers (`rls_bound`, `rls_unbounded`, `rls_granted_keys`), not a restatement of them — and then every predicate of
+  the store's own search (scope or live grant, not a tombstone, statuses, confidence floor, the authorship exclusion
+  with `IS FALSE`, the match, the ranking and the limit), built from the store's own SQL constants. It is `STABLE`,
+  only reads `experience_records` and `experience_grants`, and returns exactly the columns the store's statement
+  selects. So its answers equal the store's own statement's with row-level security off, for the same data and
+  authorization.
+- **Hardened as `0013` prescribes.** `search_path` pinned to `pg_catalog, pg_temp`; every relation and every function of
+  the schema schema-qualified; `EXECUTE` revoked from `PUBLIC` and granted to the application role only by this call,
+  only while it enables row-level security. Unlike the helpers, the call never re-creates it: it verifies it —
+  `SECURITY DEFINER`, PL/pgSQL, `STABLE`, not leakproof, that `search_path` alone, owned by the tables' owner, the
+  canonical arguments, result and body byte for byte — and refuses to enable row-level security over one altered by
+  hand. Put it back by running, as the owner, the `CREATE OR REPLACE FUNCTION` statement that
+  `PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName)` returns. The
+  check runs when the call enables row-level security: a `CREATE OR REPLACE` the owner runs afterwards is used until
+  the next privileges call refuses it. A `SECURITY DEFINER` function the role can execute without its opt-in — this one
+  granted to `PUBLIC`, say — is refused like any other.
+- **The grant table must stay readable.** The function reads `experience_grants` as the owner, so the call requires
+  the application role to hold `SELECT` on it while row-level security is on, and a grant the function shares is one
+  the role could read itself. Revoking that `SELECT` afterwards is unsupported drift, which the next privileges call
+  refuses.
+- **What it does not hide.** It searches the table-wide GIN indexes, so a search's cost reflects how many rows match in
+  every tenant, not only the declared one: a weak timing and statistics side channel, part of
+  [KL-17](../known-limits.md#documented-boundaries). A tenant-leading composite GIN index would need the `btree_gin`
+  extension, which the library does not require.
+
 **What it guards against, and what it does not.** It guards against a mistake in a store's SQL: a predicate dropped,
 mistyped or composed wrong is cut back to the bounds the host authorized, and a write outside them fails. It does
 **not**:
@@ -449,11 +502,13 @@ mistyped or composed wrong is cut back to the bounds the host authorized, and a 
   able to run arbitrary SQL as the application role can declare any tenant's bounds itself;
 - enforce a grant's disclosure level. A grant admits the whole row; what of a borrowed record is shown (`LessonOnly`
   and the others) is decided in the library's code;
-- hide that an ID exists in another tenant. Unique indexes span tenants, so a create that collides with another
-  tenant's ID still fails as a collision (`Conflict`), exactly as before;
-- check the record an exposure names. The port lets a feedback submission name a record the store does not hold, and
-  a record outside the bounds is, to a policy, exactly as invisible as one that does not exist, so no policy can tell
-  the two apart. The submission itself must lie inside the bounds.
+- hide that a caller-chosen ID exists in another tenant. Record IDs are globally unique by design, so a create that
+  collides with another tenant's ID still fails as a collision (`Conflict`). That is an accepted design trade: making
+  them unique per scope would rekey every table. Finalization's own derived IDs mix in the scope, so they cannot
+  collide across tenants;
+- check the record an exposure names. An exposure of an unknown record is kept, as `Unresolved`, by design, so that
+  feedback for a record erased since it was injected still records; and checking existence under row-level security
+  would itself reveal that the record exists. The submission itself must lie inside the bounds.
 
 Those boundaries are [KL-17](../known-limits.md#documented-boundaries). The owner and superusers bypass row-level
 security, as they bypass every privilege.
@@ -464,11 +519,11 @@ the same way, and then only what they admit. Run cross-tenant maintenance as the
 read `experience_grants` still reads its own scope through the stores' exact-scope fallback: the grant branch of a
 policy answers "nothing is granted" when the grant table is missing or unreadable.
 
-**What it costs.** About 0.7 ms per operation for the transaction and the declaration, and about 1 ms more per text
-search with row-level security on, on the benchmark machine. **Text search loses its GIN index under the policies**:
-the full-text match operator is not leakproof, so PostgreSQL applies it after the policy, over every live record in
-the declared tenant, found through the scope index. The vector channel keeps its HNSW index. See
-[Row-level security](../benchmarks.md#row-level-security-story-151) for the plans and numbers.
+**What it costs.** About 0.7 ms per operation for the transaction and the declaration, on the benchmark machine. The
+per-search cost with row-level security on was not re-measured after story 17.7. Text search keeps its GIN index through `search_experience_text` (above); before story 17.7 it lost it under the policies
+and scanned every live record of the declared tenant. The vector channel keeps its HNSW index. See
+[Row-level security](../benchmarks.md#row-level-security-story-151) for the plans and numbers measured for story
+15.1, before the function existed.
 
 ### Upgrading an existing single-role database
 

@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0023` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0024` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -672,6 +672,29 @@ RecordedOnly` (see [Keeping host-trusted evidence out of the ranked score](confi
   already satisfies them, and the header has the `VALIDATE` statements. No table, column, function or trigger is
   added, so the application role's manifest is unchanged. Nothing is backfilled: evidence counted before stays
   counted. Apply it before setting `RecordedOnly`: without it every host-trusted submission fails.
+
+### 0024: text search function
+
+`0024_text_search_function.sql` (story 17.7) keeps the text index usable under row-level security. With the policies
+on, `@@` is not leakproof, so PostgreSQL applies it only after `rls_records_select` and cannot use the GIN indexes. The
+script creates **`agent_experience.search_experience_text(...)`**, the text channel's search run as the owner, whom the
+policies do not bind:
+
+- `SECURITY DEFINER`, PL/pgSQL, `STABLE`, `search_path` pinned to `pg_catalog, pg_temp`, every relation and schema
+  function schema-qualified, owned by the role that runs the migrator; `EXECUTE` revoked from `PUBLIC`.
+- It returns nothing unless the calling transaction declared bounds (`agent_experience.auth_set = 'on'`) and the
+  requested scope lies inside them (`rls_scope_admits`). Every row it
+  returns satisfies the read policy's own admission (the same expression, over `0019`'s `rls_bound`, `rls_unbounded`
+  and `rls_granted_keys`) and then every predicate of `PostgresExperienceCandidateSource`'s own statement — exact
+  scope or live grant, not a tombstone, statuses, confidence floor, the authorship exclusion (`IS FALSE`), the match,
+  ranking and limit — built from the same SQL constants, which a test holds this script equal to. It returns exactly
+  the columns that statement selects.
+- The candidate source calls it only while row-level security is enabled on `experience_records` and the role may
+  execute it; otherwise its own statement runs, unchanged.
+  `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` only while it enables row-level security, verifies the
+  function byte for byte before enabling (never re-creating it), and refuses one altered by hand.
+- No table, column or index changes and no table lock. The header records the security review; see
+  [Enabling row-level security](deployment.md#enabling-row-level-security).
 
 ## Script comments that were written before the work they point at shipped
 

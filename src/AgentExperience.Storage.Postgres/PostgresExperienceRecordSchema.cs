@@ -337,6 +337,23 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string RecordedOnlyEvidenceScriptName = "0023_recorded_only_evidence.sql";
 
+    /// <summary>
+    /// The script that keeps the text index usable under row-level security (story 17.7): it creates
+    /// <c>agent_experience.search_experience_text</c>, a <c>SECURITY DEFINER</c> function that runs the text channel's
+    /// search as the owner -- so the planner can use the GIN indexes, which the read policy's security barrier keeps
+    /// <c>@@</c> from using -- while applying the read policy's own admission, through <c>0019</c>'s helpers, and every
+    /// predicate of the store's search. <see cref="PostgresExperienceCandidateSource"/> calls it only while row-level
+    /// security is enabled on <c>experience_records</c>.
+    /// </summary>
+    /// <remarks>
+    /// It revokes <c>EXECUTE</c> from <c>PUBLIC</c>;
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// grants it to the application role exactly while <see cref="ExperienceApplicationRoleOptions.EnableRowLevelSecurity"/>
+    /// is set, and refuses to enable row-level security unless the function is exactly the canonical one. Its header
+    /// records the security review. No table, column or index changes, and no lock is taken on any table.
+    /// </remarks>
+    public const string TextSearchFunctionScriptName = "0024_text_search_function.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -344,7 +361,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0023</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0024</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -368,6 +385,7 @@ public static class PostgresExperienceRecordSchema
         ReflectionAuthorshipScriptName,
         LibraryReflectorAuthorshipScriptName,
         RecordedOnlyEvidenceScriptName,
+        TextSearchFunctionScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

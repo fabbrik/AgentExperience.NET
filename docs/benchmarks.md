@@ -187,3 +187,11 @@ is planning. This is recorded as part of [KL-17](known-limits.md#documented-boun
 tenant condition: a text search never reads another tenant's rows. What a deployment with large tenants can do is leave
 row-level security off, or keep it off until it has measured its own tenants. Marking `ts_match_vq` leakproof would
 restore the index, but that is a superuser's decision about a built-in function and not one this library makes.
+
+**Since story 17.7 the text channel keeps its GIN indexes with row-level security on.** While row-level security is
+enabled, it searches through `agent_experience.search_experience_text` (`0024`), a `SECURITY DEFINER` function that runs
+the same statement as the owner, whom the policies do not bind, while applying the read policy's own admission itself
+(see [Enabling row-level security](guide/deployment.md#enabling-row-level-security)). The plan is again the GIN indexes'
+`Bitmap Index Scan`, which `PostgresTextSearchRowLevelSecurityTests` asserts on through `auto_explain` over a 20,000-record
+tenant. The table and the plans above are story 15.1's measurements and were not re-run; the paragraph above describes
+the store before story 17.7, and `ts_match_vq` is still not marked leakproof.

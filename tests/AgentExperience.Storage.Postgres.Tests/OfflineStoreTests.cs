@@ -390,6 +390,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName,
                 PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName,
                 PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName,
+                PostgresExperienceRecordSchema.TextSearchFunctionScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1273,6 +1274,61 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Text_search_function_script_is_the_canonical_hardened_definition()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // The function verbatim -- the definition the privileges call verifies -- and nothing else is created or granted.
+        Assert.Equal(1, CountOccurrences(statements, TextSearchFunction.Ddl));
+        Assert.Equal(1, CountOccurrences(statements, "CREATE OR REPLACE FUNCTION "));
+        Assert.Equal(1, CountOccurrences(statements, "SECURITY DEFINER"));
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("LEAKPROOF", statements, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BYPASSRLS", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATE TABLE", statements, StringComparison.Ordinal);
+        Assert.Contains(
+            "REVOKE ALL ON FUNCTION agent_experience.search_experience_text(\n" +
+            "    text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean) FROM PUBLIC;",
+            statements,
+            StringComparison.Ordinal);
+
+        // Hardened as 0013 prescribes: pg_temp last, STABLE, and every relation schema-qualified.
+        Assert.Contains("SECURITY DEFINER\nSET search_path = pg_catalog, pg_temp\n", TextSearchFunction.Ddl, StringComparison.Ordinal);
+        Assert.Contains("\nSTABLE\n", TextSearchFunction.Ddl, StringComparison.Ordinal);
+        Assert.DoesNotContain(" FROM experience_", TextSearchFunction.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("JOIN experience_", TextSearchFunction.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@", TextSearchFunction.Body.Replace("@@", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+
+        // Nothing is returned without the marker a store sets, and every query applies the read policy's own admission
+        // through 0019's helpers, then the store's own statement with its parameters renamed.
+        Assert.Contains("IF pg_catalog.current_setting('agent_experience.auth_set', true) IS DISTINCT FROM 'on' THEN\n        RETURN;", TextSearchFunction.Body, StringComparison.Ordinal);
+        Assert.Contains(
+            "IF NOT agent_experience.rls_scope_admits(p_tenant_id, p_application_id, p_project_id, p_team_id, p_agent_id, p_user_id) THEN\n        RETURN;",
+            TextSearchFunction.Body,
+            StringComparison.Ordinal);
+        var admission = RowLevelSecurityPolicies.Readable("r.");
+        Assert.Equal(4, CountOccurrences(TextSearchFunction.Body, "AND (" + admission + ")"));
+        Assert.Equal(4, CountOccurrences(TextSearchFunction.Body, "RETURN QUERY"));
+        Assert.Contains("agent_experience.rls_granted_keys()", admission, StringComparison.Ordinal);
+        Assert.Equal(
+            RowLevelSecurityPolicies.All.Single(p => p.Name == "rls_records_select").Using,
+            RowLevelSecurityPolicies.Readable(string.Empty));
+        foreach (var head in new[] { PostgresExperienceCandidateSource.ReadableSearchHead, PostgresExperienceCandidateSource.ExactSearchHead })
+        {
+            Assert.Equal(2, CountOccurrences(TextSearchFunction.Body, TextSearchFunction.Parameterize(head) + "\n"));
+        }
+
+        Assert.Equal(2, CountOccurrences(TextSearchFunction.Body, TextSearchFunction.Parameterize(PostgresExperienceCandidateSource.ExcludingSearchFilters) + ";"));
+        Assert.Equal(2, CountOccurrences(TextSearchFunction.Body, TextSearchFunction.Parameterize(PostgresExperienceCandidateSource.SearchFilters) + ";"));
+        Assert.Contains(PostgresExperienceCandidateSource.ModelAuthoredPredicate, PostgresExperienceCandidateSource.ExcludingSearchFilters, StringComparison.Ordinal);
+
+        // Applied after every earlier script.
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+    }
+
+    [Fact]
     public void Row_level_security_script_creates_policies_and_switches_nothing_on()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.RowLevelSecurityScriptName);
@@ -1391,7 +1447,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         var statements = ApplicationRolePrivileges.Statements(
             "\"app\"",
             new HashSet<string>(byName.Keys, StringComparer.Ordinal),
-            new ExperienceApplicationRoleOptions("app")).ToArray();
+            new ExperienceApplicationRoleOptions("app") { EnableRowLevelSecurity = false }).ToArray();
         Assert.DoesNotContain(statements, s => s.Contains("TRUNCATE", StringComparison.Ordinal));
         Assert.DoesNotContain(statements, s => s.Contains("CREATE", StringComparison.Ordinal));
         Assert.DoesNotContain(statements, s => s.Contains("OWNER", StringComparison.Ordinal));
@@ -1407,9 +1463,19 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         var opted = ApplicationRolePrivileges.Statements(
             "\"app\"",
             new HashSet<string>(byName.Keys, StringComparer.Ordinal),
-            new ExperienceApplicationRoleOptions("app") { AllowErasure = true }).ToArray();
+            new ExperienceApplicationRoleOptions("app") { AllowErasure = true, EnableRowLevelSecurity = false }).ToArray();
         Assert.Equal(2, opted.Count(s => s.StartsWith("GRANT EXECUTE", StringComparison.Ordinal)));
         Assert.DoesNotContain(opted, s => s.Contains("purge_grant_access", StringComparison.Ordinal));
+
+        // Story 17.7: the text search function is granted exactly while row-level security is on, and nothing else is.
+        Assert.DoesNotContain(opted, s => s.Contains("search_experience_text", StringComparison.Ordinal));
+        var secured = ApplicationRolePrivileges.Statements(
+            "\"app\"",
+            new HashSet<string>(byName.Keys, StringComparer.Ordinal),
+            new ExperienceApplicationRoleOptions("app") { EnableRowLevelSecurity = true }).ToArray();
+        Assert.Equal(
+            $"GRANT EXECUTE ON FUNCTION {TextSearchFunction.Signature} TO \"app\"",
+            Assert.Single(secured, s => s.StartsWith("GRANT EXECUTE", StringComparison.Ordinal)));
     }
 
     [Fact]
