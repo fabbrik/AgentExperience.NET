@@ -261,9 +261,42 @@ worst; at the default of 10,000 the same limits allow about 80 GB at worst. Most
 to what your memory budget allows at the worst case, or at a realistic per-run size you have measured, and high
 enough to cover the completed runs that finish within the time your host takes to finalize them.
 
-**Open runs are never dropped by these bounds.** The MAF adapter bounds them itself: it completes a run left open for
-`MaxOpenRunDuration` (see above). A caller that uses `IExperienceCaptureService` directly has no such bound and must
-complete every run it opens, or it keeps it in memory for the process lifetime.
+**Open runs.** The bounds above never drop an open run. The service bounds open runs separately, and never drops one
+without completing it first:
+
+- **By count, on by default.** At most `CaptureLimits.MaxOpenRuns` (default 10,000) runs are open at once. Past it,
+  a `StartRun` call that would open a *new* run returns `StartRunOutcome.CapacityExceeded` and stores nothing. A call
+  that continues an open run is never refused, and a run frees its slot as soon as it completes. The MAF adapter
+  reports a refusal through `OnCaptureFailure` (stage `StartRun`) and runs the invocation uncaptured.
+- **By age, off by default.** Set `CaptureLimits.MaxOpenRunAge` and the service itself completes an open run older
+  than it (measured on the monotonic timestamp from when the service opened the run) as `Cancelled`, with `EndedAt`
+  set to the `TimeProvider`'s current time (never earlier than the run's `StartedAt`). From then on it is a completed
+  run, kept and dropped under the bounds above. A host that later completes it under its own completion event ID gets
+  `Conflict`, as for any completed run, and so does an attempt appended to it. Like the other bounds, it is applied
+  only when the service is called, so `EndedAt` records when the service *noticed* the expiry, on its first call
+  after the run became due, not when it became due.
+- **A run the age bound cancels is never finalized or reported by the service.** Nothing calls finalization for it
+  and nothing tells the host it happened. A direct caller that wants a durable record of a run must complete and
+  finalize it itself before `MaxOpenRunAge` passes.
+
+The MAF adapter already completes a run left open for `MaxOpenRunDuration` (see above), so the age bound matters to
+a caller that uses `IExperienceCaptureService` directly. Such a caller should still complete every run it opens; the
+age bound is the backstop for the ones it does not. If you set both, set `MaxOpenRunAge` longer than twice
+`MaxOpenRunDuration` plus `FinalizationTimeout`, the longest an invocation can hold a run (see above), so the
+adapter's own close, with the run's real outcome and its report, always comes first.
+
+```csharp
+new CaptureLimits(MaxAttemptsPerRun: 10, MaxToolCallsPerAttempt: 50, MaxResultLength: 4_000, MaxErrorLength: 4_000)
+{
+    MaxOpenRuns = 1_000,
+    MaxOpenRunAge = TimeSpan.FromHours(1),
+};
+```
+
+**Sizing both counts together.** An open run can hold the same worst case per run as a completed one, so the service
+can hold up to `MaxOpenRuns + MaxRetainedCompletedRuns` runs at once, not only the completed ones. At the defaults that
+is 20,000 runs: with the per-run limits of the earlier example (about 8 MB per run at worst), about 160 GB at worst,
+twice the completed-only figure above. Size the two counts so their sum fits your memory budget.
 
 ## Supported agent types
 

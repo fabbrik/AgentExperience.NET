@@ -91,7 +91,9 @@ public interface IExperienceCaptureService
     /// <see cref="StartRunOutcome.Continued"/> -- the caller is continuing that same run and may
     /// append a further attempt to it -- and anything else, including an already-finalized run, is
     /// <see cref="StartRunOutcome.Conflict"/>. A continuation never writes: the existing run's task
-    /// description, scope, environment, provenance and start time all stand.
+    /// description, scope, environment, provenance and start time all stand. An implementation that
+    /// bounds how many runs may be open at once refuses a call that would open a <em>new</em> run past
+    /// that bound with <see cref="StartRunOutcome.CapacityExceeded"/>, storing nothing.
     /// </param>
     /// <param name="taskId">Identifies which task this run is attempting.</param>
     /// <param name="taskDescription">Optional human-readable description of the task. Not sanitized by this service (Story 1.2 scopes sanitization to tool-call/attempt content only).</param>

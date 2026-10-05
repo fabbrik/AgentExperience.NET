@@ -22,6 +22,23 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `AlreadyFinalized`. A reused ID of a dropped run finalizes as `AlreadyFinalized` for the earlier record, so use a
   fresh run ID per run. See [How long runs are kept](docs/guide/capture.md#how-long-runs-are-kept).
 
+### The in-memory capture service bounds the runs it holds open (story 16.4)
+
+- **The problem it fixes.** Story 16.1 bounded completed runs only, so a caller that used
+  `InMemoryExperienceCaptureService` directly (without the MAF adapter's `MaxOpenRunDuration`) and never completed
+  its runs still grew without bound.
+- **Open-run count bound, on by default.** `CaptureLimits.MaxOpenRuns` (new, default 10,000). Past it, a `StartRun`
+  call that would open a new run returns the new `StartRunOutcome.CapacityExceeded` (appended last, so existing
+  values are unchanged) and stores nothing; continuing an open run is never refused. The MAF adapter reports the
+  refusal through `OnCaptureFailure` and runs the invocation uncaptured.
+- **Open-run age bound, off by default.** `CaptureLimits.MaxOpenRunAge` (new, `null` by default). When set, the
+  service completes an open run older than it as `Cancelled`, on its next call, and the run is then held and dropped
+  like any completed run. A later host completion under its own event ID returns `Conflict`.
+- **Behaviour change.** A host with more than 10,000 runs open at once in one service now has new runs refused; raise
+  `MaxOpenRuns` if that is intended. The service can hold up to `MaxOpenRuns + MaxRetainedCompletedRuns` runs (20,000
+  at the defaults, so about twice the completed-only worst case), so size the two together. A run the age bound
+  cancels is never finalized or reported by the service. See [How long runs are kept](docs/guide/capture.md#how-long-runs-are-kept).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

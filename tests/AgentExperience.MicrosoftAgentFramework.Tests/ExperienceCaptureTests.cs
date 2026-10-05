@@ -68,11 +68,14 @@ public class ExperienceCaptureTests
         private readonly List<ExperienceCaptureFailure> _failures = [];
         private readonly List<(int ThreadId, bool IsThreadPool)> _failureThreads = [];
 
-        public Harness(int maxAttemptsPerRun = 10, ISanitizer? sanitizer = null, int maxResultLength = 10_000, int maxErrorLength = 10_000)
+        public Harness(int maxAttemptsPerRun = 10, ISanitizer? sanitizer = null, int maxResultLength = 10_000, int maxErrorLength = 10_000, int maxOpenRuns = 10_000)
         {
             Service = new RecordingCaptureService(new InMemoryExperienceCaptureService(
                 sanitizer ?? new DefaultSanitizer(Sanitization),
-                new CaptureLimits(maxAttemptsPerRun, MaxToolCallsPerAttempt: 50, MaxResultLength: maxResultLength, MaxErrorLength: maxErrorLength)));
+                new CaptureLimits(maxAttemptsPerRun, MaxToolCallsPerAttempt: 50, MaxResultLength: maxResultLength, MaxErrorLength: maxErrorLength)
+                {
+                    MaxOpenRuns = maxOpenRuns,
+                }));
         }
 
         public RecordingCaptureService Service { get; }
@@ -826,6 +829,33 @@ public class ExperienceCaptureTests
         var run = harness.SingleRun();
         Assert.Null(run.ExecutionStatus);
         Assert.Empty(run.Attempts);
+    }
+
+    /// <summary>
+    /// Story 16.4. A capture service already holding as many open runs as it allows refuses to open
+    /// another; the adapter reports that as a start failure and the invocation still runs, uncaptured.
+    /// </summary>
+    [Fact]
+    public async Task StartRun_refused_for_open_run_capacity_reports_StartRun_and_the_invocation_still_succeeds()
+    {
+        var harness = new Harness(maxOpenRuns: 1);
+        var options = harness.Options(shouldComplete: _ => false);
+        var agent = harness.Capture(CreateAgent(new ScriptedChatClient()), options);
+
+        await agent.RunAsync("task-first", await agent.CreateSessionAsync());
+        var secondSession = await agent.CreateSessionAsync();
+        var response = await agent.RunAsync("task-second", secondSession);
+
+        Assert.Equal("Hello, world", response.Text);
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(ExperienceCaptureFailureStage.StartRun, failure.Stage);
+        Assert.Null(failure.Exception);
+        Assert.Contains("StartRun returned CapacityExceeded", failure.Reason, StringComparison.Ordinal);
+        Assert.False(secondSession.StateBag.TryGetValue<string>(ExperienceCaptureAgentBuilderExtensions.RunIdStateKey, out _));
+
+        var run = harness.SingleRun();
+        Assert.Equal("task-first", run.TaskId);
+        Assert.Null(run.ExecutionStatus);
     }
 
     /// <summary>

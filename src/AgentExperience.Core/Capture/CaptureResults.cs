@@ -47,6 +47,14 @@ public enum StartRunOutcome
     /// invariant <c>AppendAttemptAsync</c> enforces.
     /// </summary>
     Conflict,
+
+    /// <summary>
+    /// The call would have opened a new run, but the service already holds as many open runs as its
+    /// limit allows (<see cref="CaptureLimits.MaxOpenRuns"/> for <see cref="InMemoryExperienceCaptureService"/>).
+    /// Nothing was stored. A call that continues an open run is never refused this way, and a new run
+    /// can be started again once an open run completes.
+    /// </summary>
+    CapacityExceeded,
 }
 
 /// <summary>
@@ -134,8 +142,8 @@ public sealed record TruncatedField(string FieldPath, string Reason);
 /// The result of one <see cref="IExperienceCaptureService.StartRun"/> call.
 /// </summary>
 /// <param name="Outcome">What happened.</param>
-/// <param name="Run">The newly opened run's initial snapshot when <see cref="Outcome"/> is <see cref="StartRunOutcome.Started"/>, or the existing run's current snapshot when it is <see cref="StartRunOutcome.Continued"/>; <see langword="null"/> on <see cref="StartRunOutcome.Conflict"/>.</param>
-/// <param name="Reason">Optional, auditable explanation, e.g. why a duplicate <c>RunId</c> conflicted.</param>
+/// <param name="Run">The newly opened run's initial snapshot when <see cref="Outcome"/> is <see cref="StartRunOutcome.Started"/>, or the existing run's current snapshot when it is <see cref="StartRunOutcome.Continued"/>; <see langword="null"/> on <see cref="StartRunOutcome.Conflict"/> and <see cref="StartRunOutcome.CapacityExceeded"/>.</param>
+/// <param name="Reason">Optional, auditable explanation, e.g. why a duplicate <c>RunId</c> conflicted or why a new run was refused for <see cref="StartRunOutcome.CapacityExceeded"/>.</param>
 public sealed record StartRunResult(StartRunOutcome Outcome, ExperienceRun? Run, string? Reason);
 
 /// <summary>

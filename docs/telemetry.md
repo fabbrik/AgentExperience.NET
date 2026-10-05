@@ -208,7 +208,7 @@ a value is a deliberate change that widens every instrument's cardinality.
 
 | `operation` | Emitted by | `outcome` values (besides `Faulted`) | Span attributes beyond the common ones | Nested operations it emits |
 | --- | --- | --- | --- | --- |
-| `capture.start_run` | `InMemoryExperienceCaptureService.StartRun` | `StartRunOutcome`: `Started`, `Continued`, `Conflict` | `run_id` | — |
+| `capture.start_run` | `InMemoryExperienceCaptureService.StartRun` | `StartRunOutcome`: `Started`, `Continued`, `Conflict`, `CapacityExceeded` | `run_id` | — |
 | `capture.append_attempt` | `InMemoryExperienceCaptureService.AppendAttemptAsync` | `AppendAttemptOutcome`: `Recorded`, `DuplicateNoOp`, `Conflict`, `SanitizationRejected`, `RunNotFound`, `CapacityExceeded` | `run_id`, `attempt_id` | — |
 | `capture.complete_run` | `InMemoryExperienceCaptureService.CompleteRunAsync` | `CompleteRunOutcome`: `Recorded`, `DuplicateNoOp`, `Conflict`, `RunNotFound` | `run_id`, `event_id` | — |
 | `verify` | `VerificationAggregator.Aggregate` | `TaskVerificationStatus`: `Unknown`, `Verified`, `Failed` | — | — |

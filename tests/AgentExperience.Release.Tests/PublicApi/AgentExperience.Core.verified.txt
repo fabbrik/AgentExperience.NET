@@ -32,6 +32,8 @@
         public System.TimeSpan CompletedRunRetention { get; init; }
         public int MaxAttemptsPerRun { get; init; }
         public int MaxErrorLength { get; init; }
+        public System.TimeSpan? MaxOpenRunAge { get; init; }
+        public int MaxOpenRuns { get; init; }
         public int MaxResultLength { get; init; }
         public int MaxRetainedCompletedRuns { get; init; }
         public int MaxToolCallsPerAttempt { get; init; }
@@ -98,6 +100,7 @@
         Started = 0,
         Continued = 1,
         Conflict = 2,
+        CapacityExceeded = 3,
     }
     public sealed class StartRunResult : System.IEquatable<AgentExperience.Core.Capture.StartRunResult>
     {
