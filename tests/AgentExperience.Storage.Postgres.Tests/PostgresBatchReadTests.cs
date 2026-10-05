@@ -261,18 +261,18 @@ public sealed class PostgresBatchReadTests(PostgresFixture fixture)
         // exact-scope fallback.
         const string One = "WHERE r.experience_id = @experience_id AND ";
         const string Many = "WHERE r.experience_id = ANY(@experience_ids) AND ";
-        Assert.Equal(1, CountOf(PostgresExperienceRecordStore.GetSql, One));
-        Assert.Equal(PostgresExperienceRecordStore.GetManySql, PostgresExperienceRecordStore.GetSql.Replace(One, Many, StringComparison.Ordinal));
-        Assert.Equal(1, CountOf(PostgresExperienceRecordStore.GetExactSql, One));
-        Assert.Equal(PostgresExperienceRecordStore.GetManyExactSql, PostgresExperienceRecordStore.GetExactSql.Replace(One, Many, StringComparison.Ordinal));
+        Assert.Equal(1, CountOf(ExperienceRecordSql.GetSql, One));
+        Assert.Equal(ExperienceRecordSql.GetManySql, ExperienceRecordSql.GetSql.Replace(One, Many, StringComparison.Ordinal));
+        Assert.Equal(1, CountOf(ExperienceRecordSql.GetExactSql, One));
+        Assert.Equal(ExperienceRecordSql.GetManyExactSql, ExperienceRecordSql.GetExactSql.Replace(One, Many, StringComparison.Ordinal));
         Assert.Equal(
-            PostgresExperienceRecordStore.GetManySql,
-            PostgresExperienceRecordStore.GetSelectFrom + "WHERE r.experience_id = ANY(@experience_ids) AND " + PostgresExperienceRecordStore.GetReadablePredicate);
+            ExperienceRecordSql.GetManySql,
+            ExperienceRecordSql.GetSelectFrom + "WHERE r.experience_id = ANY(@experience_ids) AND " + ExperienceRecordSql.GetReadablePredicate);
         Assert.Equal(
-            PostgresExperienceRecordStore.GetManyExactSql,
-            PostgresExperienceRecordStore.GetExactSelectFrom + "WHERE r.experience_id = ANY(@experience_ids) AND " + PostgresExperienceRecordStore.RecordScopePredicate);
-        Assert.Contains(PostgresExperienceRecordStore.PermittingGrantJoin, PostgresExperienceRecordStore.GetSelectFrom, StringComparison.Ordinal);
-        Assert.Contains(PostgresExperienceRecordStore.DeletedAtColumn, PostgresExperienceRecordStore.GetSelectFrom, StringComparison.Ordinal);
+            ExperienceRecordSql.GetManyExactSql,
+            ExperienceRecordSql.GetExactSelectFrom + "WHERE r.experience_id = ANY(@experience_ids) AND " + ExperienceRecordSql.RecordScopePredicate);
+        Assert.Contains(ExperienceRecordSql.PermittingGrantJoin, ExperienceRecordSql.GetSelectFrom, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.DeletedAtColumn, ExperienceRecordSql.GetSelectFrom, StringComparison.Ordinal);
     }
 
     private static int CountOf(string text, string fragment) =>

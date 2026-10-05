@@ -111,7 +111,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         // The single read's own statement, with its exact-scope predicate replaced by "true" -- the mistake the
         // second layer exists for. Run as the owner, whom row-level security does not bind, it really does hand
         // over tenant B's record to a caller asking in tenant A's scope.
-        var broken = BreakScopePredicate(PostgresExperienceRecordStore.GetManySql);
+        var broken = BreakScopePredicate(ExperienceRecordSql.GetManySql);
         Assert.Equal(
             new[] { a, b }.Order(),
             (await ReadIdsAsync(world.Owner, declare: null, broken, Scope(tenantA), a, b)).Order());
@@ -123,7 +123,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         // The same holds for a broken write: the projection update with its scope predicate removed.
         var brokenUpdate = BreakScopePredicate(
             "UPDATE agent_experience.experience_records SET updated_at = now() WHERE experience_id = ANY(@experience_ids) AND " +
-            PostgresExperienceRecordStore.ScopePredicate);
+            ExperienceRecordSql.ScopePredicate);
         Assert.Equal(0, await ExecuteAsync(
             world.App, Authorize(tenantA), brokenUpdate, ("experience_ids", new[] { b }), Scope(tenantA)));
     }
@@ -693,8 +693,8 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
     private static string BreakScopePredicate(string sql)
     {
         var broken = sql
-            .Replace(PostgresExperienceRecordStore.RecordScopePredicate, "true", StringComparison.Ordinal)
-            .Replace(PostgresExperienceRecordStore.ScopePredicate, "true", StringComparison.Ordinal);
+            .Replace(ExperienceRecordSql.RecordScopePredicate, "true", StringComparison.Ordinal)
+            .Replace(ExperienceRecordSql.ScopePredicate, "true", StringComparison.Ordinal);
         Assert.NotEqual(sql, broken);
         return broken;
     }
@@ -711,7 +711,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", ids));
-        PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
+        ExperienceRecordParameters.AddScopeParameters(command.Parameters, scope);
 
         var found = new List<Guid>();
         await using var reader = await command.ExecuteReaderAsync();
@@ -747,7 +747,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
 
         if (scope is not null)
         {
-            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, scope);
+            ExperienceRecordParameters.AddScopeParameters(command.Parameters, scope);
         }
 
         var affected = await command.ExecuteNonQueryAsync();

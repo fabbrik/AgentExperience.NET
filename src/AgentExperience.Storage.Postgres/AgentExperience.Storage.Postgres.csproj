@@ -58,8 +58,13 @@
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Tests" />
     <!-- The vectors package is the same adapter family, split out only because this package's
          dependency boundary forbids Pgvector and the model-provider abstractions it needs. It reuses
-         this package's column list, scope predicate, row decoder, and failure translation so the two
-         retrieval channels cannot drift apart. -->
+         this package's shared SQL (ExperienceRecordSql: table, columns, live, scope and grant fragments),
+         row decoder (ExperienceRecordRows), parameter binding (ExperienceRecordParameters) and failure
+         translation (ExperienceStoreFailures), so the two retrieval channels cannot drift apart. It also
+         shares the record keys (ExperienceEncryption, RecordKey), the row-level-security session
+         (AuthorizedTransaction, ExperienceSessionContext) and grant auditing. Story 19.2 kept this grant on
+         purpose: removing it would mean publishing those security-sensitive internals as public API or
+         duplicating them in a second package. -->
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors" />
     <!-- Only so the vectors suite can set ExperienceEncryption.TestSuiteDefault and run a second time in
          encrypted mode (AGENTEXPERIENCE_TEST_ENCRYPTION); see that property. -->

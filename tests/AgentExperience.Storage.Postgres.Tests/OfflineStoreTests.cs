@@ -1535,16 +1535,16 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // and the failure would be a silently wrong scope filter inside the recursive chain walk rather
         // than a syntax error. They are written out separately now, so this keeps them equivalent.
         Assert.Equal(
-            PostgresExperienceRecordStore.RecordScopePredicate,
-            PostgresExperienceRecordStore.EventScopePredicate.Replace("e.", "r.", StringComparison.Ordinal));
+            ExperienceRecordSql.RecordScopePredicate,
+            ExperienceRecordSql.EventScopePredicate.Replace("e.", "r.", StringComparison.Ordinal));
 
         // Both bind exactly the six scope parameters every statement already adds, and no others.
         foreach (var parameter in new[] { "@tenant_id", "@application_id", "@project_id", "@team_id", "@agent_id", "@user_id" })
         {
-            Assert.Contains(parameter, PostgresExperienceRecordStore.EventScopePredicate, StringComparison.Ordinal);
+            Assert.Contains(parameter, ExperienceRecordSql.EventScopePredicate, StringComparison.Ordinal);
         }
 
-        Assert.Equal(6, CountOccurrences(PostgresExperienceRecordStore.EventScopePredicate, "e."));
+        Assert.Equal(6, CountOccurrences(ExperienceRecordSql.EventScopePredicate, "e."));
     }
 
     [Fact]
@@ -1553,48 +1553,48 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // This inspects the predicate constants only. It cannot say which statements compose them --
         // that is proved behaviourally against the container in PostgresGrantTests, which is where the
         // "writes are never widened" and "history stays owner-scope" claims are actually tested.
-        Assert.Contains("g.revoked_at IS NULL", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains("g.revoked_at IS NULL", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
 
         // clock_timestamp(), not now(): now() is fixed at transaction start, so inside a caller-held
         // transaction an expired grant would keep permitting reads.
-        Assert.Contains("g.expires_at > clock_timestamp()", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
-        Assert.DoesNotContain("expires_at > now()", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
-        Assert.Contains("g.recipient_tenant_id = @tenant_id", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains("g.expires_at > clock_timestamp()", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.DoesNotContain("expires_at > now()", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains("g.recipient_tenant_id = @tenant_id", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
 
         // The record side of the correlation is aliased, never bare: a bare experience_id inside the
         // subquery would bind to the grants table's own column and match every record ever granted.
-        Assert.Contains("g.experience_id = r.experience_id", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
-        Assert.DoesNotContain("g.experience_id = experience_id", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains("g.experience_id = r.experience_id", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.DoesNotContain("g.experience_id = experience_id", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
 
-        Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.ReadableRecordScopePredicate, StringComparison.Ordinal);
-        Assert.Contains(PostgresExperienceRecordStore.ActiveGrantPredicate, PostgresExperienceRecordStore.ReadableRecordScopePredicate, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordScopePredicate, ExperienceRecordSql.ReadableRecordScopePredicate, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.ActiveGrantPredicate, ExperienceRecordSql.ReadableRecordScopePredicate, StringComparison.Ordinal);
 
         // Expiry is the database's clock, never a value this adapter computed and sent.
-        Assert.DoesNotContain("@now", PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.DoesNotContain("@now", ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
 
         // The shared-by-grant flag is the negation of the exact match, computed by the same statement
         // that decided readability, so no consumer has to re-derive it by comparing scopes.
-        Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
-        Assert.StartsWith("NOT (", PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
-        Assert.EndsWith(PostgresExperienceRecordStore.SharedByGrantAlias, PostgresExperienceRecordStore.SharedByGrantColumn, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordScopePredicate, ExperienceRecordSql.SharedByGrantColumn, StringComparison.Ordinal);
+        Assert.StartsWith("NOT (", ExperienceRecordSql.SharedByGrantColumn, StringComparison.Ordinal);
+        Assert.EndsWith(ExperienceRecordSql.SharedByGrantAlias, ExperienceRecordSql.SharedByGrantColumn, StringComparison.Ordinal);
 
         // The join that NAMES the permitting grant and the predicate that decides whether one exists are
         // the same rule written once. If they could drift, an access row could name a grant that did not
         // permit the read -- which is the one thing the trail must never say.
-        Assert.Contains(PostgresExperienceRecordStore.ActiveGrantConditions, PostgresExperienceRecordStore.ActiveGrantPredicate, StringComparison.Ordinal);
-        Assert.Contains(PostgresExperienceRecordStore.ActiveGrantConditions, PostgresExperienceRecordStore.PermittingGrantJoin, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.ActiveGrantConditions, ExperienceRecordSql.ActiveGrantPredicate, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.ActiveGrantConditions, ExperienceRecordSql.PermittingGrantJoin, StringComparison.Ordinal);
 
         // One grant, chosen the same way every time, so the trail's answer is stable rather than
         // whatever the planner returned first.
-        Assert.Contains("ORDER BY g.grant_id LIMIT 1", PostgresExperienceRecordStore.PermittingGrantJoin, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY g.grant_id LIMIT 1", ExperienceRecordSql.PermittingGrantJoin, StringComparison.Ordinal);
 
         // LEFT, so a record the requester owns still comes back -- with no grant named.
-        Assert.StartsWith("LEFT JOIN LATERAL", PostgresExperienceRecordStore.PermittingGrantJoin, StringComparison.Ordinal);
+        Assert.StartsWith("LEFT JOIN LATERAL", ExperienceRecordSql.PermittingGrantJoin, StringComparison.Ordinal);
 
         // The readable predicate expressed against the join is the exact match or a named grant, and it
         // still carries the exact-scope predicate byte for byte.
-        Assert.Contains(PostgresExperienceRecordStore.RecordScopePredicate, PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate, StringComparison.Ordinal);
-        Assert.EndsWith(PostgresExperienceRecordStore.PermittingGrantAlias, PostgresExperienceRecordStore.PermittingGrantColumn, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordScopePredicate, ExperienceRecordSql.ReadableWithNamedGrantPredicate, StringComparison.Ordinal);
+        Assert.EndsWith(ExperienceRecordSql.PermittingGrantAlias, ExperienceRecordSql.PermittingGrantColumn, StringComparison.Ordinal);
     }
 
     [Fact]

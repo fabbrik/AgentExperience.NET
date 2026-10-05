@@ -16,7 +16,7 @@ namespace AgentExperience.Storage.Postgres;
 /// <remarks>
 /// <para>
 /// <b>What runs in SQL.</b> The scope predicate -- including any active sharing grant, through
-/// <see cref="PostgresExperienceRecordStore.ReadableRecordScopePredicate"/> -- the status filter, the
+/// <see cref="ExperienceRecordSql.ReadableRecordScopePredicate"/> -- the status filter, the
 /// confidence floor, the authorship exclusion when the query asks for it, the text match, and the limit.
 /// Nothing else: expiry and environment compatibility are Core's decisions, made over what comes back,
 /// because they depend on policy and on the request's required attributes rather than on stored state alone.
@@ -70,9 +70,9 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     /// <summary>
     /// The alias the rank is selected under. It is appended <em>after</em> the record columns, so
-    /// <see cref="PostgresExperienceRecordStore.ReadRecord"/>'s ordinals 0-17 are untouched, and it is
+    /// <see cref="ExperienceRecordRows.ReadRecord"/>'s ordinals 0-17 are untouched, and it is
     /// read back by name rather than by a hard-coded ordinal so that adding a column to
-    /// <see cref="PostgresExperienceRecordStore.SelectColumns"/> cannot silently shift the rank out
+    /// <see cref="ExperienceRecordSql.SelectColumns"/> cannot silently shift the rank out
     /// from under this reader.
     /// </summary>
     internal const string RelevanceColumn = "relevance";
@@ -83,7 +83,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// here is still unqualified and still resolves to this one table.
     /// </summary>
     private const string SearchSelect =
-        $"SELECT {PostgresExperienceRecordStore.SelectColumns}, " +
+        $"SELECT {ExperienceRecordSql.SelectColumns}, " +
         $"ts_rank_cd({RankedVector}, websearch_to_tsquery('{SearchConfiguration}', @task_text), 32) AS {RelevanceColumn}, ";
 
     /// <summary>
@@ -103,7 +103,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         $"OR search_vector_sealed @@ websearch_to_tsquery('{SearchConfiguration}', @task_text))";
 
     private const string SearchFrom =
-        $" FROM {PostgresExperienceRecordStore.Table} r WHERE ";
+        $" FROM {ExperienceRecordSql.Table} r WHERE ";
 
     /// <summary>
     /// The same <c>FROM</c> with the lateral join that names the grant a shared row came back through.
@@ -111,7 +111,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// filters, and the ordering still resolves to <c>r</c> exactly as before.
     /// </summary>
     private const string SearchFromWithGrant =
-        $" FROM {PostgresExperienceRecordStore.Table} r {PostgresExperienceRecordStore.PermittingGrantJoin} WHERE ";
+        $" FROM {ExperienceRecordSql.Table} r {ExperienceRecordSql.PermittingGrantJoin} WHERE ";
 
     private const string SearchFilterHead =
         // A tombstone carries no payload, so it is not a candidate: its generated search_vector holds
@@ -124,7 +124,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         // thing that makes erased text unfindable. What makes erased text unfindable is that
         // search_vector is GENERATED ALWAYS and regenerates from the placeholder alone, and that 0016's
         // trigger clears a sealed record's search_vector_sealed on the same transition.
-        $" AND {PostgresExperienceRecordStore.RecordLivePredicate} " +
+        $" AND {ExperienceRecordSql.RecordLivePredicate} " +
         "AND status = ANY(@statuses) " +
         "AND reuse_confidence >= @min_confidence ";
 
@@ -149,7 +149,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// unknown (<c>NULL</c>) flag counts as model-authored. Shared with the vectors package's search, which qualifies
     /// the column itself.
     /// </summary>
-    internal const string ModelAuthoredPredicate = PostgresExperienceRecordStore.ModelAuthoredColumn + " IS FALSE";
+    internal const string ModelAuthoredPredicate = ExperienceRecordSql.ModelAuthoredColumn + " IS FALSE";
 
     /// <summary>
     /// The grant-aware statement up to and including its scope predicate: the select list, the <c>FROM</c> with the
@@ -157,17 +157,17 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// row-level security admission between it and the filters.
     /// </summary>
     internal const string ReadableSearchHead =
-        SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
-        + PostgresExperienceRecordStore.PermittingGrantColumn + ", "
-        + PostgresExperienceRecordStore.PermittingDisclosureColumn + SearchFromWithGrant
-        + PostgresExperienceRecordStore.ReadableWithNamedGrantPredicate;
+        SearchSelect + ExperienceRecordSql.SharedByGrantColumn + ", "
+        + ExperienceRecordSql.PermittingGrantColumn + ", "
+        + ExperienceRecordSql.PermittingDisclosureColumn + SearchFromWithGrant
+        + ExperienceRecordSql.ReadableWithNamedGrantPredicate;
 
     /// <summary>The exact-scope statement up to and including its scope predicate. Shared with <see cref="TextSearchFunction"/>.</summary>
     internal const string ExactSearchHead =
-        SearchSelect + "false AS " + PostgresExperienceRecordStore.SharedByGrantAlias
-        + ", NULL::uuid AS " + PostgresExperienceRecordStore.PermittingGrantAlias
-        + ", NULL::text AS " + PostgresExperienceRecordStore.PermittingDisclosureAlias + SearchFrom
-        + PostgresExperienceRecordStore.RecordScopePredicate;
+        SearchSelect + "false AS " + ExperienceRecordSql.SharedByGrantAlias
+        + ", NULL::uuid AS " + ExperienceRecordSql.PermittingGrantAlias
+        + ", NULL::text AS " + ExperienceRecordSql.PermittingDisclosureAlias + SearchFrom
+        + ExperienceRecordSql.RecordScopePredicate;
 
     private const string SearchSql = ReadableSearchHead + SearchFilters;
 
@@ -265,9 +265,9 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
                 (result, disclosures) = await RunSearchAsync(withGrants: false, authorization, query, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "candidate search", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "candidate search", cancellationToken);
         }
 
         // Outside the read's own translation, exactly as the record store's is: an audit failure is the
@@ -399,7 +399,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             await using (var command = session.CreateCommand(sql))
             {
                 var parameters = command.Parameters;
-                PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
+                ExperienceRecordParameters.AddScopeParameters(parameters, query.Scope);
                 parameters.Add(new NpgsqlParameter<string>("task_text", NpgsqlDbType.Text) { TypedValue = query.TaskText });
 
                 var statuses = query.EligibleStatuses.Distinct().Select(status => status.ToString()).ToArray();
@@ -428,7 +428,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
         var candidates = new List<ExperienceCandidate>();
         var disclosures = new List<ExperienceGrantDisclosure?>();
-        var records = await PostgresExperienceRecordStore.ReadRecordsAsync(rows, _encryption, cancellationToken).ConfigureAwait(false);
+        var records = await ExperienceRecordRows.ReadRecordsAsync(rows, _encryption, cancellationToken).ConfigureAwait(false);
         for (var i = 0; i < rows.Count; i++)
         {
             // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
@@ -441,9 +441,9 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
             candidates.Add(new ExperienceCandidate(
                 record,
                 ReadRelevance(row),
-                PostgresExperienceRecordStore.ReadSharedByGrant(row),
-                PostgresExperienceRecordStore.ReadPermittingGrant(row)));
-            disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(row));
+                ExperienceRecordRows.ReadSharedByGrant(row),
+                ExperienceRecordRows.ReadPermittingGrant(row)));
+            disclosures.Add(ExperienceRecordRows.ReadPermittingDisclosure(row));
         }
 
         return ((new(ExperienceStoreOutcome.Found, candidates, NoErrors), disclosures), null);

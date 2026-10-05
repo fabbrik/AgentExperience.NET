@@ -21,6 +21,23 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   baseline to the last release. Restore now downloads the baseline packages from nuget.org. No behaviour or API
   change.
 
+### PostgreSQL record store split (story 19.2)
+
+- **Internal refactor, no behaviour change.** `PostgresExperienceRecordStore` was one file of almost 3,900 lines. Its
+  stateful concerns now sit in partial files of the same class (the lifecycle commit, erasure and retention, sealing and
+  the authorship backfill), and its stateless code moved to internal static classes, which also hold what other
+  components share: the store's SQL fragments (`ExperienceRecordSql`), its row and payload decoders
+  (`ExperienceRecordRows`), its parameter binding (`ExperienceRecordParameters`) and failure translation
+  (`ExperienceStoreFailures`). The SQL text, the public API, the telemetry and the exceptions are unchanged. About ten
+  helpers that were private to the store (`DecodeSealedRecord`, `ReadEvent`, `ReadRevision`, `ReadStoredStatus`,
+  `ReadEventScope`, `DecodeEnumText` and the four `Nullable*` binders) are now `internal`, so the assemblies this
+  package grants `InternalsVisibleTo` can reach them.
+- **`AgentExperience.Storage.Postgres.Vectors` keeps its `InternalsVisibleTo` access, on purpose.** The vector channel
+  shares the store's schema and SQL fragments, its row decoder, the per-record keys of crypto-shredding, the
+  row-level-security session and grant auditing. Making the package independent would mean publishing those
+  security-sensitive internals as public API or duplicating them, so the access stays, and the project file says what
+  the vectors package depends on and why.
+
 ## 0.1.0-preview.7
 
 This preview makes the library easier to adopt and more useful once adopted. One call sets it up

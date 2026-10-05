@@ -127,17 +127,17 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
     /// turns into a lie between this read and the exposure inserts below it. Taking
     /// <c>FOR KEY SHARE</c> over every named record in scope, live or not, is what makes this a check
     /// that holds until the transaction commits rather than a check-then-write; see
-    /// <see cref="PostgresExperienceRecordStore.RecordKeyShareLock"/>. The rows are locked in
+    /// <see cref="ExperienceRecordSql.RecordKeyShareLock"/>. The rows are locked in
     /// <c>experience_id</c> order so two submissions naming overlapping records cannot deadlock.
     /// </para>
     /// </summary>
     private static readonly string SelectExposedRecordStateSql =
-        $"SELECT r.experience_id, r.{PostgresExperienceRecordStore.DeletedAtAlias} " +
-        $"FROM {PostgresExperienceRecordStore.Table} r " +
+        $"SELECT r.experience_id, r.{ExperienceRecordSql.DeletedAtAlias} " +
+        $"FROM {ExperienceRecordSql.Table} r " +
         "WHERE r.experience_id = ANY(@experience_ids) " +
-        $"AND {PostgresExperienceRecordStore.RecordScopePredicate} " +
+        $"AND {ExperienceRecordSql.RecordScopePredicate} " +
         "ORDER BY r.experience_id " +
-        PostgresExperienceRecordStore.RecordKeyShareLock;
+        ExperienceRecordSql.RecordKeyShareLock;
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -280,9 +280,9 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceReuseFeedbackStoreOutcome.Recorded, feedback, NoErrors);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "reuse feedback record", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "reuse feedback record", cancellationToken);
         }
     }
 
@@ -297,7 +297,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
 
         parameters.Add(new NpgsqlParameter<Guid>("feedback_id", feedback.FeedbackId));
         parameters.Add(new NpgsqlParameter<Guid>("run_id", feedback.RunId));
-        PostgresExperienceRecordStore.AddScopeParameters(parameters, feedback.Scope);
+        ExperienceRecordParameters.AddScopeParameters(parameters, feedback.Scope);
         parameters.Add(Text("run_outcome", feedback.RunOutcome.ToString()));
         parameters.Add(Text("claimed_benefit", feedback.ClaimedBenefit.ToString()));
         parameters.Add(Text("benefit", feedback.Benefit.ToString()));
@@ -317,7 +317,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         parameters.Add(new NpgsqlParameter("attributed_at", NpgsqlDbType.TimestampTz)
         {
             Value = feedback.AttributedAt is { } attributedAt
-                ? PostgresExperienceRecordStore.ToStoredTimestamp(attributedAt)
+                ? ExperienceRecordParameters.ToStoredTimestamp(attributedAt)
                 : (object)DBNull.Value,
         });
         parameters.Add(Text("measure_kind", feedback.Measure.Kind));
@@ -327,10 +327,10 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         // value that was stored and the same value, not between it and a higher-precision original.
         parameters.Add(new NpgsqlParameter<DateTimeOffset>(
             "observed_at",
-            PostgresExperienceRecordStore.ToStoredTimestamp(feedback.ObservedAt)));
+            ExperienceRecordParameters.ToStoredTimestamp(feedback.ObservedAt)));
         parameters.Add(new NpgsqlParameter<DateTimeOffset>(
             "recorded_at",
-            PostgresExperienceRecordStore.ToStoredTimestamp(_timeProvider.GetUtcNow())));
+            ExperienceRecordParameters.ToStoredTimestamp(_timeProvider.GetUtcNow())));
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
@@ -388,7 +388,7 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
             {
                 TypedValue = exposedIds,
             });
-            PostgresExperienceRecordStore.AddScopeParameters(command.Parameters, feedback.Scope);
+            ExperienceRecordParameters.AddScopeParameters(command.Parameters, feedback.Scope);
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -606,11 +606,11 @@ public sealed class PostgresExperienceReuseFeedbackStore : IExperienceReuseFeedb
         // is an identity comparison rather than a numeric one.
         && stored.Measure.Value.Equals(submitted.Measure.Value)
         && string.Equals(stored.TrialLabel, submitted.TrialLabel, StringComparison.Ordinal)
-        && stored.ObservedAt == PostgresExperienceRecordStore.ToStoredTimestamp(submitted.ObservedAt)
+        && stored.ObservedAt == ExperienceRecordParameters.ToStoredTimestamp(submitted.ObservedAt)
         && stored.Exposures.SequenceEqual(submitted.Exposures);
 
     private static DateTimeOffset? Stored(DateTimeOffset? value) =>
-        value is { } set ? PostgresExperienceRecordStore.ToStoredTimestamp(set) : null;
+        value is { } set ? ExperienceRecordParameters.ToStoredTimestamp(set) : null;
 
     private static string? NullableString(NpgsqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

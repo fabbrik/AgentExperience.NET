@@ -80,9 +80,9 @@ public static class ExperienceVectorIndexMaintenance
             await using var command = dataSource.CreateCommand(sql);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "embedding index creation", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "embedding index creation", cancellationToken);
         }
     }
 
@@ -111,9 +111,9 @@ public static class ExperienceVectorIndexMaintenance
                 $"DROP INDEX IF EXISTS {PostgresExperienceRecordSchema.SchemaName}.{name}");
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
+        catch (Exception ex) when (ExperienceStoreFailures.IsInfrastructureFailure(ex, cancellationToken))
         {
-            throw PostgresExperienceRecordStore.Translate(ex, "embedding index removal", cancellationToken);
+            throw ExperienceStoreFailures.Translate(ex, "embedding index removal", cancellationToken);
         }
     }
 
