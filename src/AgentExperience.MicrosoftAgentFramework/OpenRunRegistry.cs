@@ -57,7 +57,9 @@ namespace AgentExperience.MicrosoftAgentFramework;
 internal sealed class OpenRunRegistry(IExperienceCaptureService service, ExperienceCaptureOptions options) : IDisposable
 {
     private readonly ConcurrentDictionary<Guid, OpenRun> _entries = new();
+    private readonly ConcurrentDictionary<Task, byte> _backgroundWork = new();
     private int _disposed;
+    private int _closesStarted;
 
     // Every captured invocation arms a bound, so the callback delegate is made once rather than per
     // timer. Set lazily -- a field initializer cannot name an instance method -- and a race here only
@@ -72,6 +74,51 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     /// left open -- each with its bound armed. Zero whenever nothing is in flight and nothing is left open.
     /// </summary>
     internal int Count => _entries.Count;
+
+    /// <summary>
+    /// How many background closes this registration has started, by a bound firing or by
+    /// <see cref="CloseNow"/>. Incremented synchronously, before the close is queued, so a test can read
+    /// right after firing a bound whether a close was started -- an absence asserted when it is decided,
+    /// not after a wait. Diagnostic only; nothing in the adapter reads it.
+    /// </summary>
+    internal int ClosesStarted => Volatile.Read(ref _closesStarted);
+
+    /// <summary>How many tracked background tasks have not finished yet. Diagnostic only.</summary>
+    internal int BackgroundWorkCount => _backgroundWork.Count;
+
+    /// <summary>
+    /// Completes when every background close, every completion a close abandoned at its timeout, and
+    /// every finalization an invocation abandoned at its timeout (<see cref="TrackAbandoned"/>) has
+    /// finished, including work tracked while this waits -- completion written,
+    /// reports made or suppressed. For tests, which otherwise have no handle on fire-and-forget work;
+    /// nothing in the adapter awaits it.
+    /// </summary>
+    internal async Task BackgroundWorkSettledAsync()
+    {
+        // Until nothing is left: work can be tracked while this waits (a close tracks the completion it
+        // abandoned at its timeout), and a single snapshot would miss it.
+        while (!_backgroundWork.IsEmpty)
+        {
+            var pending = _backgroundWork.Keys;
+
+            // Abandoned work can fault after its invocation stopped waiting; settling is all this reports.
+            await Task.WhenAll(pending).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+            // Removed here as well as by each task's own continuation, which may not have run yet:
+            // otherwise this could spin on work that is finished but still listed.
+            foreach (var finished in pending)
+            {
+                _backgroundWork.TryRemove(finished, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tracks a finalization its invocation stopped waiting for at
+    /// <see cref="ExperienceCaptureOptions.FinalizationTimeout"/>, so <see cref="BackgroundWorkSettledAsync"/>
+    /// also waits for it. Tracking only; the work is neither joined nor changed.
+    /// </summary>
+    internal void TrackAbandoned(Task work) => Track(work);
 
     /// <summary>
     /// Test seam: runs inside <see cref="TryClaim"/> between the dictionary lookup and taking the
@@ -261,7 +308,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
             entry.Closing = true;
         }
 
-        _ = Task.Run(() => CloseAsync(entry, atBound));
+        StartClose(entry, atBound);
     }
 
     /// <summary>Forgets a run the caller has completed, cancelling its duration bound with it.</summary>
@@ -456,7 +503,32 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
 
         // Fire-and-forget by construction: a timer callback has nowhere to await, and this path
         // must never throw. CloseAsync swallows everything and reports through the host channel.
-        _ = Task.Run(() => CloseAsync(entry, atBound: true));
+        StartClose(entry, atBound: true);
+    }
+
+    /// <summary>
+    /// Starts a close in the background, counting it first and tracking it until it finishes, so tests
+    /// can observe both that a close was started (<see cref="ClosesStarted"/>) and when it settled
+    /// (<see cref="BackgroundWorkSettledAsync"/>). The close itself never throws.
+    /// </summary>
+    private void StartClose(OpenRun entry, bool atBound)
+    {
+        Interlocked.Increment(ref _closesStarted);
+        Track(Task.Run(() => CloseAsync(entry, atBound)));
+    }
+
+    /// <summary>Holds a background task until it finishes, for <see cref="BackgroundWorkSettledAsync"/>.</summary>
+    private void Track(Task work)
+    {
+        // Added before the removal is attached, so work that has already finished is removed at once
+        // rather than left behind.
+        _backgroundWork.TryAdd(work, 0);
+        _ = work.ContinueWith(
+            static (finished, state) => ((ConcurrentDictionary<Task, byte>)state!).TryRemove(finished, out _),
+            _backgroundWork,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     /// <summary>
@@ -491,6 +563,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
         }
 
         CancellationTokenSource? timeout = null;
+        Task? work = null;
         try
         {
             // Cancelled only after a timeout has been reported (no timer of its own), so a
@@ -504,7 +577,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
                 identity = entry.Identity;
             }
 
-            var work = Task.Run(() => CompleteAndFinalizeAsync(runId, identity, atBound, token), CancellationToken.None);
+            work = Task.Run(() => CompleteAndFinalizeAsync(runId, identity, atBound, token), CancellationToken.None);
             await work.WaitAsync(options.FinalizationTimeout, options.TimeProvider).ConfigureAwait(false);
 
             timeout.Dispose();
@@ -516,6 +589,12 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
                 runId,
                 $"Completing a run the adapter could not leave open did not finish within {options.FinalizationTimeout}; whether it was completed is unknown.",
                 ex));
+
+            // Abandoned, not joined; tracked only so a test can tell when it has finished.
+            if (work is not null)
+            {
+                Track(work);
+            }
 
             // Left undisposed on purpose: the abandoned completion may still observe its token, and
             // disposing it underneath that work would throw ObjectDisposedException into a

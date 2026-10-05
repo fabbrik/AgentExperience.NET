@@ -23,6 +23,8 @@
     <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
          test project references another. -->
     <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+    <!-- Waits until a statement is really parked on a lock, instead of sleeping (story 19.3). -->
+    <Compile Include="..\Shared\PostgresLockWait.cs" Link="Shared\PostgresLockWait.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -38,11 +38,27 @@ the published previews' packages, into a temporary directory (see its [README](t
 `AGENTEXPERIENCE_TEST_ENCRYPTION=on`, the two storage test projects run again, unmodified, in crypto-shredding mode;
 CI runs them both ways.
 
-**Without Docker**, skip the container-backed classes:
+**Without Docker**, run the projects that need no container whole, filter the two that mix both, and skip the
+three built around a PostgreSQL container:
 
 ```bash
-dotnet test --filter "FullyQualifiedName!~PostgresVectorProof&FullyQualifiedName!~ExperienceSchemaMigratorTests&FullyQualifiedName!~MigratorLogSilenceTests&FullyQualifiedName!~PlainPostgresMigrationTests&FullyQualifiedName!~PostgresApplicationRoleTests&FullyQualifiedName!~PostgresBatchReadTests&FullyQualifiedName!~PostgresConfidenceEvidenceTests&FullyQualifiedName!~CryptoShredding&FullyQualifiedName!~PostgresDeletionTests&FullyQualifiedName!~PostgresExperienceCandidateSourceTests&FullyQualifiedName!~PostgresExperienceRecordStoreTests&FullyQualifiedName!~PostgresFinalizationTests&FullyQualifiedName!~PostgresGrantAccessAuditTests&FullyQualifiedName!~PostgresGrantTests&FullyQualifiedName!~PostgresLifecycleCommitTests&FullyQualifiedName!~PostgresRetentionReachTests&FullyQualifiedName!~PostgresReuseFeedbackTests&FullyQualifiedName!~PostgresServerVersionTests&FullyQualifiedName!~PostgresSupersessionAndAppendOnlyTests&FullyQualifiedName!~PostgresVerifiedIndependenceTests&FullyQualifiedName!~ApplicationRoleVectorsTests&FullyQualifiedName!~HybridRetrievalIntegrationTests&FullyQualifiedName!~PostgresDeindexingTests&FullyQualifiedName!~PostgresEmbeddingIndexTests&FullyQualifiedName!~ErasureTelemetryTests&FullyQualifiedName!~BatchReReadPostgresEquivalenceTests&FullyQualifiedName!~SamplePostgres&FullyQualifiedName!~Postgres.Tests.Conformance&FullyQualifiedName!~UpgradeFromPublishedPreviewsTests"
+dotnet test tests/AgentExperience.Abstractions.Tests
+dotnet test tests/AgentExperience.Core.Tests
+dotnet test tests/AgentExperience.MicrosoftAgentFramework.Tests
+dotnet test tests/AgentExperience.Storage.InMemory.Tests
+dotnet test tests/AgentExperience.ReuseBaseline
+dotnet test tests/AgentExperience.Release.Tests
+dotnet test experiments/AgentExperience.LiveReuse.Tests
+dotnet test tests/AgentExperience.CompatibilityProof --filter "FullyQualifiedName!~Postgres"
+dotnet test tests/AgentExperience.Sample.EndToEnd.Tests --filter "FullyQualifiedName!~Postgres"
 ```
+
+Skipped without Docker: `tests/AgentExperience.Storage.Postgres.Tests`, `tests/AgentExperience.Storage.Postgres.Vectors.Tests`,
+`tests/AgentExperience.Upgrade.Tests`. In the two filtered projects every container-backed class has `Postgres` in its
+name (`PostgresVectorProof`, `SamplePostgresModeTests`, `BatchReReadPostgresEquivalenceTests`, ...).
+`ContributingWithoutDockerTests` fails if a test project is in neither list, or if a command here would run a class
+that uses a container. `AgentExperience.Release.Tests` needs nuget.org on its first restore: it
+downloads the last published preview's packages as the package-validation baseline.
 
 No test anywhere needs model credentials: every model and embedding in the suite is a deterministic in-test fake.
 

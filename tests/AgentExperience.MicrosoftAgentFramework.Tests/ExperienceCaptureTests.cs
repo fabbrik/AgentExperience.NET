@@ -807,18 +807,16 @@ public class ExperienceCaptureTests
         harness.Service.HangHonoringToken = true;
         var options = harness.Options(finalizationTimeout: TimeSpan.FromMilliseconds(200));
 
-        var response = await harness.Capture(CreateAgent(new ScriptedChatClient()), options).RunAsync("task-hang-token");
+        var agent = CreateAgent(new ScriptedChatClient()).AsBuilder()
+            .UseExperienceCapture(harness.Service, options, out var captureLifetime)
+            .Build();
+        var response = await agent.RunAsync("task-hang-token");
 
         Assert.Equal("Hello, world", response.Text);
 
-        // Let the abandoned finalization observe its cancelled token and try completion.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (harness.Service.CompleteCalls == 0 && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(10);
-        }
-
-        await Task.Delay(50);
+        // Let the abandoned finalization observe its cancelled token, try completion and report (or not)
+        // whatever followed -- waiting for that work itself to finish rather than for a guessed interval.
+        await OpenRunsOf(captureLifetime).BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(1, harness.Service.CompleteCalls);
         var failure = Assert.Single(harness.Failures);
@@ -1639,6 +1637,56 @@ public class ExperienceCaptureTests
     }
 
     /// <summary>
+    /// The seam the converted tests rely on: once a bound's close has overrun its timeout and abandoned its
+    /// completion, <see cref="OpenRunRegistry.BackgroundWorkSettledAsync"/> waits for that abandoned completion
+    /// too, so everything it did is in by the time the wait returns.
+    /// </summary>
+    [Fact]
+    public async Task Background_work_settles_only_after_a_timed_out_close_abandoned_completion_has_finished()
+    {
+        var harness = new Harness();
+        var clock = new ManualBoundTimeProvider();
+        var runId = Guid.NewGuid();
+        var options = harness.Options(
+            resolve: _ => new ExperienceRunDescriptor("incident-42", TestScope, ContinuesRunId: runId),
+            shouldComplete: _ => false,
+            finalizationTimeout: TimeSpan.FromMilliseconds(100),
+            timeProvider: clock);
+        var agent = CreateAgent(new ScriptedChatClient()).AsBuilder()
+            .UseExperienceCapture(harness.Service, options, out var captureLifetime)
+            .Build();
+        var registry = OpenRunsOf(captureLifetime);
+
+        await agent.RunAsync("attempt-1");
+        harness.Service.HangHonoringToken = true;
+
+        // The abandoned completion observes its cancellation and then stays in flight until the close that
+        // abandoned it has finished and forgotten the run, so it outlives that close.
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.HoldAfterCancellation = hold;
+        var completions = harness.Service.CompleteCalls;
+
+        Assert.Single(clock.Bounds).Fire();
+        Assert.Equal(1, registry.ClosesStarted);
+        var settled = registry.BackgroundWorkSettledAsync();
+        var releasing = Task.Run(async () =>
+        {
+            await Eventually(() => registry.Count == 0);
+            hold.SetResult();
+        });
+
+        await settled.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The settle covered the abandoned completion itself, not only the close: it had finished.
+        Assert.True(harness.Service.HangFinished.Task.IsCompleted);
+        await releasing;
+        Assert.Equal(completions + 1, harness.Service.CompleteCalls);
+        Assert.Single(harness.Failures, failure => failure.Reason.Contains("did not finish within", StringComparison.Ordinal));
+        Assert.Equal(0, registry.Count);
+        Assert.Null(StatusOf(harness, runId));
+    }
+
+    /// <summary>
     /// BH-9. A timer callback that was already running when the run was completed normally -- disposing
     /// a timer does not join it -- must not report the run as still open at its bound. Since story 5.3
     /// it finds the entry removed and does nothing at all, not even a conflicting completion; the
@@ -1657,7 +1705,10 @@ public class ExperienceCaptureTests
             shouldComplete: _ => closing,
             timeProvider: clock);
 
-        var agent = harness.Capture(CreateAgent(new ScriptedChatClient()), options);
+        var agent = CreateAgent(new ScriptedChatClient()).AsBuilder()
+            .UseExperienceCapture(harness.Service, options, out var captureLifetime)
+            .Build();
+        var registry = OpenRunsOf(captureLifetime);
         await agent.RunAsync("attempt-1");
         closing = true;
         await agent.RunAsync("attempt-2");
@@ -1666,9 +1717,12 @@ public class ExperienceCaptureTests
         var bound = Assert.Single(clock.Bounds);
         Assert.True(bound.Disposed);
         var completions = harness.Service.CompleteCalls;
+        var closes = registry.ClosesStarted;
 
+        // The callback decides synchronously, inside Fire, whether to start a close: none was started.
         bound.Fire();
-        await Task.Delay(200);
+        Assert.Equal(closes, registry.ClosesStarted);
+        await registry.BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(completions, harness.Service.CompleteCalls);
         Assert.Empty(harness.Failures);
@@ -1701,10 +1755,14 @@ public class ExperienceCaptureTests
         captureLifetime.Dispose();
         Assert.True(bound.Disposed);
 
-        // A callback that was already on its way when the timer was disposed does nothing.
+        // A callback that was already on its way when the timer was disposed does nothing: it starts no
+        // close, which it decides synchronously, inside Fire.
+        var registry = OpenRunsOf(captureLifetime);
         var completions = harness.Service.CompleteCalls;
+        var closes = registry.ClosesStarted;
         bound.Fire();
-        await Task.Delay(200);
+        Assert.Equal(closes, registry.ClosesStarted);
+        await registry.BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(completions, harness.Service.CompleteCalls);
         Assert.Null(StatusOf(harness, runId));
         Assert.Empty(harness.Failures);
@@ -1750,9 +1808,10 @@ public class ExperienceCaptureTests
         Assert.True(bound.Disposed);
 
         // Twice, so the one hand-off to the live invocation is spent and a live registry would close.
+        var registry = OpenRunsOf(captureLifetime);
         bound.Fire();
         bound.Fire();
-        await Task.Delay(100);
+        Assert.Equal(0, registry.ClosesStarted);
         Assert.Equal(0, harness.Service.CompleteCalls);
         Assert.Empty(harness.Failures);
 
@@ -2012,8 +2071,10 @@ public class ExperienceCaptureTests
 
         // The re-armed timer firing late finds the run already closed and forgotten, and does nothing.
         var completions = harness.Service.CompleteCalls;
+        await registry.BackgroundWorkSettledAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var closes = registry.ClosesStarted;
         bound.Fire();
-        await Task.Delay(100);
+        Assert.Equal(closes, registry.ClosesStarted);
         Assert.Equal(completions, harness.Service.CompleteCalls);
         Assert.Equal(0, registry.Count);
         Assert.Single(harness.Failures);
@@ -2192,7 +2253,7 @@ public class ExperienceCaptureTests
             bound.Fire();
         }
 
-        await Task.Delay(100);
+        Assert.Equal(0, registry.ClosesStarted);
         Assert.Equal(completions, harness.Service.CompleteCalls);
         Assert.Empty(harness.Failures);
     }
@@ -2426,9 +2487,9 @@ public class ExperienceCaptureTests
         Assert.True(bound.Disposed);
         Assert.Equal(0, OpenRunsOf(captureLifetime).Count);
 
-        // The re-armed timer's late firing finds the run forgotten.
+        // The re-armed timer's late firing finds the run forgotten, and starts no close.
         bound.Fire();
-        await Task.Delay(100);
+        Assert.Equal(0, OpenRunsOf(captureLifetime).ClosesStarted);
         Assert.Equal(1, harness.Service.CompleteCalls);
         Assert.Empty(harness.Failures);
     }

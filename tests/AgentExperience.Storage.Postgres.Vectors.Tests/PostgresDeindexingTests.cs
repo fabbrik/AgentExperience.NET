@@ -1,6 +1,7 @@
 using AgentExperience.Core.Indexing;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Retrieval;
+using AgentExperience.Tests.Shared;
 using Npgsql;
 
 namespace AgentExperience.Storage.Postgres.Vectors.Tests;
@@ -303,7 +304,7 @@ public class PostgresDeindexingTests(VectorsFixture fixture)
                 TopicEmbeddingGenerator.VectorFor("Refresh an expired token")),
             CancellationToken.None);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        await PostgresLockWait.UntilBlockedAsync(RawDataSource, purging, ExperienceRecordSql.RecordKeyShareLock, writing);
         await transaction.CommitAsync();
 
         Assert.Equal(ExperienceIndexOutcome.Missing, (await writing).Outcome);
