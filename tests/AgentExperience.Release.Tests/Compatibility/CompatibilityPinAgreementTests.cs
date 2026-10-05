@@ -366,6 +366,41 @@ public sealed class CompatibilityPinAgreementTests
     }
 
     /// <summary>
+    /// The same check across every project in the repository — tests, the sample, the experiments, the proof — in
+    /// place of central package management, which the floating-dependency probe and the per-project pins this class
+    /// checks rely on not having. A package's lower bound is compared, so an exact pin (<c>[1.2.3]</c>) and a floor
+    /// (<c>1.2.3</c>) of the same version agree, and a range agrees with its floor. The upgrade seeders are left out:
+    /// pinning older published versions is their purpose.
+    /// </summary>
+    [Fact]
+    public void A_package_referenced_by_several_projects_anywhere_has_one_version()
+    {
+        var projects = Directory.EnumerateFiles(RepositoryRoot.Path, "*.csproj", SearchOption.AllDirectories)
+            .Where(path =>
+            {
+                var relative = Path.GetRelativePath(RepositoryRoot.Path, path).Replace('\\', '/');
+                return !relative.StartsWith($"tests/{DeliberatelyOldPins}/", StringComparison.Ordinal)
+                    && !relative.Split('/').Any(part => part is "bin" or "obj");
+            })
+            .ToList();
+        Assert.True(projects.Count > 10, $"Only {projects.Count} projects were found.");
+
+        var drift = projects
+            .SelectMany(path => XDocument.Load(path).Descendants("PackageReference")
+                .Where(reference => reference.Attribute("Include") is not null && reference.Attribute("Version") is not null)
+                .Select(reference => (
+                    Project: Path.GetFileNameWithoutExtension(path),
+                    Package: reference.Attribute("Include")!.Value,
+                    Floor: LowerBound(reference.Attribute("Version")!.Value))))
+            .GroupBy(r => r.Package, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Select(r => r.Floor).Distinct(StringComparer.Ordinal).Count() > 1)
+            .Select(g => $"{g.Key}: " + string.Join(", ", g.Select(r => $"{r.Project} {r.Floor}")))
+            .ToList();
+
+        Assert.True(drift.Count == 0, string.Join(Environment.NewLine, drift));
+    }
+
+    /// <summary>
     /// No shipping reference is conditional: every package targets the same frameworks, and every floor applies to
     /// all of them, so a floor is never limited to somewhere the checks above do not look. The last conditional ones,
     /// the net8.0-only System.Text.Json and Microsoft.Bcl.Memory, went when the packages became net10.0 only. A
