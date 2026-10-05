@@ -265,10 +265,15 @@ public class ReuseEvidenceFinalizationTests
     public async Task The_step_is_bounded_by_its_timeout_and_a_timeout_truncates_the_list()
     {
         var engine = new CallbackEngine();
-        var world = new World(SameTask with { ReuseEvidenceTimeout = TimeSpan.FromMilliseconds(1) }, engine);
+        var inMemory = new InMemoryExperienceRecordStore();
+        var watching = TokenWatchingStore.Over(inMemory, out var lastToken);
+        var world = new World(SameTask with { ReuseEvidenceTimeout = TimeSpan.FromMilliseconds(1) }, engine, watching, inMemory);
         var first = await world.LessonAsync();
         var second = await world.LessonAsync();
-        engine.OnScore = () => Thread.Sleep(50);
+
+        // Score the first record only once the step's own budget has run out, so the timeout is observed on the next
+        // record however slowly the timer fires on a loaded machine.
+        engine.OnScore = () => Assert.True(lastToken().WaitHandle.WaitOne(TimeSpan.FromSeconds(30)), "The step's budget never ran out.");
 
         var result = await world.RunAsync(exposedTo: [first, second]);
 
@@ -526,6 +531,32 @@ public class ReuseEvidenceFinalizationTests
         {
             var result = await read;
             return result.Record is { } record && _granted.Contains(record.ExperienceId) ? result with { SharedByGrant = true } : result;
+        }
+    }
+
+    /// <summary>The in-memory store, remembering the token of the last read so a test can wait on the caller's budget.</summary>
+    public class TokenWatchingStore : DispatchProxy
+    {
+        private IExperienceRecordStore _inner = null!;
+        private CancellationToken _last;
+
+        public static IExperienceRecordStore Over(IExperienceRecordStore inner, out Func<CancellationToken> lastToken)
+        {
+            var proxy = Create<IExperienceRecordStore, TokenWatchingStore>();
+            var self = (TokenWatchingStore)(object)proxy;
+            self._inner = inner;
+            lastToken = () => self._last;
+            return proxy;
+        }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod!.Name == nameof(IExperienceRecordStore.GetAsync) && args?[^1] is CancellationToken token)
+            {
+                _last = token;
+            }
+
+            return targetMethod.Invoke(_inner, args);
         }
     }
 
