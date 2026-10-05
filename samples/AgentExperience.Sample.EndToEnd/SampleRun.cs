@@ -417,9 +417,9 @@ public sealed class SampleRun
 
         var blockShape = BlockShape(block!, record);
         Require(blockShape.CarriesLesson, 6, "the injected block does not carry the record's lesson.");
-        Require(blockShape.NamesSource, 6, "the injected block does not name the record it came from.");
+        Require(blockShape.NamesTask, 6, "the injected block does not name the task the record came from.");
         Require(blockShape.NamesConfidence, 6, "the injected block does not state the record's confidence.");
-        Require(blockShape.NamesApplicability, 6, "the injected block does not state how it was ranked.");
+        Require(blockShape.SaysWhyMatched, 6, "the injected block does not say why the record matched.");
         Require(blockShape.NamesApproach, 6, "the injected block does not name the tools the verified attempt used.");
         Require(!blockShape.RepeatsCapturedResult, 6, "the injected block repeats a raw captured result, which it must never do.");
         Require(!blockShape.RepeatsCapturedError, 6, "the injected block repeats a raw captured error, which it must never do by default.");
@@ -440,7 +440,7 @@ public sealed class SampleRun
             [
                 $"byte budget used: {injection.PayloadBytes.ToString(CultureInfo.InvariantCulture)} of {injectionLimits.MaxBytes.ToString(CultureInfo.InvariantCulture)}; record limit {injectionLimits.MaxRecords.ToString(CultureInfo.InvariantCulture)}",
                 $"omitted: {injection.Omitted.Count.ToString(CultureInfo.InvariantCulture)}; excluded before ranking: {injection.Excluded.Count.ToString(CultureInfo.InvariantCulture)}; truncated search: {injection.Truncated.ToString().ToLowerInvariant()}",
-                $"read out of the {Utf8Length(block!).ToString(CultureInfo.InvariantCulture)} bytes run B's model was handed: lesson {Present(blockShape.CarriesLesson)}, source {Named(blockShape.NamesSource)}, confidence {Named(blockShape.NamesConfidence)}, applicability {Named(blockShape.NamesApplicability)}, approach {Named(blockShape.NamesApproach)}",
+                $"read out of the {Utf8Length(block!).ToString(CultureInfo.InvariantCulture)} bytes run B's model was handed: lesson {Present(blockShape.CarriesLesson)}, task {Named(blockShape.NamesTask)}, why it matched {Present(blockShape.SaysWhyMatched)}, confidence {Named(blockShape.NamesConfidence)}, approach {Named(blockShape.NamesApproach)}",
                 $"each attempt is its tool names in order, whether it failed with the error's class, and which one worked: raw captured result {Present(blockShape.RepeatsCapturedResult)}, raw captured error {Present(blockShape.RepeatsCapturedError)}, captured tool argument {Present(blockShape.RepeatsToolArguments)}",
                 $"run B's own Experience Run is {runBId:D}, read from the session state key '{ExperienceCaptureAgentBuilderExtensions.RunIdStateKey}'",
             ]));
@@ -489,9 +489,9 @@ public sealed class SampleRun
     /// <summary>What the injected block was found to contain, each answer read out of the block itself.</summary>
     private sealed record InjectedBlockShape(
         bool CarriesLesson,
-        bool NamesSource,
+        bool NamesTask,
         bool NamesConfidence,
-        bool NamesApplicability,
+        bool SaysWhyMatched,
         bool NamesApproach,
         bool RepeatsCapturedResult,
         bool RepeatsCapturedError,
@@ -567,9 +567,10 @@ public sealed class SampleRun
     /// <summary>Reads back, out of the block itself, what the sample is about to say the block contains.</summary>
     private static InjectedBlockShape BlockShape(string block, ExperienceRecord record) => new(
         CarriesLesson: record.Reflection is { Lesson.Length: > 0 } reflection && block.Contains(reflection.Lesson, StringComparison.Ordinal),
-        NamesSource: block.Contains($"Source: experience {record.ExperienceId:D}", StringComparison.Ordinal),
-        NamesConfidence: block.Contains("Confidence: ", StringComparison.Ordinal),
-        NamesApplicability: block.Contains("Applicability (as ranked at retrieval)", StringComparison.Ordinal),
+        // The default compact block names the record by its task, not its identifiers, and says why it matched.
+        NamesTask: block.Contains($"--- RECORD 1: {record.TaskId} ---\n", StringComparison.Ordinal),
+        SaysWhyMatched: block.Contains("\nMatched: ", StringComparison.Ordinal),
+        NamesConfidence: block.Contains("\nConfidence: ", StringComparison.Ordinal),
         NamesApproach: record.Attempts
             .OrderBy(attempt => attempt.SequenceNumber)
             .LastOrDefault() is { Error: null } winning

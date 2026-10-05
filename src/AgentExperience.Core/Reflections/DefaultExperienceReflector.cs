@@ -59,9 +59,9 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
     public const string TemplateVersion = "1.1.0";
 
     /// <summary>The <see cref="Reflection.Producer"/> value every reflection produced by this implementation carries.</summary>
-    public const string ProducerIdentity = "AgentExperience.DefaultExperienceReflector/" + TemplateVersion;
+    public const string ProducerIdentity = DefaultReflectionText.ProducerPrefix + TemplateVersion;
 
-    private const string UnknownValue = "unknown";
+    private const string UnknownValue = DefaultReflectionText.UnknownValue;
 
     /// <summary>The most characters of one piece of captured text (an error, a result, an evaluation reason) this reflector quotes.</summary>
     private const int MaxQuotedLength = 500;
@@ -140,7 +140,7 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
         switch (status)
         {
             case TaskVerificationStatus.Verified:
-                warnings.Add("Verification applies only to this run and its captured environment; reuse in another context is not itself verified.");
+                warnings.Add(DefaultReflectionText.VerificationScopeWarning);
                 if (evidenceIds.Count == 0)
                 {
                     warnings.Add("Verification status is Verified, but the evaluation supplied no evidence.");

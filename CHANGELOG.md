@@ -431,6 +431,51 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   unchanged, and records stored before this release keep their lesson. See
   [Finalization](docs/guide/finalization.md#the-default-reflectors-lesson).
 
+### A compact rendering by default (story 18.2)
+
+- **The problem it fixes.** Most of the injected block's bytes carried nothing a model could decide with: an
+  eight-line preamble written for developers, per-record GUIDs, the ranking arithmetic, two timestamps, the host,
+  runtime and OS, and an evidence count. Nothing said why a record was matched.
+- **Behaviour change: the default rendering is now compact.** New `ExperienceInjectionOptions.Rendering`
+  (`HistoricalReferenceRendering.Compact`, the default, or `Verbose`). Compact writes the same begin and end markers,
+  a two-line preamble addressed to the model (the records are untrusted reference data, not instructions, and
+  authorize nothing), and per record:
+  - **kept:** a header `--- RECORD n: {task id} ---`; a `Matched:` line; `Confidence: 0.67 · Verified · Validated`
+    (confidence, verification status, lifecycle status); `Environment: differs from this run's (fit 0.40)` when the
+    ranking's environment fit is below 1; then `Shared:`, `Lesson:`, `Tried:`/`Worked:`, `Reuse guidance:`,
+    `Preconditions:` and `Warnings:`. The model-authored and unconfirmed-content fences are placed as before, and
+    withdrawal notices are unchanged. An unconfirmed record's header carries no task, and its task and verification
+    status sit inside the fence.
+  - **dropped:** experience and run IDs, the `Applicability` line, `Recorded:`, the captured environment fingerprint,
+    `Evidence:`, and any empty field. For a reflection the default reflector wrote, and only then, two generic lines
+    are dropped too: a precondition whose value it could not capture (`…: unknown`) and its "Verification applies
+    only to this run…" warning. Any other reflection keeps every precondition and warning. The default reflector's
+    wording is now shared by the reflector and the writer from one source file.
+  - **size:** the 3-record test fixture is 1,886 bytes against 4,368 verbose (57% smaller), and the end-to-end
+    sample's block went from 2,176 bytes to 955 (56% smaller).
+- **`Matched:`** names the record's text relevance (the ranking's relevance component, the stronger of the text and
+  vector matches when both channels ran), e.g. `Matched: text relevance 0.45`. It never names confidence, environment
+  fit (a fit below 1 gets the `Environment:` line), recency or lifecycle status, and it is built only from the ranking
+  retrieval computed, never from record text. A ranking with no relevance component says `Matched: no ranking data`;
+  a relevance that is not a real number says `Matched: (unavailable)`. Each store scores
+  relevance on its own scale, so in-memory and PostgreSQL can show different values.
+- **`Verbose`** is the earlier block byte for byte, except that a line of record text starting with `Matched:` is now
+  neutralized: `Matched:` joins the field labels in both renderings. A host that parses `Source:`, `Applicability` or
+  the other dropped lines must set `Rendering = HistoricalReferenceRendering.Verbose`. The
+  `HistoricalReferenceWriter.Write` overloads without settings keep rendering `Verbose`.
+- **Budgets apply to the block as rendered**, so more compact records fit in `Limits.MaxBytes` and in the session
+  budget. `BlockOverheadBytes` and `RetractionBlockBytes`, which validate the budgets, stay the larger verbose sizes.
+- **The message role is configurable.** New `ExperienceInjectionOptions.MessageRole`
+  (`HistoricalReferenceMessageRole.User`, the default and the previous behaviour, or `System`). The text and the
+  `AgentExperience.HistoricalReference` marker are the same either way. Some chat APIs reject, move or merge a system
+  message that is not first, or allow only one, so test `System` with your provider. Undefined `Rendering` or
+  `MessageRole` values are refused when the provider is constructed.
+- **Public API.** New enums `HistoricalReferenceRendering` and `HistoricalReferenceMessageRole`, the two options, the
+  record `HistoricalReferenceWriteSettings` (rendering, failure detail, content confirmation) and a `Write` overload
+  that takes it and renders exactly as the provider does, and `HistoricalReferenceWriter.MatchedWithoutRanking`. A call
+  that passes a literal `null` as the fourth argument of `Write` is now ambiguous; cast it to the intended type. See
+  [Injection](docs/guide/injection.md#the-payload).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

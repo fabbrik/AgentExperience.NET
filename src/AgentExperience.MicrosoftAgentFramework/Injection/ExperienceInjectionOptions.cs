@@ -526,6 +526,34 @@ public sealed class ExperienceInjectionOptions
     public AttemptFailureDetail FailureDetail { get; init; } = AttemptFailureDetail.ErrorClass;
 
     /// <summary>
+    /// How the block lays out each record. <see cref="HistoricalReferenceRendering.Compact"/> (the default) keeps the
+    /// framing, fences, <c>Shared:</c> line, confidence, verification and lifecycle status and the decision content, and
+    /// adds a <c>Matched:</c> line; it leaves out identifiers, the ranking arithmetic, timestamps, the captured
+    /// environment fingerprint and the evidence count (see <see cref="HistoricalReferenceRendering.Compact"/>).
+    /// <see cref="HistoricalReferenceRendering.Verbose"/> is the earlier layout, byte for byte except that record text
+    /// starting a line with <c>Matched:</c> is now neutralized.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Limits"/> and <see cref="SessionLimits"/> apply to the block as rendered, so more compact records fit in
+    /// the same budget. A value that is not a defined <see cref="HistoricalReferenceRendering"/> is refused when the
+    /// provider is constructed.
+    /// </remarks>
+    public HistoricalReferenceRendering Rendering { get; init; } = HistoricalReferenceRendering.Compact;
+
+    /// <summary>
+    /// The chat role the block's message is sent in: <see cref="HistoricalReferenceMessageRole.User"/> (the default)
+    /// or <see cref="HistoricalReferenceMessageRole.System"/>. Either way the message carries
+    /// <c>AdditionalProperties["AgentExperience.HistoricalReference"] = true</c> and the same text. A value that is not a
+    /// defined <see cref="HistoricalReferenceMessageRole"/> is refused when the provider is constructed.
+    /// </summary>
+    /// <remarks>
+    /// Some chat APIs reject a system message that is not the first, hoist or merge system messages, or allow only one,
+    /// and the block arrives alongside the invocation's own messages: test <see cref="HistoricalReferenceMessageRole.System"/>
+    /// with your provider before relying on it.
+    /// </remarks>
+    public HistoricalReferenceMessageRole MessageRole { get; init; } = HistoricalReferenceMessageRole.User;
+
+    /// <summary>
     /// Validates this instance, in the same style as
     /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/>: a misconfigured
     /// provider fails when it is constructed, not on the first invocation it silently does nothing on.
@@ -553,6 +581,20 @@ public sealed class ExperienceInjectionOptions
             throw new ArgumentException(
                 "FailureDetail must be a defined AttemptFailureDetail value.",
                 $"{paramName}.{nameof(FailureDetail)}");
+        }
+
+        if (!Enum.IsDefined(Rendering))
+        {
+            throw new ArgumentException(
+                "Rendering must be a defined HistoricalReferenceRendering value.",
+                $"{paramName}.{nameof(Rendering)}");
+        }
+
+        if (!Enum.IsDefined(MessageRole))
+        {
+            throw new ArgumentException(
+                "MessageRole must be a defined HistoricalReferenceMessageRole value.",
+                $"{paramName}.{nameof(MessageRole)}");
         }
 
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)

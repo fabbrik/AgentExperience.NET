@@ -231,9 +231,12 @@ public class SampleRunTests
         var record = execution.PersistedRecord();
 
         Assert.Contains(record.Reflection!.Lesson, block, StringComparison.Ordinal);
-        Assert.Contains($"Source: experience {record.ExperienceId:D}", block, StringComparison.Ordinal);
-        Assert.Contains("Confidence: ", block, StringComparison.Ordinal);
-        Assert.Contains("Applicability (as ranked at retrieval)", block, StringComparison.Ordinal);
+        // The default compact block: the record's task in its header, why it matched, its confidence and verification,
+        // and no identifier or ranking arithmetic.
+        Assert.Contains($"--- RECORD 1: {record.TaskId} ---\nMatched: text relevance ", block, StringComparison.Ordinal);
+        Assert.Contains($"\nConfidence: {record.ReuseConfidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} \u00b7 {record.Outcome.Status} \u00b7 {record.Status}\n", block, StringComparison.Ordinal);
+        Assert.DoesNotContain(record.ExperienceId.ToString("D"), block, StringComparison.Ordinal);
+        Assert.DoesNotContain("Applicability", block, StringComparison.Ordinal);
 
         // Story 4.6: the verified attempt's tool names, in order, and derived from the record's own
         // attempts rather than from the reflection's prose.

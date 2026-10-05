@@ -21,9 +21,79 @@ public class ExperienceInjectionTests
     // ---- Matrix: Ranked candidates --------------------------------------------------------------
 
     [Fact]
-    public async Task Ranked_candidates_are_injected_as_one_delimited_labeled_block_in_rank_order()
+    public async Task By_default_the_block_is_compact_and_sent_in_the_user_role()
     {
         var harness = new Harness();
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Check the lock table first."), relevance: 1d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var message = Assert.Single(
+            harness.Client.LastMessages!,
+            m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true);
+        Assert.Equal(ChatRole.User, message.Role);
+        Assert.Contains("\n--- RECORD 1: triage-ticket ---\nMatched: text relevance 1.00\n", message.Text, StringComparison.Ordinal);
+        Assert.Contains("\nConfidence: 0.67 \u00b7 Verified \u00b7 Validated\n", message.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Source:", message.Text, StringComparison.Ordinal);
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(message.Text), Assert.Single(harness.Results).PayloadBytes);
+    }
+
+    [Fact]
+    public async Task FailureDetail_None_renders_a_failed_attempt_with_no_class_in_the_default_compact_block()
+    {
+        var harness = new Harness { FailureDetail = AttemptFailureDetail.None };
+        var call = new ToolCallRecord(
+            ToolCallId: Guid.Parse("33333333-0000-0000-0000-000000000101"),
+            SequenceNumber: 0,
+            ToolName: "retry_refund",
+            Arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
+            StartedAt: InjectionRecords.Now,
+            Duration: TimeSpan.FromMilliseconds(5),
+            Result: null,
+            Error: null);
+        Attempt Attempt(int sequence, string? error) => new(
+            AttemptId: Guid.Parse($"22222222-0000-0000-0000-{sequence:D12}"),
+            SequenceNumber: sequence,
+            StartedAt: InjectionRecords.Now,
+            Duration: TimeSpan.FromSeconds(1),
+            ToolCalls: [call],
+            Result: null,
+            Error: error);
+        harness.World.Publish(
+            InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts: [Attempt(1, "System.TimeoutException: lock held (exit 2)"), Attempt(2, null)]),
+            relevance: 1d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var text = harness.InjectedText()!;
+        Assert.Contains("\n--- RECORD 1: triage-ticket ---\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 1: retry_refund \u2192 failed\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("TimeoutException", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MessageRole_System_sends_the_same_block_as_a_system_message()
+    {
+        var user = new Harness();
+        var system = new Harness { MessageRole = HistoricalReferenceMessageRole.System };
+        foreach (var harness in new[] { user, system })
+        {
+            harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Check the lock table first."), relevance: 1d);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var message = Assert.Single(
+            system.Client.LastMessages!,
+            m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true);
+        Assert.Equal(ChatRole.System, message.Role);
+        Assert.Equal(user.InjectedText(), message.Text);
+        Assert.Equal(InjectionOutcome.Injected, Assert.Single(system.Results).Outcome);
+    }
+
+    [Fact]
+    public async Task Ranked_candidates_are_injected_as_one_delimited_labeled_block_in_rank_order()
+    {
+        var harness = new Harness { Rendering = HistoricalReferenceRendering.Verbose };
         var first = InjectionRecords.Id(1);
         var second = InjectionRecords.Id(2);
         harness.World.Publish(InjectionRecords.Record(first, TestScope, lesson: "Check the lock table first."), relevance: 1d);
@@ -354,6 +424,7 @@ public class ExperienceInjectionTests
                 {
                     PreferredEnvironmentAttributes = preferred,
                 },
+                Rendering = HistoricalReferenceRendering.Verbose,
             };
             harness.World.Publish(InjectionRecords.Record(plain, TestScope, lesson: "Plain lesson."), relevance: 0.5d);
             harness.World.Publish(
@@ -1578,6 +1649,7 @@ public class ExperienceInjectionTests
         {
             Resolve = _ => new RetrieveExperienceRequest(Authorization, reader, "refund ticket stuck on a lock", CorrelationId: "corr-1"),
             Limits = ExperienceInjectionLimits.Default with { MaxRecords = 12 },
+            Rendering = HistoricalReferenceRendering.Verbose,
             Decide = context => context.Current.ExperienceId == hostDenied
                 ? InjectionDecision.Deny("the host's risk policy says no.")
                 : InjectionDecision.Permit,
@@ -2449,6 +2521,15 @@ public class ExperienceInjectionTests
 
         public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
 
+        /// <summary>The block layout; the library default unless a test pins the verbose text.</summary>
+        public HistoricalReferenceRendering Rendering { get; init; } = HistoricalReferenceRendering.Compact;
+
+        /// <summary>The block's message role; the library default unless a test sets it.</summary>
+        public HistoricalReferenceMessageRole MessageRole { get; init; } = HistoricalReferenceMessageRole.User;
+
+        /// <summary>How much a Tried: line says about a failure; the library default unless a test sets it.</summary>
+        public AttemptFailureDetail FailureDetail { get; init; } = AttemptFailureDetail.ErrorClass;
+
         public ExperienceInjectionSessionLimits? SessionLimits { get; init; } = ExperienceInjectionSessionLimits.Default;
 
         public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? Resolve { get; init; }
@@ -2497,6 +2578,9 @@ public class ExperienceInjectionTests
                     RequiredEnvironmentAttributes: RequiredEnvironment,
                     CorrelationId: "corr-1")),
                 Limits = Limits,
+                Rendering = Rendering,
+                MessageRole = MessageRole,
+                FailureDetail = FailureDetail,
                 SessionLimits = SessionLimits,
                 DecideInjection = Decide,
                 TimeProvider = Clock,

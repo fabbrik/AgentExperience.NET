@@ -126,17 +126,20 @@ public class ExperienceLoopClosureTests
             model.LastMessages!,
             m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true);
 
-        // The record's own lesson, its source, its confidence, and its applicability -- nothing raw.
+        // The record's own lesson, its task, why it matched, and its confidence and verification -- nothing raw. The
+        // default compact layout carries no identifier and no ranking arithmetic.
         Assert.Contains(record.Reflection!.Lesson, injected.Text, StringComparison.Ordinal);
         Assert.Contains("Lesson: Verified after ", injected.Text, StringComparison.Ordinal);
-        Assert.Contains($"Source: experience {record.ExperienceId:D}", injected.Text, StringComparison.Ordinal);
-        Assert.Contains($"source run {record.SourceRunId:D}", injected.Text, StringComparison.Ordinal);
-        Assert.Contains("Confidence: 0.667 (status Validated)", injected.Text, StringComparison.Ordinal);
-        Assert.Contains("Applicability (as ranked at retrieval): score ", injected.Text, StringComparison.Ordinal);
+        Assert.Contains($"--- RECORD 1: {TaskId} ---", injected.Text, StringComparison.Ordinal);
+        Assert.Contains("Matched: text relevance ", injected.Text, StringComparison.Ordinal);
+        Assert.Contains("Confidence: 0.67 \u00b7 Verified \u00b7 Validated\n", injected.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(record.ExperienceId.ToString("D"), injected.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(record.SourceRunId.ToString("D"), injected.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Applicability", injected.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("raw-evidence-detail-must-never-be-injected", injected.Text, StringComparison.Ordinal);
 
-        // Reference material in the user role, marked but not trusted -- a System-role block would
-        // read as a host instruction, which is exactly what this is not.
+        // Reference material in the user role by default, marked but not trusted. A host can opt into the system
+        // role (ExperienceInjectionOptions.MessageRole); this agent does not, so no system message is sent.
         Assert.Equal(ChatRole.User, injected.Role);
         Assert.Equal(true, injected.AdditionalProperties![ExperienceContextProvider.HistoricalReferenceKey]);
         Assert.DoesNotContain(model.LastMessages!, m => m.Role == ChatRole.System);

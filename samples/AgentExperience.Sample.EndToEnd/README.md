@@ -183,8 +183,12 @@ starts empty every time, which is why that is the mode the determinism guarantee
 
 The two modes rank candidates differently: the in-memory candidate source scores by word overlap,
 and the PostgreSQL one uses full-text search, so the relevance number each computes for the same
-record is different. Nothing downstream of the ranking is: with one candidate, both modes rank it
-first, and the Historical Reference block is written from the record, so both modes print the same
-`byte budget used: 2176`. `SamplePostgresModeTests` asserts exactly that — the PostgreSQL mode's
-transcript is compared against the checked-in one line for line, with the header that names the
-ports as the only difference.
+record is different. With one candidate, both modes rank it first, and the Historical Reference
+block is written from the record, except for its `Matched:` line, which names the record's text
+relevance: `text relevance 1.00` in the in-memory mode, and `text relevance 0.xx` under PostgreSQL.
+So the block's size, printed twice in stage 6 (`byte budget used: 955` in the in-memory mode), may
+differ by a few bytes between the modes.
+`SamplePostgresModeTests` asserts exactly that: the PostgreSQL mode's transcript is compared against
+the checked-in one line for line, with the header that names the ports as the only other difference
+and the block size within four bytes of the golden one, and the two blocks are compared line for line
+with only their `Matched:` lines left out, each pinned to the relevance its mode names.
