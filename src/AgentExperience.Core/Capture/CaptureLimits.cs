@@ -95,6 +95,34 @@ public sealed record CaptureLimits(
         init => field = EnsurePositive(value, nameof(CompletedRunRetention));
     } = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// The most <em>open</em> (started, not yet completed) runs an <see cref="InMemoryExperienceCaptureService"/>
+    /// holds at once. While this many are open, a <c>StartRun</c> call that would open a new run is refused
+    /// with <see cref="StartRunOutcome.CapacityExceeded"/> and nothing is stored; a call that continues an
+    /// open run is never refused by it. A slot frees as soon as a run completes. Defaults to 10,000; must be
+    /// strictly positive.
+    /// </summary>
+    public int MaxOpenRuns
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(MaxOpenRuns));
+    } = 10_000;
+
+    /// <summary>
+    /// How long an <see cref="InMemoryExperienceCaptureService"/> lets a run stay <em>open</em>, measured on the
+    /// service's <see cref="TimeProvider"/>'s monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>) from
+    /// when the service opened it. An older open run is completed by the service itself, as
+    /// <see cref="AgentExperience.Abstractions.RunExecutionStatus.Cancelled"/>, on the service's next call; from
+    /// then on it is a completed run, kept and dropped under <see cref="MaxRetainedCompletedRuns"/> and
+    /// <see cref="CompletedRunRetention"/>. Defaults to <see langword="null"/>: open runs are not aged out.
+    /// When set, must be strictly positive.
+    /// </summary>
+    public TimeSpan? MaxOpenRunAge
+    {
+        get;
+        init => field = value is { } age ? EnsurePositive(age, nameof(MaxOpenRunAge)) : null;
+    }
+
     private static int EnsurePositive(int value, string paramName) =>
         value > 0 ? value : throw new ArgumentOutOfRangeException(paramName, value, "Capture limits must be strictly positive.");
 

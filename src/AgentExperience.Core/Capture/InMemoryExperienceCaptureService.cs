@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Diagnostics;
@@ -62,8 +63,20 @@ namespace AgentExperience.Core.Capture;
 /// finalizes exactly once.
 /// </para>
 /// <para>
-/// <b>How long a run is kept:</b> an open run is kept until it completes -- these bounds never drop one,
-/// because the MAF adapter's open-run bound already closes a run left open. A completed run is kept until
+/// <b>How many runs stay open, and for how long:</b> at most <see cref="CaptureLimits.MaxOpenRuns"/> runs
+/// are open at once. Past it, a <see cref="StartRun"/> call that would open a new run is refused with
+/// <see cref="StartRunOutcome.CapacityExceeded"/> and stores nothing; continuing an open run is never
+/// refused, and a run leaves the open count the moment it completes. When
+/// <see cref="CaptureLimits.MaxOpenRunAge"/> is set, an open run older than it (on the monotonic timestamp,
+/// from when this service opened it) is completed by this service as
+/// <see cref="RunExecutionStatus.Cancelled"/>, ended at the provider's <see cref="TimeProvider.GetUtcNow"/>,
+/// under a completion event ID derived from its run ID -- so a later completion from the host under its own
+/// event ID is a <see cref="CompleteRunOutcome.Conflict"/>, exactly as for any finalized run. It is then a
+/// completed run like any other. An open run is never dropped without being completed first. Expiry is
+/// applied lazily, before every call answers, from a queue kept in start order and checked at its head only.
+/// </para>
+/// <para>
+/// <b>How long a completed run is kept:</b> an open run is never dropped by these bounds. A completed run is kept until
 /// it is older than <see cref="CaptureLimits.CompletedRunRetention"/>, or until more than
 /// <see cref="CaptureLimits.MaxRetainedCompletedRuns"/> completed runs are held, the earliest completed
 /// dropped first. Finalization does not drop a run, so while a run is held a finalization retry still
@@ -95,6 +108,19 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     // The monotonic timestamp of the head of _completed (long.MaxValue when nothing is held): read
     // without the lock so that a call with nothing yet to expire never takes it.
     private long _oldestCompletedAtTimestamp = long.MaxValue;
+
+    // How many runs are open (started, not completed). Raised by StartRun before it adds a run (and given
+    // back if the add does not happen), lowered exactly once per run by the completion transition.
+    private int _openCount;
+
+    // Open runs in start order, kept only when CaptureLimits.MaxOpenRunAge is set. An entry whose run has
+    // since completed stays until it reaches the head or the queue is compacted. Guarded by _openGate, which
+    // is taken outside a run's own Gate (and so outside _retentionGate), never inside one.
+    private Queue<OpenedRun> _opened = new();
+    private readonly object _openGate = new();
+
+    // The monotonic timestamp of the head of _opened (long.MaxValue when it is empty), for the lock-free check.
+    private long _oldestOpenedAtTimestamp = long.MaxValue;
 
     /// <summary>Creates an <see cref="InMemoryExperienceCaptureService"/> that measures retention on <see cref="TimeProvider.System"/>.</summary>
     /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
@@ -195,19 +221,85 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
 
         EvictExpired();
 
-        // A run dropped between the failed add and the read is gone, so the ID names no run and a new one
-        // is opened under it -- exactly as if the drop had happened before this call.
+        // An existing run is decided first, so a continuation is never refused for capacity. A run dropped
+        // between the failed add and the next read is gone, so the ID names no run and a new one is opened
+        // under it -- exactly as if the drop had happened before this call.
         while (true)
         {
-            if (_runs.TryAdd(runId, new RunState(run)))
-            {
-                return new StartRunResult(StartRunOutcome.Started, run, null);
-            }
-
             if (_runs.TryGetValue(runId, out var existing))
             {
                 return Continue(existing, runId, taskId, scope);
             }
+
+            if (!TryReserveOpenSlot())
+            {
+                // A concurrent call may have opened this very ID meanwhile: that is a continuation, not a refusal.
+                if (_runs.TryGetValue(runId, out existing))
+                {
+                    return Continue(existing, runId, taskId, scope);
+                }
+
+                return new StartRunResult(
+                    StartRunOutcome.CapacityExceeded,
+                    null,
+                    $"{_limits.MaxOpenRuns} runs are already open; no new run can be opened until one completes.");
+            }
+
+            var state = new RunState(run);
+            if (_runs.TryAdd(runId, state))
+            {
+                TrackOpened(runId, state);
+                return new StartRunResult(StartRunOutcome.Started, run, null);
+            }
+
+            Interlocked.Decrement(ref _openCount);
+        }
+    }
+
+    /// <summary>Takes one open-run slot, or returns <see langword="false"/> when <see cref="CaptureLimits.MaxOpenRuns"/> are already taken.</summary>
+    private bool TryReserveOpenSlot()
+    {
+        // Only ever raised while below the bound, so the count never reads past it and a concurrent start is
+        // never refused while a slot is free.
+        var current = Volatile.Read(ref _openCount);
+        while (current < _limits.MaxOpenRuns)
+        {
+            var observed = Interlocked.CompareExchange(ref _openCount, current + 1, current);
+            if (observed == current)
+            {
+                return true;
+            }
+
+            current = observed;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Queues a just-opened run for the age bound, when <see cref="CaptureLimits.MaxOpenRunAge"/> is set.
+    /// Entries for runs that have completed since are compacted away once they outnumber the open runs, so
+    /// the queue never holds much more than twice <see cref="CaptureLimits.MaxOpenRuns"/> entries and each
+    /// entry is copied a constant number of times on average.
+    /// </summary>
+    private void TrackOpened(Guid runId, RunState state)
+    {
+        if (_limits.MaxOpenRunAge is null)
+        {
+            return;
+        }
+
+        lock (_openGate)
+        {
+            // Read under the lock, so the queue is in start order and its head is the run that expires first.
+            _opened.Enqueue(new OpenedRun(runId, state, _timeProvider.GetTimestamp()));
+
+            if (_opened.Count > (2 * Math.Max(Volatile.Read(ref _openCount), 0)) + 16)
+            {
+                _opened = new Queue<OpenedRun>(_opened.Where(entry => !entry.State.IsCompleted));
+            }
+
+            PublishOldestOpened();
         }
     }
 
@@ -574,14 +666,48 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                     : new CompleteRunResult(CompleteRunOutcome.Conflict, "This completion event was already recorded with different content.");
             }
 
-            state.Completion = (completionEventId, executionStatus, endedAt);
-            state.Run = state.Run with { ExecutionStatus = executionStatus, EndedAt = endedAt };
-
-            Retain(runId, state);
+            MarkCompleted(runId, state, completionEventId, executionStatus, endedAt);
 
             return new CompleteRunResult(CompleteRunOutcome.Recorded, Reason: null);
         }
     }
+
+    /// <summary>
+    /// The one transition from open to completed, whether the host completes the run or the open-run age
+    /// bound does: records the completion, frees the run's open slot, and queues it as a completed run.
+    /// Called under <paramref name="state"/>'s lock, with the run not yet completed.
+    /// </summary>
+    private void MarkCompleted(Guid runId, RunState state, Guid completionEventId, RunExecutionStatus executionStatus, DateTimeOffset endedAt)
+    {
+        state.Completion = (completionEventId, executionStatus, endedAt);
+        state.Run = state.Run with { ExecutionStatus = executionStatus, EndedAt = endedAt };
+        state.IsCompleted = true;
+        Interlocked.Decrement(ref _openCount);
+
+        Retain(runId, state);
+    }
+
+    /// <summary>
+    /// The completion event ID under which the open-run age bound completes <paramref name="runId"/>: a
+    /// name-based (SHA-256, RFC 9562 version 8) GUID over a fixed label and the run ID, so it is the same
+    /// every time for the same run and is never the run ID itself.
+    /// </summary>
+    private static Guid ExpiredOpenRunCompletionEventId(Guid runId)
+    {
+        Span<byte> input = stackalloc byte[ExpiredOpenRunLabel.Length + 16];
+        ExpiredOpenRunLabel.CopyTo(input);
+        runId.TryWriteBytes(input[ExpiredOpenRunLabel.Length..], bigEndian: true, out _);
+
+        Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
+        SHA256.HashData(input, hash);
+
+        var bytes = hash[..16];
+        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x80); // version 8
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80); // RFC 9562 variant
+        return new Guid(bytes, bigEndian: true);
+    }
+
+    private static ReadOnlySpan<byte> ExpiredOpenRunLabel => "AgentExperience.Capture.ExpiredOpenRun:"u8;
 
     /// <summary>
     /// Queues a just-completed run at the tail of the completion order and, if that puts more completed
@@ -608,12 +734,15 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     }
 
     /// <summary>
-    /// Drops every completed run older than <see cref="CaptureLimits.CompletedRunRetention"/>. Nothing is
+    /// First completes every open run past <see cref="CaptureLimits.MaxOpenRunAge"/> (see <see cref="ExpireOpenRuns"/>),
+    /// then drops every completed run older than <see cref="CaptureLimits.CompletedRunRetention"/>. Nothing is
     /// locked when the earliest held completion is not yet due; otherwise the call waits for the lock, so
     /// it never answers for a run that is already due to be dropped.
     /// </summary>
     private void EvictExpired()
     {
+        ExpireOpenRuns();
+
         var oldest = Volatile.Read(ref _oldestCompletedAtTimestamp);
         if (oldest == long.MaxValue)
         {
@@ -657,6 +786,72 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// <summary>Publishes the head's completion time for the lock-free check in <see cref="EvictExpired"/>. Called under <see cref="_retentionGate"/>.</summary>
     private void PublishOldest() =>
         Volatile.Write(ref _oldestCompletedAtTimestamp, _completed.TryPeek(out var head) ? head.CompletedAt : long.MaxValue);
+
+    /// <summary>
+    /// Completes, as <see cref="RunExecutionStatus.Cancelled"/>, every open run older than
+    /// <see cref="CaptureLimits.MaxOpenRunAge"/>, so it is then held and dropped like any completed run.
+    /// Nothing is locked when the earliest opened run is not yet due; otherwise the call waits for the lock,
+    /// so it never answers for a run that is already due to be completed.
+    /// </summary>
+    private void ExpireOpenRuns()
+    {
+        if (_limits.MaxOpenRunAge is not { } maxAge)
+        {
+            return;
+        }
+
+        var oldest = Volatile.Read(ref _oldestOpenedAtTimestamp);
+        if (oldest == long.MaxValue)
+        {
+            return;
+        }
+
+        var now = _timeProvider.GetTimestamp();
+        if (_timeProvider.GetElapsedTime(oldest, now) < maxAge)
+        {
+            return;
+        }
+
+        lock (_openGate)
+        {
+            while (_opened.TryPeek(out var head))
+            {
+                // A run completed since it was queued has already left the open count: just let go of it.
+                if (!head.State.IsCompleted)
+                {
+                    if (_timeProvider.GetElapsedTime(head.OpenedAt, now) < maxAge)
+                    {
+                        break;
+                    }
+
+                    lock (head.State.Gate)
+                    {
+                        // Re-checked under the run's lock: the host may have completed it a moment ago.
+                        if (head.State.Completion is null)
+                        {
+                            MarkCompleted(
+                                head.RunId,
+                                head.State,
+                                ExpiredOpenRunCompletionEventId(head.RunId),
+                                RunExecutionStatus.Cancelled,
+                                Later(_timeProvider.GetUtcNow(), head.State.Run.StartedAt));
+                        }
+                    }
+                }
+
+                _opened.Dequeue();
+            }
+
+            PublishOldestOpened();
+        }
+    }
+
+    /// <summary>An expired run never ends before the start time its host supplied, whatever the clock says now.</summary>
+    private static DateTimeOffset Later(DateTimeOffset a, DateTimeOffset b) => a >= b ? a : b;
+
+    /// <summary>Publishes the head's start time for the lock-free check in <see cref="ExpireOpenRuns"/>. Called under <see cref="_openGate"/>.</summary>
+    private void PublishOldestOpened() =>
+        Volatile.Write(ref _oldestOpenedAtTimestamp, _opened.TryPeek(out var head) ? head.OpenedAt : long.MaxValue);
 
     /// <summary>
     /// Decides, under <paramref name="state"/>'s lock, whether <paramref name="request"/> can be
@@ -889,8 +1084,21 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         public ExperienceRun Run = run;
         public readonly Dictionary<Guid, AppendAttemptRequest> SeenAttempts = new();
         public (Guid EventId, RunExecutionStatus Status, DateTimeOffset EndedAt)? Completion;
+
+        // Set once, under Gate, with Completion; readable without the lock (Completion itself is a struct
+        // that could be read torn), so the open-run queue can skip a completed run cheaply.
+        private volatile bool _isCompleted;
+
+        public bool IsCompleted
+        {
+            get => _isCompleted;
+            set => _isCompleted = value;
+        }
     }
 
     /// <summary>One completed run on the completion queue, and the monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>) at which this service recorded its completion.</summary>
     private readonly record struct CompletedRun(Guid RunId, RunState State, long CompletedAt);
+
+    /// <summary>One run on the open-run queue, and the monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>) at which this service opened it.</summary>
+    private readonly record struct OpenedRun(Guid RunId, RunState State, long OpenedAt);
 }

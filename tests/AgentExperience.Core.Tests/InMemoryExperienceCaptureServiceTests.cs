@@ -1098,6 +1098,353 @@ public class InMemoryExperienceCaptureServiceTests
         Assert.Equal(Bound, ids.Count(id => service.TryGetRun(id, out _)));
     }
 
+    // -- Story 16.4: bounding the runs held open --
+
+    private static InMemoryExperienceCaptureService CreateOpenBoundService(
+        ManualClock clock,
+        int maxOpen = 10_000,
+        TimeSpan? maxOpenAge = null,
+        int maxRetained = 10_000,
+        TimeSpan? retention = null) =>
+        new(
+            new DefaultSanitizer(PermissiveOptions),
+            GenerousLimits() with
+            {
+                MaxOpenRuns = maxOpen,
+                MaxOpenRunAge = maxOpenAge,
+                MaxRetainedCompletedRuns = maxRetained,
+                CompletedRunRetention = retention ?? TimeSpan.FromHours(24),
+            },
+            clock);
+
+    [Fact]
+    public void CaptureLimits_open_run_bounds_default_to_ten_thousand_runs_and_no_age_limit()
+    {
+        var limits = GenerousLimits();
+
+        Assert.Equal(10_000, limits.MaxOpenRuns);
+        Assert.Null(limits.MaxOpenRunAge);
+        Assert.Equal(TimeSpan.FromMinutes(5), (limits with { MaxOpenRunAge = TimeSpan.FromMinutes(5) }).MaxOpenRunAge);
+        Assert.Null((limits with { MaxOpenRunAge = TimeSpan.FromMinutes(5) } with { MaxOpenRunAge = null }).MaxOpenRunAge);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void CaptureLimits_rejects_a_non_positive_open_run_count(int value)
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => GenerousLimits() with { MaxOpenRuns = value });
+        Assert.Equal(nameof(CaptureLimits.MaxOpenRuns), ex.ParamName);
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public void CaptureLimits_rejects_a_non_positive_open_run_age(long ticks)
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => GenerousLimits() with { MaxOpenRunAge = TimeSpan.FromTicks(ticks) });
+        Assert.Equal(nameof(CaptureLimits.MaxOpenRunAge), ex.ParamName);
+    }
+
+    [Fact]
+    public void At_the_open_run_bound_a_new_run_is_refused_with_capacity_exceeded_and_nothing_is_stored()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: 3);
+        for (var i = 0; i < 3; i++)
+        {
+            StartTestRun(service);
+        }
+
+        var refusedId = Guid.NewGuid();
+        var refused = StartTestRunResult(service, refusedId);
+
+        Assert.Equal(StartRunOutcome.CapacityExceeded, refused.Outcome);
+        Assert.Null(refused.Run);
+        Assert.NotNull(refused.Reason);
+        Assert.False(service.TryGetRun(refusedId, out _));
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service, refusedId).Outcome);
+    }
+
+    [Fact]
+    public void At_the_open_run_bound_continuing_an_open_run_is_never_refused()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: 2);
+        var first = StartTestRun(service).RunId;
+        StartTestRun(service);
+
+        var continued = StartTestRunResult(service, first);
+
+        Assert.Equal(StartRunOutcome.Continued, continued.Outcome);
+        Assert.Equal(first, continued.Run!.RunId);
+
+        // A colliding ID that is not a continuation is still a conflict, not a capacity refusal.
+        Assert.Equal(StartRunOutcome.Conflict, StartTestRunResult(service, first, taskId: "another-task").Outcome);
+    }
+
+    [Fact]
+    public async Task A_run_completing_at_the_open_run_bound_frees_its_slot_for_the_next_new_run()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: 2);
+        var first = StartTestRun(service).RunId;
+        StartTestRun(service);
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service).Outcome);
+
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(first, Guid.NewGuid(), RunExecutionStatus.Completed, clock.GetUtcNow())).Outcome);
+
+        Assert.Equal(StartRunOutcome.Started, StartTestRunResult(service).Outcome);
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service).Outcome);
+
+        // Completing the same run again (a duplicate) frees nothing further.
+        Assert.Equal(CompleteRunOutcome.Conflict, (await service.CompleteRunAsync(first, Guid.NewGuid(), RunExecutionStatus.Completed, clock.GetUtcNow())).Outcome);
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service).Outcome);
+    }
+
+    [Fact]
+    public async Task With_no_open_run_age_set_an_open_run_held_for_days_stays_open()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, retention: TimeSpan.FromMinutes(10));
+        var runId = StartTestRun(service).RunId;
+
+        clock.Advance(TimeSpan.FromDays(30));
+
+        var run = MustGetRun(service, runId);
+        Assert.Null(run.ExecutionStatus);
+        Assert.Null(run.EndedAt);
+        Assert.Equal(AppendAttemptOutcome.Recorded, (await service.AppendAttemptAsync(runId, MakeAttemptRequest())).Outcome);
+    }
+
+    [Theory]
+    [MemberData(nameof(ServiceMethods))]
+    public async Task An_open_run_past_its_age_is_completed_as_cancelled_whichever_method_is_the_first_call(string method)
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpenAge: TimeSpan.FromMinutes(5), retention: TimeSpan.FromMinutes(10));
+        var runId = StartTestRunResult(service, startedAt: clock.GetUtcNow()).Run!.RunId;
+        Assert.Equal(AppendAttemptOutcome.Recorded, (await service.AppendAttemptAsync(runId, MakeAttemptRequest())).Outcome);
+
+        clock.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromTicks(1));
+        Assert.Null(MustGetRun(service, runId).ExecutionStatus);
+        clock.Advance(TimeSpan.FromTicks(1));
+        var expiredAt = clock.GetUtcNow();
+
+        // While open, every one of these calls would be accepted; completed by the bound, each is refused as for a finished run.
+        switch (method)
+        {
+            case "TryGetRun":
+                break;
+            case "AppendAttempt":
+                Assert.Equal(AppendAttemptOutcome.Conflict, (await service.AppendAttemptAsync(runId, MakeAttemptRequest())).Outcome);
+                break;
+            case "CompleteRun":
+                Assert.Equal(CompleteRunOutcome.Conflict, (await service.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, clock.GetUtcNow())).Outcome);
+                break;
+            case "RecordExposure":
+                Assert.Equal(RecordExposureOutcome.Conflict, service.RecordExposure(runId, [new RunExposure(Guid.NewGuid(), 1)]).Outcome);
+                break;
+            case "StartRun":
+                Assert.Equal(StartRunOutcome.Conflict, StartTestRunResult(service, runId).Outcome);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(method), method, null);
+        }
+
+        var run = MustGetRun(service, runId);
+        Assert.Equal(RunExecutionStatus.Cancelled, run.ExecutionStatus);
+        Assert.Equal(expiredAt, run.EndedAt);
+        Assert.Single(run.Attempts);
+
+        // From here it is a completed run, kept for the completed-run retention and then dropped.
+        clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromTicks(1));
+        Assert.True(service.TryGetRun(runId, out _));
+        clock.Advance(TimeSpan.FromTicks(1));
+        await AssertAnswersAsUnknownAsync(service, runId, Guid.NewGuid());
+    }
+
+    [Fact]
+    public void An_open_run_expired_by_its_age_never_ends_before_its_host_supplied_start()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpenAge: TimeSpan.FromMinutes(5));
+        var startedAt = clock.GetUtcNow().AddHours(3);    // the host's clock is ahead of the service's
+        var runId = StartTestRunResult(service, startedAt: startedAt).Run!.RunId;
+
+        clock.Advance(TimeSpan.FromMinutes(5));
+
+        var run = MustGetRun(service, runId);
+        Assert.Equal(RunExecutionStatus.Cancelled, run.ExecutionStatus);
+        Assert.Equal(startedAt, run.EndedAt);
+    }
+
+    [Fact]
+    public async Task An_open_run_completed_by_its_age_refuses_a_late_host_completion_under_any_event_id()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpenAge: TimeSpan.FromMinutes(5));
+        var runId = StartTestRun(service).RunId;
+        clock.Advance(TimeSpan.FromMinutes(6));
+
+        Assert.Equal(CompleteRunOutcome.Conflict, (await service.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, clock.GetUtcNow())).Outcome);
+
+        // The bound's own event ID is derived from the run ID, but is not the run ID itself.
+        Assert.Equal(CompleteRunOutcome.Conflict, (await service.CompleteRunAsync(runId, runId, RunExecutionStatus.Cancelled, clock.GetUtcNow())).Outcome);
+        Assert.Equal(AppendAttemptOutcome.Conflict, (await service.AppendAttemptAsync(runId, MakeAttemptRequest())).Outcome);
+        Assert.Equal(RunExecutionStatus.Cancelled, MustGetRun(service, runId).ExecutionStatus);
+    }
+
+    [Fact]
+    public async Task Open_runs_age_out_in_start_order_and_a_run_completed_by_the_host_is_never_cancelled()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: 2, maxOpenAge: TimeSpan.FromMinutes(5));
+        var first = StartTestRun(service).RunId;
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var second = StartTestRun(service).RunId;
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(first, Guid.NewGuid(), RunExecutionStatus.Failed, clock.GetUtcNow())).Outcome);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var third = StartTestRun(service).RunId;
+
+        clock.Advance(TimeSpan.FromMinutes(2));     // `first`'s queue entry is due, but it already completed
+        Assert.Equal(RunExecutionStatus.Failed, MustGetRun(service, first).ExecutionStatus);
+        Assert.Null(MustGetRun(service, second).ExecutionStatus);
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service).Outcome);
+
+        clock.Advance(TimeSpan.FromMinutes(2));     // `second` is due; `third` is not
+        Assert.Equal(StartRunOutcome.Started, StartTestRunResult(service).Outcome);
+        Assert.Equal(RunExecutionStatus.Cancelled, MustGetRun(service, second).ExecutionStatus);
+        Assert.Null(MustGetRun(service, third).ExecutionStatus);
+    }
+
+    [Fact]
+    public async Task Concurrent_starts_never_open_more_runs_than_the_bound()
+    {
+        const int Bound = 64;
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: Bound);
+        var outcomes = new System.Collections.Concurrent.ConcurrentBag<StartRunOutcome>();
+
+        await Parallel.ForEachAsync(Enumerable.Range(0, 4_000), (_, _) =>
+        {
+            outcomes.Add(StartTestRunResult(service).Outcome);
+            return ValueTask.CompletedTask;
+        });
+
+        Assert.Equal(Bound, outcomes.Count(o => o == StartRunOutcome.Started));
+        Assert.Equal(4_000 - Bound, outcomes.Count(o => o == StartRunOutcome.CapacityExceeded));
+    }
+
+    [Fact]
+    public async Task Parallel_starts_of_one_run_id_open_it_once_and_take_a_single_slot()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: 2);
+        var runId = Guid.NewGuid();
+        var outcomes = new System.Collections.Concurrent.ConcurrentBag<StartRunOutcome>();
+
+        await Parallel.ForEachAsync(Enumerable.Range(0, 1_000), (_, _) =>
+        {
+            outcomes.Add(StartTestRunResult(service, runId).Outcome);
+            return ValueTask.CompletedTask;
+        });
+
+        Assert.Equal(1, outcomes.Count(o => o == StartRunOutcome.Started));
+        Assert.Equal(999, outcomes.Count(o => o == StartRunOutcome.Continued));
+        Assert.Equal(StartRunOutcome.Started, StartTestRunResult(service).Outcome);
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service).Outcome);
+    }
+
+    [Fact]
+    public async Task A_duplicate_completion_does_not_free_a_second_open_slot()
+    {
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: 3);
+        var first = StartTestRun(service).RunId;
+        StartTestRun(service);
+        StartTestRun(service);
+
+        var eventId = Guid.NewGuid();
+        var endedAt = clock.GetUtcNow();
+        Assert.Equal(CompleteRunOutcome.Recorded, (await service.CompleteRunAsync(first, eventId, RunExecutionStatus.Completed, endedAt)).Outcome);
+        Assert.Equal(CompleteRunOutcome.DuplicateNoOp, (await service.CompleteRunAsync(first, eventId, RunExecutionStatus.Completed, endedAt)).Outcome);
+
+        Assert.Equal(StartRunOutcome.Started, StartTestRunResult(service).Outcome);
+        Assert.Equal(StartRunOutcome.CapacityExceeded, StartTestRunResult(service).Outcome);
+    }
+
+    [Fact]
+    public async Task The_open_run_queue_lets_go_of_completed_runs_even_behind_a_long_lived_open_run()
+    {
+        const int MaxOpen = 50;
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(clock, maxOpen: MaxOpen, maxOpenAge: TimeSpan.FromHours(1), maxRetained: 100);
+        var longLived = StartTestRun(service).RunId;    // at the head of the queue throughout, never due
+
+        for (var i = 0; i < 20_000; i++)
+        {
+            await StartAndCompleteAsync(service, clock);
+        }
+
+        // White-box: the queue holds entries for runs completed since they were queued only until it is compacted.
+        var queue = (System.Collections.ICollection)typeof(InMemoryExperienceCaptureService)
+            .GetField("_opened", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(service)!;
+        Assert.InRange(queue.Count, 1, (2 * MaxOpen) + 17);
+        Assert.Null(MustGetRun(service, longLived).ExecutionStatus);
+    }
+
+    [Fact]
+    public void Soak_fifty_thousand_runs_never_completed_stay_within_both_bounds()
+    {
+        const int MaxOpen = 200;
+        const int MaxRetained = 1_000;
+        const int Runs = 50_000;
+        var clock = new ManualClock();
+        var service = CreateOpenBoundService(
+            clock,
+            maxOpen: MaxOpen,
+            maxOpenAge: TimeSpan.FromSeconds(30),
+            maxRetained: MaxRetained,
+            retention: TimeSpan.FromMinutes(5));
+
+        var started = new List<Guid>(Runs);
+        var refused = 0;
+        for (var i = 1; i <= Runs; i++)
+        {
+            var result = StartTestRunResult(service);
+            if (result.Outcome == StartRunOutcome.Started)
+            {
+                started.Add(result.Run!.RunId);
+            }
+            else
+            {
+                Assert.Equal(StartRunOutcome.CapacityExceeded, result.Outcome);
+                refused++;
+            }
+
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+
+            if (i % 2_500 == 0)
+            {
+                var held = started.Select(id => service.TryGetRun(id, out var run) ? run : null).OfType<ExperienceRun>().ToList();
+                Assert.InRange(held.Count(run => run.ExecutionStatus is null), 1, MaxOpen);
+                Assert.InRange(held.Count(run => run.ExecutionStatus is not null), 0, MaxRetained);
+                Assert.All(held.Where(run => run.ExecutionStatus is not null), run => Assert.Equal(RunExecutionStatus.Cancelled, run.ExecutionStatus));
+            }
+        }
+
+        // 300 runs would be open at once without the count bound, so it did refuse some.
+        Assert.True(refused > 0);
+
+        // Once everything has aged out of both bounds, nothing is held at all.
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(StartRunOutcome.Started, StartTestRunResult(service).Outcome);
+        clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.DoesNotContain(started, id => service.TryGetRun(id, out _));
+    }
+
     /// <summary>A dropped run must get, on every method, the answer an ID the service never saw gets.</summary>
     private static async Task AssertAnswersAsUnknownAsync(InMemoryExperienceCaptureService service, Guid dropped, Guid unknown)
     {
