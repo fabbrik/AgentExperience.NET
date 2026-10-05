@@ -2,7 +2,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 
 /// <summary>
 /// A validated, immutable snapshot of the host's <see cref="ExperienceInjectionOptions.ApproachArguments"/>:
-/// per tool name, the argument keys whose values the <c>Approach:</c> line may show, in the order the
+/// per tool name, the argument keys whose values the <c>Tried:</c> lines may show, in the order the
 /// host listed them.
 /// </summary>
 /// <remarks>
@@ -17,7 +17,7 @@ internal sealed class ApproachArgumentAllowlist
     internal const int MaxKeyLength = 64;
 
     /// <summary>
-    /// Characters a key may not contain, because the <c>Approach:</c> line uses them to delimit an
+    /// Characters a key may not contain, because the <c>Tried:</c> lines use them to delimit an
     /// argument: a key holding one could make one argument read as two, or as the end of the call.
     /// A key is written into the line as configured, so it is refused here rather than escaped there.
     /// </summary>
@@ -27,7 +27,7 @@ internal sealed class ApproachArgumentAllowlist
 
     private ApproachArgumentAllowlist(Dictionary<string, string[]> keys) => _keys = keys;
 
-    /// <summary>The empty allowlist: every <c>Approach:</c> line is tool names only.</summary>
+    /// <summary>The empty allowlist: every <c>Tried:</c> line is tool names only.</summary>
     internal static ApproachArgumentAllowlist Empty { get; } = new(new Dictionary<string, string[]>(StringComparer.Ordinal));
 
     /// <summary>Whether no argument of any tool may be shown.</summary>

@@ -511,7 +511,7 @@ public static class ReuseBaselineReport
                 record.FailedAttempts));
             Line(text, string.Format(
                 CultureInfo.InvariantCulture,
-                "      working approach on its Approach: line: {0} (read out of the record's final attempt, not from the task set)",
+                "      working approach on its Tried: line: {0} (read out of the record's final attempt, not from the task set)",
                 record.WorkingStrategy is null ? "(none)" : "'" + record.WorkingStrategy + "'"));
         }
 
@@ -520,12 +520,13 @@ public static class ReuseBaselineReport
         Line(text, "  faces exactly the same stored experience and the two arms differ by the condition alone.");
         Line(text, string.Empty);
         Line(text, "  The records were written by the library's shipped DefaultExperienceReflector alone; this harness");
-        Line(text, "  registers no reflector of its own. That reflector is domain-blind -- its lesson names the task");
-        Line(text, "  and the checks that passed, never how -- and in this experiment every strategy is the same single");
+        Line(text, "  registers no reflector of its own. That reflector is domain-blind -- its lesson counts the");
+        Line(text, "  attempts, classes each failure and names the deciding checks, never a tool or an argument -- and");
+        Line(text, "  in this experiment every strategy is the same single");
         Line(text, "  tool, distinguished only by its 'strategy' argument, so the ordered tool NAMES on the block's");
-        Line(text, "  Approach: line cannot tell the strategies apart either. What carries the working approach to a");
+        Line(text, "  Tried: line cannot tell the strategies apart either. What carries the working approach to a");
         Line(text, "  later run is one host setting: ExperienceInjectionOptions.ApproachArguments allowlists the");
-        Line(text, "  'strategy' argument of run_incident_check, so the library's own Approach: line shows its");
+        Line(text, "  'strategy' argument of run_incident_check, so the library's own Tried: line shows its");
         Line(text, "  sanitized value next to the tool name. That allowlist is a legitimate host responsibility and it");
         Line(text, "  is also a load-bearing part of why the arms differ, so it is named here rather than left in");
         Line(text, "  source. Without it, nothing about a working approach would reach a later run.");

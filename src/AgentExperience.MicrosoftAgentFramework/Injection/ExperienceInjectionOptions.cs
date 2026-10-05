@@ -193,7 +193,7 @@ public sealed record ExperienceInjectionContext(
 /// <param name="GrantDisclosure">
 /// The permitting grant's <see cref="ExperienceGrant.Disclosure"/>, from the same re-read, when
 /// <paramref name="SharedByGrant"/> is <see langword="true"/>: what the block will show of this record.
-/// Under <see cref="ExperienceGrantDisclosure.LessonOnly"/> the <c>Approach:</c> line is omitted. A
+/// Under <see cref="ExperienceGrantDisclosure.LessonOnly"/> the <c>Tried:</c> and <c>Worked:</c> lines are omitted. A
 /// store that did not report a level is shown here, and rendered, as
 /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>. <see langword="null"/> when the record is the
 /// requester's own. It is informational: a host may deny on it, but nothing it returns can widen it.
@@ -367,7 +367,7 @@ public sealed class ExperienceInjectionOptions
     /// <para>
     /// The gate sits between the re-read and <see cref="DecideInjection"/>, so it runs after the
     /// <see cref="ExperienceInjectionLimits.MaxRecords"/> cut: a gated record still takes a record slot, and the
-    /// agent may get fewer records than the limit. It checks only the tools the <c>Approach:</c> line names, not
+    /// agent may get fewer records than the limit. It checks only the tools of the attempt the <c>Worked:</c> line names (not an earlier attempt), not
     /// tool names the lesson text may mention. <see cref="ReceivingAgentCapabilities.ToolRiskClasses"/> has no
     /// effect without <see cref="ReceivingAgentCapabilities.MaxRiskClass"/>; <see cref="ToolRiskClass.Critical"/>
     /// as the maximum disables the risk check; and an available tool missing from
@@ -436,7 +436,7 @@ public sealed class ExperienceInjectionOptions
 
     /// <summary>
     /// Optional, empty by default. Per tool name, the argument keys whose values the injected
-    /// <c>Approach:</c> line may show next to that tool's name, for example
+    /// <c>Tried:</c> lines may show next to that tool's name, for example
     /// <c>ApproachArguments = { ["run_incident_check"] = ["strategy"] }</c>. Leave it empty and the
     /// block is byte for byte what it is without this option: tool names only.
     /// </summary>
@@ -510,6 +510,22 @@ public sealed class ExperienceInjectionOptions
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
     /// <summary>
+    /// How much a <c>Tried:</c> line says about an attempt that ended with an error.
+    /// <see cref="AttemptFailureDetail.ErrorClass"/> (the default) shows the error's class -- an exception type name,
+    /// an exit code, an HTTP status, a POSIX errno name or a timeout, built only from tokens the library recognises
+    /// and never from other text in the error. <see cref="AttemptFailureDetail.Excerpt"/> adds the error's first
+    /// line, cut to <see cref="HistoricalReferenceWriter.MaxErrorExcerptLength"/> characters, neutralized and quoted;
+    /// <see cref="AttemptFailureDetail.None"/> shows <c>failed</c> alone.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AttemptFailureDetail.Excerpt"/> lets captured error text reach a later model: error messages often
+    /// echo paths, hosts, identifiers or content a tool read, which the capture-time sanitizer classified only by
+    /// field. A record borrowed through a sharing grant never shows an excerpt, only the class. A value that is not
+    /// a defined <see cref="AttemptFailureDetail"/> is refused when the provider is constructed.
+    /// </remarks>
+    public AttemptFailureDetail FailureDetail { get; init; } = AttemptFailureDetail.ErrorClass;
+
+    /// <summary>
     /// Validates this instance, in the same style as
     /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/>: a misconfigured
     /// provider fails when it is constructed, not on the first invocation it silently does nothing on.
@@ -530,6 +546,13 @@ public sealed class ExperienceInjectionOptions
             throw new ArgumentException(
                 "ModelAuthoredLessons must be a defined ModelAuthoredLessonPolicy value.",
                 $"{paramName}.{nameof(ModelAuthoredLessons)}");
+        }
+
+        if (!Enum.IsDefined(FailureDetail))
+        {
+            throw new ArgumentException(
+                "FailureDetail must be a defined AttemptFailureDetail value.",
+                $"{paramName}.{nameof(FailureDetail)}");
         }
 
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)

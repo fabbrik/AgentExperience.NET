@@ -11,8 +11,8 @@ namespace AgentExperience.ReuseBaseline.Experiment;
 /// <para>
 /// <b>The policy, in full.</b> On each attempt the client picks the next strategy from a candidate
 /// list it has not tried yet, and asks for the incident check under it. The candidate list is:
-/// every strategy named inside an injected Historical Reference block, in the order the block names
-/// them -- which is rank order -- followed by the task set's fixed exploration order with those
+/// every strategy named inside an injected Historical Reference block, outside the <c>Tried:</c> lines of attempts
+/// its <c>Worked:</c> lines do not name, in the order the block names them -- which is rank order -- followed by the task set's fixed exploration order with those
 /// already listed removed. With no injected block the candidate list is exactly the exploration
 /// order. There is no other input: the client cannot see the task's resolving strategy, and it
 /// cannot see which condition it is running under.
@@ -161,13 +161,57 @@ internal sealed class PolicyChatClient : IChatClient
         _contextRead = true;
         SeenBlock = block;
 
+        // Everything but the Tried: lines of attempts that did not work: since story 18.1 the block lists each
+        // record's attempts there, failed ones included, and a strategy named on one of those is history, not a
+        // recommendation. The attempt the Worked: line names, the lesson and every other field are read as before.
+        var worked = string.Join("\n", OutsideTriedLines(block));
+
         foreach (var strategy in _explorationOrder
-            .Select(strategy => (Strategy: strategy, At: block.IndexOf(strategy, StringComparison.Ordinal)))
+            .Select(strategy => (Strategy: strategy, At: worked.IndexOf(strategy, StringComparison.Ordinal)))
             .Where(found => found.At >= 0)
             .OrderBy(found => found.At)
             .Select(found => found.Strategy))
         {
             _fromContext.Add(strategy);
+        }
+    }
+
+    /// <summary>
+    /// The block's lines with every <c>Tried:</c> line and the bullets under it left out, except the bullet of the
+    /// attempt the record's <c>Worked:</c> line names: that bullet carries the calls of the attempt that worked.
+    /// </summary>
+    private static IEnumerable<string> OutsideTriedLines(string block)
+    {
+        var bullets = new List<string>();
+        var inTried = false;
+        foreach (var line in block.Split('\n'))
+        {
+            if (line == "Tried:")
+            {
+                inTried = true;
+                bullets.Clear();
+                continue;
+            }
+
+            if (inTried && line.StartsWith("  - ", StringComparison.Ordinal))
+            {
+                bullets.Add(line);
+                continue;
+            }
+
+            inTried = false;
+            if (line.StartsWith("Worked: attempt ", StringComparison.Ordinal))
+            {
+                var number = line["Worked: attempt ".Length..].Split(' ')[0];
+                var worked = bullets.FirstOrDefault(bullet => bullet.StartsWith("  - attempt " + number + ": ", StringComparison.Ordinal));
+                if (worked is not null)
+                {
+                    yield return worked;
+                }
+            }
+
+            bullets.Clear();
+            yield return line;
         }
     }
 

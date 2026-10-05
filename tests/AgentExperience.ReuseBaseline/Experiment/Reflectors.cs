@@ -4,7 +4,7 @@ using AgentExperience.Core.Reflections;
 namespace AgentExperience.ReuseBaseline.Experiment;
 
 /// <summary>
-/// Which strategy a run's final attempt used, read the way the injected <c>Approach:</c> line reads it.
+/// Which strategy a run's final attempt used, read the way the injected <c>Tried:</c> line reads it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,7 +15,7 @@ namespace AgentExperience.ReuseBaseline.Experiment;
 /// file held a host <c>WorkingApproachReflector</c> that appended it to the lesson. The experiment now
 /// allowlists that one argument through <c>ExperienceInjectionOptions.ApproachArguments</c> instead,
 /// and the shipped default reflector alone is what the learning phase runs: the working strategy
-/// reaches a later run on the block's own <c>Approach:</c> line, derived by the library from the
+/// reaches a later run on the block's own <c>Tried:</c> line, derived by the library from the
 /// record's attempts.
 /// </para>
 /// <para>
@@ -25,7 +25,7 @@ namespace AgentExperience.ReuseBaseline.Experiment;
 /// type never sees. It does not repeat the writer's other conditions -- a verified, unquarantined,
 /// owned record with unique attempt numbers and the call within the first
 /// <c>MaxApproachToolNames</c> -- all of which hold for every record this experiment learns; a
-/// record that broke one would name a strategy here that its <c>Approach:</c> line does not show,
+/// record that broke one would name a strategy here that its <c>Tried:</c> line does not show,
 /// and the attribution check would then refuse the run rather than credit it.
 /// </para>
 /// </remarks>

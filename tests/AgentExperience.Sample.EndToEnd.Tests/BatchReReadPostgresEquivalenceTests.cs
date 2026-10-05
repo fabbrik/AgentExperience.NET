@@ -147,11 +147,11 @@ public sealed class BatchReReadPostgresEquivalenceTests(SamplePostgresFixture fi
             ],
             batched.Result.Omitted.Select(omission => omission.Reason));
 
-        // The same block, byte for byte -- the approach line withheld for the lesson-only grant and
+        // The same block, byte for byte -- the attempt lines withheld for the lesson-only grant and
         // rendered for the lesson-and-approach one, from the level the re-read itself returned.
         Assert.NotNull(batched.Block);
         Assert.Equal(perRecord.Block, batched.Block);
-        Assert.Contains("The grant withholds this lesson's approach.", batched.Block, StringComparison.Ordinal);
+        Assert.Contains("The grant withholds this lesson's attempts.", batched.Block, StringComparison.Ordinal);
 
         // The same access rows: one per grant-delivered record, naming the same grant at the same level.
         Assert.Equal(2, batched.Rows.Count);

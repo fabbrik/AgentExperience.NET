@@ -9,10 +9,21 @@ namespace AgentExperience.Core.Reflections;
 /// invariant-culture templates using only the request run's attempts and environment fingerprint
 /// plus the supplied evaluation, so the same request always produces equal content. It never calls
 /// a model, never reads the clock or generates identifiers, never invents a causal explanation
-/// (captured, sanitized error and evaluation-reason text is quoted verbatim instead), and never
+/// (captured, sanitized error text is quoted verbatim in the approach lists instead), and never
 /// produces a reuse-confidence value.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>Lesson</b> (since template 1.1.0, story 18.1): <c>"{Verified|Did not verify|Unverified} after {n} attempt(s)."</c>
+/// (for a Verified, Failed or Unknown verdict), then <c>" Failed: attempt {k} — {error class}."</c> for each attempt
+/// that ended with an error when there are at most two, or <c>" Failed: {count} attempts; last: attempt {k} — {error
+/// class}."</c> when there are more; then, for a verified run whose final attempt ended without one,
+/// <c>" Worked: attempt {m}."</c>; then <c>" Checks: [{check IDs}]."</c> -- the failing checks of a failed run, the
+/// required checks that reached no conclusive result in an unverified one, the passing ones of a verified one -- or
+/// nothing when there are none. An error is reduced to its class (an exception type, an exit code, an HTTP status, an
+/// errno name or a timeout, never its text). No tool name, no evidence ID, no score. The evaluation reason of a run
+/// that did not verify is quoted in the warnings instead.
+/// </para>
 /// <para>
 /// <b>Attempt classification</b> (attempts are read in <see cref="Attempt.SequenceNumber"/> order):
 /// every attempt with a captured <see cref="Attempt.Error"/> is a failed approach. The final attempt,
@@ -45,7 +56,7 @@ namespace AgentExperience.Core.Reflections;
 public sealed class DefaultExperienceReflector : IExperienceReflector
 {
     /// <summary>The version of this reflector's text templates. Bumped whenever any template's wording or structure changes.</summary>
-    public const string TemplateVersion = "1.0.0";
+    public const string TemplateVersion = "1.1.0";
 
     /// <summary>The <see cref="Reflection.Producer"/> value every reflection produced by this implementation carries.</summary>
     public const string ProducerIdentity = "AgentExperience.DefaultExperienceReflector/" + TemplateVersion;
@@ -57,6 +68,9 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
 
     /// <summary>What ends a text this reflector had to cut short: a single ellipsis character.</summary>
     private const string ClipMarker = "\u2026";
+
+    /// <summary>The most failed attempts the lesson lists one by one; with more, it says how many and names the last.</summary>
+    private const int MaxLessonFailedAttempts = 2;
 
     /// <inheritdoc />
     public Task<Reflection> ReflectAsync(ReflectionRequest request, CancellationToken cancellationToken = default)
@@ -102,23 +116,30 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
         var status = outcome.Status;
 
         var evidenceIds = DistinctInOrder(outcome.Evidence.Select(e => e.EvidenceId));
-        var evidenceText = evidenceIds.Count == 0
-            ? "none"
-            : string.Join(", ", evidenceIds.Select(id => id.ToString("D", CultureInfo.InvariantCulture)));
         var scoreText = evaluation.CompletionScore.ToString("R", CultureInfo.InvariantCulture);
         var passingChecks = DistinctInOrder(outcome.Evidence.Where(e => e.Result == CheckResult.Pass).Select(e => e.CheckId));
         var failingChecks = DistinctInOrder(outcome.Evidence.Where(e => e.Result == CheckResult.Fail).Select(e => e.CheckId));
+        var attempts = run.Attempts.OrderBy(a => a.SequenceNumber).ToList();
 
         var warnings = new List<string>();
         var successfulApproaches = new List<string>();
         var failedApproaches = new List<string>();
 
-        // Lesson and verdict warnings -- built only from the supplied evaluation.
-        string lesson;
+        // Lesson -- see Lesson. Verdict warnings -- built only from the supplied evaluation.
+        // The checks the verdict turned on: the failing ones of a failed run, the ones that reached no conclusive
+        // result in an unverified one, and the passing ones of a verified one.
+        var inconclusiveChecks = DistinctInOrder((evaluation.Basis?.RequiredChecks ?? [])
+            .Select(check => check.CheckId)
+            .Where(checkId => !passingChecks.Contains(checkId) && !failingChecks.Contains(checkId)));
+        var lesson = Lesson(status, attempts, status switch
+        {
+            TaskVerificationStatus.Verified => passingChecks,
+            TaskVerificationStatus.Failed => failingChecks,
+            _ => inconclusiveChecks,
+        });
         switch (status)
         {
             case TaskVerificationStatus.Verified:
-                lesson = Invariant($"Task '{run.TaskId}' verified: required checks [{JoinList(passingChecks)}] passed (evidence: {evidenceText}).");
                 warnings.Add("Verification applies only to this run and its captured environment; reuse in another context is not itself verified.");
                 if (evidenceIds.Count == 0)
                 {
@@ -128,16 +149,20 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
                 break;
 
             case TaskVerificationStatus.Failed:
-                lesson = Invariant($"Task '{run.TaskId}' failed verification: required checks [{JoinList(failingChecks)}] failed (evidence: {evidenceText}).") + ReasonSuffix(outcome.Reason);
                 warnings.Add("Not a validated procedure: task verification status is Failed.");
                 warnings.Add(Invariant($"Verification failed: required checks [{JoinList(failingChecks)}] failed."));
                 break;
 
             default:
-                lesson = Invariant($"Task '{run.TaskId}' is unverified: no conclusive verification was reached (completion score {scoreText} under rule {evaluation.RuleVersion}; evidence: {evidenceText}).") + ReasonSuffix(outcome.Reason);
                 warnings.Add("Not a validated procedure: task verification status is Unknown.");
                 warnings.Add("Unverified: not every required check reached a conclusive result in the evaluation.");
                 break;
+        }
+
+        // Captured, sanitized text, quoted verbatim: the lesson carries no free text, so the reason is kept here.
+        if (status != TaskVerificationStatus.Verified && !string.IsNullOrWhiteSpace(outcome.Reason))
+        {
+            warnings.Add(Invariant($"Evaluation reason: {Quote(outcome.Reason)}."));
         }
 
         if (status != TaskVerificationStatus.Verified && evaluation.CompletionScore > 0)
@@ -151,7 +176,6 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
         }
 
         // Attempt classification -- see the type's remarks.
-        var attempts = run.Attempts.OrderBy(a => a.SequenceNumber).ToList();
         if (attempts.Count == 0)
         {
             warnings.Add("No attempts were captured.");
@@ -315,8 +339,54 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
             : Invariant($"Attempt {attempt.SequenceNumber} using tools [{string.Join(", ", toolCalls)}]");
     }
 
-    private static string ReasonSuffix(string? reason) =>
-        string.IsNullOrWhiteSpace(reason) ? string.Empty : Invariant($" Evaluation reason: {Quote(reason)}.");
+    /// <summary>
+    /// The lesson: a short, task-specific summary of what the attempts did, built only from the verdict, the
+    /// attempts' numbers and error classes (<see cref="ErrorClass"/>), and the deciding check IDs. No tool name (so a
+    /// sharing grant that withholds a record's attempts withholds its tools), no evidence ID, no score, and no error
+    /// text beyond its class.
+    /// </summary>
+    /// <param name="status">The verification verdict.</param>
+    /// <param name="attempts">The run's attempts, in sequence order.</param>
+    /// <param name="checks">The failing check IDs of a failed run, the inconclusive ones of an unverified run, the passing ones of a verified run.</param>
+    private static string Lesson(TaskVerificationStatus status, List<Attempt> attempts, IReadOnlyList<string> checks)
+    {
+        var verdict = status switch
+        {
+            TaskVerificationStatus.Verified => "Verified",
+            TaskVerificationStatus.Failed => "Did not verify",
+            _ => "Unverified",
+        };
+
+        var lesson = new System.Text.StringBuilder(Invariant($"{verdict} after {attempts.Count} {(attempts.Count == 1 ? "attempt" : "attempts")}."));
+        var failedAttempts = attempts.Where(a => a.Error is not null).ToList();
+        if (failedAttempts.Count > MaxLessonFailedAttempts)
+        {
+            // Too many to list: how many, and how the last one failed.
+            var last = failedAttempts[^1];
+            lesson.Append(Invariant($" Failed: {failedAttempts.Count} attempts; last: attempt {last.SequenceNumber} \u2014 {ErrorClass.Of(last.Error)}."));
+        }
+        else
+        {
+            foreach (var failed in failedAttempts)
+            {
+                lesson.Append(Invariant($" Failed: attempt {failed.SequenceNumber} \u2014 {ErrorClass.Of(failed.Error)}."));
+            }
+        }
+
+        // The same rule as the successful approach below: only the final attempt of a verified run, and only when
+        // it ended without an error.
+        if (status == TaskVerificationStatus.Verified && attempts.Count > 0 && attempts[^1].Error is null)
+        {
+            lesson.Append(Invariant($" Worked: attempt {attempts[^1].SequenceNumber}."));
+        }
+
+        if (checks.Count > 0)
+        {
+            lesson.Append(Invariant($" Checks: [{JoinList(checks)}]."));
+        }
+
+        return lesson.ToString();
+    }
 
     /// <summary>
     /// Wraps captured text in double quotes, escaping backslash, double quote, CR and LF so the quoted

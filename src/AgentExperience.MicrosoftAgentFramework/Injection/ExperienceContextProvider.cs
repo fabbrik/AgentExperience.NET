@@ -29,7 +29,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// through <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, and any it still returns is dropped before
 /// that limit is applied, and again after the re-read); with
 /// <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
-/// capability gate then drops each record whose <c>Approach:</c> line names a tool the agent lacks or may not use
+/// capability gate then drops each record whose working attempt (the one its <c>Worked:</c> line names) calls a tool the agent lacks or may not use
 /// -- after the record limit, so a gated record still takes a slot and the agent may get fewer records than
 /// the limit; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
 /// asked about each survivor; and <see cref="HistoricalReferenceWriter"/> renders the rest inside the
@@ -470,7 +470,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 _approachArguments,
                 recheckOutcome.Withdrawn,
                 session?.RemainingBytes,
-                _retrieval.IsContentConfirmed);
+                _retrieval.IsContentConfirmed,
+                _options.FailureDetail);
         }
         catch (Exception ex)
         {
@@ -1154,8 +1155,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
             // The capability gate (story 10.4): a record whose verified approach the receiving agent
             // cannot, or must not, carry out is kept out, on the record as it stands now and on exactly the
-            // tools its Approach: line would name -- none for a borrowed record whose grant withholds the
-            // line, so the gate cannot be used to probe a lender's tool names. Before the host's decision,
+            // tools of the attempt its Worked: line names -- not an earlier attempt's, which is history, and none
+            // for a borrowed record whose grant withholds the lines, so the gate cannot be used to probe a lender's
+            // tool names. Before the host's decision,
             // so a gated record is never shown to it; with no detail, so no tool name reaches the result. It
             // withdraws nothing: like the environment attributes, it is about this agent, not the record.
             if (_capabilityGate is { } gate

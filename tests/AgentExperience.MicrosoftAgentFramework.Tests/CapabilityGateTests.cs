@@ -51,7 +51,7 @@ public class CapabilityGateTests
         Assert.Equal(InjectionOutcome.Injected, harness.Last.Outcome);
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
         Assert.Empty(harness.Last.Omitted);
-        Assert.Contains("called these tools, in order: a -> b.", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: a, b \u2192 completed\n", harness.InjectedText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -135,7 +135,7 @@ public class CapabilityGateTests
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
 
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
-        Assert.Contains(HistoricalReferenceWriter.ApproachClamped, harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains(HistoricalReferenceWriter.AttemptToolsClamped, harness.InjectedText(), StringComparison.Ordinal);
     }
 
     // ---- The risk check ------------------------------------------------------------------------------
@@ -236,7 +236,35 @@ public class CapabilityGateTests
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
 
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
-        Assert.DoesNotContain("Approach:", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Worked:", harness.InjectedText(), StringComparison.Ordinal);
+
+        // Its Tried: line still names the unavailable tool: what a run tried is history, not an approach to carry out.
+        Assert.Contains("  - attempt 0: unlisted_tool \u2192 completed\n", harness.InjectedText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_failed_earlier_attempt_calling_a_tool_the_agent_lacks_does_not_gate_the_record()
+    {
+        var harness = new Harness
+        {
+            ReceivingAgent = new ReceivingAgentCapabilities
+            {
+                AvailableTools = Set("safe_tool"),
+                MaxRiskClass = ToolRiskClass.Low,
+                ToolRiskClasses = new Dictionary<string, ToolRiskClass> { ["safe_tool"] = ToolRiskClass.Low },
+            },
+        };
+        var worked = Attempts("safe_tool")[0];
+        var failed = Attempts("missing_tool")[0] with { SequenceNumber = 0, Error = "HTTP 503" };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts: [failed, worked with { SequenceNumber = 1 }]));
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // The gate checks only the attempt the Worked: line names; the failed attempt is shown as history.
+        Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
+        Assert.Empty(harness.Last.Omitted);
+        Assert.Contains("  - attempt 0: missing_tool \u2192 failed (HTTP 503)\n", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains("Worked: attempt 1" + HistoricalReferenceWriter.WorkedSuffix, harness.InjectedText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -248,7 +276,7 @@ public class CapabilityGateTests
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
 
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
-        Assert.Contains(HistoricalReferenceWriter.NoToolsUsed, harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: " + HistoricalReferenceWriter.NoToolCalled, harness.InjectedText(), StringComparison.Ordinal);
     }
 
     // ---- One check set -------------------------------------------------------------------------------

@@ -67,12 +67,31 @@ public class HistoricalReferenceApproachArgumentsTests
     private static string Write(ExperienceRecord record, IEnumerable<KeyValuePair<string, IReadOnlyList<string>>>? allowlist) =>
         HistoricalReferenceWriter.Write([new RankedExperience(record, 0.5d, [])], ExperienceInjectionLimits.Default, allowlist).Text;
 
-    private static string ApproachLine(string text) =>
-        Assert.Single(text.Split('\n'), line => line.StartsWith("Approach: ", StringComparison.Ordinal));
+    /// <summary>
+    /// The final attempt's <c>Tried:</c> line, which carries its calls (the <c>Worked:</c> line names only the attempt),
+    /// without its closing <c>" → completed"</c>.
+    /// </summary>
+    private static string ApproachLine(string text)
+    {
+        var lines = text.Split('\n');
+        var at = Array.IndexOf(lines, "Tried:");
+        Assert.True(at >= 0, "No Tried: line.");
+        var last = lines.Skip(at + 1).TakeWhile(line => line.StartsWith("  - ", StringComparison.Ordinal)).Last();
+        var completed = HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted;
+        Assert.EndsWith(completed, last, StringComparison.Ordinal);
+        return last[..^completed.Length];
+    }
 
-    private static string Expected(string steps, bool arguments) =>
-        "Approach: " + HistoricalReferenceWriter.ApproachPrefix + steps + "."
-        + (arguments ? HistoricalReferenceWriter.ApproachArgumentsSuffix : HistoricalReferenceWriter.ApproachSuffix);
+    /// <summary>
+    /// The final attempt's <c>Tried:</c> line for <paramref name="steps"/>, without its outcome, written with
+    /// <c>" -> "</c> between calls for readability. Since story 18.1 the line carries no qualifier, so whether it
+    /// shows arguments changes nothing but the calls themselves.
+    /// </summary>
+    private static string Expected(string steps, bool arguments)
+    {
+        _ = arguments;
+        return "  - attempt 0: " + steps.Replace(" -> ", HistoricalReferenceWriter.ToolSeparator, StringComparison.Ordinal);
+    }
 
     // ---- The default is unchanged -----------------------------------------------------------------
 
@@ -329,10 +348,10 @@ public class HistoricalReferenceApproachArgumentsTests
         // quotes around it are the only ones, and what follows the closing one is the line's own ")."
         var opening = line.IndexOf("strategy=\"", StringComparison.Ordinal) + "strategy=\"".Length;
         var closing = line.IndexOf('"', opening);
-        Assert.Equal(").", line.Substring(closing + 1, 2));
+        Assert.Equal(")", line[(closing + 1)..]);
         Assert.Equal(2, line.Count(character => character == '"'));
         Assert.Contains("x')", line, StringComparison.Ordinal);
-        Assert.DoesNotContain(HistoricalReferenceWriter.ApproachSeparator, line[opening..closing], StringComparison.Ordinal);
+        Assert.DoesNotContain("->", line[opening..closing], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -343,7 +362,7 @@ public class HistoricalReferenceApproachArgumentsTests
         var line = ApproachLine(Write(record, StrategyOnly));
 
         Assert.Contains("(strategy=\"x') - > delete_all(confirm='yes'\")", line, StringComparison.Ordinal);
-        Assert.Single(line.Split(HistoricalReferenceWriter.ApproachSeparator));
+        Assert.Single(line.Split(HistoricalReferenceWriter.ToolSeparator));
     }
 
     [Fact]
@@ -441,7 +460,7 @@ public class HistoricalReferenceApproachArgumentsTests
             .ToArray();
         var line = ApproachLine(Write(RecordWith(calls), StrategyOnly));
 
-        Assert.EndsWith(HistoricalReferenceWriter.ApproachArgumentsSuffix + HistoricalReferenceWriter.ApproachArgumentsClamped, line, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
 
         // Every argument shown is whole (clamped to the value limit and marked, never cut shorter),
         // and together they stay under the line's cap.
@@ -453,8 +472,8 @@ public class HistoricalReferenceApproachArgumentsTests
         Assert.True(shown.Sum(value => "strategy=".Length + value.Length) <= HistoricalReferenceWriter.MaxApproachArgumentsLength);
 
         // Every call is still named, in order: the cap drops arguments, never steps.
-        Assert.Equal(HistoricalReferenceWriter.MaxApproachToolNames, line.Split(HistoricalReferenceWriter.ApproachSeparator).Length);
-        Assert.Contains(HistoricalReferenceWriter.ApproachSeparator + Tool + ".", line, StringComparison.Ordinal);
+        Assert.Equal(HistoricalReferenceWriter.MaxApproachToolNames, line.Split(HistoricalReferenceWriter.ToolSeparator).Length);
+        Assert.EndsWith(HistoricalReferenceWriter.ToolSeparator + Tool + HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -473,10 +492,10 @@ public class HistoricalReferenceApproachArgumentsTests
 
         var line = ApproachLine(Write(RecordWith(calls), allowlist));
 
-        Assert.EndsWith(HistoricalReferenceWriter.ApproachArgumentsClamped, line, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
         Assert.DoesNotContain("tiny-same-call", line, StringComparison.Ordinal);
         Assert.DoesNotContain("tiny-later-call", line, StringComparison.Ordinal);
-        Assert.EndsWith(HistoricalReferenceWriter.ApproachSeparator + Tool + HistoricalReferenceWriter.ApproachSeparator + Tool + "." + HistoricalReferenceWriter.ApproachArgumentsSuffix + HistoricalReferenceWriter.ApproachArgumentsClamped, line, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.ToolSeparator + Tool + HistoricalReferenceWriter.ToolSeparator + Tool + HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -524,7 +543,7 @@ public class HistoricalReferenceApproachArgumentsTests
         }
         else
         {
-            Assert.DoesNotContain("Approach: ", withAllowlist.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain("Worked: ", withAllowlist.Text, StringComparison.Ordinal);
         }
     }
 

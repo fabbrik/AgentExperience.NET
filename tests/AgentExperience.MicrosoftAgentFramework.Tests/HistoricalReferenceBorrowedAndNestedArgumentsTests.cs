@@ -87,11 +87,24 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
             ExperienceInjectionLimits.Default,
             reader).Text;
 
-    private static string ApproachLine(string text) =>
-        Assert.Single(text.Split('\n'), line => line.StartsWith("Approach: ", StringComparison.Ordinal));
+    /// <summary>
+    /// The final attempt's <c>Tried:</c> line, which carries its calls (the <c>Worked:</c> line names only the attempt),
+    /// without its closing <c>" → completed"</c>.
+    /// </summary>
+    private static string ApproachLine(string text)
+    {
+        var lines = text.Split('\n');
+        var at = Array.IndexOf(lines, "Tried:");
+        Assert.True(at >= 0, "No Tried: line.");
+        var last = lines.Skip(at + 1).TakeWhile(line => line.StartsWith("  - ", StringComparison.Ordinal)).Last();
+        var completed = HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted;
+        Assert.EndsWith(completed, last, StringComparison.Ordinal);
+        return last[..^completed.Length];
+    }
 
-    private static string Expected(string steps, string suffix) =>
-        "Approach: " + HistoricalReferenceWriter.ApproachPrefix + steps + "." + suffix;
+    /// <summary>The final attempt's <c>Tried:</c> line for <paramref name="steps"/>, without its outcome, written with <c>" -> "</c> between calls for readability.</summary>
+    private static string Expected(string steps) =>
+        "  - attempt 0: " + steps.Replace(" -> ", HistoricalReferenceWriter.ToolSeparator, StringComparison.Ordinal);
 
     /// <summary>Every planted marker, none of which may ever reach a block.</summary>
     private static readonly string[] Planted =
@@ -145,8 +158,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         Assert.Equal(
             Expected(
-                Tool + "(options.mode=\"fast\", targets.1=\"db-7\", blob=" + HistoricalReferenceWriter.ArgumentNotShown + ") -> " + OtherTool,
-                HistoricalReferenceWriter.ApproachArgumentsSuffix),
+                Tool + "(options.mode=\"fast\", targets.1=\"db-7\", blob=" + HistoricalReferenceWriter.ArgumentNotShown + ") -> " + OtherTool),
             ApproachLine(text));
         AssertNothingPlanted(text);
     }
@@ -164,8 +176,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
             Expected(
                 Tool + "(options=" + HistoricalReferenceWriter.ArgumentNotShown
                     + ", targets=" + HistoricalReferenceWriter.ArgumentNotShown
-                    + ", targets.2=" + HistoricalReferenceWriter.ArgumentNotShown + ") -> " + OtherTool,
-                HistoricalReferenceWriter.ApproachArgumentsSuffix),
+                    + ", targets.2=" + HistoricalReferenceWriter.ArgumentNotShown + ") -> " + OtherTool),
             ApproachLine(text));
         AssertNothingPlanted(text);
         Assert.DoesNotContain("fast", text, StringComparison.Ordinal);
@@ -197,7 +208,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         {
             var text = Owned(PlantedRecord(json), Allow((Tool, [path])));
 
-            Assert.Equal(Expected(Tool + " -> " + OtherTool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+            Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
             AssertNothingPlanted(text);
         }
     }
@@ -209,7 +220,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         var text = Owned(record, Allow((Tool, ["options.mode"])));
 
-        Assert.Equal(Expected(Tool + "(options.mode=\"literal\")", HistoricalReferenceWriter.ApproachArgumentsSuffix), ApproachLine(text));
+        Assert.Equal(Expected(Tool + "(options.mode=\"literal\")"), ApproachLine(text));
         Assert.DoesNotContain(PlantedSibling, text, StringComparison.Ordinal);
     }
 
@@ -221,7 +232,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         var text = Owned(record, Allow((Tool, ["options.mode"])));
 
-        Assert.Equal(Expected(Tool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+        Assert.Equal(Expected(Tool), ApproachLine(text));
         Assert.DoesNotContain(PlantedCase, text, StringComparison.Ordinal);
     }
 
@@ -259,7 +270,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         var line = ApproachLine(Owned(RecordWith(Call(0, Tool, Map(("options", options)))), Allow((Tool, [.. keys]))));
 
-        Assert.EndsWith(HistoricalReferenceWriter.ApproachArgumentsClamped, line, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
         var shown = line[(line.IndexOf('(', StringComparison.Ordinal) + 1)..line.IndexOf(')', StringComparison.Ordinal)];
         Assert.True(shown.Length <= HistoricalReferenceWriter.MaxApproachArgumentsLength);
         Assert.DoesNotContain(new string('l', HistoricalReferenceWriter.MaxArgumentValueLength), line, StringComparison.Ordinal);
@@ -277,7 +288,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         var text = Owned(RecordWith(Call(0, Tool, Map(("options", disposed)))), Allow((Tool, ["options.mode"])));
 
         Assert.Equal(
-            Expected(Tool + "(options.mode=" + HistoricalReferenceWriter.ArgumentNotShown + ")", HistoricalReferenceWriter.ApproachArgumentsSuffix),
+            Expected(Tool + "(options.mode=" + HistoricalReferenceWriter.ArgumentNotShown + ")"),
             ApproachLine(text));
     }
 
@@ -298,7 +309,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         // The reader's order, the intersection only, and the line says whose allowlists those were.
         Assert.Equal(
-            Expected(Tool + "(targets.1=\"db-7\", options.mode=\"fast\") -> " + OtherTool, HistoricalReferenceWriter.ApproachGrantArgumentsSuffix),
+            Expected(Tool + "(targets.1=\"db-7\", options.mode=\"fast\") -> " + OtherTool),
             ApproachLine(text));
         Assert.DoesNotContain(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
         AssertNothingPlanted(text);
@@ -321,7 +332,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         {
             var text = Borrowed(PlantedRecord(json), ExperienceGrantDisclosure.LessonApproachAndArguments, OwnerConsent, reader);
 
-            Assert.Equal(Expected(Tool + " -> " + OtherTool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+            Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
             AssertNothingPlanted(text);
         }
     }
@@ -343,7 +354,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         _ = label;
         var text = Borrowed(PlantedRecord(json: false), ExperienceGrantDisclosure.LessonApproachAndArguments, owner, ReaderAllowlist);
 
-        Assert.Equal(Expected(Tool + " -> " + OtherTool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+        Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
         Assert.DoesNotContain("fast", text, StringComparison.Ordinal);
         Assert.DoesNotContain("db-7", text, StringComparison.Ordinal);
         AssertNothingPlanted(text);
@@ -354,7 +365,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
     {
         var text = Borrowed(PlantedRecord(json: false), ExperienceGrantDisclosure.LessonApproachAndArguments, new ThrowingAllowlist(), ReaderAllowlist);
 
-        Assert.Equal(Expected(Tool + " -> " + OtherTool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+        Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
         AssertNothingPlanted(text);
     }
 
@@ -384,7 +395,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
     {
         var text = Borrowed(PlantedRecord(json: false), ExperienceGrantDisclosure.LessonApproachAndArguments, OwnerConsent, Allow());
 
-        Assert.Equal(Expected(Tool + " -> " + OtherTool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+        Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
         Assert.DoesNotContain("fast", text, StringComparison.Ordinal);
     }
 
@@ -397,7 +408,8 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         // Even when the store also reports an owner allowlist it should not have.
         var text = Borrowed(PlantedRecord(json: false), level, OwnerConsent, ReaderAllowlist);
 
-        Assert.DoesNotContain("Approach: ", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Worked: ", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Tried:", text, StringComparison.Ordinal);
         Assert.Contains(HistoricalReferenceWriter.ApproachWithheld, text, StringComparison.Ordinal);
         Assert.DoesNotContain(Tool + "(", text, StringComparison.Ordinal);
         Assert.DoesNotContain("fast", text, StringComparison.Ordinal);
@@ -409,7 +421,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
     {
         var text = Borrowed(PlantedRecord(json: false), ExperienceGrantDisclosure.LessonAndApproach, OwnerConsent, ReaderAllowlist);
 
-        Assert.Equal(Expected(Tool + " -> " + OtherTool, HistoricalReferenceWriter.ApproachSuffix), ApproachLine(text));
+        Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
         Assert.DoesNotContain("fast", text, StringComparison.Ordinal);
     }
 
@@ -432,7 +444,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         // The reader's own record shows everything the reader allowlisted; the borrowed one only the intersection.
         Assert.Contains(Tool + "(readerOnly=\"" + PlantedReaderOnly + "\", options.mode=\"fast\")", text, StringComparison.Ordinal);
-        Assert.Contains(Tool + "(options.mode=\"slow\")." + HistoricalReferenceWriter.ApproachGrantArgumentsSuffix, text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: " + Tool + "(options.mode=\"slow\") \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.Equal(1, text.Split(PlantedReaderOnly).Length - 1);
     }
 }

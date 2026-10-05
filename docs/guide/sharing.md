@@ -164,8 +164,9 @@ not flagged, so a source that returns a foreign record without declaring a grant
 
 ## Disclosure levels
 
-A verified record's block includes the `Approach:` line — the ordered tool names the run called — and for a borrowed
-record those are the *lending* scope's tool names, which (`hr_salary_lookup`, `stripe_charge_prod`) are themselves
+A record's block includes its `Tried:` and `Worked:` lines — the ordered tool names each attempt called, whether it
+failed and the error's class, and what worked. For a borrowed record a grant shows no more than the verified working
+attempt (the owner's failed attempts and their error classes never cross a grant), and those are the *lending* scope's tool names, which (`hr_salary_lookup`, `stripe_charge_prod`) are themselves
 information about its systems. So every grant carries an immutable disclosure level,
 `ExperienceGrantRequest.Disclosure`:
 
@@ -179,15 +180,17 @@ new ExperienceGrantRequest(grantId, recordId, ownerScope, recipientScope, reason
     ApproachArguments: new Dictionary<string, IReadOnlyList<string>> { ["retry_refund"] = ["delay", "options.mode"] });
 ```
 
-| Level | What the recipient's model sees on the `Approach:` line |
+| Level | What the recipient's model sees on the `Tried:` and `Worked:` lines |
 | --- | --- |
-| `LessonOnly` (the default) | Nothing: the line is omitted, and the `Shared:` line says the grant withholds it when the record has one |
-| `LessonAndApproach` | The owner's tool names, exactly as the owner would see them, and never an argument value |
-| `LessonApproachAndArguments` | The tool names, plus a value only for a key the owner named on the grant **and** the reader's own `ApproachArguments` names for the same tool |
+| `LessonOnly` (the default) | Nothing: the lines are omitted, and the `Shared:` line says the grant withholds them when a showing level would have shown a working attempt |
+| `LessonAndApproach` | For a verified record, its working (final) attempt only — one `Tried:` line with the owner's tool names and the `Worked:` line — and never an argument value, a failed attempt or an error class; nothing for a record that did not verify |
+| `LessonApproachAndArguments` | As `LessonAndApproach`, plus a value only for a key the owner named on the grant **and** the reader's own `ApproachArguments` names for the same tool |
 
-The level governs the `Approach:` line **only**: the lesson, reuse guidance, preconditions and warnings are the
-reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model under
-any level. Only the *block* is governed: the `ExperienceRecord` a store returns to host code is complete either way.
+The level governs the `Tried:` and `Worked:` lines **only**: the lesson, reuse guidance, preconditions and warnings
+are the reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model
+under any level. The default reflector's lesson names no tool, only attempt numbers, error classes and check IDs (see
+[Finalization](finalization.md#the-default-reflectors-lesson)), so under `LessonOnly` a record it wrote discloses
+none of the owner's tool names. Only the *block* is governed: the `ExperienceRecord` a store returns to host code is complete either way.
 A store that says a record is shared but reports no level is rendered as `LessonOnly`, and the host decision can deny
 a record but never widen its level.
 
@@ -198,8 +201,8 @@ put it only on the access row, never on an `ExperienceCandidate`. It reaches the
 events and onto every access row, and **cannot be changed**: the database refuses an `UPDATE` of it, so to widen or
 narrow it, revoke the grant and issue a new one — the one-active-grant rule means the revoke comes first, so the
 recipient has no access in the gap. A level the enum does not define is `Invalid` on `Disclosure`, and nothing is
-written. The access row records the level the library applied at delivery, not whether an `Approach:` line actually
-reached a model: the host may deny the record, the byte budget may drop it, or it may have no approach.
+written. The access row records the level the library applied at delivery, not whether a `Tried:` or `Worked:` line
+actually reached a model: the host may deny the record, the byte budget may drop it, or it may have no attempts.
 
 **The third level carries the owner's consent to argument values.** Under `LessonApproachAndArguments` the request
 must name, per tool, the argument keys (or dotted paths such as `options.mode`) the owner consents to show:
@@ -222,7 +225,7 @@ rendered is in [Showing selected argument values](injection.md#showing-selected-
 ### Upgrading the grant schema
 
 **`0011` changes behaviour, and the order matters.** It gives every existing grant `LessonOnly`, so a borrowed
-record's `Approach:` line disappears from injected blocks until the owner revokes the grant and issues a
+record's `Tried:` and `Worked:` lines disappear from injected blocks until the owner revokes the grant and issues a
 `LessonAndApproach` replacement. Events and access rows written before `0011` read back with a `null` level: it was
 never recorded. **Run `0011`, then deploy the new build, and stop older writers first.** A build that knows about
 levels, on a pre-`0011` schema, fails every grant-joined read with `42703` (undefined column), and an older build on a
@@ -296,7 +299,7 @@ var store = new PostgresExperienceRecordStore(
 
 Each row names the grant, the record **and the revision that was disclosed**, the grant's disclosure level at
 delivery (kept on the row after the grant itself is purged; `null` on rows written before `0011`; the level the
-library applied, not proof that an `Approach:` line reached a model), the owner scope, the recipient scope, the
+library applied, not proof that a `Tried:` or `Worked:` line reached a model), the owner scope, the recipient scope, the
 reading principal (the host's `AuthorizationContext.PrincipalId`, never anything a caller passed as data), the host's
 correlation ID for the work that caused the read, and both `occurred_at` (the reader's clock, which is
 `ExperienceGrantAuditing.Clock`) and `recorded_at` (the database's `clock_timestamp()`). The revision and the

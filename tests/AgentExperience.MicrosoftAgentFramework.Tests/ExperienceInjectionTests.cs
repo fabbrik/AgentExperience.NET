@@ -149,8 +149,8 @@ public class ExperienceInjectionTests
         Assert.DoesNotContain(InjectionRecords.EvidenceDetail, everything, StringComparison.Ordinal);
 
         // The name of the tool the verified attempt called is the one thing that does cross, and it
-        // crosses on the Approach line -- not smuggled into some other field.
-        Assert.Contains("Approach: ", everything, StringComparison.Ordinal);
+        // crosses on the Tried: and Worked: lines -- not smuggled into some other field.
+        Assert.Contains("  - attempt 0: refund_ticket \u2192 completed\n", everything, StringComparison.Ordinal);
         Assert.Contains("refund_ticket", everything, StringComparison.Ordinal);
     }
 
@@ -603,7 +603,7 @@ public class ExperienceInjectionTests
 
         // The reader's own record is unaffected: its approach is still rendered, and it has no level.
         Assert.Contains("my_own_tool", text, StringComparison.Ordinal);
-        Assert.Equal(1, text.Split("Approach: ").Length - 1);
+        Assert.Equal(1, text.Split("Worked: ").Length - 1);
 
         Assert.Contains((shared, (ExperienceGrantDisclosure?)ExperienceGrantDisclosure.LessonOnly), seen);
         Assert.Contains((mine, (ExperienceGrantDisclosure?)null), seen);
@@ -633,7 +633,7 @@ public class ExperienceInjectionTests
         var text = harness.InjectedText();
         Assert.NotNull(text);
         Assert.Contains(
-            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + "lender_private_tool.",
+            "  - attempt 0: lender_private_tool \u2192 completed\n",
             text,
             StringComparison.Ordinal);
         Assert.Contains("Shared: " + HistoricalReferenceWriter.SharedLine + "\n", text, StringComparison.Ordinal);
@@ -700,7 +700,7 @@ public class ExperienceInjectionTests
         var text = harness.InjectedText();
         Assert.NotNull(text);
         Assert.Contains(
-            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + "lender_tool(options.mode=\"fast\")." + HistoricalReferenceWriter.ApproachGrantArgumentsSuffix,
+            "  - attempt 0: lender_tool(options.mode=\"fast\") \u2192 completed\n",
             text,
             StringComparison.Ordinal);
         Assert.DoesNotContain("planted-", text, StringComparison.Ordinal);
@@ -799,7 +799,7 @@ public class ExperienceInjectionTests
 
         var text = harness.InjectedText();
         Assert.NotNull(text);
-        Assert.Contains("Approach: " + HistoricalReferenceWriter.ApproachPrefix + "refund_ticket.", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: refund_ticket \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.SecretArgument, text, StringComparison.Ordinal);
         Assert.Null(Assert.Single(seen).GrantApproachArguments);
     }
@@ -1688,9 +1688,10 @@ public class ExperienceInjectionTests
 
     /// <summary>
     /// SHA-256 of the Historical Reference block the pre-5.6 provider injected for the mixed world in
-    /// <see cref="The_batched_re_read_produces_the_same_outcomes_block_and_access_rows_as_the_per_record_re_read"/>.
+    /// <see cref="The_batched_re_read_produces_the_same_outcomes_block_and_access_rows_as_the_per_record_re_read"/>,
+    /// re-pinned in story 18.1, whose Tried: and Worked: lines replaced each record's Approach: line and whose withheld sentence now says "attempts", and changed nothing else.
     /// </summary>
-    private const string PreBatchBlockSha256 = "1d8599f5d377b109d6c5e1d8f048c90f9ea00bc4679783e1ecc68d86d20d75ff";
+    private const string PreBatchBlockSha256 = "fcc03281e543b36b4bdaa0871e917bc1459b4dcf2f21cf3846e801f03963f627";
 
     [Fact]
     public async Task A_store_that_throws_on_every_read_omits_every_selected_record_with_the_reason_a_failing_single_read_gave()

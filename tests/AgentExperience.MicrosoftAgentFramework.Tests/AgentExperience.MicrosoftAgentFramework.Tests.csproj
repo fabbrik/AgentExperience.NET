@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_MAF_TESTS</DefineConstants>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <!-- Not packed/consumed, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
@@ -31,6 +32,9 @@
   <ItemGroup>
     <!-- Story 17.2: signs records from the documented canonical encodings, independently of Core's internal signer. -->
     <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
+    <!-- Story 18.1: the error classifier is shared source linked into Core and the MAF adapter; its tests run
+         against both copies. -->
+    <Compile Include="..\AgentExperience.Core.Tests\ErrorClassTests.cs" Link="Shared\ErrorClassTests.cs" />
   </ItemGroup>
 
 </Project>

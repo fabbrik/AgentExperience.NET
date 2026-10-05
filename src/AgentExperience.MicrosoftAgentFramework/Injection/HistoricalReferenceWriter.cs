@@ -28,7 +28,7 @@ public sealed record HistoricalReferencePayload(
     public IReadOnlyList<Guid> RetractedExperienceIds { get; init; } = [];
 
     /// <summary>
-    /// The borrowed records in <see cref="ExperienceIds"/> whose <c>Approach:</c> line shows at least one argument
+    /// The borrowed records in <see cref="ExperienceIds"/> whose <c>Tried:</c> lines show at least one argument
     /// value, so session tracking can withdraw exactly those deliveries when their grant later narrows.
     /// </summary>
     internal IReadOnlyList<Guid> BorrowedArgumentsShown { get; init; } = [];
@@ -54,13 +54,15 @@ public sealed record HistoricalReferencePayload(
 /// <b>What a record carries.</b> Per record: its source (experience ID, source run ID, task ID), its
 /// reuse confidence, its applicability (the rank score and every normalized component with the
 /// weight applied to it), an evidence <em>summary</em> -- lesson, reuse guidance, preconditions,
-/// warnings, verification status, and how many evidence IDs back it -- and, for a verified record,
-/// the ordered tool <em>names</em> of its verified approach, with the values of only those tool
-/// arguments the host allowlisted. Nothing else.
+/// warnings, verification status, and how many evidence IDs back it -- and what its attempts tried:
+/// a <c>Tried:</c> line per attempt (the ordered tool <em>names</em>, with the values of only those tool
+/// arguments the host allowlisted, and whether it failed, with the error's class), and, for a verified
+/// record, a <c>Worked:</c> line naming the final attempt (its calls are on its <c>Tried:</c> line). Nothing else.
 /// </para>
 /// <para>
 /// <b>What a record never carries, and what changed.</b> Tool <em>results</em>, attempt
-/// <em>results</em>, attempt <em>errors</em> and evidence <em>detail</em> are never serialized here,
+/// <em>results</em>, attempt error <em>text</em> (unless the host opts into
+/// <see cref="AttemptFailureDetail.Excerpt"/>) and evidence <em>detail</em> are never serialized here,
 /// and neither is any tool <em>argument</em> the host did not allowlist, so a raw captured payload
 /// cannot reach a model through injection. The ordered tool <em>names</em> of the verified approach
 /// are -- that was added in story 4.6 because a lesson that cannot say <em>what was done</em> teaches
@@ -75,6 +77,12 @@ public sealed record HistoricalReferencePayload(
 /// may be a dotted path to a scalar inside an object- or array-valued argument (only that scalar is shown,
 /// never the container), and a borrowed record may show a value when its grant is
 /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> and both sides named the key.
+/// Story 18.1 widens it to every attempt of a record in the reader's own scope, not only the verified final one:
+/// each attempt's tool names (and allowlisted values) on a <c>Tried:</c> line, whether it ended with an error, and
+/// that error's <em>class</em> -- tokens this library recognises, never other text from the error -- plus a
+/// <c>Worked:</c> line naming the verified final attempt. The error's first line crosses only when the host opts into
+/// <see cref="AttemptFailureDetail.Excerpt"/>. A borrowed record still shows only what a grant consented to: its
+/// verified final attempt, as one <c>Tried:</c> line and the <c>Worked:</c> line, and nothing about a failure.
 /// </para>
 /// <para>
 /// <b>Why a name crosses by default: provenance, not shape.</b> A tool name is fixed when the tool
@@ -87,7 +95,7 @@ public sealed record HistoricalReferencePayload(
 /// marker, and an MCP or OpenAPI inventory takes its names from a remote server or a specification
 /// rather than from the host. Nothing bounds or sanitizes the name anywhere else in the pipeline
 /// either -- <see cref="AgentExperience.Core.Capture.RawToolCall.ToolName"/> is the one captured
-/// field a host's sanitizer never sees -- so <see cref="Approach"/> does the bounding itself, here,
+/// field a host's sanitizer never sees -- so <see cref="AttemptLines"/> does the bounding itself, here,
 /// where the name is about to enter a model's context.
 /// </para>
 /// <para>
@@ -125,20 +133,19 @@ public sealed record HistoricalReferencePayload(
 /// the two can never disagree or double-report an omission.
 /// </para>
 /// <para>
-/// <b>A grant decides whether a borrowed record's approach is shown.</b> The <c>Approach:</c> line
-/// names the tools the <em>owner</em> scope used. For a record read through a sharing grant
+/// <b>A grant decides whether a borrowed record's attempts are shown.</b> The <c>Tried:</c> and
+/// <c>Worked:</c> lines name the tools the <em>owner</em> scope used. For a record read through a sharing grant
 /// (<see cref="RankedExperience.SharedByGrant"/>) the line is written only when
 /// <see cref="RankedExperience.GrantDisclosure"/> is
 /// <see cref="ExperienceGrantDisclosure.LessonAndApproach"/>; any other value, <see langword="null"/>
-/// included, is the least disclosure, so the line is omitted and, when the record has an approach to
-/// withhold, the <c>Shared:</c> line ends with <see cref="ApproachWithheld"/>. Only the <c>Approach:</c>
-/// line is governed: the reflection's prose is rendered unfiltered under either level. The record a store returns to host code is unaffected -- this
+/// included, is the least disclosure, so the lines are omitted and, when the record has attempts to
+/// withhold, the <c>Shared:</c> line ends with <see cref="ApproachWithheld"/>. Only those lines are
+/// governed: the reflection's prose is rendered unfiltered under either level. The record a store returns to host code is unaffected -- this
 /// writer is the boundary, not the store. A record in the reader's own scope is rendered as always.
-/// A borrowed record's <c>Approach:</c> line shows an argument value only under
+/// A borrowed record's lines show an argument value only under
 /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, the level an owner issues as consent to
 /// that, and then only for a key both <see cref="RankedExperience.GrantApproachArguments"/> (the owner's, from
-/// the grant) and the reader's allowlist name for the same tool; its line then ends with
-/// <see cref="ApproachGrantArgumentsSuffix"/>. Under <see cref="ExperienceGrantDisclosure.LessonAndApproach"/>
+/// the grant) and the reader's allowlist name for the same tool. Under <see cref="ExperienceGrantDisclosure.LessonAndApproach"/>
 /// it is tool names only, whatever the reader allowlisted.
 /// </para>
 /// <para>
@@ -188,26 +195,41 @@ public static class HistoricalReferenceWriter
     /// <summary>The label written when an optional evidence-summary field carries nothing.</summary>
     public const string NoValue = "(none recorded)";
 
+    /// <summary>What a <c>Tried:</c> line says for an attempt that called no tool at all.</summary>
+    public const string NoToolCalled = "(no tool called)";
+
+    /// <summary>What separates two tool calls on a <c>Tried:</c> line, in call order.</summary>
+    public const string ToolSeparator = ", ";
+
+    /// <summary>What separates an attempt's tool calls from how it ended on a <c>Tried:</c> line.</summary>
+    public const string OutcomeSeparator = " \u2192 ";
+
+    /// <summary>How a <c>Tried:</c> line says an attempt ended without an error.</summary>
+    public const string AttemptCompleted = "completed";
+
+    /// <summary>How a <c>Tried:</c> line says an attempt ended with an error, before any class or excerpt.</summary>
+    public const string AttemptFailed = "failed";
+
     /// <summary>
-    /// What the <c>Approach:</c> line says when the verified run's final attempt called no tool at
-    /// all. An empty list would read as "unknown"; this says which of the two it is.
+    /// What follows the attempt number on a <c>Worked:</c> line. The line names the attempt and nothing else: its
+    /// calls are on that attempt's <c>Tried:</c> line, so no tool name or argument value is rendered twice.
     /// </summary>
-    public const string NoToolsUsed = "the verified run's final attempt completed without calling any tool.";
-
-    /// <summary>What separates two tool names in the <c>Approach:</c> line, in call order.</summary>
-    public const string ApproachSeparator = " -> ";
+    public const string WorkedSuffix = " (the final attempt)";
 
     /// <summary>
-    /// The sentence the <c>Approach:</c> line's tool-name sequence is introduced by. It states what
-    /// the sequence is and, just as importantly, what it is not.
+    /// The most attempts the <c>Tried:</c> lines show: the last ones, oldest first. When a record has more, the first
+    /// line says how many earlier attempts were omitted.
     /// </summary>
-    public const string ApproachPrefix = "the verified run's final attempt called these tools, in order: ";
-
-    /// <summary>The standing qualifier closing an <c>Approach:</c> line that names tools.</summary>
-    public const string ApproachSuffix = " Tool names only -- no arguments, no results, no error text.";
+    public const int MaxTriedAttempts = 4;
 
     /// <summary>
-    /// The most characters one tool name contributes to an <c>Approach:</c> line. A longer name is
+    /// The most characters of an error's first line that <see cref="AttemptFailureDetail.Excerpt"/> shows, counted
+    /// before quoting. A longer line is cut to it and marked with <see cref="ClampedName"/> outside the quotes.
+    /// </summary>
+    public const int MaxErrorExcerptLength = 120;
+
+    /// <summary>
+    /// The most characters one tool name contributes to a <c>Tried:</c> line. A longer name is
     /// cut to it and marked with <see cref="ClampedName"/>.
     /// </summary>
     /// <remarks>
@@ -222,28 +244,19 @@ public static class HistoricalReferenceWriter
     public const int MaxToolNameLength = 96;
 
     /// <summary>
-    /// The most tool names one <c>Approach:</c> line carries. A longer sequence is cut to it and the
-    /// line ends with <see cref="ApproachClamped"/> instead of a full stop.
+    /// The most tool names one <c>Tried:</c> line carries. A longer sequence is cut to it and
+    /// <see cref="AttemptToolsClamped"/> follows the last name shown.
     /// </summary>
     public const int MaxApproachToolNames = 20;
 
     /// <summary>What marks a tool name this writer cut to <see cref="MaxToolNameLength"/>.</summary>
     public const string ClampedName = "[...]";
 
-    /// <summary>What closes an <c>Approach:</c> line whose sequence was cut to <see cref="MaxApproachToolNames"/>.</summary>
-    public const string ApproachClamped = " -> (the rest of the sequence is not shown).";
+    /// <summary>What follows the last tool name shown on a line whose sequence was cut to <see cref="MaxApproachToolNames"/>.</summary>
+    public const string AttemptToolsClamped = ", (the rest of the sequence is not shown)";
 
     /// <summary>
-    /// The standing qualifier closing an <c>Approach:</c> line that shows at least one argument
-    /// value, in place of <see cref="ApproachSuffix"/>. Written only when the host allowlisted an
-    /// argument through <see cref="ExperienceInjectionOptions.ApproachArguments"/> and a call on the
-    /// line carried it; a line that shows no argument keeps <see cref="ApproachSuffix"/> unchanged.
-    /// </summary>
-    public const string ApproachArgumentsSuffix =
-        " Tool names, plus only the argument values the host allowlisted, as stored after capture-time sanitization -- no other arguments, no results, no error text.";
-
-    /// <summary>
-    /// The most characters one argument value contributes to an <c>Approach:</c> line, counted
+    /// The most characters one argument value contributes to a <c>Tried:</c> line, counted
     /// before quoting. A longer value is cut to it and marked with
     /// <see cref="ClampedName"/>, written after the closing quote so the marker can never be read as
     /// part of the value.
@@ -252,23 +265,14 @@ public static class HistoricalReferenceWriter
 
     /// <summary>
     /// The most characters every shown argument together -- key, <c>=</c>, quoted value,
-    /// and separator -- contributes to one <c>Approach:</c> line. An argument that would take the line
-    /// past it is not shown, nor is any argument after it, and the line ends with
-    /// <see cref="ApproachArgumentsClamped"/>. An argument is never cut to fit this limit.
+    /// and separator -- contributes to one <c>Tried:</c> line. An argument that would take the
+    /// line past it is not shown, nor is any argument after it, and <see cref="AttemptArgumentsClamped"/> follows the
+    /// line's tool calls. An argument is never cut to fit this limit.
     /// </summary>
     public const int MaxApproachArgumentsLength = 512;
 
-    /// <summary>
-    /// The standing qualifier closing the <c>Approach:</c> line of a record borrowed through a
-    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> grant when it shows at least one argument
-    /// value, in place of <see cref="ApproachArgumentsSuffix"/>: the values shown are only those both the lending
-    /// scope's grant and the host allowlisted.
-    /// </summary>
-    public const string ApproachGrantArgumentsSuffix =
-        " Tool names, plus only the argument values both the lending scope's grant and the host allowlisted, as stored after capture-time sanitization -- no other arguments, no results, no error text.";
-
-    /// <summary>What closes an <c>Approach:</c> line some of whose allowlisted argument values were left out by <see cref="MaxApproachArgumentsLength"/>.</summary>
-    public const string ApproachArgumentsClamped = " Some allowlisted argument values are not shown: the line's argument limit was reached.";
+    /// <summary>What follows the tool calls of a line some of whose allowlisted argument values were left out by <see cref="MaxApproachArgumentsLength"/>.</summary>
+    public const string AttemptArgumentsClamped = " (some allowlisted argument values are not shown: the line's argument limit was reached)";
 
     /// <summary>
     /// What an allowlisted argument's value is written as when it is not a string, a number or a
@@ -281,12 +285,13 @@ public static class HistoricalReferenceWriter
 
     /// <summary>
     /// The sentence appended to <see cref="SharedLine"/> when the grant withholds the record's
-    /// <c>Approach:</c> line, in place of that line. Written only when the record has an approach to
-    /// withhold. Fixed text: it names no scope and no tool. It covers the <c>Approach:</c> line only:
+    /// <c>Tried:</c> and <c>Worked:</c> lines, in place of them. Written only when a grant that shows them would
+    /// have shown something: a verified, unquarantined record with distinct attempt numbers whose final attempt
+    /// ended without an error. Fixed text: it names no scope and no tool. It covers those lines only:
     /// the lesson, reuse guidance, preconditions and warnings are the reflector's prose and are rendered
     /// unfiltered, so a tool name the reflector wrote into them still reaches the model.
     /// </summary>
-    public const string ApproachWithheld = " The grant withholds this lesson's approach.";
+    public const string ApproachWithheld = " The grant withholds this lesson's attempts.";
 
     /// <summary>
     /// What a record's <c>Source:</c> line says in place of its task ID when its content is unconfirmed (story 17.2):
@@ -299,8 +304,8 @@ public static class HistoricalReferenceWriter
     /// <see cref="Reflection.Authorship"/> other than <see cref="ReflectionAuthorship.Deterministic"/>, so an
     /// undefined or future value is labelled too, or a <see cref="Reflection.Producer"/> naming the library's own
     /// <see cref="ChatClientExperienceReflector"/>): the lesson, the reuse guidance, the preconditions and the warnings
-    /// follow it, and <see cref="ModelAuthoredEndLine"/> closes them. Such an entry carries its <c>Approach:</c>
-    /// line, which is derived from the record's attempts and not model-written, before this one. Fixed text.
+    /// follow it, and <see cref="ModelAuthoredEndLine"/> closes them. Such an entry carries its <c>Tried:</c> and
+    /// <c>Worked:</c> lines, which are derived from the record's attempts and not model-written, before this one. Fixed text.
     /// </summary>
     /// <remarks>
     /// A record whose reflection is deterministic, or that has none, gets neither line and keeps its field order.
@@ -362,6 +367,8 @@ public static class HistoricalReferenceWriter
         "Evidence:",
         "Lesson:",
         "Approach:",
+        "Tried:",
+        "Worked:",
         "Reuse guidance:",
         "Preconditions:",
         "Warnings:",
@@ -414,13 +421,13 @@ public static class HistoricalReferenceWriter
     /// <summary>
     /// Renders <paramref name="records"/> as one Historical Reference block, exactly as
     /// <see cref="Write(IReadOnlyList{RankedExperience}, ExperienceInjectionLimits)"/> does, except
-    /// that an <c>Approach:</c> line may also show the values of the tool arguments
+    /// that the <c>Tried:</c> lines may also show the values of the tool arguments
     /// <paramref name="approachArguments"/> allowlists.
     /// </summary>
     /// <param name="records">As for the two-argument overload.</param>
     /// <param name="limits">As for the two-argument overload.</param>
     /// <param name="approachArguments">
-    /// Per tool name, the argument keys whose stored values an <c>Approach:</c> line may show; see
+    /// Per tool name, the argument keys whose stored values the <c>Tried:</c> lines may show; see
     /// <see cref="ExperienceInjectionOptions.ApproachArguments"/> for every bound applied to them.
     /// <see langword="null"/> or empty renders byte for byte what the two-argument overload does.
     /// </param>
@@ -445,7 +452,7 @@ public static class HistoricalReferenceWriter
     /// <paramref name="isContentConfirmed"/> does not confirm is rendered as model-authored whatever it declares, with
     /// every line drawn from it inside the fence -- its task ID (a <c>Task:</c> line, the <c>Source:</c> line saying
     /// <see cref="UnconfirmedTaskNotice"/>), its <c>Recorded:</c>, <c>Environment:</c>, <c>Verification:</c> and
-    /// <c>Evidence:</c> lines, its <c>Approach:</c> line and its reflection. Only the record header and the confidence
+    /// <c>Evidence:</c> lines, its <c>Tried:</c> and <c>Worked:</c> lines and its reflection. Only the record header and the confidence
     /// and ranking lines the library computes stay above it.
     /// </summary>
     /// <param name="records">As for the two-argument overload.</param>
@@ -480,8 +487,9 @@ public static class HistoricalReferenceWriter
     internal static HistoricalReferencePayload Write(
         IReadOnlyList<RankedExperience> records,
         ExperienceInjectionLimits limits,
-        ApproachArgumentAllowlist approachArguments) =>
-        Write(records, limits, approachArguments, NoIds, sessionBytesRemaining: null, isContentConfirmed: null);
+        ApproachArgumentAllowlist approachArguments,
+        AttemptFailureDetail failureDetail = AttemptFailureDetail.ErrorClass) =>
+        Write(records, limits, approachArguments, NoIds, sessionBytesRemaining: null, isContentConfirmed: null, failureDetail);
 
     /// <summary>
     /// The one implementation: withdrawal notices first, then records in rank order, within
@@ -502,13 +510,15 @@ public static class HistoricalReferenceWriter
     /// is rendered as model-authored, with every line drawn from it inside the fence.
     /// <see langword="null"/> confirms every record, deciding on the reflection alone.
     /// </param>
+    /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt; see <see cref="ExperienceInjectionOptions.FailureDetail"/>.</param>
     internal static HistoricalReferencePayload Write(
         IReadOnlyList<RankedExperience> records,
         ExperienceInjectionLimits limits,
         ApproachArgumentAllowlist approachArguments,
         IReadOnlyList<Guid> retractions,
         long? sessionBytesRemaining,
-        Func<ExperienceRecord, bool>? isContentConfirmed = null)
+        Func<ExperienceRecord, bool>? isContentConfirmed = null,
+        AttemptFailureDetail failureDetail = AttemptFailureDetail.ErrorClass)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(limits);
@@ -590,7 +600,7 @@ public static class HistoricalReferenceWriter
 
             if (!dropping)
             {
-                var rendered = Render(ranked, included.Count + 1, approachArguments, isContentConfirmed, out var borrowedArguments);
+                var rendered = Render(ranked, included.Count + 1, approachArguments, isContentConfirmed, failureDetail, out var borrowedArguments);
                 var size = Utf8(rendered);
                 var fitsBlock = used + size <= limits.MaxBytes;
                 var fitsSession = sessionBytesRemaining is not { } remaining || used + size <= remaining;
@@ -651,19 +661,21 @@ public static class HistoricalReferenceWriter
     /// <param name="ordinal">Its position in the block, from 1.</param>
     /// <param name="approachArguments">The reader's validated allowlist.</param>
     /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
-    /// <param name="borrowedArguments">Whether the record is borrowed and its <c>Approach:</c> line shows at least one argument value.</param>
+    /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt.</param>
+    /// <param name="borrowedArguments">Whether the record is borrowed and its <c>Tried:</c> lines show at least one argument value.</param>
     private static string Render(
         RankedExperience ranked,
         int ordinal,
         ApproachArgumentAllowlist approachArguments,
         Func<ExperienceRecord, bool>? isContentConfirmed,
+        AttemptFailureDetail failureDetail,
         out bool borrowedArguments)
     {
         var record = ranked.Record;
         var reflection = record.Reflection;
 
         // Story 17.2: content nothing confirms (with provenance signing configured) is fenced as model-authored, and
-        // so are the task ID and the Approach: line it renders, which a writer of the store could have changed too.
+        // so are the task ID and the Tried: and Worked: lines it renders, which a writer of the store could have changed too.
         var unconfirmed = isContentConfirmed is not null && !isContentConfirmed(record);
 
         var text = new StringBuilder();
@@ -677,10 +689,10 @@ public static class HistoricalReferenceWriter
         // Borrowed experience says so. No scope identifier is written -- the block never carries who
         // owns or may act on anything -- only the fact that this lesson is not the reader's own.
         //
-        // A borrowed record's Approach: line is rendered only when the grant that permitted it says so.
+        // A borrowed record's Tried: and Worked: lines are rendered only when the grant that permitted it says so.
         // Anything else, a level the store did not report included, is the least disclosure: fail closed.
-        // The withheld sentence is written only when there is an approach to withhold, so the block never
-        // implies one exists for a record that has none.
+        // The withheld sentence is written only when there are attempts a showing grant would have shown (a
+        // verified working attempt), so the block never implies one exists for a record that has none.
         //
         // A borrowed record shows an argument value only under LessonApproachAndArguments, and then only for
         // a key both the owner's grant and the reader's allowlist name: the reader's allowlist is its own
@@ -691,7 +703,10 @@ public static class HistoricalReferenceWriter
             : ranked.GrantDisclosure == ExperienceGrantDisclosure.LessonApproachAndArguments
                 ? approachArguments.IntersectWithGrant(ranked.GrantApproachArguments)
                 : ApproachArgumentAllowlist.Empty;
-        var approach = Approach(record, effective, ranked.SharedByGrant, out var argumentsShown);
+
+        // A borrowed record shows only its verified working attempt (see AttemptLines): no failure, so no error
+        // class or excerpt of the lending scope's ever crosses.
+        var approach = AttemptLines(record, effective, failureDetail, ranked.SharedByGrant, out var argumentsShown);
         var approachWithheld = ranked.SharedByGrant && !ShowsApproach(ranked.GrantDisclosure);
         borrowedArguments = ranked.SharedByGrant && !approachWithheld && argumentsShown;
         if (ranked.SharedByGrant)
@@ -738,14 +753,13 @@ public static class HistoricalReferenceWriter
         }
 
         // Derived from the record's own attempts, never from the reflection's prose -- see the type's
-        // remarks. Absent entirely when there is no verified approach to describe, and when a sharing
-        // grant withholds it.
-        var approachLine = !approachWithheld && approach is not null ? "Approach: " + approach + "\n" : null;
+        // remarks. Absent entirely when there is no attempt to describe, and when a sharing grant withholds it.
+        var approachLine = !approachWithheld ? approach : null;
 
         if (unconfirmed)
         {
             // Story 17.2: nothing confirms this record's content, so every line drawn from it -- the task ID, when
-            // and where it was recorded, its verification and evidence, the Approach: line and the reflection -- sits
+            // and where it was recorded, its verification and evidence, the Tried: and Worked: lines and the reflection -- sits
             // between the two fixed lines.
             text.Append(ModelAuthoredLine).Append('\n');
             text.Append("Task: ").Append(Clean(record.TaskId)).Append('\n');
@@ -760,7 +774,7 @@ public static class HistoricalReferenceWriter
         else if (IsModelAuthored(reflection))
         {
             // A model wrote this text from captured run output (story 14.3). Every model-written field sits
-            // between two fixed lines, and the Approach: line, which no model wrote, stays outside them. Fail
+            // between two fixed lines, and the Tried: and Worked: lines, which no model wrote, stay outside them. Fail
             // closed: any authorship that is not Deterministic is labelled.
             text.Append(approachLine);
             text.Append(ModelAuthoredLine).Append('\n');
@@ -836,126 +850,180 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>
-    /// The verified approach, as the ordered tool <em>names</em> of the record's final attempt, or
-    /// <see langword="null"/> when there is no verified approach to describe and no line is written.
+    /// The record's <c>Tried:</c> lines -- one per attempt, oldest first, the last <see cref="MaxTriedAttempts"/> of
+    /// them -- and its <c>Worked:</c> line, each ending in a line break, or <see langword="null"/> when there is no
+    /// attempt to describe and no line is written.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Only a verified, unquarantined record, and only its final attempt.</b> A record whose
-    /// outcome is not <see cref="TaskVerificationStatus.Verified"/> has no approach that was shown to
-    /// work, and a record whose own status is <see cref="ExperienceStatus.Quarantined"/> is withheld
-    /// from reuse whatever its outcome says -- a record quarantined <em>after</em> a verified run, the
-    /// suspected-sanitization-gap case, is exactly the one that must not describe what it did. The
-    /// two are different fields and both are checked. Within an eligible record only the
-    /// <em>final</em> attempt is read, and only when it carries no error. This is deliberately the
-    /// same classification <see cref="AgentExperience.Core.Reflections.DefaultExperienceReflector"/>
-    /// uses: attempts are not linked to verification rounds, so presenting an earlier error-free
-    /// attempt as "the approach that worked" would be causal invention. A verified record whose final
-    /// attempt errored therefore yields no approach line either.
+    /// <b>Tried.</b> Every attempt of a record that is not <see cref="ExperienceStatus.Quarantined"/> -- a record
+    /// quarantined after its run, the suspected-sanitization-gap case, is exactly the one that must not describe what
+    /// it did -- whatever its outcome, so a failed run still says what it tried. Each line is
+    /// <c>attempt N: tool_a, tool_b(key="value") → failed (TimeoutException)</c> or <c>... → completed</c>: the
+    /// attempt's <see cref="Attempt.SequenceNumber"/>, its calls, and whether it ended with an
+    /// <see cref="Attempt.Error"/>. A failure says no more than <paramref name="failureDetail"/> allows: by default
+    /// the error's class (<see cref="ErrorClass"/>), never its text. An attempt's result, its calls' results and
+    /// errors, and every argument the allowlist does not name are never read.
     /// </para>
     /// <para>
-    /// <b>Which attempt is "final", and what a tie means.</b> The final attempt is the one with the
-    /// greatest <see cref="Attempt.SequenceNumber"/>, read from the numbers themselves rather than
-    /// from list order, because a store is free to return attempts in any order.
-    /// <see cref="AgentExperience.Core.Reflections.DefaultExperienceReflector"/> refuses a run whose
-    /// attempt sequence numbers are not unique -- <em>any</em> two, not only the last two -- outright;
-    /// this writer cannot throw, so it applies the same rule the only way it can: a record with any
-    /// duplicated attempt sequence number gets no approach line. Two attempts sharing the greatest
-    /// number would leave the record unable to say which one was last, and picking either would be
-    /// inventing the answer; a duplicate lower down is a record the reflector would never have
-    /// produced, and the two components must not disagree about which records are well-formed.
+    /// <b>Borrowed.</b> A record read through a grant that shows its approach (<paramref name="borrowed"/>) gets
+    /// exactly what its <c>Approach:</c> line used to show: its verified final attempt only, as one <c>Tried:</c> line
+    /// and the <c>Worked:</c> line, and nothing for a record that did not verify. The owner consented to that, not to
+    /// its failed attempts or their error classes.
     /// </para>
     /// <para>
-    /// <b>Names, in call order, and by default nothing else.</b> Every tool call of that attempt
-    /// contributes its <see cref="ToolCallRecord.ToolName"/> in <see cref="ToolCallRecord.SequenceNumber"/>
-    /// order, repeats included, because the repetition is part of the sequence. A call that itself
-    /// errored contributes its name like any other and nothing says so: whether a call failed is one
-    /// more thing out of the captured run, and the widening does not reach it. When the host allowlisted
-    /// argument keys for a call's tool name, the call is written as <c>name(key="value", ...)</c> with
-    /// only those keys, in the allowlist's order -- <paramref name="approachArguments"/> is already the effective
-    /// allowlist: the reader's own for its own record, the intersection with the grant's for a borrowed one under
-    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, and empty otherwise; a
-    /// call that carried none of them is written as its bare name, and a line that shows no argument
-    /// at all is byte for byte the names-only line.
+    /// <b>Worked.</b> Only for a verified record, and only its final attempt when that ended without an error (see
+    /// <see cref="ApproachToolCalls"/>): <c>Worked: attempt N (the final attempt)</c>, naming the attempt whose calls
+    /// its <c>Tried:</c> line already shows. This is deliberately the same classification
+    /// <see cref="AgentExperience.Core.Reflections.DefaultExperienceReflector"/> uses: attempts are not linked to
+    /// verification rounds, so presenting an earlier error-free attempt as "the approach that worked" would be
+    /// causal invention.
     /// </para>
     /// <para>
-    /// <b>Each name is bounded here, because nothing else bounds it.</b> A name's invisible
-    /// characters -- control, format (bidirectional controls, zero-width characters, TAG characters),
-    /// private-use and unassigned code points, classified per Unicode scalar -- become spaces, exactly as
-    /// in an argument value; its whitespace is then collapsed to single spaces -- so a name cannot add lines to the block or forge a bullet,
-    /// which <c>"  - "</c> is not a field label and would otherwise allow -- then it goes through
-    /// <see cref="Clean"/> like every other stored string, so a tool named after one of this block's
-    /// own markers cannot forge structure with it, and then it is cut to
-    /// <see cref="MaxToolNameLength"/> characters. The sequence itself is cut to
-    /// <see cref="MaxApproachToolNames"/> names. Both cuts are marked in the text rather than silent.
-    /// Argument values are bounded by <see cref="Value"/>, and all of a line's arguments together by
-    /// <see cref="MaxApproachArgumentsLength"/>; the record as a whole is still subject to the byte
-    /// budget, which drops it whole rather than cutting it.
+    /// <b>Which attempt is which.</b> Attempts are ordered by their sequence numbers, not list order, because a store
+    /// is free to return them in any order. <see cref="AgentExperience.Core.Reflections.DefaultExperienceReflector"/>
+    /// refuses a run whose attempt sequence numbers are not unique; this writer cannot throw, so a record with any
+    /// duplicated attempt sequence number gets no line at all rather than an invented order.
+    /// </para>
+    /// <para>
+    /// <b>Names, in call order, and by default nothing else.</b> Every tool call of an attempt contributes its
+    /// <see cref="ToolCallRecord.ToolName"/> in <see cref="ToolCallRecord.SequenceNumber"/> order, repeats included.
+    /// When the host allowlisted argument keys for a call's tool name, the call is written as
+    /// <c>name(key="value", ...)</c> with only those keys, in the allowlist's order --
+    /// <paramref name="approachArguments"/> is already the effective allowlist: the reader's own for its own record,
+    /// the intersection with the grant's for a borrowed one under
+    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>, and empty otherwise.
+    /// </para>
+    /// <para>
+    /// <b>Each name is bounded here, because nothing else bounds it.</b> A name's invisible characters -- control,
+    /// format, private-use and unassigned code points, classified per Unicode scalar -- become spaces, exactly as in
+    /// an argument value; its whitespace is then collapsed to single spaces, so a name cannot add lines to the block
+    /// or forge a bullet; then it goes through <see cref="Clean"/> like every other stored string, so a tool named
+    /// after one of this block's own markers cannot forge structure with it, and then it is cut to
+    /// <see cref="MaxToolNameLength"/> characters. Each line's sequence is cut to <see cref="MaxApproachToolNames"/>
+    /// names. Both cuts are marked in the text rather than silent. Argument values are bounded by
+    /// <see cref="Value"/>, and all of one line's arguments together by <see cref="MaxApproachArgumentsLength"/>; the
+    /// record as a whole is still subject to the byte budget, which drops it whole rather than cutting it.
     /// </para>
     /// </remarks>
-    private static string? Approach(ExperienceRecord record, ApproachArgumentAllowlist approachArguments, bool borrowed, out bool argumentsShown)
+    private static string? AttemptLines(
+        ExperienceRecord record,
+        ApproachArgumentAllowlist approachArguments,
+        AttemptFailureDetail failureDetail,
+        bool borrowed,
+        out bool argumentsShown)
     {
         argumentsShown = false;
-        var ordered = ApproachToolCalls(record, out var clamped);
-        if (ordered is null)
+        if (record.Status == ExperienceStatus.Quarantined)
         {
             return null;
         }
 
-        if (ordered.Count == 0)
+        var attempts = OrderedAttempts(record);
+        if (attempts is null or { Count: 0 })
         {
-            return NoToolsUsed;
+            return null;
+        }
+
+        var worked = FinalVerifiedAttempt(record, attempts);
+        if (borrowed)
+        {
+            // A grant was issued as consent to show a verified record's working approach, which is all an
+            // Approach: line ever showed: so a borrowed record shows that one attempt, completed, and nothing about
+            // the owner's failed attempts, their error classes, or a record that did not verify.
+            if (worked is null)
+            {
+                return null;
+            }
+
+            attempts = [worked];
+        }
+
+        var text = new StringBuilder("Tried:\n");
+        var first = Math.Max(0, attempts.Count - MaxTriedAttempts);
+        if (first > 0)
+        {
+            text.Append("  - ").Append(first.ToString(CultureInfo.InvariantCulture))
+                .Append(first == 1 ? " earlier attempt omitted" : " earlier attempts omitted").Append('\n');
+        }
+
+        for (var index = first; index < attempts.Count; index++)
+        {
+            var attempt = attempts[index];
+            text.Append("  - attempt ").Append(attempt.SequenceNumber.ToString(CultureInfo.InvariantCulture)).Append(": ")
+                .Append(Calls(OrderedCalls(attempt, out var clamped), clamped, approachArguments, ref argumentsShown))
+                .Append(OutcomeSeparator)
+                .Append(attempt.Error is null ? AttemptCompleted : Failure(attempt.Error, failureDetail))
+                .Append('\n');
+        }
+
+        // Names the attempt only: its calls are already on its Tried: line, so nothing is rendered twice.
+        if (worked is not null)
+        {
+            text.Append("Worked: attempt ").Append(worked.SequenceNumber.ToString(CultureInfo.InvariantCulture))
+                .Append(WorkedSuffix).Append('\n');
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>One line's tool calls, joined with <see cref="ToolSeparator"/>, each bounded as <see cref="AttemptLines"/> describes.</summary>
+    private static string Calls(List<ToolCallRecord> calls, bool clamped, ApproachArgumentAllowlist approachArguments, ref bool argumentsShown)
+    {
+        if (calls.Count == 0)
+        {
+            return NoToolCalled;
         }
 
         var budget = new ArgumentBudget();
-        var steps = new List<string>(ordered.Count);
-        foreach (var call in ordered)
+        var steps = new List<string>(calls.Count);
+        foreach (var call in calls)
         {
             var name = Name(call.ToolName);
             var shown = approachArguments.IsEmpty ? null : Arguments(call, approachArguments.KeysFor(call.ToolName), budget);
             steps.Add(shown is null ? name : name + "(" + shown + ")");
         }
 
-        argumentsShown = budget.Shown;
-        return ApproachPrefix
-            + string.Join(ApproachSeparator, steps)
-            + (clamped ? ApproachClamped : ".")
-            + (!budget.Shown ? ApproachSuffix : borrowed ? ApproachGrantArgumentsSuffix : ApproachArgumentsSuffix)
-            + (budget.Exhausted ? ApproachArgumentsClamped : string.Empty);
+        argumentsShown |= budget.Shown;
+        return string.Join(ToolSeparator, steps)
+            + (clamped ? AttemptToolsClamped : string.Empty)
+            + (budget.Exhausted ? AttemptArgumentsClamped : string.Empty);
+    }
+
+    /// <summary>How a <c>Tried:</c> line says an attempt failed, under <paramref name="failureDetail"/>.</summary>
+    private static string Failure(string error, AttemptFailureDetail failureDetail) => failureDetail switch
+    {
+        AttemptFailureDetail.None => AttemptFailed,
+        AttemptFailureDetail.Excerpt => AttemptFailed + " (" + ErrorClass.Of(error) + ") " + Excerpt(error),
+        _ => AttemptFailed + " (" + ErrorClass.Of(error) + ")",
+    };
+
+    /// <summary>
+    /// The error's first non-blank line, bounded, neutralized and quoted exactly as a string argument value is
+    /// (<see cref="Quoted"/>), but cut to <see cref="MaxErrorExcerptLength"/> characters.
+    /// </summary>
+    private static string Excerpt(string error)
+    {
+        var line = error
+            .Split(['\r', '\n', '\u2028', '\u2029', '\u0085', '\v', '\f'])
+            .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate)) ?? string.Empty;
+        return Quoted(line, MaxErrorExcerptLength);
     }
 
     /// <summary>
-    /// The tool calls a record's <c>Approach:</c> line carries, in order and cut to
-    /// <see cref="MaxApproachToolNames"/>: the final attempt's calls, when the record's outcome is
-    /// <see cref="TaskVerificationStatus.Verified"/>, it is not quarantined, and its final attempt is
-    /// unambiguous and error-free. <see langword="null"/> when the record has no approach; empty when the
-    /// final attempt called no tool. The one place both the renderer and the capability gate
-    /// (<see cref="ExperienceInjectionOptions.ReceivingAgent"/>) read a record's approach from, so the gate
-    /// checks exactly the tools the line would name.
+    /// The record's attempts in sequence order, null entries skipped, or <see langword="null"/> when two share a
+    /// sequence number (the record cannot say which came first) or it has none.
     /// </summary>
-    /// <param name="record">The record whose approach is wanted.</param>
-    /// <param name="clamped"><see langword="true"/> when the sequence was longer than <see cref="MaxApproachToolNames"/> and was cut.</param>
-    internal static List<ToolCallRecord>? ApproachToolCalls(ExperienceRecord record, out bool clamped)
+    private static List<Attempt>? OrderedAttempts(ExperienceRecord record)
     {
-        clamped = false;
-
-        // Two different fields, deliberately both checked: Outcome.Status is the verification the run
-        // reached, record.Status is where the record's lifecycle has since put it.
-        if (record.Outcome.Status != TaskVerificationStatus.Verified || record.Status == ExperienceStatus.Quarantined)
+        if (record.Attempts is null or { Count: 0 })
         {
             return null;
         }
 
-        var attempts = record.Attempts;
-        if (attempts is null or { Count: 0 })
-        {
-            return null;
-        }
-
-        Attempt? final = null;
-        var atGreatest = 0;
         var seen = new HashSet<int>();
-        foreach (var attempt in attempts)
+        var attempts = new List<Attempt>(record.Attempts.Count);
+        foreach (var attempt in record.Attempts)
         {
             if (attempt is null)
             {
@@ -963,31 +1031,47 @@ public static class HistoricalReferenceWriter
             }
 
             // The same well-formedness rule DefaultExperienceReflector enforces: unique sequence
-            // numbers, or no claim about which attempt was final.
+            // numbers, or no claim about which attempt came when.
             if (!seen.Add(attempt.SequenceNumber))
             {
                 return null;
             }
 
-            if (final is null || attempt.SequenceNumber > final.SequenceNumber)
-            {
-                final = attempt;
-                atGreatest = 1;
-            }
-            else if (attempt.SequenceNumber == final.SequenceNumber)
-            {
-                atGreatest++;
-            }
+            attempts.Add(attempt);
         }
 
-        // More than one attempt at the greatest sequence number: the record cannot say which of them
-        // was last, so it says nothing rather than picking one.
-        if (final is null || atGreatest > 1 || final.Error is not null)
+        attempts.Sort((left, right) => left.SequenceNumber.CompareTo(right.SequenceNumber));
+        return attempts;
+    }
+
+    /// <summary>
+    /// The attempt a <c>Worked:</c> line describes: the final attempt of a record whose outcome is
+    /// <see cref="TaskVerificationStatus.Verified"/>, that is not quarantined, whose attempts are unambiguous, and
+    /// whose final attempt carries no error. <see langword="null"/> otherwise.
+    /// </summary>
+    /// <param name="record">The record.</param>
+    /// <param name="attempts">Its attempts as <see cref="OrderedAttempts"/> returned them, so one ordered list serves both the lines and this.</param>
+    private static Attempt? FinalVerifiedAttempt(ExperienceRecord record, List<Attempt>? attempts)
+    {
+        // Two different fields, deliberately both checked: Outcome.Status is the verification the run
+        // reached, record.Status is where the record's lifecycle has since put it.
+        if (record.Outcome.Status != TaskVerificationStatus.Verified || record.Status == ExperienceStatus.Quarantined)
         {
             return null;
         }
 
-        var calls = final.ToolCalls;
+        return attempts is { Count: > 0 } && attempts[^1].Error is null ? attempts[^1] : null;
+    }
+
+    /// <summary>
+    /// One attempt's tool calls in call order, null entries skipped, cut to <see cref="MaxApproachToolNames"/>.
+    /// </summary>
+    /// <param name="attempt">The attempt.</param>
+    /// <param name="clamped"><see langword="true"/> when the sequence was longer than <see cref="MaxApproachToolNames"/> and was cut.</param>
+    private static List<ToolCallRecord> OrderedCalls(Attempt attempt, out bool clamped)
+    {
+        clamped = false;
+        var calls = attempt.ToolCalls;
         if (calls is null or { Count: 0 })
         {
             return [];
@@ -1009,10 +1093,27 @@ public static class HistoricalReferenceWriter
         return ordered;
     }
 
-    /// <summary>What separates two arguments of one call on an <c>Approach:</c> line.</summary>
+    /// <summary>
+    /// The tool calls of the attempt a record's <c>Worked:</c> line names, in order and cut to
+    /// <see cref="MaxApproachToolNames"/>: the final attempt's calls, when the record's outcome is
+    /// <see cref="TaskVerificationStatus.Verified"/>, it is not quarantined, and its final attempt is
+    /// unambiguous and error-free. <see langword="null"/> when the record has no verified approach; empty when the
+    /// final attempt called no tool. The one place both the renderer and the capability gate
+    /// (<see cref="ExperienceInjectionOptions.ReceivingAgent"/>) read a record's working approach from, so the gate
+    /// checks exactly the tools the line would name.
+    /// </summary>
+    /// <param name="record">The record whose approach is wanted.</param>
+    /// <param name="clamped"><see langword="true"/> when the sequence was longer than <see cref="MaxApproachToolNames"/> and was cut.</param>
+    internal static List<ToolCallRecord>? ApproachToolCalls(ExperienceRecord record, out bool clamped)
+    {
+        clamped = false;
+        return FinalVerifiedAttempt(record, OrderedAttempts(record)) is { } final ? OrderedCalls(final, out clamped) : null;
+    }
+
+    /// <summary>What separates two arguments of one call on a <c>Tried:</c> line.</summary>
     private const string ArgumentSeparator = ", ";
 
-    /// <summary>What one <c>Approach:</c> line has spent of <see cref="MaxApproachArgumentsLength"/>, and what it has shown.</summary>
+    /// <summary>What one <c>Tried:</c> line has spent of <see cref="MaxApproachArgumentsLength"/>, and what it has shown.</summary>
     private sealed class ArgumentBudget
     {
         /// <summary>The characters every shown argument on the line has taken so far.</summary>
@@ -1214,7 +1315,7 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>
-    /// One allowlisted argument's stored value as the <c>Approach:</c> line carries it.
+    /// One allowlisted argument's stored value as a <c>Tried:</c> line carries it.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1298,15 +1399,15 @@ public static class HistoricalReferenceWriter
     /// the value, because only a double quote can.
     /// </para>
     /// </remarks>
-    private static string Quoted(string value)
+    private static string Quoted(string value, int length = MaxArgumentValueLength)
     {
-        var collapsed = CollapseWhitespace(Visible(value, quoteLookAlikes: true)).Replace("->", "- >", StringComparison.Ordinal);
+        var collapsed = Unseparated(CollapseWhitespace(Visible(value, quoteLookAlikes: true)), comma: false);
 
         // Clean maps a blank string to NoValue, which is right for a lesson and wrong here: an empty
         // value -- which is what the default redactor leaves in place of a secret -- is written as the
         // empty string it is.
         var cleaned = collapsed.Length == 0 ? string.Empty : Clean(collapsed);
-        var (text, cut) = Clamp(cleaned, MaxArgumentValueLength);
+        var (text, cut) = Clamp(cleaned, length);
         return "\"" + text + "\"" + (cut ? ClampedName : string.Empty);
     }
 
@@ -1440,8 +1541,9 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>
-    /// One tool name as the <c>Approach:</c> line carries it: invisible characters turned into spaces,
-    /// whitespace collapsed to single spaces, the block's markers and labels neutralized, and the result
+    /// One tool name as a <c>Tried:</c> line carries it: invisible characters turned into spaces,
+    /// whitespace collapsed to single spaces, the line's separators taken out (see <see cref="Unseparated"/>), the
+    /// block's markers and labels neutralized, and the result
     /// cut to <see cref="MaxToolNameLength"/> characters with <see cref="ClampedName"/> marking the cut.
     /// </summary>
     /// <remarks>
@@ -1482,8 +1584,20 @@ public static class HistoricalReferenceWriter
         var chosen = !string.Equals(spaced, joined, StringComparison.Ordinal) && MarkerPatterns.Any(marker => marker.IsMatch(joined))
             ? joined
             : spaced;
-        var (text, cut) = Clamp(Clean(chosen), MaxToolNameLength);
+        var (text, cut) = Clamp(Clean(Unseparated(chosen, comma: true)), MaxToolNameLength);
         return cut ? text + ClampedName : text;
+    }
+
+    /// <summary>
+    /// <paramref name="value"/> unable to spell a line's separators: the outcome arrow <c>→</c> and the old step
+    /// separator <c>-&gt;</c> each become <c>- &gt;</c>, and, with <paramref name="comma"/> (a tool name, which is not
+    /// quoted), a comma becomes a semicolon, so a name can fake neither another call nor an attempt's outcome. A
+    /// quoted value keeps its commas: only its closing quote can end it.
+    /// </summary>
+    private static string Unseparated(string value, bool comma)
+    {
+        var text = value.Replace("->", "- >", StringComparison.Ordinal).Replace("\u2192", "- >", StringComparison.Ordinal);
+        return comma ? text.Replace(',', ';') : text;
     }
 
     /// <summary>Every run of whitespace -- newlines included -- as one space, with the ends trimmed.</summary>
@@ -1679,7 +1793,7 @@ public static class HistoricalReferenceWriter
     private static int Utf8(string value) => Encoding.UTF8.GetByteCount(value);
 
     /// <summary>
-    /// Whether a grant at <paramref name="level"/> shows a borrowed record's <c>Approach:</c> line. Only the two
+    /// Whether a grant at <paramref name="level"/> shows a borrowed record's <c>Tried:</c> and <c>Worked:</c> lines. Only the two
     /// levels that say so do; anything else, <see langword="null"/> and an undefined value included, is the least
     /// disclosure.
     /// </summary>

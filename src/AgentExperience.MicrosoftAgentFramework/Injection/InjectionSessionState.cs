@@ -7,7 +7,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 
 /// <summary>
 /// One record a session has been given: which record, at which revision, whether the block showed it an
-/// <c>Approach:</c> line only a grant permitted, and whether a withdrawal notice for it has since been
+/// <c>Tried:</c> and <c>Worked:</c> lines only a grant permitted, and whether a withdrawal notice for it has since been
 /// delivered.
 /// </summary>
 /// <param name="ExperienceId">The record.</param>

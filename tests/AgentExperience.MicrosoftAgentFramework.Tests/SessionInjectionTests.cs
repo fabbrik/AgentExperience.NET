@@ -498,6 +498,86 @@ public class SessionInjectionTests
         Assert.DoesNotContain("strategy-shown", FreshBlock(harness.Client.LastMessages!), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// <see cref="ArgumentRecord"/> preceded by a failed attempt whose call carries its own allowlisted value, so a
+    /// borrowed record's attempts differ from what a grant shows (story 18.1: only the verified final attempt).
+    /// </summary>
+    private static ExperienceRecord ArgumentRecordAfterAFailure(Guid id, Scope owner, string? finalStrategy)
+    {
+        var record = ArgumentRecord(id, owner);
+        var final = record.Attempts[0];
+        var finalCall = final.ToolCalls[0];
+        var failedCall = finalCall with
+        {
+            ToolCallId = Guid.Parse("33333333-0000-0000-0000-000000000099"),
+            Arguments = new Dictionary<string, object?>(StringComparer.Ordinal) { ["strategy"] = "failed-strategy-value" },
+        };
+
+        return record with
+        {
+            Attempts =
+            [
+                final with { AttemptId = Guid.Parse("22222222-0000-0000-0000-000000000099"), SequenceNumber = 0, ToolCalls = [failedCall], Error = "HTTP 503" },
+                final with
+                {
+                    SequenceNumber = 1,
+                    ToolCalls =
+                    [
+                        finalCall with
+                        {
+                            Arguments = finalStrategy is null
+                                ? new Dictionary<string, object?>(StringComparer.Ordinal)
+                                : new Dictionary<string, object?>(StringComparer.Ordinal) { ["strategy"] = finalStrategy },
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_borrowed_delivery_tracks_only_the_value_its_final_attempt_showed_and_narrowing_retracts_it(bool finalShowsValue)
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var reader = TestScope with { TeamId = "team-b" };
+        var harness = new Harness { Reader = reader, ApproachArguments = { ["lender_tool"] = ["strategy"] } };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(ArgumentRecordAfterAFailure(id, owner, finalShowsValue ? "strategy-shown" : null));
+        harness.World.Grant(
+            id,
+            reader,
+            ExperienceGrantDisclosure.LessonApproachAndArguments,
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["lender_tool"] = ["strategy"] });
+
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        var first = FreshBlock(harness.Client.LastMessages!);
+
+        // The failed attempt and its value never cross a grant; the final attempt's value does, when it has one.
+        Assert.DoesNotContain("failed-strategy-value", first, StringComparison.Ordinal);
+        Assert.DoesNotContain("HTTP 503", first, StringComparison.Ordinal);
+        Assert.Equal(finalShowsValue, first.Contains("strategy=\"strategy-shown\"", StringComparison.Ordinal));
+
+        // The owner narrows the grant to names only.
+        harness.World.Revoke(id, reader);
+        harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonAndApproach);
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        if (finalShowsValue)
+        {
+            Assert.Equal(InjectionOutcome.Retracted, harness.Last.Outcome);
+            Assert.Equal([id], harness.Last.RetractedExperienceIds);
+        }
+        else
+        {
+            // Nothing was shown that the narrower grant withholds, so nothing is withdrawn.
+            Assert.Empty(harness.Last.RetractedExperienceIds);
+        }
+    }
+
     [Fact]
     public async Task A_LessonApproachAndArguments_delivery_that_showed_no_value_is_not_tracked_and_a_reissue_withdraws_nothing()
     {

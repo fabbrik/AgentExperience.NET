@@ -376,7 +376,7 @@ its triggers as to `0006`'s.
 - `experience_grants.disclosure text NOT NULL DEFAULT 'LessonOnly'`, with `experience_grants_disclosure_known`
   (`'LessonOnly'` or `'LessonAndApproach'`). The default covers every existing grant and any writer that bypasses
   this library. **This changes behaviour on upgrade:** every existing grant becomes `LessonOnly`, so a borrowed
-  record's `Approach:` line stops being injected until the owner revokes the grant and issues a `LessonAndApproach`
+  record's approach stops being injected until the owner revokes the grant and issues a `LessonAndApproach`
   one.
 - **Deployment order:** run `0011`, then deploy the new build, and stop older writers first (see
   [Upgrading the grant schema](sharing.md#upgrading-the-grant-schema)).

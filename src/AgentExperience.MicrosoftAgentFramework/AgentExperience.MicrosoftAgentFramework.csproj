@@ -40,6 +40,9 @@
     <!-- Story 17.1: the one rule that decides whether a reflection counts as model-authored, shared by Core, the MAF
          adapter and both stores so every authorship decision agrees. -->
     <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />
+    <!-- Story 18.1: the one rule that reduces a captured error to a short class, shared by the default reflector's
+         lesson and the injected block's Tried: lines so both name a failure the same way. -->
+    <Compile Include="..\Shared\ErrorClass.Shared.cs" Link="Shared\ErrorClass.Shared.cs" />
   </ItemGroup>
 
 </Project>

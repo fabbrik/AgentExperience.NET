@@ -44,6 +44,26 @@ public class AgentPolicyTests
     }
 
     [Fact]
+    public async Task A_strategy_named_only_on_a_Tried_line_is_history_and_is_not_a_candidate()
+    {
+        var policy = new PolicyChatClient("eval-incident-101", IncidentStrategies.ExplorationOrder);
+
+        await policy.GetResponseAsync(
+        [
+            new ChatMessage(
+                ChatRole.System,
+                HistoricalReferenceWriter.BlockBegin + "\n"
+                    + "Tried:\n"
+                    + "  - attempt 1: " + IncidentCheckTool.ToolName + "(" + WorkingApproach.StrategyArgument + "=\"" + IncidentStrategies.EscalateToOnCall + "\") \u2192 failed (exit 1)\n"
+                    + "  - attempt 2: " + IncidentCheckTool.ToolName + "(" + WorkingApproach.StrategyArgument + "=\"" + IncidentStrategies.WaitForLock + "\") \u2192 completed\n"
+                    + "Worked: attempt 2" + HistoricalReferenceWriter.WorkedSuffix + "\n"
+                    + HistoricalReferenceWriter.BlockEnd),
+        ]);
+
+        Assert.Equal([IncidentStrategies.WaitForLock], policy.StrategiesFromContext);
+    }
+
+    [Fact]
     public async Task Strategies_are_taken_in_the_order_the_block_names_them_which_is_rank_order()
     {
         var policy = new PolicyChatClient("eval-incident-201", IncidentStrategies.ExplorationOrder);
@@ -101,13 +121,16 @@ public class AgentPolicyTests
 
     /// <summary>
     /// A message shaped like an injected Historical Reference block naming the given strategies, one
-    /// record each, on the <c>Approach:</c> line the allowlisted <c>strategy</c> argument produces.
+    /// record each, on the <c>Tried:</c> line of the attempt its <c>Worked:</c> line names, as the allowlisted
+    /// <c>strategy</c> argument produces it.
     /// </summary>
     private static ChatMessage Block(params string[] strategies) => new(
         ChatRole.System,
         HistoricalReferenceWriter.BlockBegin + "\n"
             + string.Join("\n", strategies.Select(strategy =>
-                "Approach: " + HistoricalReferenceWriter.ApproachPrefix + IncidentCheckTool.ToolName
-                + "(" + WorkingApproach.StrategyArgument + "=\"" + strategy + "\")." + HistoricalReferenceWriter.ApproachArgumentsSuffix))
+                "Tried:\n  - attempt 1: " + IncidentCheckTool.ToolName
+                + "(" + WorkingApproach.StrategyArgument + "=\"" + strategy + "\")"
+                + HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted + "\n"
+                + "Worked: attempt 1" + HistoricalReferenceWriter.WorkedSuffix))
             + "\n" + HistoricalReferenceWriter.BlockEnd);
 }

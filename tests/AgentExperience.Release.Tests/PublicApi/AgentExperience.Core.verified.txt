@@ -636,8 +636,8 @@ namespace AgentExperience.Core.Reflections
 {
     public sealed class DefaultExperienceReflector : AgentExperience.Core.Reflections.IExperienceReflector
     {
-        public const string ProducerIdentity = "AgentExperience.DefaultExperienceReflector/1.0.0";
-        public const string TemplateVersion = "1.0.0";
+        public const string ProducerIdentity = "AgentExperience.DefaultExperienceReflector/1.1.0";
+        public const string TemplateVersion = "1.1.0";
         public DefaultExperienceReflector() { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.Reflection> ReflectAsync(AgentExperience.Core.Reflections.ReflectionRequest request, System.Threading.CancellationToken cancellationToken = default) { }
     }
