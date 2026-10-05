@@ -541,7 +541,7 @@ sentence with no space after its full stop, quarantines the record. What you can
 injection.
 
 **Upgrading from an unreleased build.** Records the `ChatClientExperienceReflector` wrote before authorship existed were not
-marked: they read back as `Deterministic`. After `0.1.0-preview.6` they are recognised by their producer, which starts with
+marked: they read back as `Deterministic`. Since `0.1.0-preview.7` they are recognised by their producer, which starts with
 `AgentExperience.ChatClientExperienceReflector/`, and count as model-authored everywhere: the injection label and
 fence, `Exclude`, retrieval's exclusion check, and both stores' excluding searches. PostgreSQL's migration `0022`
 recomputes the flag of every such plaintext row; a sealed row whose flag is unknown is classified by the owner-run

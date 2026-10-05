@@ -575,7 +575,7 @@ model-authored records out in SQL, **before** its `LIMIT`. See
   (see [Indexing](indexing.md#the-hnsw-index-is-created-out-of-band)).
 - **A sealed row stored without its flag.** That is a row sealed before `0021` (the migration cannot open it), a row
   an instance still running the previous build seals during a rolling deploy — until every instance runs this
-  version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. After `0.1.0-preview.6` an
+  version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. Since `0.1.0-preview.7` an
   excluding search leaves it out, as if a model wrote it, so it takes no place in the candidate window; a deterministic
   record among them is not found by an excluding search until its flag is written. The owner-run
   `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` opens each with its record key and writes its flag; see

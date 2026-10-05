@@ -87,7 +87,7 @@ public sealed record HistoricalReferencePayload(
 /// may be a dotted path to a scalar inside an object- or array-valued argument (only that scalar is shown,
 /// never the container), and a borrowed record may show a value when its grant is
 /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/> and both sides named the key.
-/// After <c>0.1.0-preview.6</c> it widens to every attempt of a record in the reader's own scope, not only the verified final one:
+/// Since <c>0.1.0-preview.7</c> it widens to every attempt of a record in the reader's own scope, not only the verified final one:
 /// each attempt's tool names (and allowlisted values) on a <c>Tried:</c> line, whether it ended with an error, and
 /// that error's <em>class</em> -- tokens this library recognises, never other text from the error -- plus a
 /// <c>Worked:</c> line naming the verified final attempt. The error's first line crosses only when the host opts into

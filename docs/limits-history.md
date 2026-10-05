@@ -186,7 +186,7 @@ scripts are never edited, so this and the similar forward references in `0007`â€
 [the schema guide](guide/postgres-schema.md#script-comments-that-were-written-before-the-work-they-point-at-shipped)
 instead.
 
-## Narrowed after `0.1.0-preview.6`
+## Narrowed in `0.1.0-preview.7`
 
 - **KL-18** (model-authored lessons) is **narrowed** by story 17.1. Two of its clauses were removable by code, and
   are gone. A PostgreSQL row sealed without its authorship flag (sealed before migration `0021`, sealed during a

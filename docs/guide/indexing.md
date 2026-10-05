@@ -139,7 +139,7 @@ is stored as before: it is derived from the erased text, erasure deletes it from
 before the erasure — backups, replicas, WAL, the dead tuple — still holds it. That is part of the KL-2 boundary in
 [Known limits and documented boundaries](../known-limits.md#documented-boundaries).
 
-The content hash is not needed to search, so after `0.1.0-preview.6` an encrypted deployment does not write it in the clear.
+The content hash is not needed to search, so since `0.1.0-preview.7` an encrypted deployment does not write it in the clear.
 The write stores `keyed:` followed by base64 of HMAC-SHA256 of the plain hash, under a subkey derived from the
 record's data key with HKDF-SHA256 and the fixed label `aexp:embedding-content-hash:v1`. It looks the key up first and
 creates one only for a live plaintext record in exactly the write's scope (written before the upgrade), so an unknown

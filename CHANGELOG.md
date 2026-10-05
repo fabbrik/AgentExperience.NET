@@ -6,6 +6,29 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.7
+
+This preview makes the library easier to adopt and more useful once adopted. One call sets it up
+(`services.AddAgentExperience(...)`), host callbacks can be async, an injected lesson says what failed and what worked
+in a compact block, the task text can be derived from the conversation, and verified reuse can move a lesson's
+confidence (opt-in). It also bounds the in-memory capture service and the pre-model path, fails closed on unknown
+authorship, signs the reflection with the rest of the record (provenance v2), and keeps text search on its GIN index
+under row-level security.
+
+Upgrading from `0.1.0-preview.6` applies migrations `0022`, `0023` and `0024`. Run the migrator before deploying the new
+build. `0022` reads every live plaintext payload inside the migrator's transaction and command timeout, so on a large
+plaintext table migrate in a maintenance window or with a raised command timeout. `0023` builds an index on the
+confidence-evidence ledger, which blocks appends to it while it builds; on a large ledger build it `CONCURRENTLY` first,
+as its header shows, and run the migrator with a `lock_timeout`. Migrate before setting
+`HostTrustedEvidence = RecordedOnly` (`0023`), and with row-level security on, run the privileges call after migrating
+so searches use `search_experience_text` (`0024`). Breaking changes, all labelled below: `Tried:` and `Worked:` replace
+`Approach:` in the rendered block, the compact rendering is the default, `InitialEventIdFor` takes the scope,
+`ResolveRequest` is no longer `required`, and some option setters changed from `init` to `set`. During a rolling
+deploy, a node on `0.1.0-preview.6` refuses the version 2 provenance signatures new nodes make: set
+`SignClaimsVersion = 1` until every node runs this build (see [Confidence](docs/guide/confidence.md)).
+
 ### The in-memory capture service bounds the finished runs it keeps (story 16.1)
 
 - **The problem it fixes.** `InMemoryExperienceCaptureService`, the default `IExperienceCaptureService`, kept every
@@ -170,7 +193,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   rerunning it is safe. It is the new `record.authorship.backfill` telemetry operation. **Action with crypto-shredding
   on:** run it after upgrading, passing each `ResumeAfter` on until `MoreRemain` is `false` for every project; see
   [Backfilling authorship flags](docs/guide/crypto-shredding.md#backfilling-authorship-flags-after-upgrading).
-- **KL-18** drops both clauses; see [Limits history](docs/limits-history.md#narrowed-after-010-preview6).
+- **KL-18** drops both clauses; see [Limits history](docs/limits-history.md#narrowed-in-010-preview7).
 
 ### The reflection is signed too (story 17.2)
 
@@ -219,7 +242,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   **Action for a host that constructs `ExperienceRetrievalService` by hand with signing on:** pass the same options
   to the new constructor, or records are judged without the content check.
 - **KL-18** drops the clause that signing covers the finalization claims only; KL-11 now says a content edit is
-  caught only for version 2 records. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  caught only for version 2 records. See [Limits history](docs/limits-history.md#narrowed-in-010-preview7) and
   [Signing provenance](docs/guide/confidence.md#signing-provenance).
 
 ### Host-trusted evidence can be kept out of the ranked score (story 17.3)
@@ -255,7 +278,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   submission for a key already counted or recorded as a duplicate.
 - **No backfill.** Evidence counted before `RecordedOnly` was set stays counted; read it out with `ExcludeHostTrusted`.
 - **KL-11** drops the clause that the opt-out's evidence is excluded only on read; see
-  [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  [Limits history](docs/limits-history.md#narrowed-in-010-preview7) and
   [Keeping host-trusted evidence out of the ranked score](docs/guide/confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score).
 
 ### Session tracking is serialized within a process (story 17.4)
@@ -302,7 +325,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   this build injects nothing there until the host removes its state key, which resets the session's account.
 - **KL-12** drops the clause that concurrent invocations on one session race on the tracking; what remains is two
   processes resuming the same serialized session, the host deleting or replacing the state key, and a model that
-  cannot unread a block. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  cannot unread a block. See [Limits history](docs/limits-history.md#narrowed-in-010-preview7) and
   [Reused sessions](docs/guide/injection.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
 
 ### The embedding's content hash stops confirming a guessed summary after erasure (story 17.5)
@@ -337,7 +360,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   clear hash remains. Do not run a plaintext-mode and an encrypted-mode indexer against the same database: each
   re-embeds the other's rows, and plaintext-mode writes put clear hashes back.
 - **KL-2** drops the content hash from what confirms a guessed summary in every copy after erasure; the embedding
-  vector and the full-text vector remain. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  vector and the full-text vector remain. See [Limits history](docs/limits-history.md#narrowed-in-010-preview7) and
   [Crypto-shredding](docs/guide/crypto-shredding.md#search-and-why-the-residual-is-what-it-is).
 
 ### The initial lifecycle event ID is derived from the scope too (story 17.6)
@@ -396,7 +419,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   ID reports `Conflict` because record IDs are globally unique by design, and an exposure of an unknown record is kept
   as `Unresolved` by design. It gains one stated boundary: the search uses the table-wide GIN index, so its cost
   reflects matches in every tenant (a weak timing side channel). See
-  [Limits history](docs/limits-history.md#narrowed-after-010-preview6).
+  [Limits history](docs/limits-history.md#narrowed-in-010-preview7).
 
 ### An injected lesson says what failed and what worked (story 18.1)
 

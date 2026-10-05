@@ -257,7 +257,7 @@ So encrypted mode keeps them, and the residual above is exactly them:
 A sealed record carries `0021`'s `reflection_model_authored` flag in the clear, so a search that excludes
 model-authored lessons (`ModelAuthoredLessons = Exclude`) can leave them out in SQL. A sealed row stored **without**
 it — sealed before `0021`, which cannot open it, or sealed during a rolling deploy by an instance on an earlier build —
-has `NULL`. After `0.1.0-preview.6` an excluding search fails closed on `NULL` and leaves such a row out, as if a model wrote
+has `NULL`. Since `0.1.0-preview.7` an excluding search fails closed on `NULL` and leaves such a row out, as if a model wrote
 it: a deterministic record among them is not injected under `Exclude` until its flag is written. Searches without the
 exclusion are unchanged.
 
