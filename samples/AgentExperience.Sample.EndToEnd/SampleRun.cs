@@ -422,6 +422,7 @@ public sealed class SampleRun
         Require(blockShape.NamesApplicability, 6, "the injected block does not state how it was ranked.");
         Require(blockShape.NamesApproach, 6, "the injected block does not name the tools the verified attempt used.");
         Require(!blockShape.RepeatsCapturedResult, 6, "the injected block repeats a raw captured result, which it must never do.");
+        Require(!blockShape.RepeatsCapturedError, 6, "the injected block repeats a raw captured error, which it must never do by default.");
         Require(!blockShape.RepeatsToolArguments, 6, "the injected block repeats a captured tool argument, which it must never do.");
 
         if (!session.StateBag.TryGetValue<string>(ExperienceCaptureAgentBuilderExtensions.RunIdStateKey, out var runBText)
@@ -440,7 +441,7 @@ public sealed class SampleRun
                 $"byte budget used: {injection.PayloadBytes.ToString(CultureInfo.InvariantCulture)} of {injectionLimits.MaxBytes.ToString(CultureInfo.InvariantCulture)}; record limit {injectionLimits.MaxRecords.ToString(CultureInfo.InvariantCulture)}",
                 $"omitted: {injection.Omitted.Count.ToString(CultureInfo.InvariantCulture)}; excluded before ranking: {injection.Excluded.Count.ToString(CultureInfo.InvariantCulture)}; truncated search: {injection.Truncated.ToString().ToLowerInvariant()}",
                 $"read out of the {Utf8Length(block!).ToString(CultureInfo.InvariantCulture)} bytes run B's model was handed: lesson {Present(blockShape.CarriesLesson)}, source {Named(blockShape.NamesSource)}, confidence {Named(blockShape.NamesConfidence)}, applicability {Named(blockShape.NamesApplicability)}, approach {Named(blockShape.NamesApproach)}",
-                $"the approach is the verified attempt's tool names in order and nothing else: raw captured result {Present(blockShape.RepeatsCapturedResult)}, captured tool argument {Present(blockShape.RepeatsToolArguments)}",
+                $"each attempt is its tool names in order, whether it failed with the error's class, and which one worked: raw captured result {Present(blockShape.RepeatsCapturedResult)}, raw captured error {Present(blockShape.RepeatsCapturedError)}, captured tool argument {Present(blockShape.RepeatsToolArguments)}",
                 $"run B's own Experience Run is {runBId:D}, read from the session state key '{ExperienceCaptureAgentBuilderExtensions.RunIdStateKey}'",
             ]));
 
@@ -493,6 +494,7 @@ public sealed class SampleRun
         bool NamesApplicability,
         bool NamesApproach,
         bool RepeatsCapturedResult,
+        bool RepeatsCapturedError,
         bool RepeatsToolArguments);
 
     /// <summary>
@@ -573,11 +575,17 @@ public sealed class SampleRun
             .LastOrDefault() is { Error: null } winning
             && winning.ToolCalls.Count > 0
             && block.Contains(
-                "Approach: " + HistoricalReferenceWriter.ApproachPrefix
-                    + string.Join(HistoricalReferenceWriter.ApproachSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName)) + ".",
+                "  - attempt " + winning.SequenceNumber.ToString(CultureInfo.InvariantCulture) + ": "
+                    + string.Join(HistoricalReferenceWriter.ToolSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName))
+                    + HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted + "\n"
+                    + "Worked: attempt " + winning.SequenceNumber.ToString(CultureInfo.InvariantCulture) + HistoricalReferenceWriter.WorkedSuffix + "\n",
                 StringComparison.Ordinal),
         RepeatsCapturedResult: record.Attempts.Any(attempt =>
             attempt.Result is { Length: > 0 } result && block.Contains(result, StringComparison.Ordinal)),
+
+        // A failed attempt crosses as its error class; the captured error text itself never does by default.
+        RepeatsCapturedError: record.Attempts.Any(attempt =>
+            attempt.Error is { Length: > 0 } error && block.Contains(error, StringComparison.Ordinal)),
 
         // The approach carries names. An argument value -- the free-form half of a tool call, and the
         // half a secret lives in -- must not ride along with them.

@@ -146,7 +146,7 @@ public static class PostgresExperienceRecordSchema
     /// <para>
     /// <b>It changes behaviour on upgrade.</b> Every existing grant becomes
     /// <see cref="AgentExperience.Abstractions.ExperienceGrantDisclosure.LessonOnly"/>, so a borrowed
-    /// record's <c>Approach:</c> line stops being injected until the owner revokes the grant and issues
+    /// record's approach stops being injected until the owner revokes the grant and issues
     /// a new one with <see cref="AgentExperience.Abstractions.ExperienceGrantDisclosure.LessonAndApproach"/>.
     /// </para>
     /// <para>

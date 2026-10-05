@@ -280,8 +280,8 @@ for nothing.
   leaves it out under `ExcludeModelAuthored` (`RetrievalExclusionReason.UnconfirmedContent` when that is the only
   reason, `ModelAuthored` when its reflection is model-authored anyway), and injection omits it under
   `ModelAuthoredLessons = Exclude` (`InjectionOmissionReason.UnconfirmedContent`), or fences and labels it, with its
-  task ID (a `Task:` line), its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines and its `Approach:`
-  line inside the fence together with its lesson; only the record header and the confidence and ranking lines the
+  task ID (a `Task:` line), its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines and its `Tried:` and
+  `Worked:` lines inside the fence together with its lesson; only the record header and the confidence and ranking lines the
   library computes stay above it. A stored record whose content cannot be encoded at all is unconfirmed too, and never
   fails a retrieval. So a party that can write
   the store can no longer change a lesson or flip its authorship to `Deterministic` unnoticed (KL-18). The retrieval

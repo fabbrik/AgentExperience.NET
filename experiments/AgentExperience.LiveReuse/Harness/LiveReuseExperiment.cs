@@ -92,7 +92,7 @@ public sealed record RunRecord(
     public IReadOnlyList<string> StoredStrategies { get; init; } = [];
 
     /// <summary>
-    /// Every strategy named on the Approach: line of the block the model was shown, in order. <see cref="BlockStrategy"/>
+    /// Every strategy named on the working attempt's Tried: line of the block the model was shown (the attempt its Worked: line names), in order. <see cref="BlockStrategy"/>
     /// is the first -- what a model reading the line meets first, and what <see cref="FollowedBlock"/> measures.
     /// </summary>
     public IReadOnlyList<string> BlockStrategies { get; init; } = [];
@@ -324,7 +324,7 @@ public static class LiveReuseExperiment
                     }
 
                     // The placebo injects the very record memory-enabled injects, with the story 6.2 allowlist off: the
-                    // block is there, its Approach: line names the tools but not the strategy.
+                    // block is there, its Tried: lines name the tools but not the strategy.
                     var memory = condition == design.TreatmentLabel || condition == design.PlaceboLabel ? currentStore
                         : condition == design.NegativeControlLabel ? staleStore
                         : null;
@@ -520,7 +520,7 @@ public static class LiveReuseExperiment
                             TimeProvider = frozen,
 
                             // Story 6.2: the one argument that distinguishes the approaches, allowlisted so the
-                            // block's own Approach: line carries the working strategy.
+                            // block's own Tried: line for the working attempt carries the working strategy.
                             ApproachArguments = showStrategy
                                 ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { [MigrationEnvironment.ApplyToolName] = ["strategy"] }
                                 : new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal),
@@ -752,7 +752,7 @@ public static class LiveReuseExperiment
 
     /// <summary>
     /// Finalizes a verified learning run into its store, reads the record back, and returns the strategies its final
-    /// attempt's <c>apply_migration</c> calls carry as stored, in call order -- what the injected Approach: line will show.
+    /// attempt's <c>apply_migration</c> calls carry as stored, in call order -- what the working attempt's injected Tried: line will show.
     /// </summary>
     private static async Task<IReadOnlyList<string>> FinalizeAsync(
         IServiceProvider provider,
@@ -789,8 +789,8 @@ public static class LiveReuseExperiment
 
         var final = readBack.Record.Attempts.MaxBy(attempt => attempt.SequenceNumber);
         // Every apply_migration call that carried a strategy, in order: a call whose arguments did not bind carries none,
-        // and a model may make a redundant call after the migration went live, which the record keeps (the Approach:
-        // line lists every call of the final attempt and does not mark which one succeeded).
+        // and a model may make a redundant call after the migration went live, which the record keeps (the final attempt's
+        // Tried: line lists every call of that attempt and does not mark which one succeeded).
         List<string> strategies = final is null
             ? []
             : [.. final.ToolCalls
@@ -805,23 +805,40 @@ public static class LiveReuseExperiment
             : throw new HarnessIntegrityException($"Run {sequence}'s stored record has no apply_migration strategy on its final attempt.");
     }
 
-    /// <summary>The strategy on the Approach: line of the block the model was shown, read out of the text itself.</summary>
-    internal static string? BlockStrategy(string? block)
+    /// <summary>The first strategy on the working attempt's Tried: line of the block the model was shown, read out of the text itself.</summary>
+    internal static string? BlockStrategy(string? block) =>
+        block is null ? null : RolloutStrategies.FirstNamedIn(WorkingAttemptLine(block));
+
+    /// <summary>Every strategy on the working attempt's Tried: line of the block the model was shown, in order, read out of the text itself.</summary>
+    internal static IReadOnlyList<string> BlockStrategies(string? block) =>
+        block is null ? [] : RolloutStrategies.AllNamedIn(WorkingAttemptLine(block));
+
+    /// <summary>
+    /// The <c>Tried:</c> line of the attempt the block's first <c>Worked:</c> line names: the line that lists every call of
+    /// the stored run's final attempt, in order. Earlier attempts' lines, which may name strategies that failed, are not
+    /// read. <see langword="null"/> when the block has no <c>Worked:</c> line.
+    /// </summary>
+    internal static string? WorkingAttemptLine(string block)
     {
-        if (block is null)
+        var lines = block.Split('\n');
+        var worked = Array.FindIndex(lines, text => text.StartsWith("Worked: attempt ", StringComparison.Ordinal));
+        if (worked < 0)
         {
             return null;
         }
 
-        var line = block.Split('\n').FirstOrDefault(text => text.StartsWith("Approach:", StringComparison.Ordinal));
-        return RolloutStrategies.FirstNamedIn(line);
-    }
+        var number = lines[worked]["Worked: attempt ".Length..].Split(' ')[0];
+        var prefix = "  - attempt " + number + ": ";
+        for (var index = worked - 1; index >= 0 && lines[index].StartsWith("  - ", StringComparison.Ordinal); index--)
+        {
+            if (lines[index].StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return lines[index];
+            }
+        }
 
-    /// <summary>Every strategy on the Approach: line of the block the model was shown, in order, read out of the text itself.</summary>
-    internal static IReadOnlyList<string> BlockStrategies(string? block) =>
-        block is null
-            ? []
-            : RolloutStrategies.AllNamedIn(block.Split('\n').FirstOrDefault(text => text.StartsWith("Approach:", StringComparison.Ordinal)));
+        return null;
+    }
 
     internal static string? TextOf(object? value) => value switch
     {

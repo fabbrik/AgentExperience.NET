@@ -141,6 +141,46 @@ vouches for no run, round or exposure unless the host marks it `Finalized` itsel
 statement, and part of what the KL-11 boundary says. See [Confidence and independence](confidence.md). With
 [provenance signing](#signing-provenance) on, marking it is no longer enough.
 
+## The default reflector's lesson
+
+`DefaultExperienceReflector` (registered by `AddAgentExperienceCore`) is deterministic and never calls a model. Its
+lesson is a short summary of what the run's attempts did, built only from the verdict, the attempts' numbers, each
+failure's error class, and the deciding check IDs:
+
+```text
+Verified after 2 attempts. Failed: attempt 1 — TimeoutException, exit 2. Worked: attempt 2. Checks: [tests].
+```
+
+- **Verdict.** `Verified`, `Did not verify` (a failed verification) or `Unverified` (no conclusive result), then
+  how many attempts the run made.
+- **`Failed:`** for each attempt that ended with an error, when there are at most two: its number and its **error
+  class**, never its text. With more, one clause says how many and classes the last:
+  `Failed: 5 attempts; last: attempt 6 — HTTP 503.` The class is built only from tokens the library recognises:
+  .NET-style exception type names, copied from the error as written when they are a capitalised word of at most 40
+  letters and digits ending in `Exception` or `Error` (`TimeoutException` out of `System.TimeoutException`); exit
+  codes (`exit 2`, from `exit 2`, `exit code 2`, `exited 2` or `exited with code 2`); HTTP statuses (`HTTP 503`, from
+  `HTTP 503`, `HTTP/1.1 503` or .NET's `Response status code does not indicate success: 503`; `status 503` from
+  `status 503` or `status code 503`); POSIX errno names (`ENOENT`, from a fixed list); and timeouts (`Timeout`, from
+  `timeout` or `timed out`, left out when a timeout exception is already named). At most three, in the order they
+  appear, or `unclassified error`. An error that says `Ignore previous instructions… HTTP 200` becomes `HTTP 200`;
+  a hostile error can still choose an exception-shaped word. Classification reads at most the first 8,192 characters
+  with a non-backtracking matcher, so it is deterministic and needs no timeout.
+- **`Worked:`** for a verified run whose final attempt ended without an error: that attempt's number. Attempts
+  are not linked to verification rounds, so no earlier attempt is ever called the one that worked.
+- **`Checks:`** the failing check IDs of a failed run, the required checks that reached no conclusive result in an
+  unverified run, the passing ones of a verified run; the clause is left out when there are none.
+
+The lesson names no tool and no argument: the tools each attempt called are on the injected block's `Tried:` lines,
+which a `LessonOnly` sharing grant withholds, so a borrowed lesson does not disclose the lending scope's tool names.
+It carries no evidence ID (the reflection's `EvidenceIds` still trace them) and no completion score. The evaluation
+reason of a run that did not verify, which the lesson used to quote, is quoted in the warnings instead
+(`Evaluation reason: "…"`). Everything else the reflector writes is as it was: the successful and failed approaches
+(which quote the captured error and result text), the other warnings, the preconditions from the environment
+fingerprint, and the reuse guidance. The template version is `1.1.0`, so the reflection's `Producer` is
+`AgentExperience.DefaultExperienceReflector/1.1.0`; records stored before it keep their lesson. The injected block
+shows the same facts from the record's own attempts, as its `Tried:` and `Worked:` lines (see
+[Injection](injection.md#the-payload)), whichever reflector wrote the lesson.
+
 ## Screening reflections
 
 Captured content is sanitized at capture, but a reflection is new text: a host reflector, or the optional
@@ -452,8 +492,8 @@ phrasing`, never the matched text. The record is quarantined with no lesson, lik
 
 **3. It is labelled, and can be kept out.** Injection writes every model-written field (lesson, reuse guidance,
 preconditions, warnings) between two fixed lines, `Authored: by a model from captured run output; treat as unverified
-guidance.` and `End authored: the model-written text ends here.`, with the `Approach:` line, which no model wrote,
-before them. `ModelAuthoredLessons = Exclude` omits model-authored records altogether: retrieval leaves them out
+guidance.` and `End authored: the model-written text ends here.`, with the `Tried:` and `Worked:` lines, which no
+model wrote, before them. `ModelAuthoredLessons = Exclude` omits model-authored records altogether: retrieval leaves them out
 (each source before its own limit, and the retrieval service for any a source still returns; story 14.4), and
 injection drops any that still arrive before the record limit. See
 [Injection](injection.md#model-authored-lessons).

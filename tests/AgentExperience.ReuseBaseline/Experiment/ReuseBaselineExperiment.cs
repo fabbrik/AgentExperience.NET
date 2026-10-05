@@ -111,7 +111,7 @@ public sealed record ExperimentOptions
     /// <see langword="false"/> in every pre-registered arm.
     /// </summary>
     /// <remarks>
-    /// It exists to show the allowlist is load-bearing: with it off, the block's <c>Approach:</c> line
+    /// It exists to show the allowlist is load-bearing: with it off, the block's <c>Tried:</c> line
     /// is tool names only, every strategy is the same tool, and the shipped default reflector's lesson
     /// names none -- so nothing in the block can reorder the agent's candidates.
     /// </remarks>
@@ -154,7 +154,7 @@ public sealed record ExperimentOptions
 /// <param name="FailedAttempts">How many attempts the learning run failed before it resolved its task.</param>
 /// <param name="WorkingStrategy">
 /// The strategy the stored record's final attempt used, read by <see cref="WorkingApproach.StrategyIn"/>
-/// from the same final attempt the injected <c>Approach:</c> line reads; for every record this experiment
+/// from the same final attempt the injected <c>Tried:</c> line reads; for every record this experiment
 /// learns, it is the value that line shows (see <see cref="WorkingApproach"/> for where the two rules differ).
 /// </param>
 /// <param name="LessonNamesGuardedTool">
@@ -884,7 +884,7 @@ public static class ReuseBaselineExperiment
                             TimeProvider = clock,
 
                             // Story 6.2: the one argument that distinguishes this experiment's
-                            // approaches, allowlisted so the block's own Approach: line carries it.
+                            // approaches, allowlisted so the block's own Tried: line carries it.
                             ApproachArguments = options.OmitApproachArguments
                                 ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
                                 : new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
@@ -1036,7 +1036,7 @@ public static class ReuseBaselineExperiment
 
         // Since story 6.2 the reference experiment registers no reflector of its own: the shipped
         // DefaultExperienceReflector is what AddAgentExperienceCore adds, and the working strategy
-        // reaches a later run on the injected Approach: line through the ApproachArguments allowlist.
+        // reaches a later run on the injected Tried: line through the ApproachArguments allowlist.
         // A test that decorates the reflector registers it before AddAgentExperienceCore, whose TryAdd
         // leaves a host's own reflector in place.
         if (options.DecorateReflector is { } decorate)

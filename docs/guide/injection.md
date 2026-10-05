@@ -4,8 +4,10 @@
 applicable records, re-checks each one immediately before use, asks your own risk policy, and adds what survives to
 the conversation as **one delimited, labeled Historical Reference message**. The message says it is untrusted
 reference material, not instructions — but that label is hygiene, not a security control: what stops a harmful tool
-call is your approval boundary around tools. The block carries the lesson and the names of the tools the successful
-run called, never raw tool arguments, results or errors (unless you allowlist specific argument keys). It never
+call is your approval boundary around tools. The block carries the lesson and what each attempt tried — the names of
+the tools it called, whether it failed and, by default, only the error's *class* (`TimeoutException`, `exit 2`) —
+and what worked, never raw tool results, error text or tool arguments (unless you allowlist specific argument keys,
+or opt into an error excerpt). It never
 throws into the agent. In a reused session it tracks what it already gave, so it does not repeat itself, stays within
 a budget, and tells the model when an earlier lesson has been withdrawn.
 
@@ -74,7 +76,8 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records), the bound on the final eligibility re-check, and `MaxAbandonedReads` (default 16), the cap on its abandoned reads still running (see [Pre-model latency budget](#pre-model-latency-budget)). |
 | `SessionLimits` | 32 records, 64 KB, 5-minute window (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices; `InFlightStageWindow` is how long an unsettled delivery counts as in flight. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
-| `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Approach:` line may show. See [Showing selected argument values](#showing-selected-argument-values). |
+| `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Tried:` and `Worked:` lines may show. See [Showing selected argument values](#showing-selected-argument-values). |
+| `FailureDetail` | `ErrorClass` | How much a `Tried:` line says about a failed attempt: its error class (`ErrorClass`), the class plus the error's first line, cut to 120 characters, neutralized and quoted (`Excerpt`), or just `failed` (`None`). See [What each attempt tried](#what-each-attempt-tried-and-what-worked). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. |
 | `ReceivingAgent` | none (off) | The receiving agent's tools and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
 | `ModelAuthoredLessons` (since story 14.3) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since story 14.4); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
@@ -113,8 +116,11 @@ Recorded: learned 2026-01-04T09:12:00Z; last lifecycle activity 2026-02-11T17:40
 Environment: host build-07; runtime .NET 10.0.0; os linux; application version 3.2.1; region us-east
 Verification: Verified
 Evidence: 3 evidence ID(s); no evidence detail is included.
-Lesson: ...
-Approach: the verified run's final attempt called these tools, in order: read_ledger -> wait_for_lock -> retry_refund. Tool names only -- no arguments, no results, no error text.
+Lesson: Verified after 2 attempts. Failed: attempt 1 — TimeoutException, exit 2. Worked: attempt 2. Checks: [tests].
+Tried:
+  - attempt 1: read_ledger, retry_refund → failed (TimeoutException, exit 2)
+  - attempt 2: read_ledger, wait_for_lock, retry_refund → completed
+Worked: attempt 2 (the final attempt)
 Reuse guidance: ...
 Preconditions:
   - ...
@@ -128,18 +134,51 @@ Warnings:
 Per record: its **source** (experience ID, source run ID, task ID), its **confidence**, its **applicability** (the
 rank score and every normalized component with the weight applied to it), **when it was learned and last revalidated**,
 the **environment** it came from, an **evidence summary** — lesson, reuse guidance, preconditions, warnings,
-verification status, and how many evidence IDs back it — and, for a verified record, the **approach**: the ordered
-tool *names* its final attempt called, plus the values of any tool arguments the host explicitly allowlisted
-([Showing selected argument values](#showing-selected-argument-values)).
+verification status, and how many evidence IDs back it — and **what its attempts tried and what worked**: per
+attempt, the ordered tool *names* it called, plus the values of any tool arguments the host explicitly allowlisted
+([Showing selected argument values](#showing-selected-argument-values)), and whether it failed, with the error's
+class.
 A record whose free text a model wrote is laid out differently
 ([Model-authored lessons](#model-authored-lessons)); every other record's entry is as above.
 
-`Approach:` is derived from the record's own `Attempts`, not from the reflection's prose, and it appears only when the
-record's outcome is `Verified` **and** its final attempt carries no error. That is deliberately the same rule
-`DefaultExperienceReflector` uses: attempts are not linked to verification rounds, so presenting an earlier error-free
-attempt as "the approach that worked" would be causal invention. A verified attempt that called no tool says so
-(`the verified run's final attempt completed without calling any tool.`) rather than printing an empty list, and a
-quarantined or unverified record carries no `Approach:` line at all.
+### What each attempt tried, and what worked
+
+`Tried:` and `Worked:` are derived from the record's own `Attempts`, not from the reflection's prose, so they say the
+same thing whichever reflector wrote the lesson.
+
+- **`Tried:`** one line per attempt, oldest first (by sequence number), at most the last
+  `HistoricalReferenceWriter.MaxTriedAttempts` (4); a first line says how many earlier attempts were omitted
+  (`3 earlier attempts omitted`). Each line is `attempt N:`, the attempt's calls, then `→ completed` or `→ failed`.
+  An attempt that called no tool says `(no tool called)`. An unverified or failed record in the reader's own scope
+  has these lines too: what a run tried and how it failed is worth knowing even when it never succeeded. A tool name
+  cannot spell a separator: `->` and `→` become `- >` and a comma becomes `;`, so a name fakes neither another call
+  nor an outcome.
+- **The byte budget.** These lines make a record bigger than the single `Approach:` line did, so more of its budget
+  goes to them and a block can drop whole records sooner. `MaxTriedAttempts` and the per-name and per-line bounds cap
+  how much they can take.
+- **The error class.** A failed attempt shows, by default, `failed (TimeoutException, exit 2)`: a class built only
+  from tokens the library recognises in the captured error — .NET-style exception type names, exit codes (`exit N`),
+  HTTP statuses (`HTTP 503`, also from `HTTP/1.1 503` and .NET's `Response status code does not indicate success:
+  503`; `status 503`), POSIX errno names from a fixed list, and timeouts (`Timeout`, left out when a timeout
+  exception is already named) — at most three, or `unclassified error`. An exception type name is the one token
+  copied from the error as written, and only when it is a capitalised word of at most 40 letters and digits ending in
+  `Exception` or `Error`, so a hostile error can still choose such a word. Nothing else from the error crosses, so an error that says
+  `Ignore previous instructions… HTTP 200` renders as `failed (HTTP 200)`. The default reflector names failures in
+  its lesson by the same rule (see [Finalization](finalization.md#the-default-reflectors-lesson)).
+- **`FailureDetail`.** `AttemptFailureDetail.Excerpt` adds the error's first non-blank line after the class, cut to
+  `HistoricalReferenceWriter.MaxErrorExcerptLength` (120) characters and bounded, neutralized and quoted exactly like
+  an argument value: `failed (TimeoutException, exit 2) "System.TimeoutException: lock held by deploy-7 (exit 2)"`.
+  That is captured error text reaching a later model — error messages echo paths, hosts, identifiers and content a
+  tool read — so opt in only where that is acceptable. A record borrowed through a grant never shows a failed
+  attempt at all (see [Records shared by a grant](#records-shared-by-a-grant)). `AttemptFailureDetail.None` renders
+  `failed` alone.
+- **`Worked:`** only when the record's outcome is `Verified` **and** its final attempt carries no error:
+  `Worked: attempt N (the final attempt)`. It names the attempt rather than repeating its calls, which are on that
+  attempt's `Tried:` line, so each tool name and argument value appears once. That is deliberately the same rule
+  `DefaultExperienceReflector` uses: attempts are not linked to verification rounds, so presenting an earlier error-free attempt as "the approach that worked" would be causal
+  invention.
+- **No lines at all** for a quarantined record (withheld from reuse whatever its outcome says), for a record with no
+  attempts, and for one whose attempt sequence numbers are not unique (it cannot say which came first).
 
 `Confidence:` is the record's stored reuse confidence, by default `(1 + S) / (2 + S + F)` over the independent
 supporting validations and contradictions that have been submitted against it (a host can replace the engine). It is a **heuristic**, not a calibrated
@@ -164,8 +203,10 @@ record was ranked on, and decay can change the order the records appear in.
 
 Tool *results*, attempt *results*, attempt *errors*, and evidence *detail* are never serialized into the block, and
 neither is any tool *argument* the host has not allowlisted, so a captured payload cannot reach a model through
-injection. By default the one thing that crosses from a captured run is the `Approach:` line's ordered tool
-**names**; the only other thing that can is the sanitized value of an argument key the host named for that exact tool
+injection. By default what crosses from a captured run is the `Tried:` and `Worked:` lines' ordered tool **names**,
+whether each attempt failed, and each failure's error class (built only from recognised tokens, never other text from
+the error); what else can is the error's first line under `FailureDetail = Excerpt`, and the sanitized value of an
+argument key the host named for that exact tool
 in `ExperienceInjectionOptions.ApproachArguments` — on a record in the reader's own scope, or on a borrowed one whose
 `LessonApproachAndArguments` grant names the key too — when the value, or the value a dotted path ends on, is a
 string, a number or a boolean.
@@ -186,7 +227,7 @@ the writer bounds it where it enters a model's context:
 - then whitespace (newlines included) is collapsed, and the block's markers and labels are neutralized (a marker
   split by an invisible character, even inside a word, is checked as a reader sees it, with the character removed,
   and neutralized);
-- each name is cut to `HistoricalReferenceWriter.MaxToolNameLength` (96) characters and the sequence to
+- each name is cut to `HistoricalReferenceWriter.MaxToolNameLength` (96) characters and each line's sequence to
   `MaxApproachToolNames` (20) names, and both cuts are marked in the text. A name made only of stripped characters is
   written as `(none recorded)`.
 
@@ -214,7 +255,7 @@ provenance line. The same words mid-sentence are left alone: this is about struc
 ### Showing selected argument values
 
 Two approaches that call the same tools in the same order but with different arguments — `retry_refund(delay: 0)`
-failing and `retry_refund(delay: 30)` succeeding — render as the same names-only `Approach:` line. A host that knows
+failing and `retry_refund(delay: 30)` succeeding — render as the same names on their `Tried:` lines. A host that knows
 which of its arguments carry the *choice* can name them, per tool:
 
 ```csharp
@@ -226,7 +267,10 @@ new ExperienceInjectionOptions
 ```
 
 ```
-Approach: the verified run's final attempt called these tools, in order: read_ledger -> retry_refund(delay=30). Tool names, plus only the argument values the host allowlisted, as stored after capture-time sanitization -- no other arguments, no results, no error text.
+Tried:
+  - attempt 1: read_ledger, retry_refund(delay=0) → failed (TimeoutException)
+  - attempt 2: read_ledger, retry_refund(delay=30) → completed
+Worked: attempt 2 (the final attempt)
 ```
 
 It is off by default, and a line that ends up showing no argument — no allowlisted key on any of its calls — is the
@@ -254,22 +298,21 @@ names-only line, byte for byte. When it is on, these are the guarantees, and eac
   markers are neutralized, it is cut to `HistoricalReferenceWriter.MaxArgumentValueLength` (64) characters with the
   cut marked outside the quotes, and quoted. Invisible characters are classified per Unicode scalar, so a
   TAG-character or other supplementary-plane payload becomes spaces too. Inside a value every double quote (and
-  look-alike) becomes `'` and `->` becomes `- >`, so the two double quotes around a value are the only ones and a
-  value cannot spell the step separator: it can neither add a line, nor forge a marker or label, nor end its own
-  quotes. It can still contain words that *read* like a call; it cannot be parsed as one. A value that cannot be read
+  look-alike) becomes `'`, and `->` and `→` become `- >`, so the two double quotes around a value are the only ones
+  and a value cannot spell a separator: it can neither add a line, nor forge a marker, a label or an outcome, nor end
+  its own quotes. It can still contain words that *read* like a call; it cannot be parsed as one. A value that cannot be read
   at all is written as the not-shown marker rather than failing the injection.
-- **The line is capped, and the budget still drops whole records.** All of a line's arguments together are capped at
+- **Each line is capped, and the budget still drops whole records.** All of one line's arguments together are capped at
   `MaxApproachArgumentsLength` (512) characters; an argument that would pass it is left out whole, with every later
   one, and the line says so. The record as a whole still counts against `MaxBytes`, which drops it whole.
 - **A borrowed record only with the owner's consent, and only what both sides named.** A record read through a
   sharing grant shows an argument value only when the grant is `LessonApproachAndArguments`, the level an owner
   issues as consent to it, naming on the grant the keys it consents to show
   (`ExperienceGrantRequest.ApproachArguments`). The block then shows a key only when the grant names it **and** this
-  allowlist names it for the same tool — the intersection, in this allowlist's order — and the line ends with
-  `HistoricalReferenceWriter.ApproachGrantArgumentsSuffix`. The allowlist is the *reader's* configuration, so it can
+  allowlist names it for the same tool — the intersection, in this allowlist's order. The allowlist is the *reader's* configuration, so it can
   narrow what the owner allowed but never widen it; the owner's keys are store data, so a grant whose keys are absent
-  or malformed shows no value rather than failing the block. Under `LessonOnly` the `Approach:` line is withheld
-  entirely, and under `LessonAndApproach` it is names only: neither was issued as consent to show argument values.
+  or malformed shows no value rather than failing the block. Under `LessonOnly` the `Tried:` and `Worked:` lines are
+  withheld entirely, and under `LessonAndApproach` they are names only: neither was issued as consent to show argument values.
   The host's `DecideInjection` sees the owner's keys as `ExperienceInjectionDecisionContext.GrantApproachArguments`.
   A session that was shown a borrowed record's values through one grant has that delivery withdrawn when the record
   is later read through any other grant — even one at the same level, whose keys may be fewer — or at a level that
@@ -294,7 +337,7 @@ written.
 
 ## Gating on the receiving agent's capabilities
 
-A lesson's `Approach:` line teaches the tools a verified run called. Retrieved into an agent that lacks those tools,
+A record's `Worked:` line points at the attempt, and so the tools, a verified run succeeded with. Retrieved into an agent that lacks those tools,
 or must not use tools that risky, it teaches an approach the agent cannot, or must not, carry out. Declare the
 receiving agent and the provider keeps such a record out of the block:
 
@@ -316,13 +359,14 @@ new ExperienceInjectionOptions
 }
 ```
 
-- **What is checked.** Exactly the tool names the record's `Approach:` line would carry: the verified final attempt's
-  calls, in order, up to `HistoricalReferenceWriter.MaxApproachToolNames` (20). Both are read by one helper, so the
-  gate and the line cannot disagree. A record with no approach (not verified, quarantined, or no unambiguous error-free
-  final attempt) has nothing to gate and passes, and so does a borrowed record whose grant withholds the line
+- **What is checked.** Exactly the tool names of the attempt the record's `Worked:` line names: the verified final
+  attempt's calls, in order, up to `HistoricalReferenceWriter.MaxApproachToolNames` (20), as its `Tried:` line shows
+  them. Both are read by one helper, so the gate and the lines cannot disagree. A record with no approach (not verified, quarantined, or no unambiguous error-free
+  final attempt) has nothing to gate and passes, and so does a borrowed record whose grant withholds the lines
   (`LessonOnly`): checking the lender's tool names there would let the reader probe for them. Names compare
-  ordinally, as recorded, and a recorded call with a null or blank name is always unavailable. Only the `Approach:`
-  line is checked: a tool name the lesson, reuse guidance, preconditions or warnings mention is not.
+  ordinally, as recorded, and a recorded call with a null or blank name is always unavailable. Only that attempt is
+  checked: a tool name an earlier attempt's `Tried:` line, the lesson, reuse guidance, preconditions or warnings mention is not
+  (a failed attempt's tools are history, not an approach to carry out).
 - **Tool check first, then risk.** Any approach tool missing from `AvailableTools` omits the record as
   `ToolUnavailable`. Otherwise, any approach tool whose class in `ToolRiskClasses` is above `MaxRiskClass` omits it as
   `RiskClassExceeded`. A tool missing from `ToolRiskClasses` counts as `Critical`: the library never infers a tool's
@@ -354,14 +398,16 @@ is a best-effort filter, not a boundary: content echoed from the run, a poisoned
 design, and so do paraphrased instructions. **The label and `ModelAuthoredLessons = Exclude` below are the controls to
 rely on**, and the approval boundary remains the control for any tool call a lesson induces.
 
-- **Every model-written field is labelled.** The entry carries its `Approach:` line (derived from the record's
-  attempts, which no model wrote) first, then the fixed line `HistoricalReferenceWriter.ModelAuthoredLine`, then the
+- **Every model-written field is labelled.** The entry carries its `Tried:` and `Worked:` lines (derived from the
+  record's attempts, which no model wrote) first, then the fixed line `HistoricalReferenceWriter.ModelAuthoredLine`, then the
   lesson, the reuse guidance, the preconditions and the warnings, then the fixed closing line
   `HistoricalReferenceWriter.ModelAuthoredEndLine`:
 
   ```
   Evidence: 1 evidence ID(s); no evidence detail is included.
-  Approach: the verified run's final attempt called these tools, in order: ...
+  Tried:
+    - attempt 1: ...
+  Worked: attempt 1 (the final attempt)
   Authored: by a model from captured run output; treat as unverified guidance.
   Lesson: ...
   Reuse guidance: ...
@@ -414,7 +460,7 @@ rely on**, and the approval boundary remains the control for any tool call a les
   `InjectionOmissionReason.UnconfirmedContent` (retrieval lists it as `RetrievalExclusionReason.UnconfirmedContent`),
   or labelled and fenced whatever it declares. Its `Source:` line then ends with
   `HistoricalReferenceWriter.UnconfirmedTaskNotice` instead of its task ID, and the fence holds every line drawn from
-  the record: a `Task:` line, its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines, its `Approach:`
+  the record: a `Task:` line, its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines, its `Tried:` and `Worked:`
   line and its reflection, because a party that can write the store could have changed any of them. Only the record
   header and the confidence and ranking lines the library computes stay above the fence.
   Records signed before that release are among them. See [Signing provenance](confidence.md#signing-provenance).
@@ -542,24 +588,28 @@ behind it. The grant ID is for the host, not for the model: it is never written 
 leaves it null — a search *matching* a shared record is not a delivery, and no grant has been used to hand anything
 over until the re-read.
 
-**A grant decides whether a borrowed lesson carries its `Approach:` line.** For a borrowed record the tool names are
-the *lending* scope's, and an internal name (`hr_salary_lookup`, `stripe_charge_prod`) is itself information about its
-systems. So the block renders that line only when the permitting grant allows it. The store reads the grant's
+**A grant decides whether a borrowed lesson carries its `Tried:` and `Worked:` lines.** For a borrowed record the
+tool names are the *lending* scope's, and an internal name (`hr_salary_lookup`, `stripe_charge_prod`) is itself
+information about its systems. So the block renders those lines only when the permitting grant allows it, and then
+only what the grant was issued as consent to show: the verified working attempt, as the `Approach:` line used to.
+The owner's failed attempts and their error classes are never shown to another scope. The store reads the grant's
 disclosure level from the same row that names the grant and returns it on `ExperienceRecordGetResult.GrantDisclosure`;
 the provider carries it onto `RankedExperience.GrantDisclosure` and `ExperienceInjectionDecisionContext.GrantDisclosure`,
 and `HistoricalReferenceWriter` honours it:
 
 | Record | Level | Block |
 | --- | --- | --- |
-| The reader's own | `null` | `Approach:` rendered, no `Shared:` line |
-| Borrowed | `LessonOnly` (the default) | no `Approach:` line; `Shared:` ends with `HistoricalReferenceWriter.ApproachWithheld` when the record has an approach to withhold |
-| Borrowed | `LessonAndApproach` | `Approach:` rendered with the owner's tool names, and never an argument value |
-| Borrowed | `LessonApproachAndArguments` | `Approach:` rendered, plus the values of the argument keys the grant names **and** the reader allowlisted for the same tool; the line ends with `ApproachGrantArgumentsSuffix` when it shows one |
+| The reader's own | `null` | `Tried:` and `Worked:` rendered, no `Shared:` line |
+| Borrowed | `LessonOnly` (the default) | no `Tried:` or `Worked:` line; `Shared:` ends with `HistoricalReferenceWriter.ApproachWithheld` when a showing level would have shown something |
+| Borrowed | `LessonAndApproach` | for a verified record whose final attempt ended without an error, that attempt only, as one `Tried:` line with the owner's tool names, and the `Worked:` line; never an argument value, a failed attempt or an error class; nothing for a record that did not verify |
+| Borrowed | `LessonApproachAndArguments` | as `LessonAndApproach`, plus on that line the values of the argument keys the grant names **and** the reader allowlisted for the same tool |
 | Borrowed, store reports no level or an undefined one | treated as `LessonOnly` | as `LessonOnly` — fail closed |
 
-The level governs the `Approach:` line **only**. The lesson, reuse guidance, preconditions and warnings are the
-reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model under
-any level. The level is informational to the risk policy: a host can deny a record on it, but nothing the decision
+The level governs the `Tried:` and `Worked:` lines **only**. The lesson, reuse guidance, preconditions and warnings
+are the reflector's prose and are rendered unfiltered, so a tool name a reflector wrote into them reaches the model
+under any level. The default reflector's own lesson names no tool, only attempt numbers, error classes and check
+IDs (see [Finalization](finalization.md#the-default-reflectors-lesson)), so under `LessonOnly` a record it wrote
+discloses none of the lending scope's tool names. The level is informational to the risk policy: a host can deny a record on it, but nothing the decision
 returns can widen it. Only the block is governed — the `ExperienceRecord` a store returns to host code is complete
 either way, so a host that forwards delivered records somewhere else is responsible for what it forwards. Upgrade
 order for the grant schema scripts (`0011`, `0017`) is in [Sharing and grants](sharing.md#upgrading-the-grant-schema).
@@ -569,7 +619,7 @@ record the re-read delivers through a grant appends one access row naming that g
 the grant's disclosure level, tagged with the request's `CorrelationId` — one row per delivered record, and none for
 the reader's own records. The row records that the store handed the record over, so a record the host's risk policy
 then denies still has one: the denial happens after the delivery. For the same reason the row's level is the level
-the library applied at delivery, not proof that an `Approach:` line reached the model: the host may deny the record,
+the library applied at delivery, not proof that a `Tried:` or `Worked:` line reached the model: the host may deny the record,
 the byte budget may drop it, or the record may have no approach. Under `Required` auditing a re-read whose rows
 cannot be written returns nothing for the records a grant delivered, and each is dropped as `Unreadable` like any
 other read that came back empty. The batch writes its rows in one statement, so they land together or not at all: a

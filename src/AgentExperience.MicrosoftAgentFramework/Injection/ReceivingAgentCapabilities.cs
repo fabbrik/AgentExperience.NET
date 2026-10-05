@@ -9,7 +9,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What is checked.</b> Exactly the tool names a record's <c>Approach:</c> line would carry: the
+/// <b>What is checked.</b> Exactly the tool names of the attempt a record's <c>Worked:</c> line names: the
 /// verified final attempt's calls, cut to <see cref="HistoricalReferenceWriter.MaxApproachToolNames"/>. A
 /// record with no approach (not verified, quarantined, or with no unambiguous error-free final attempt)
 /// has nothing to check and passes, and so does a borrowed record whose grant withholds the line, so the

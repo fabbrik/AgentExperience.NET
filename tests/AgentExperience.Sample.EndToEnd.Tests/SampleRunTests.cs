@@ -239,15 +239,29 @@ public class SampleRunTests
         // attempts rather than from the reflection's prose.
         var winning = record.Attempts.OrderBy(attempt => attempt.SequenceNumber).Last();
         Assert.Null(winning.Error);
+        var number = winning.SequenceNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
         Assert.Contains(
-            "Approach: " + HistoricalReferenceWriter.ApproachPrefix
-                + string.Join(HistoricalReferenceWriter.ApproachSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName)) + ".",
+            "  - attempt " + number + ": "
+                + string.Join(HistoricalReferenceWriter.ToolSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName))
+                + HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted + "\n"
+                + "Worked: attempt " + number + HistoricalReferenceWriter.WorkedSuffix + "\n",
             block,
             StringComparison.Ordinal);
+
+        // Story 18.1: the earlier, failed attempt is on its own Tried: line, by error class only.
+        Assert.Contains("\nTried:\n", block, StringComparison.Ordinal);
+        Assert.Contains("\u2192 failed (", block, StringComparison.Ordinal);
 
         foreach (var attempt in record.Attempts.Where(attempt => attempt.Result is { Length: > 0 }))
         {
             Assert.DoesNotContain(attempt.Result!, block, StringComparison.Ordinal);
+        }
+
+        // Under the default FailureDetail a failed attempt crosses as its error class, never its error text.
+        Assert.Contains(record.Attempts, attempt => attempt.Error is { Length: > 0 });
+        foreach (var attempt in record.Attempts.Where(attempt => attempt.Error is { Length: > 0 }))
+        {
+            Assert.DoesNotContain(attempt.Error!, block, StringComparison.Ordinal);
         }
 
         // Names cross; the arguments they were called with do not.

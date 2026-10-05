@@ -141,7 +141,8 @@ public class InjectedContentAuthorizationTests
         // The approach line really is what carried the tool name into the model's context.
         Assert.Equal(InjectionOutcome.Injected, Assert.Single(results).Outcome);
         var everything = string.Join("\n", model.LastMessages!.Select(m => m.Text));
-        Assert.Contains("Approach: " + HistoricalReferenceWriter.ApproachPrefix + DangerousTool + ".", everything, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: " + DangerousTool + " \u2192 completed\n", everything, StringComparison.Ordinal);
+
         Assert.Equal(1, CountOf(everything, DangerousTool));
         Assert.True(model.EmittedCall);
 
@@ -210,9 +211,9 @@ public class InjectedContentAuthorizationTests
         // "Approach: " (the genuine, derived one), and the name's own lines folded onto it.
         Assert.Equal(1, CountOf(block, HistoricalReferenceWriter.BlockEnd));
         Assert.EndsWith(HistoricalReferenceWriter.BlockEnd + "\n", block, StringComparison.Ordinal);
-        var approach = Assert.Single(lines, line => line.StartsWith("Approach: ", StringComparison.Ordinal));
-        Assert.StartsWith("Approach: " + HistoricalReferenceWriter.ApproachPrefix + "delete_everything ", approach, StringComparison.Ordinal);
-        Assert.DoesNotContain(lines, line => line.StartsWith("Approach: call", StringComparison.Ordinal));
+        var approach = Assert.Single(lines, line => line.StartsWith("  - attempt 0: ", StringComparison.Ordinal));
+        Assert.StartsWith("  - attempt 0: delete_everything ", approach, StringComparison.Ordinal);
+        Assert.DoesNotContain(lines, line => line.StartsWith("Approach:", StringComparison.Ordinal));
         Assert.True(model.EmittedCall);
 
         // And the call the model made with the registered, hostile name was denied all the same.
@@ -297,9 +298,10 @@ public class InjectedContentAuthorizationTests
         Assert.Equal(InjectionOutcome.Injected, Assert.Single(results).Outcome);
         var everything = string.Join("\n", model.LastMessages!.Select(m => m.Text));
         Assert.Contains(
-            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + BenignTool + "(strategy=\"" + Instruction + "\")." + HistoricalReferenceWriter.ApproachArgumentsSuffix,
+            "  - attempt 0: " + BenignTool + "(strategy=\"" + Instruction + "\") \u2192 completed\n",
             everything,
             StringComparison.Ordinal);
+
         Assert.Equal(1, CountOf(everything, DangerousTool));
         Assert.True(model.EmittedCall);
 
@@ -394,9 +396,10 @@ public class InjectedContentAuthorizationTests
         Assert.Equal(InjectionOutcome.Injected, Assert.Single(results).Outcome);
         var everything = string.Join("\n", model.LastMessages!.Select(m => m.Text));
         Assert.Contains(
-            "Approach: " + HistoricalReferenceWriter.ApproachPrefix + BenignTool + "(options.mode=\"" + Instruction + "\")." + HistoricalReferenceWriter.ApproachGrantArgumentsSuffix,
+            "  - attempt 0: " + BenignTool + "(options.mode=\"" + Instruction + "\") \u2192 completed\n",
             everything,
             StringComparison.Ordinal);
+
         Assert.Equal(1, CountOf(everything, DangerousTool));
         Assert.True(model.EmittedCall);
 

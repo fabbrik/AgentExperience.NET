@@ -37,18 +37,20 @@ public class ModelAuthoredInjectionTests
         var labelled = model.InjectedText()!;
         Assert.DoesNotContain("Authored:", plain, StringComparison.Ordinal);
 
-        // The same entry, with the Approach: line moved ahead of the label and every model-written field between
-        // the label and the closing line.
+        // The same entry, with the Tried: and Worked: lines moved ahead of the label and every model-written field
+        // between the label and the closing line.
         var lines = plain.Split('\n').ToList();
         var lesson = lines.FindIndex(line => line.StartsWith("Lesson: ", StringComparison.Ordinal));
-        var approach = lines.FindIndex(line => line.StartsWith("Approach: ", StringComparison.Ordinal));
+        var approach = lines.FindIndex(line => line == "Tried:");
+        var worked = lines.FindIndex(line => line.StartsWith("Worked: ", StringComparison.Ordinal));
         var end = lines.FindIndex(line => line.StartsWith("--- END RECORD", StringComparison.Ordinal));
         Assert.Equal(lesson + 1, approach);
+        Assert.True(worked > approach);
         var expected = lines.Take(lesson)
-            .Append(lines[approach])
+            .Concat(lines.Skip(approach).Take(worked - approach + 1))
             .Append(HistoricalReferenceWriter.ModelAuthoredLine)
             .Append(lines[lesson])
-            .Concat(lines.Skip(approach + 1).Take(end - approach - 1))
+            .Concat(lines.Skip(worked + 1).Take(end - worked - 1))
             .Append(HistoricalReferenceWriter.ModelAuthoredEndLine)
             .Concat(lines.Skip(end));
         Assert.Equal(string.Join('\n', expected), labelled);
@@ -121,8 +123,9 @@ public class ModelAuthoredInjectionTests
     }
 
     /// <summary>
-    /// A deterministic entry exactly as it rendered before story 14.3 (checked against the baseline commit): the
-    /// authorship label changes nothing for a deterministic record.
+    /// A deterministic entry exactly as it rendered before story 14.3 (checked against the baseline commit), except
+    /// for its Tried: and Worked: lines, which replaced the Approach: line in story 18.1: the authorship label changes
+    /// nothing for a deterministic record.
     /// </summary>
     private const string PinnedDeterministicEntry =
         ""
@@ -135,7 +138,9 @@ public class ModelAuthoredInjectionTests
         + "Verification: Verified\n"
         + "Evidence: 1 evidence ID(s); no evidence detail is included.\n"
         + "Lesson: Check the lock table before retrying the refund.\n"
-        + "Approach: the verified run's final attempt called these tools, in order: refund_ticket. Tool names only -- no arguments, no results, no error text.\n"
+        + "Tried:\n"
+        + "  - attempt 0: refund_ticket \u2192 completed\n"
+        + "Worked: attempt 0 (the final attempt)\n"
         + "Reuse guidance: Reuse only when the ticket is a refund.\n"
         + "Preconditions:\n"
         + "  - The ticket is a refund.\n"
@@ -474,8 +479,10 @@ public class ModelAuthoredInjectionTests
         Assert.Contains("META-MARKER", lines[open + 3], StringComparison.Ordinal);
         Assert.StartsWith("Verification: ", lines[open + 4], StringComparison.Ordinal);
         Assert.StartsWith("Evidence: ", lines[open + 5], StringComparison.Ordinal);
-        Assert.StartsWith("Approach: ", lines[open + 6], StringComparison.Ordinal);
-        Assert.Equal("Lesson: LESSON-MARKER", lines[open + 7]);
+        Assert.Equal("Tried:", lines[open + 6]);
+        Assert.StartsWith("  - attempt ", lines[open + 7], StringComparison.Ordinal);
+        Assert.StartsWith("Worked: ", lines[open + 8], StringComparison.Ordinal);
+        Assert.Equal("Lesson: LESSON-MARKER", lines[open + 9]);
 
         // Above the fence: only the record header and the lines the library computes.
         var above = lines.Skip(lines.FindIndex(line => line.StartsWith("--- RECORD", StringComparison.Ordinal))).TakeWhile(line => line != HistoricalReferenceWriter.ModelAuthoredLine).ToList();
@@ -490,7 +497,9 @@ public class ModelAuthoredInjectionTests
         Assert.DoesNotContain(outside, line => line.Contains("TASK-MARKER", StringComparison.Ordinal)
             || line.Contains("HOST-MARKER", StringComparison.Ordinal)
             || line.Contains("META-MARKER", StringComparison.Ordinal)
-            || line.StartsWith("Approach: ", StringComparison.Ordinal)
+            || line.StartsWith("Tried:", StringComparison.Ordinal)
+            || line.StartsWith("  - attempt ", StringComparison.Ordinal)
+            || line.StartsWith("Worked: ", StringComparison.Ordinal)
             || line.StartsWith("Environment: ", StringComparison.Ordinal)
             || line.StartsWith("Verification: ", StringComparison.Ordinal)
             || line.StartsWith("Evidence: ", StringComparison.Ordinal)
@@ -551,8 +560,10 @@ public class ModelAuthoredInjectionTests
         var open = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine);
         var close = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredEndLine);
         var approach = lines.FindIndex(line => line.Contains("wipe_database", StringComparison.Ordinal));
-        Assert.True(open < approach && approach < close);
-        Assert.StartsWith("Approach: ", lines[approach], StringComparison.Ordinal);
+        var worked = lines.FindIndex(line => line.StartsWith("Worked: ", StringComparison.Ordinal));
+        Assert.True(open < approach && approach < worked && worked < close);
+        Assert.StartsWith("  - attempt ", lines[approach], StringComparison.Ordinal);
+        Assert.Equal(approach, lines.FindLastIndex(line => line.Contains("wipe_database", StringComparison.Ordinal)));
 
         Assert.Empty(exclude.Last.InjectedExperienceIds);
         Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.UnconfirmedContent), Assert.Single(exclude.Last.Omitted));

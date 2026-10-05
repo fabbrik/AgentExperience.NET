@@ -194,21 +194,22 @@ instead of taking it on trust.
 LEARNED RECORDS -- produced by the learning phase, read back out of the store:
     learn-settlement-batch-connector-flap experience 5bdcb457-859f-8c23-b438-9c338d01a0b1
       ExperienceStatus.Validated, reuse confidence 0.667, 0 failed attempt(s) in the learning run
-      working approach on its Approach: line: 'retry-immediately' (read out of the record's final attempt, not from the task set)
+      working approach on its Tried: line: 'retry-immediately' (read out of the record's final attempt, not from the task set)
     learn-settlement-gateway-projection-drift experience 148e9569-f6c8-8e02-b778-b8f3bd4325be
       ExperienceStatus.Validated, reuse confidence 0.667, 1 failed attempt(s) in the learning run
-      working approach on its Approach: line: 'rebuild-index' (read out of the record's final attempt, not from the task set)
+      working approach on its Tried: line: 'rebuild-index' (read out of the record's final attempt, not from the task set)
 
   Trials never write a record. Only the learning phase does, so every trial in both conditions
   faces exactly the same stored experience and the two arms differ by the condition alone.
 
   The records were written by the library's shipped DefaultExperienceReflector alone; this harness
-  registers no reflector of its own. That reflector is domain-blind -- its lesson names the task
-  and the checks that passed, never how -- and in this experiment every strategy is the same single
+  registers no reflector of its own. That reflector is domain-blind -- its lesson counts the
+  attempts, classes each failure and names the deciding checks, never a tool or an argument -- and
+  in this experiment every strategy is the same single
   tool, distinguished only by its 'strategy' argument, so the ordered tool NAMES on the block's
-  Approach: line cannot tell the strategies apart either. What carries the working approach to a
+  Tried: line cannot tell the strategies apart either. What carries the working approach to a
   later run is one host setting: ExperienceInjectionOptions.ApproachArguments allowlists the
-  'strategy' argument of run_incident_check, so the library's own Approach: line shows its
+  'strategy' argument of run_incident_check, so the library's own Tried: line shows its
   sanitized value next to the tool name. That allowlist is a legitimate host responsibility and it
   is also a load-bearing part of why the arms differ, so it is named here rather than left in
   source. Without it, nothing about a working approach would reach a later run.

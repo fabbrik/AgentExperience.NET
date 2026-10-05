@@ -379,6 +379,58 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   reflects matches in every tenant (a weak timing side channel). See
   [Limits history](docs/limits-history.md#narrowed-after-010-preview6).
 
+### An injected lesson says what failed and what worked (story 18.1)
+
+- **The problem it fixes.** A lesson from the default pipeline told the receiving agent almost nothing it could act
+  on: the default reflector wrote `Task 'X' verified: required checks [...] passed (evidence: <guid>)`, and the block's
+  `Approach:` line named only the final attempt's tools. What failed, how, and what finally worked never reached the
+  model.
+- **Breaking (rendering): `Tried:` and `Worked:` replace `Approach:`.** Each record now lists its attempts, oldest
+  first, at most the last `HistoricalReferenceWriter.MaxTriedAttempts` (4), saying how many earlier ones were
+  omitted: `attempt N: tool_a, tool_b(key="value") → failed (TimeoutException, exit 2)` or `→ completed`. A verified
+  record whose final attempt ended without an error also gets `Worked: attempt N (the final attempt)`, which names
+  the attempt rather than repeating its calls, so each tool name and value appears once. Tool names and allowlisted
+  argument values are rendered with the same allowlist, grant rules, bounds and neutralization as before, and a
+  tool name or a value can no longer spell a separator: `->` and `→` become `- >`, and a comma in a tool name
+  becomes `;`. A record in the reader's own scope that is unverified or failed now says what it tried too; a
+  quarantined record, or one whose attempt numbers are not distinct, still says nothing. The lines sit where
+  `Approach:` sat, inside the model-authored fence whenever the approach was. `Tried:` and `Worked:` join the
+  neutralized field labels, and `Approach:` stays one. The capability gate still checks only the tools of the
+  attempt the `Worked:` line names. Records are bigger, so more of a record's byte budget goes to its attempt lines
+  and a block can drop whole records sooner. See [Injection](docs/guide/injection.md#the-payload).
+- **A sharing grant shows no more than it did.** A record read through a `LessonAndApproach` or
+  `LessonApproachAndArguments` grant shows exactly what its `Approach:` line used to: only a verified record's final
+  attempt, as one `Tried:` line (with argument values only under `LessonApproachAndArguments`) and the `Worked:`
+  line; never the owner's failed attempts, their error classes, or anything of a record that did not verify. A
+  `LessonOnly` grant withholds the lines, and the `Shared:` line says so, now as "The grant withholds this lesson's
+  attempts.", for a verified, unquarantined record with distinct attempt numbers whose final attempt ended without an
+  error, as before.
+- **Error class, never error text, by default.** A failed attempt shows a class built only from recognised tokens
+  (an exception type name, copied from the error when it is a capitalised word of at most 40 letters and digits
+  ending in `Exception` or `Error`; an exit code; an HTTP status, including `HTTP/1.1 503` and .NET's
+  `Response status code does not indicate success: 503`; a POSIX errno name; a timeout, left out when a timeout
+  exception is already named; at most three) or `unclassified error`. Classification is deterministic: it reads at
+  most the first 8,192 characters with a non-backtracking matcher and no timeout. New `ExperienceInjectionOptions.FailureDetail` (`AttemptFailureDetail.ErrorClass`, the
+  default; `Excerpt`, which adds the error's first line, cut to 120 characters, neutralized and quoted; or `None`).
+  An undefined value is refused when the provider is constructed.
+- **Public API.** `HistoricalReferenceWriter` loses `ApproachPrefix`, `ApproachSuffix`, `ApproachSeparator`,
+  `ApproachClamped`, `ApproachArgumentsSuffix`, `ApproachGrantArgumentsSuffix`, `ApproachArgumentsClamped` and
+  `NoToolsUsed`, and gains `NoToolCalled`, `ToolSeparator`, `OutcomeSeparator`, `AttemptCompleted`, `AttemptFailed`,
+  `AttemptToolsClamped`, `AttemptArgumentsClamped`, `WorkedSuffix`, `MaxTriedAttempts` and `MaxErrorExcerptLength`. New enum
+  `AttemptFailureDetail`. `ApproachWithheld` now reads "The grant withholds this lesson's attempts.". A host that
+  matched the old `Approach:` text must match the new lines.
+- **The default reflector's lesson (new records only).** `DefaultExperienceReflector.TemplateVersion` is `1.1.0`, so
+  its `Producer` is `AgentExperience.DefaultExperienceReflector/1.1.0`. The lesson is now
+  `Verified after 2 attempts. Failed: attempt 1 — TimeoutException, exit 2. Worked: attempt 2. Checks: [tests].`:
+  the verdict (`Verified`, `Did not verify` or `Unverified`), each failed attempt by number with its error class (or,
+  past two, `Failed: 5 attempts; last: attempt 6 — …`), the working attempt of a verified run, and the deciding check
+  IDs — the failing ones of a failed run, the inconclusive ones of an unverified run, the passing ones of a verified
+  run, and no clause when there are none. It carries no tool name (the tools are on the block's `Tried:` lines,
+  which a `LessonOnly` grant withholds), no evidence ID and no score. The evaluation reason, which the lesson used to
+  quote, is now a warning (`Evaluation reason: "…"`) of a run that did not verify. Every other field it writes is
+  unchanged, and records stored before this release keep their lesson. See
+  [Finalization](docs/guide/finalization.md#the-default-reflectors-lesson).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

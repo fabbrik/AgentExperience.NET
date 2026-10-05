@@ -128,7 +128,7 @@ public class ExperienceLoopClosureTests
 
         // The record's own lesson, its source, its confidence, and its applicability -- nothing raw.
         Assert.Contains(record.Reflection!.Lesson, injected.Text, StringComparison.Ordinal);
-        Assert.Contains($"Task '{TaskId}' verified", injected.Text, StringComparison.Ordinal);
+        Assert.Contains("Lesson: Verified after ", injected.Text, StringComparison.Ordinal);
         Assert.Contains($"Source: experience {record.ExperienceId:D}", injected.Text, StringComparison.Ordinal);
         Assert.Contains($"source run {record.SourceRunId:D}", injected.Text, StringComparison.Ordinal);
         Assert.Contains("Confidence: 0.667 (status Validated)", injected.Text, StringComparison.Ordinal);

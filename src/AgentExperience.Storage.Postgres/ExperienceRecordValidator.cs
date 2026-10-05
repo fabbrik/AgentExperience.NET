@@ -262,7 +262,7 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
-    /// The characters an argument key may not contain, because the <c>Approach:</c> line uses them to delimit an
+    /// The characters an argument key may not contain, because a <c>Tried:</c> line uses them to delimit an
     /// argument. The same set the MAF adapter refuses in <c>ExperienceInjectionOptions.ApproachArguments</c>: a key
     /// the owner could store but no reader could configure would be consent to nothing.
     /// </summary>

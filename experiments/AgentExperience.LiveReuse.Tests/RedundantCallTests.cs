@@ -5,7 +5,7 @@ namespace AgentExperience.LiveReuse.Tests;
 
 /// <summary>
 /// A model may make a second, redundant <c>apply_migration</c> call in the response that got the migration live. The
-/// stored record keeps both calls and the Approach: line lists both, in order, without marking which succeeded. The
+/// stored record keeps both calls and the final attempt's Tried: line lists both, in order, without marking which succeeded. The
 /// harness must compare the whole sequence on both sides, and still refuse a block that differs from its store.
 /// </summary>
 public sealed class RedundantCallTests
@@ -13,8 +13,8 @@ public sealed class RedundantCallTests
     [Fact]
     public void Every_strategy_on_a_line_is_read_in_order_with_repeats()
     {
-        Assert.Equal(["in-place", "batched-backfill", "in-place"], RolloutStrategies.AllNamedIn("Approach: apply_migration(strategy=in-place) > apply_migration(strategy=batched-backfill) > apply_migration(strategy=in-place)"));
-        Assert.Empty(RolloutStrategies.AllNamedIn("Approach: describe_service > apply_migration"));
+        Assert.Equal(["in-place", "batched-backfill", "in-place"], RolloutStrategies.AllNamedIn("  - attempt 2: apply_migration(strategy=\"in-place\"), apply_migration(strategy=\"batched-backfill\"), apply_migration(strategy=\"in-place\") \u2192 completed"));
+        Assert.Empty(RolloutStrategies.AllNamedIn("  - attempt 2: describe_service, apply_migration \u2192 completed"));
         Assert.Empty(RolloutStrategies.AllNamedIn(null));
     }
 

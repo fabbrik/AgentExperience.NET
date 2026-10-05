@@ -41,8 +41,8 @@ public static class RolloutStrategies
     }
 
     /// <summary>
-    /// Every strategy named in <paramref name="text"/>, in the order they appear, repeats included: an Approach: line
-    /// lists every call of the final attempt, so a strategy called twice is named twice.
+    /// Every strategy named in <paramref name="text"/>, in the order they appear, repeats included: the final attempt's Tried: line
+    /// lists every call of that attempt, so a strategy called twice is named twice.
     /// </summary>
     public static IReadOnlyList<string> AllNamedIn(string? text)
     {
