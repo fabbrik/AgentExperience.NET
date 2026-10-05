@@ -520,6 +520,43 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **Docs.** The README quick start and the injection and capture guides use it, returning `null` from `ResolveRequest`
   to skip injection when there is no text. See [Injection: the task text](docs/guide/injection.md#the-task-text).
 
+### Async resolvers (story 18.4)
+
+- **The problem it fixes.** `ExperienceInjectionOptions.ResolveRequest` and `ExperienceCaptureOptions.ResolveFinalization`
+  were synchronous and saw no cancellation token, though building a retrieval request usually means looking up the
+  caller's authorization and scope, and finalizing means running checks or reading CI for the evidence. Hosts were
+  pushed into sync-over-async or precomputation.
+- **New `ExperienceInjectionOptions.ResolveRequestAsync`**
+  (`Func<ExperienceInjectionContext, CancellationToken, ValueTask<RetrieveExperienceRequest?>>?`). Awaited at the
+  point `ResolveRequest` is called, with the invocation's token. Its result is treated exactly as the sync one's:
+  `null` skips (`Skipped`), a throw or a faulted task injects nothing and is reported (`Failed`, the reason naming
+  `ResolveRequestAsync`), and the request is validated, traced and counted the same way. An
+  `OperationCanceledException` while the invocation's own token is cancelled propagates to the caller, as the
+  provider's cancellation does elsewhere, and no result is reported; any other cancellation is `Failed`. Its time is
+  host time on top of the pre-model budget; no timeout is put around it.
+- **New `ExperienceCaptureOptions.ResolveFinalizationAsync`**
+  (`Func<ExperienceFinalizationContext, CancellationToken, ValueTask<FinalizeExperienceRequest?>>?`). Awaited where
+  `ResolveFinalization` is called, with the `FinalizationTimeout`-bounded token finalization already runs under. A
+  throw, a faulted task, or a request for another run is reported through `OnCaptureFailure` exactly as with the sync
+  form, the reason naming `ResolveFinalizationAsync`. When `FinalizationTimeout` fires during the await, only the
+  timeout is reported (stage `Finalize`), and a request returned after the timeout, or after the capture lifetime was
+  disposed, finalizes nothing.
+- **Exactly one of each pair.** The provider's constructor throws `ArgumentException` naming both when neither or
+  both of `ResolveRequest` and `ResolveRequestAsync` are set. `UseExperienceCapture` keeps "`FinalizationService` and
+  a resolver together, or neither", counting either resolver, and refuses both resolvers with `ArgumentException`.
+- **Breaking.** `ExperienceInjectionOptions.ResolveRequest` is no longer `required` and its type is now nullable
+  (`Func<ExperienceInjectionContext, RetrieveExperienceRequest?>?`), so an object initializer that omits it compiles
+  and is refused at construction instead, and code reading the property must handle `null`. A provider built with no
+  resolver now throws `ArgumentException`, not `ArgumentNullException` (its subclass): a `catch` or test that expects
+  `ArgumentNullException` exactly must change. The injection failure reason for a throwing resolver now names the form
+  that ran: `The injection request resolver (ResolveRequest) threw.` (was `The injection request resolver threw.`).
+- **Unchanged.** The sync forms behave exactly as before. `ResolveRun` and `DecideInjection` stay synchronous;
+  `DecideInjection` runs while the session's lock is held and has no async hook: prefetch what it needs, keyed by
+  scope, in `ResolveRequestAsync`, or decide offline.
+- **Docs.** The README quick start and the injection, capture and finalization guides use the async forms. See
+  [Injection: options](docs/guide/injection.md#options) and
+  [Finalization](docs/guide/finalization.md#finalizing-from-the-maf-adapter).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

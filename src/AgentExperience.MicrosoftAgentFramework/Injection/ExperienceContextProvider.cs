@@ -184,8 +184,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="retrieval">Core's retrieval service. It owns eligibility, ranking, and the retrieval timeout.</param>
     /// <param name="store">The record store each selected candidate is re-read through, in the request's own authorization and scope.</param>
     /// <param name="options">Host configuration: the resolver, the limits, the risk decision, and the result callback.</param>
-    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.ResolveRequest"/>, <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/>, <see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/>, is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><see cref="ExperienceInjectionOptions.ApproachArguments"/>, <see cref="ExperienceInjectionOptions.SessionStateKey"/> or <see cref="ExperienceInjectionOptions.ReceivingAgent"/> is malformed; see their remarks.</exception>
+    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/>, <see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/>, is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Not exactly one of <see cref="ExperienceInjectionOptions.ResolveRequest"/> and <see cref="ExperienceInjectionOptions.ResolveRequestAsync"/> is set; or <see cref="ExperienceInjectionOptions.ApproachArguments"/>, <see cref="ExperienceInjectionOptions.SessionStateKey"/> or <see cref="ExperienceInjectionOptions.ReceivingAgent"/> is malformed; see their remarks.</exception>
     public ExperienceContextProvider(
         ExperienceRetrievalService retrieval,
         IExperienceRecordStore store,
@@ -325,10 +325,21 @@ public sealed class ExperienceContextProvider : AIContextProvider
         RetrieveExperienceRequest? request;
         try
         {
-            request = _options.ResolveRequest(new ExperienceInjectionContext(
+            var resolveContext = new ExperienceInjectionContext(
                 context.AIContext.Messages as IReadOnlyList<ChatMessage> ?? context.AIContext.Messages?.ToArray() ?? [],
                 context.Session,
-                context.Agent).WithDerivationSource(unfilteredRequest));
+                context.Agent).WithDerivationSource(unfilteredRequest);
+
+            // Validation guarantees exactly one of the two is set.
+            request = _options.ResolveRequestAsync is { } resolveAsync
+                ? await resolveAsync(resolveContext, cancellationToken).ConfigureAwait(false)
+                : _options.ResolveRequest!(resolveContext);
+        }
+        catch (OperationCanceledException) when (_options.ResolveRequestAsync is not null && cancellationToken.IsCancellationRequested)
+        {
+            // The invocation itself is being cancelled while the host's async resolver awaited it: propagate, as
+            // every other cancellation here does. The synchronous resolver keeps its earlier behaviour unchanged.
+            throw;
         }
         catch (Exception ex)
         {
@@ -338,7 +349,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 NoOmissions,
                 retrieved: null,
                 correlationId: null,
-                new InjectionFailure("The injection request resolver threw.", ex));
+                new InjectionFailure(
+                    $"The injection request resolver ({(_options.ResolveRequestAsync is not null ? nameof(ExperienceInjectionOptions.ResolveRequestAsync) : nameof(ExperienceInjectionOptions.ResolveRequest))}) threw.",
+                    ex));
         }
 
         if (request is null)

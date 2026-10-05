@@ -592,12 +592,13 @@ var options = new ExperienceCaptureOptions
     ResolveRun = context => new ExperienceRunDescriptor("triage-ticket", hostScope),
 
     FinalizationService = finalization,          // AgentExperience.Core.Finalization.ExperienceFinalizationService
-    ResolveFinalization = context => new FinalizeExperienceRequest(
+    // Awaited with the FinalizationTimeout-bounded token, so it can run the checks or read CI for the evidence.
+    ResolveFinalizationAsync = async (context, cancellationToken) => new FinalizeExperienceRequest(
         RunId: context.Run.RunId,
         Authorization: hostAuthorization,
         ClosedRound: new ClosedVerificationRound(roundId, artifactRevision),
         RequiredChecks: [new RequiredCheck("unit-tests-pass", ExpectedKind: "TestResult")],
-        Evidence: evidenceFor(context.Run),
+        Evidence: await evidenceForAsync(context.Run, cancellationToken),
         CurrentArtifactRevision: artifactRevision,
         StorageDecision: StorageDecision.Permit,
         FinalizedAt: DateTimeOffset.UtcNow),
@@ -611,12 +612,20 @@ var options = new ExperienceCaptureOptions
   step and the same `FinalizationTimeout`. A run whose capture reported a problem is never finalized, so a
   half-captured run is never persisted as if it were whole. A run kept open for a further attempt is finalized only
   when it completes.
-- **Opting out per run.** `ResolveFinalization` returning `null` skips that run, and is not a failure.
-- **Failures.** A throwing resolver, a throwing `FinalizeAsync`, or a non-durable outcome (`StorageDenied`,
-  `NotAuthorized`, `Failed`, …) is reported through `OnCaptureFailure` with stage `Finalization` and never thrown.
-  The captured run is left untouched, so the host can retry finalization itself from the capture service.
+- **Async or sync.** `ResolveFinalizationAsync` is the preferred form; the synchronous `ResolveFinalization` still
+  works, unchanged. Set exactly one of them. The async one is awaited at the same point, with the token finalization
+  already runs under (bounded by `FinalizationTimeout`, never the caller's); pass it on to the checks or CI calls
+  that produce the evidence, so they stop when the step runs out of time.
+- **Opting out per run.** The resolver returning `null` skips that run, and is not a failure.
+- **Failures.** A throwing resolver (or a faulted task from the async one), a throwing `FinalizeAsync`, or a
+  non-durable outcome (`StorageDenied`, `NotAuthorized`, `Failed`, …) is reported through `OnCaptureFailure` with
+  stage `Finalization` and never thrown. The captured run is left untouched, so the host can retry finalization
+  itself from the capture service.
+- **Timeout or disposal during the async resolver.** When `FinalizationTimeout` fires while `ResolveFinalizationAsync`
+  is awaited, the timeout is reported once, at stage `Finalize`; the resolver's cancellation is not reported again.
+  A request the resolver returns after the timeout, or after the capture lifetime was disposed, finalizes nothing.
 - **Latency.** Finalization is a database round trip and is awaited inside `FinalizationTimeout` (5 s by default), so
   it adds caller-visible latency. Leave `FinalizationService` unset and finalize out of band if that is not
   acceptable.
-- **Setting `FinalizationService` without `ResolveFinalization` throws** at `UseExperienceCapture`, rather than
-  silently doing nothing.
+- **Setting `FinalizationService` without a resolver, a resolver without `FinalizationService`, or both resolvers,
+  throws** `ArgumentException` at `UseExperienceCapture`, rather than silently doing nothing.

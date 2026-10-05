@@ -474,3 +474,59 @@ internal sealed class ManualBoundTimer(TimerCallback callback, object? state, Ti
         return ValueTask.CompletedTask;
     }
 }
+
+/// <summary>
+/// A clock whose finalization timeouts (every timer other than an open-run bound) fire only when the test says so;
+/// open-run bounds and timestamps stay real.
+/// </summary>
+internal sealed class ManualTimeoutTimeProvider : TimeProvider
+{
+    private readonly List<ManualBoundTimer> _timeouts = [];
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        if (state is OpenRun)
+        {
+            return System.CreateTimer(callback, state, dueTime, period);
+        }
+
+        var timer = new ManualBoundTimer(callback, state, dueTime);
+        lock (_timeouts)
+        {
+            _timeouts.Add(timer);
+        }
+
+        return timer;
+    }
+
+    /// <summary>Waits for at least one live timeout to be armed, then fires every one that is still live.</summary>
+    public async Task FireTimeoutsAsync()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            ManualBoundTimer[] live;
+            lock (_timeouts)
+            {
+                live = _timeouts.Where(timer => !timer.Disposed).ToArray();
+            }
+
+            if (live.Length > 0)
+            {
+                foreach (var timer in live)
+                {
+                    timer.Fire();
+                }
+
+                return;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new TimeoutException("No timeout was ever armed.");
+            }
+
+            await Task.Delay(5);
+        }
+    }
+}

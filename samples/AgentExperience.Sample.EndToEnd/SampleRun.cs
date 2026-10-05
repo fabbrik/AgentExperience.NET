@@ -378,7 +378,8 @@ public sealed class SampleRun
                         _store,
                         new ExperienceInjectionOptions
                         {
-                            ResolveRequest = _ => new RetrieveExperienceRequest(Authorization, SampleScope, TaskText, CorrelationId: "sample-run-b"),
+                            ResolveRequestAsync = (_, _) => ValueTask.FromResult<RetrieveExperienceRequest?>(
+                                new RetrieveExperienceRequest(Authorization, SampleScope, TaskText, CorrelationId: "sample-run-b")),
                             Limits = injectionLimits,
                             OnContextInjected = result => injection = result,
                             TimeProvider = _clock,

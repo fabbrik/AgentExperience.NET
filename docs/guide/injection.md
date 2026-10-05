@@ -32,13 +32,21 @@ var provider = new ExperienceContextProvider(
     {
         // The user's latest words (see "The task text" below). With none -- an image-only turn, say --
         // return null to skip injection for this invocation rather than search on a generic phrase.
-        ResolveRequest = context => context.DerivedTaskText is { } taskText
-            ? new RetrieveExperienceRequest(
-                Authorization: hostAuthorization,  // host-established; nothing in the invocation may widen it
-                Scope: hostScope,
+        // Awaited with the invocation's token, so the host can look up the caller's authorization and scope.
+        ResolveRequestAsync = async (context, cancellationToken) =>
+        {
+            if (context.DerivedTaskText is not { } taskText)
+            {
+                return null;
+            }
+
+            var caller = await hostAuth.GetCallerAsync(cancellationToken);
+            return new RetrieveExperienceRequest(
+                Authorization: caller.Authorization,  // host-established; nothing in the invocation may widen it
+                Scope: caller.Scope,
                 TaskText: taskText,
-                CorrelationId: traceId)
-            : null,
+                CorrelationId: traceId);
+        },
 
         Limits = ExperienceInjectionLimits.Default,   // 8 records, 16 KB of UTF-8, re-checked within 500 ms
 
@@ -125,7 +133,8 @@ it through its own redaction first. It recognises no language: no stemming, no s
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.DerivedTaskText` is a ready task text (see [The task text](#the-task-text)); if you read `context.Messages` yourself, it may be empty — read it with `LastOrDefault`, never `Last()`. |
+| `ResolveRequestAsync` | none; set exactly one of the two | Turns one invocation into a `RetrieveExperienceRequest`, awaited with the invocation's `CancellationToken`. Return `null` to skip that invocation. `context.DerivedTaskText` is a ready task text (see [The task text](#the-task-text)); if you read `context.Messages` yourself, it may be empty — read it with `LastOrDefault`, never `Last()`. The preferred form: looking up the caller's authorization and scope usually needs I/O. A throw or a faulted task is reported as `Failed`, exactly as a synchronous throw is; an `OperationCanceledException` while the invocation's own token is cancelled propagates to the caller. |
+| `ResolveRequest` | none; set exactly one of the two | The synchronous form of `ResolveRequestAsync`, unchanged. Setting both, or neither, throws `ArgumentException` when the provider is constructed. |
 | `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records), the bound on the final eligibility re-check, and `MaxAbandonedReads` (default 16), the cap on its abandoned reads still running (see [Pre-model latency budget](#pre-model-latency-budget)). |
 | `SessionLimits` | 32 records, 64 KB, 5-minute window (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices; `InFlightStageWindow` is how long an unsettled delivery counts as in flight. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
@@ -133,10 +142,10 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `FailureDetail` | `ErrorClass` | How much a `Tried:` line says about a failed attempt: its error class (`ErrorClass`), the class plus the error's first line, cut to 120 characters, neutralized and quoted (`Excerpt`), or just `failed` (`None`). See [What each attempt tried](#what-each-attempt-tried-and-what-worked). |
 | `Rendering` | `Compact` | The block's layout: `Compact`, with a short preamble, a `Matched:` line and no identifiers or bookkeeping, or `Verbose`, the earlier layout (byte for byte, except that record text starting a line with `Matched:` is now neutralized). See [The payload](#the-payload). |
 | `MessageRole` | `User` | The chat role the block is sent in: `User` or `System`. Some chat APIs reject, move or merge a system message that is not first, so test `System` with your provider. See [The payload](#the-payload). |
-| `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. |
+| `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. Synchronous on purpose: with session tracking on it runs while the session's lock is held. Per-candidate I/O has no async hook: prefetch what it needs, keyed by scope, in `ResolveRequestAsync`, or decide offline. |
 | `ReceivingAgent` | none (off) | The receiving agent's tools and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
 | `ModelAuthoredLessons` (since story 14.3) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since story 14.4); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
-| `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. |
+| `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. No result is emitted when the caller cancels the invocation: the cancellation propagates instead. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
 
 ## What the agent sees
@@ -425,7 +434,7 @@ which of its arguments carry the *choice* can name them, per tool:
 ```csharp
 new ExperienceInjectionOptions
 {
-    ResolveRequest = ...,
+    ResolveRequestAsync = ...,
     ApproachArguments = { ["retry_refund"] = ["delay"], ["run_incident_check"] = ["strategy"] },
 }
 ```
@@ -508,7 +517,7 @@ receiving agent and the provider keeps such a record out of the block:
 ```csharp
 new ExperienceInjectionOptions
 {
-    ResolveRequest = ...,
+    ResolveRequestAsync = ...,
     ReceivingAgent = new ReceivingAgentCapabilities
     {
         AvailableTools = new HashSet<string> { "read_ledger", "wait_for_lock", "retry_refund" },
@@ -661,7 +670,7 @@ call anyway; the tool body never runs. See the [security suite](../security-suit
 
 | Step | What it does |
 | --- | --- |
-| Resolve | `ResolveRequest` turns the invocation into a `RetrieveExperienceRequest`. Returning `null` skips this invocation (`Skipped`); throwing injects nothing and is reported (`Failed`) |
+| Resolve | `ResolveRequestAsync` (or the synchronous `ResolveRequest`) turns the invocation into a `RetrieveExperienceRequest`. Returning `null` skips this invocation (`Skipped`); throwing, or a faulted task, injects nothing and is reported (`Failed`) |
 | Retrieve | `ExperienceRetrievalService` applies scope, status, confidence, expiry, and environment eligibility, then ranks. Its own timeout bounds the call |
 | Record limit | The top `Limits.MaxRecords` (default 8) in rank order are kept (with `ModelAuthoredLessons = Exclude`, model-authored records are omitted first and take no slot); the rest are recorded as `OverRecordLimit` and are never even re-read. The provider owns this limit — `HistoricalReferenceWriter.Write` *rejects* an untrimmed list rather than applying it a second time |
 | Final eligibility check | Every kept candidate is re-read through the store in **one** batched call, `IExperienceRecordStore.GetManyAsync`, in the request's own authorization and scope, and each is put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 500 ms) |
@@ -720,9 +729,10 @@ model it is withdrawn (see [Reused sessions](#reused-sessions-a-budget-no-repeat
 
 Before the model is called, the provider spends at most about `RetrievalPolicy.Timeout` (default 500 ms) on retrieval
 plus `Limits.EligibilityCheckTimeout` (default 500 ms) on the final eligibility check — about 1 s at the defaults —
-plus whatever the host's own `ResolveRequest` callback takes. `DecideInjection` runs inside the check, so its time
-counts against `EligibilityCheckTimeout`; one synchronous call is not cut short, but the check stops as soon as it
-returns past the bound. Store reads are hard-bounded: one still running when its bound runs out is abandoned, keeps
+plus whatever the host's own `ResolveRequestAsync` (or `ResolveRequest`) takes: that is host time on top of the
+budget, and the provider puts no timeout around it, so bound any I/O it does with the token it is given.
+`DecideInjection` runs inside the check, so its time counts against `EligibilityCheckTimeout`; one synchronous call
+is not cut short, but the check stops as soon as it returns past the bound. Store reads are hard-bounded: one still running when its bound runs out is abandoned, keeps
 running in the background, and may hold a pooled database connection until its cancellation lands. The bounds are
 released by `TimeProvider` timers, so a starved thread pool can still release them late.
 
@@ -938,7 +948,7 @@ The account is per provider — its budget, the revisions it delivered, the noti
 ```csharp
 var tenantB = new ExperienceContextProvider(retrievalB, storeB, new ExperienceInjectionOptions
 {
-    ResolveRequest = ResolveForTenantB,
+    ResolveRequestAsync = ResolveForTenantBAsync,
     SessionStateKey = "Contoso.TenantB.InjectionSession",
 });
 ```

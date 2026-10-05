@@ -551,6 +551,7 @@ internal sealed class CaptureScope
             _options,
             RunId,
             failure => ReportFailure(failure.Stage, failure.Reason, failure.Exception),
+            () => _registry.IsDisposed,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -657,12 +658,19 @@ internal sealed class CaptureScope
         ExperienceCaptureOptions options,
         Guid runId,
         Action<ExperienceCaptureFailure> report,
+        Func<bool> isDisposed,
         CancellationToken cancellationToken)
     {
-        if (options.FinalizationService is not { } finalization || options.ResolveFinalization is not { } resolve)
+        if (options.FinalizationService is not { } finalization
+            || (options.ResolveFinalization is null && options.ResolveFinalizationAsync is null))
         {
             return;
         }
+
+        // Validation guarantees exactly one of the two resolvers is set alongside the service.
+        var resolverName = options.ResolveFinalizationAsync is not null
+            ? nameof(ExperienceCaptureOptions.ResolveFinalizationAsync)
+            : nameof(ExperienceCaptureOptions.ResolveFinalization);
 
         void Fail(ExperienceCaptureFailureStage stage, string reason, Exception? exception) =>
             report(new ExperienceCaptureFailure(stage, runId, reason, exception));
@@ -676,11 +684,32 @@ internal sealed class CaptureScope
                 return;
             }
 
-            request = resolve(new ExperienceFinalizationContext(run));
+            var context = new ExperienceFinalizationContext(run);
+            if (options.ResolveFinalizationAsync is { } resolveAsync)
+            {
+                request = await resolveAsync(context, cancellationToken).ConfigureAwait(false);
+
+                // The await can outlast the step: once FinalizationTimeout has fired (and been reported), or the
+                // host has disposed capture, a resolver that ignored its token must not finalize anything.
+                if (cancellationToken.IsCancellationRequested || isDisposed())
+                {
+                    return;
+                }
+            }
+            else
+            {
+                request = options.ResolveFinalization!(context);
+            }
+        }
+        catch (OperationCanceledException) when (options.ResolveFinalizationAsync is not null && cancellationToken.IsCancellationRequested)
+        {
+            // FinalizationTimeout fired while the async resolver awaited, and the timeout is already reported at
+            // stage Finalize; reporting the resolver's cancellation too would blame the host for it.
+            return;
         }
         catch (Exception ex)
         {
-            Fail(ExperienceCaptureFailureStage.Finalization, $"ResolveFinalization threw {ex.GetType().FullName}; the run is not finalized.", ex);
+            Fail(ExperienceCaptureFailureStage.Finalization, $"{resolverName} threw {ex.GetType().FullName}; the run is not finalized.", ex);
             return;
         }
 
@@ -696,7 +725,7 @@ internal sealed class CaptureScope
         {
             Fail(
                 ExperienceCaptureFailureStage.Finalization,
-                "ResolveFinalization returned a request for a different run; the run is not finalized.",
+                $"{resolverName} returned a request for a different run; the run is not finalized.",
                 null);
             return;
         }

@@ -90,11 +90,14 @@ stores; it is for development and tests only, and keeps nothing across a restart
 
 This wires steps 1 to 6 for one MAF agent: apply the schema, register the services, inject past lessons before each
 run, and capture, verify and store each run after it (step 7 is in [Reuse feedback](docs/guide/reuse-feedback.md)).
-It compiles against `0.1.0-preview.6`. Before you run it, create the two database roles it names (a few lines of SQL,
-in [Deployment](docs/guide/deployment.md#creating-the-roles)); for a throwaway local database with a single role,
-skip the `ApplyApplicationRolePrivilegesAsync` call, which refuses the role running it. You supply four things:
-`chatClient` (any `Microsoft.Extensions.AI` `IChatClient`), two connection strings, and `EvidenceFor`, which turns
-your own checks (for example, a test run) into `Evidence` for the round you closed.
+It targets the next preview, which is not yet published: on `0.1.0-preview.6`, use the synchronous `ResolveRequest`
+and `ResolveFinalization` and build the task text yourself, since `ResolveRequestAsync`, `ResolveFinalizationAsync`
+and `DerivedTaskText` are not in that release. Before you run it, create the two database roles it names (a few
+lines of SQL, in [Deployment](docs/guide/deployment.md#creating-the-roles)); for a throwaway local database with a
+single role, skip the `ApplyApplicationRolePrivilegesAsync` call, which refuses the role running it. You supply four
+things:
+`chatClient` (any `Microsoft.Extensions.AI` `IChatClient`), two connection strings, and `EvidenceForAsync`, which
+runs your own checks (for example, a test run) and turns them into `Evidence` for the round you closed.
 
 ```csharp
 using AgentExperience.Abstractions;
@@ -153,9 +156,10 @@ var injection = new ExperienceContextProvider(
     new ExperienceInjectionOptions
     {
         // The user's latest words, bounded; with none, return null to skip injection for this run.
-        ResolveRequest = context => context.DerivedTaskText is { } taskText
+        // Async, with the invocation's token: look up the caller's authorization and scope here if you need I/O.
+        ResolveRequestAsync = (context, cancellationToken) => ValueTask.FromResult(context.DerivedTaskText is { } taskText
             ? new RetrieveExperienceRequest(authorization, scope, TaskText: taskText)
-            : null,
+            : null),
     });
 
 // 5. After each run: capture what happened, verify it with your checks, and store the lesson.
@@ -166,7 +170,7 @@ AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIC
         ResolveRun = context => new ExperienceRunDescriptor(
             TaskId: "triage-ticket", Scope: scope, TaskDescription: context.DerivedTaskText),
         FinalizationService = provider.GetRequiredService<ExperienceFinalizationService>(),
-        ResolveFinalization = context =>
+        ResolveFinalizationAsync = async (context, cancellationToken) =>
         {
             var round = new ClosedVerificationRound(Guid.NewGuid(), ArtifactRevision: "build-42");
             return new FinalizeExperienceRequest(
@@ -174,7 +178,8 @@ AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIC
                 Authorization: authorization,
                 ClosedRound: round,
                 RequiredChecks: [new RequiredCheck("tests-pass", ExpectedKind: "TestResult")],
-                Evidence: EvidenceFor(context.Run, round),   // your own checks, never the model's word
+                // Your own checks, never the model's word.
+                Evidence: await EvidenceForAsync(context.Run, round, cancellationToken),
                 CurrentArtifactRevision: "build-42",
                 StorageDecision: StorageDecision.Permit,
                 FinalizedAt: DateTimeOffset.UtcNow);
