@@ -152,7 +152,7 @@ answers `Deleted` for its own tombstone. (Mixing the scope into the derivation r
 `ExperienceIdFor(Guid)` with no compatible overload, before the first preview was published: an `[Obsolete]`
 overload could not have been kept honestly, because it would have had to go on deriving an ID any scope could
 squat. Callers pass the same `Scope` they finalize under; nothing persisted needs migrating, because a record's ID is
-stored, never re-derived. The release after `0.1.0-preview.6` made the matching change to the initial lifecycle event ID:
+stored, never re-derived. `0.1.0-preview.7` made the matching change to the initial lifecycle event ID:
 `InitialEventIdFor(runId, scope)` replaced `InitialEventIdFor(Guid)`, again with no compatible overload — see
 [Why retrying is safe](finalization.md#why-retrying-is-safe).)
 

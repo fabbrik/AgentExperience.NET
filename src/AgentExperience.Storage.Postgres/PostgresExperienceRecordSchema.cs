@@ -295,7 +295,7 @@ public static class PostgresExperienceRecordSchema
     /// A trigger derives the flag from every unsealed payload whenever the row is written, the store writes it from the
     /// reflection when it seals a record, and a tombstone carries the fixed <c>false</c>. A sealed row stored without
     /// the flag -- sealed before this script, or by an instance on the previous build during a rolling deploy -- keeps
-    /// <c>NULL</c>. After <c>0.1.0-preview.6</c> an excluding search leaves <c>NULL</c> out as well (unknown counts as model-authored),
+    /// <c>NULL</c>. Since <c>0.1.0-preview.7</c> an excluding search leaves <c>NULL</c> out as well (unknown counts as model-authored),
     /// and <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext, AgentExperience.Abstractions.Scope, int, ScopeMatch, Guid?, CancellationToken)"/> writes the flag from each such row's
     /// opened payload; docs/guide/postgres-schema.md describes both.
     /// </para>

@@ -9,7 +9,7 @@ not match), and the executable test that proves this repository works against it
 It is the successor to the Story 1.7 research digest, which lived in a directory excluded from git. Anything a
 reader needs to check a pin is here.
 
-**Last verified: 2026-10-01** (the `0.1.0-preview.6` release checks), against nuget.org's registration API and a full local run of the suite on `net10.0`
+**Last verified: 2026-10-05** (the `0.1.0-preview.7` release checks), against nuget.org's registration API and a full local run of the suite on `net10.0`
 and all four PostgreSQL majors, plus the floating-dependency leg and both MAF probe legs. Re-verify — and update the date — whenever
 a pin or a floor moves.
 

@@ -629,7 +629,7 @@ rely on**, and the approval boundary remains the control for any tool call a les
   reflection by the same rule as the stores (its `Producer` counts only when it is the library's own reflector). An undefined policy value is refused when the provider is constructed.
 - **Unknown authorship fails closed.** A PostgreSQL row sealed without its authorship flag has no authorship SQL can
   read — rows sealed before migration `0021`, rows an instance still running an earlier build seals during a rolling
-  deploy, and any a writer inserts without the flag. After `0.1.0-preview.6` its source leaves it out of an excluding search,
+  deploy, and any a writer inserts without the flag. Since `0.1.0-preview.7` its source leaves it out of an excluding search,
   as if a model wrote it, so it takes no place in the candidate window; a deterministic record among them is not
   injected under `Exclude` until the owner-run `BackfillSealedAuthorshipAsync` writes its flag (see
   [Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading)).
@@ -895,7 +895,7 @@ stage older than it is committed as unsure even if its invocation is still runni
 then deliver its records again (charged and tracked, never lost). At most eight stages are kept pending: staging a
 ninth first commits the oldest the same way.
 
-**Concurrent invocations on one session** (after `0.1.0-preview.6`). Within one process, the account is read, decided on
+**Concurrent invocations on one session** (since `0.1.0-preview.7`). Within one process, the account is read, decided on
 and written back under a lock per `AgentSession` instance and state key, shared by every provider in the process and
 released when the session is collected; two providers with different keys never wait for each other. It is held from
 loading the account to saving it, through retrieval and the final eligibility check, and around settling — never
