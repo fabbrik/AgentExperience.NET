@@ -93,6 +93,28 @@ If an indexing hook is registered, one more thing happens *after* those six stag
 and its vector stored. That step is outside the canonical write and can never change the outcome above — see
 [Indexing](indexing.md).
 
+## Reuse evidence
+
+With `ExperienceFinalizationOptions.ReuseEvidence = ReuseEvidenceMode.SameTask` (off by default), a durable result
+(`Validated`, `Quarantined`, or an `AlreadyFinalized` replay) is followed by one more step, after indexing: for each
+record the run was given on its own task, finalization submits machine confidence evidence, supporting when the run
+verified, and contradicting when it failed and `ContradictOnFailure` is set. It goes through
+`ExperienceLifecycleService.ApplyEvidenceAsync`, bound to the round this finalization closed, so independence
+verification applies exactly as for evidence a host submits. The evidence and event IDs are derived from the run, its
+scope, the record and the kind, so a replay resubmits the same evidence and counts nothing twice, and a writer in
+another scope cannot derive them.
+
+What happened is reported on `FinalizeExperienceResult.ReuseEvidence`, one `ReuseEvidenceResult` per distinct record
+the run was given: submitted (with the `ConfidenceUpdateOutcome`), `Skipped` with the reason (another task, shared by a
+grant, from this run, or not readable in the run's scope), or failed with the exception's type. It is empty when the
+option is off. Like indexing, it never changes the outcome: a refusal is reported, an exception is caught, and nothing
+is retried. The step is bounded by `ReuseEvidenceTimeout` (10 seconds by default); a cancellation or the timeout stops
+it and sets `ReuseEvidenceTruncated`. A verified run supports what it was given even when its own record was
+quarantined by reflection or screening. To recover evidence that did not land, finalize the run again: the replay
+resubmits idempotently (`Replay = true`, never counted twice), and also backfills a run finalized while the option was
+off. See [Letting reuse move confidence](confidence.md#letting-reuse-move-confidence) for what counts, why a grant-shared
+lesson is skipped, and why contradiction is opt-in.
+
 ## Verifying a run, and binding its evaluation
 
 Every required check names the evidence kind that satisfies it, and matching is default-deny: evidence of any other

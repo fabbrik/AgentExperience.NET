@@ -89,6 +89,7 @@ public class ExperienceTelemetryTests
         "agentexperience.confidence.admission",
         "agentexperience.independence.refusal",
         "agentexperience.reflection.screening_refusal",
+        "agentexperience.reuse_evidence.submitted",
     ];
 
     /// <summary>
@@ -438,6 +439,33 @@ public class ExperienceTelemetryTests
         Assert.Contains(
             probe.LibraryActivities,
             span => span.GetTagItem("agentexperience.reflection.screening_refusal") as string == nameof(ReflectionScreeningRefusal.OverLimit));
+
+        // Plus one durable finalization with reuse evidence on, so its submitted count has been written too.
+        var reuseStore = new AgentExperience.Storage.InMemory.InMemoryExperienceRecordStore();
+        var reuseCapture = new InMemoryExperienceCaptureService(new DefaultSanitizer(new SanitizationOptions(new Dictionary<string, SanitizationPolicy>(StringComparer.Ordinal))), new CaptureLimits(5, 5, 100, 100));
+        var reuseFinalization = new ExperienceFinalizationService(
+            reuseCapture,
+            new DefaultExperienceReflector(),
+            reuseStore,
+            new ExperienceLifecycleService(reuseStore, indexingService: null, new ExperienceIndependenceOptions(), reuseCapture),
+            indexingService: null,
+            indexingTimeout: null,
+            provenanceSigning: null,
+            reflectionSanitizer: null,
+            new ExperienceFinalizationOptions { ReuseEvidence = ReuseEvidenceMode.SameTask });
+        var reuseRun = Guid.NewGuid();
+        reuseCapture.StartRun(reuseRun, "task", null, ExperienceLoop.Scope, new EnvironmentFingerprint("h", "r", "o", null, new Dictionary<string, string>()), new Provenance("tests", null, ExperienceLoop.Now, null), ExperienceLoop.Now);
+        await reuseCapture.AppendAttemptAsync(reuseRun, new AppendAttemptRequest(Guid.NewGuid(), ExperienceLoop.Now, TimeSpan.FromSeconds(1), [], "done", null));
+        await reuseCapture.CompleteRunAsync(reuseRun, Guid.NewGuid(), RunExecutionStatus.Completed, ExperienceLoop.Now);
+        var reuseRound = Guid.NewGuid();
+        var reuseResult = await reuseFinalization.FinalizeAsync(
+            new FinalizeExperienceRequest(
+                reuseRun, ExperienceLoop.Authorization, new ClosedVerificationRound(reuseRound, "rev"), [new RequiredCheck("tests", "TestResult")],
+                [new Evidence(Guid.NewGuid(), reuseRound, "rev", "tests", "TestResult", CheckResult.Pass, "ci", null, ExperienceLoop.Now)],
+                "rev", StorageDecision.Permit, ExperienceLoop.Now),
+            CancellationToken.None);
+        Assert.True(reuseResult.IsDurable);
+        Assert.Contains(probe.LibraryActivities, span => span.GetTagItem("agentexperience.reuse_evidence.submitted") is 0);
 
         // Plus one thrown operation, so error.type and error.class have been written by the time the
         // keys are collected and the exact set below is not an accident of the happy path.

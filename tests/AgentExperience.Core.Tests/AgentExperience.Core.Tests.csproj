@@ -29,6 +29,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.Abstractions\AgentExperience.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+    <!-- Test-only: the reuse-evidence step is exercised end to end over the shipping in-memory store. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
   </ItemGroup>
 
   <ItemGroup>

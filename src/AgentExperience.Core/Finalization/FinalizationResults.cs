@@ -1,5 +1,7 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Indexing;
+using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Verification;
 
 namespace AgentExperience.Core.Finalization;
@@ -178,6 +180,32 @@ public sealed record FinalizeExperienceResult(
         init => field = value ?? throw new ArgumentNullException(nameof(ReflectionRedactedFieldPaths));
     } = [];
 
+    /// <summary>
+    /// The confidence evidence this call submitted about the records the run was given, one entry per distinct record
+    /// the run's provenance names (in that order, at most <see cref="RunExposure.MaxPerRun"/>, never the run's own
+    /// record): submitted, or <see cref="ReuseEvidenceResult.Skipped"/> with the reason. Empty when
+    /// <see cref="ExperienceFinalizationOptions.ReuseEvidence"/> is <see cref="ReuseEvidenceMode.Off"/> (the default),
+    /// when no record is durable, when the run neither verified nor (with
+    /// <see cref="ExperienceFinalizationOptions.ContradictOnFailure"/>) failed, when finalization closed no round, and
+    /// when the run was given no record. Reported, never acted on: nothing here changes
+    /// <see cref="Outcome"/> or <see cref="IsDurable"/>. A replay (<see cref="FinalizationOutcome.AlreadyFinalized"/>)
+    /// submits the same evidence under the same identifiers, so the store reports the originals
+    /// (<see cref="ReuseEvidenceResult.Replay"/>) and nothing is counted twice.
+    /// </summary>
+    public IReadOnlyList<ReuseEvidenceResult> ReuseEvidence
+    {
+        get;
+        init => field = value ?? throw new ArgumentNullException(nameof(ReuseEvidence));
+    } = [];
+
+    /// <summary>
+    /// Whether the reuse-evidence step stopped before it reached every record the run was given, because the caller's
+    /// token was cancelled or <see cref="ExperienceFinalizationOptions.ReuseEvidenceTimeout"/> passed. The last entry of
+    /// <see cref="ReuseEvidence"/> is the record it stopped at; the records after it are not reported. Finalizing the run
+    /// again resubmits them.
+    /// </summary>
+    public bool ReuseEvidenceTruncated { get; init; }
+
     /// <summary>The Experience Record's ID, when one exists. No ID is issued when nothing was persisted.</summary>
     public Guid? ExperienceId => Record?.ExperienceId;
 
@@ -194,4 +222,52 @@ public sealed record FinalizeExperienceResult(
     public bool IsDurable => Outcome is FinalizationOutcome.Validated
         or FinalizationOutcome.Quarantined
         or FinalizationOutcome.AlreadyFinalized;
+}
+
+/// <summary>
+/// What finalization's reuse-evidence step did for one record the run was given (see
+/// <see cref="ExperienceFinalizationOptions.ReuseEvidence"/>).
+/// </summary>
+/// <param name="ExperienceId">The record the evidence is about.</param>
+/// <param name="Kind">Supporting for a verified run; contradicting for a failed one under <see cref="ExperienceFinalizationOptions.ContradictOnFailure"/>.</param>
+/// <param name="Outcome">
+/// What <see cref="ExperienceLifecycleService.ApplyEvidenceAsync"/> answered, or <see langword="null"/> when nothing was
+/// submitted: the record was <see cref="Skipped"/>, or reading it or applying the evidence threw, was cancelled or timed
+/// out (<see cref="ExceptionType"/> names the exception). A refusal, such as
+/// <see cref="ConfidenceUpdateOutcome.Unverified"/> or <see cref="ConfidenceUpdateOutcome.Ineligible"/>, is reported here
+/// and never retried.
+/// </param>
+/// <param name="Reason">The lifecycle service's content-free reason, why the record was skipped, or why the step failed; otherwise <see langword="null"/>.</param>
+public sealed record ReuseEvidenceResult(
+    Guid ExperienceId,
+    ConfidenceEvidenceKind Kind,
+    ConfidenceUpdateOutcome? Outcome,
+    string? Reason)
+{
+    /// <summary>
+    /// Whether the evidence moved the record's counters. <see langword="false"/> for a duplicate (its independence key
+    /// was already counted), for host-trusted evidence recorded only, for a <see cref="Replay"/>, and for every outcome
+    /// other than <see cref="ConfidenceUpdateOutcome.Applied"/>.
+    /// </summary>
+    public bool Counted { get; init; }
+
+    /// <summary>
+    /// Whether the record was not submitted for, because it could not be read in the run's scope (any read outcome other
+    /// than found is reported here), is readable only through a sharing grant, is on another task, or came from this run.
+    /// <see cref="Reason"/> says which; <see cref="Outcome"/> is <see langword="null"/>.
+    /// </summary>
+    public bool Skipped { get; init; }
+
+    /// <summary>
+    /// Whether the store already held this evidence, under the same identifiers, from an earlier finalization of the
+    /// same run, and reported it again. A replay is never <see cref="Counted"/>, whatever the original counted, so a sum
+    /// over every call counts each piece of evidence once.
+    /// </summary>
+    public bool Replay { get; init; }
+
+    /// <summary>Which identifier failed independence verification, on <see cref="ConfidenceUpdateOutcome.Unverified"/>; otherwise <see langword="null"/>.</summary>
+    public IndependenceRefusal? Refusal { get; init; }
+
+    /// <summary>The full name of the exception's type when the step threw for this record; otherwise <see langword="null"/>. The exception itself is not kept.</summary>
+    public string? ExceptionType { get; init; }
 }

@@ -85,7 +85,20 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
 
         if (Options.Verify is { } verify)
         {
-            capture.FinalizationService = services.GetRequiredService<ExperienceFinalizationService>();
+            var finalization = services.GetRequiredService<ExperienceFinalizationService>();
+            if (finalization.Options.ReuseEvidence != Options.ReuseEvidence
+                || finalization.Options.ContradictOnFailure != Options.ContradictOnFailure)
+            {
+                // An ExperienceFinalizationOptions registered after AddAgentExperience replaced the one it registered.
+                throw new InvalidOperationException(
+                    $"The finalization service's {nameof(ExperienceFinalizationOptions.ReuseEvidence)} ({finalization.Options.ReuseEvidence}) or "
+                    + $"{nameof(ExperienceFinalizationOptions.ContradictOnFailure)} ({finalization.Options.ContradictOnFailure}) differs from "
+                    + $"{nameof(AgentExperienceOptions)} ({Options.ReuseEvidence}, {Options.ContradictOnFailure}): an {nameof(ExperienceFinalizationOptions)} "
+                    + "registered after AddAgentExperience replaced the one it registered. Set the two on AgentExperienceOptions, and register "
+                    + $"any other {nameof(ExperienceFinalizationOptions)} before AddAgentExperience.");
+            }
+
+            capture.FinalizationService = finalization;
             capture.ResolveFinalizationAsync = (context, cancellationToken) => ResolveFinalizationAsync(verify, binding, context, cancellationToken);
         }
 

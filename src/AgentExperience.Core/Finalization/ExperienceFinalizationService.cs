@@ -41,6 +41,14 @@ namespace AgentExperience.Core.Finalization;
 /// is down leaves the record committed, durable, text-searchable, and indexable by a later pass.
 /// </para>
 /// <para>
+/// <b>Reuse evidence, opt-in.</b> With <see cref="ExperienceFinalizationOptions.ReuseEvidence"/> set to
+/// <see cref="ReuseEvidenceMode.SameTask"/>, a durable result -- including an
+/// <see cref="FinalizationOutcome.AlreadyFinalized"/> replay -- is followed by machine confidence evidence about each
+/// record the run was given on its own task, through <see cref="ExperienceLifecycleService.ApplyEvidenceAsync"/> and
+/// bound to the round finalization closed. Like indexing, it is reported on
+/// <see cref="FinalizeExperienceResult.ReuseEvidence"/> and never changes the outcome.
+/// </para>
+/// <para>
 /// <b>Validated vs quarantined.</b> A verified evaluation plus a successful reflection plus a
 /// permitting storage decision produces a <see cref="ExperienceStatus.Validated"/> record with reuse
 /// confidence <c>2/3</c>, one supporting validation and no contradictions. A permitted record whose
@@ -139,6 +147,17 @@ public sealed class ExperienceFinalizationService
     private const byte ExperienceIdTag = 1;
     private const byte InitialEventIdTag = 2;
     private const byte ReflectionIdTag = 3;
+    private const byte ReuseEvidenceIdTag = 4;
+    private const byte ReuseEventIdTag = 5;
+
+    /// <summary>
+    /// The <see cref="ApplyConfidenceEvidenceRequest.Producer"/> of every piece of evidence finalization's reuse-evidence
+    /// step submits (see <see cref="ExperienceFinalizationOptions.ReuseEvidence"/>).
+    /// </summary>
+    public const string ReuseEvidenceProducer = "AgentExperience.ExperienceFinalizationService/reuse-evidence/1.0.0";
+
+    /// <summary>A scope check, not a delivery: the reuse-evidence step reads a record only to decide whether to submit evidence about it.</summary>
+    private static readonly ExperienceReadOptions ScopeCheckRead = new(ExperienceReadPurpose.ScopeCheck);
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 
@@ -410,6 +429,58 @@ public sealed class ExperienceFinalizationService
         return Derive(runId, InitialEventIdTag, scope);
     }
 
+    /// <summary>
+    /// The <see cref="ApplyConfidenceEvidenceRequest.EvidenceId"/> of the evidence finalizing <paramref name="runId"/>
+    /// in <paramref name="scope"/> submits about <paramref name="experienceId"/> (see
+    /// <see cref="ExperienceFinalizationOptions.ReuseEvidence"/>), derived from all four so a retry resubmits the same
+    /// evidence and it is never counted twice.
+    /// </summary>
+    /// <remarks>
+    /// Evidence IDs are unique across every scope, so the scope is mixed in exactly as for
+    /// <see cref="InitialEventIdFor(Guid, Scope)"/> (every scope field length-prefixed): a writer in another scope that
+    /// knows the run and record IDs cannot derive it and take it first. The derivation is unkeyed and is not a secret: a
+    /// writer that also knows this scope's fields computes the same ID.
+    /// </remarks>
+    /// <param name="runId">The finalized run.</param>
+    /// <param name="scope">The scope the run's record lives in, which is also the scope of the record it was given.</param>
+    /// <param name="experienceId">The record the run was given.</param>
+    /// <param name="kind">Whether the evidence supports or contradicts the record.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="scope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is not a defined <see cref="ConfidenceEvidenceKind"/>.</exception>
+    public static Guid ReuseEvidenceIdFor(Guid runId, Scope scope, Guid experienceId, ConfidenceEvidenceKind kind)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        EnsureDefined(kind);
+        return Derive(runId, ReuseEvidenceIdTag, scope, experienceId, kind);
+    }
+
+    /// <summary>
+    /// The <see cref="ApplyConfidenceEvidenceRequest.EventId"/> of the evidence finalizing <paramref name="runId"/>
+    /// in <paramref name="scope"/> submits about <paramref name="experienceId"/>, derived like
+    /// <see cref="ReuseEvidenceIdFor"/>, scope included.
+    /// </summary>
+    /// <param name="runId">The finalized run.</param>
+    /// <param name="scope">The scope the run's record lives in.</param>
+    /// <param name="experienceId">The record the run was given.</param>
+    /// <param name="kind">Whether the evidence supports or contradicts the record.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="scope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is not a defined <see cref="ConfidenceEvidenceKind"/>.</exception>
+    public static Guid ReuseEventIdFor(Guid runId, Scope scope, Guid experienceId, ConfidenceEvidenceKind kind)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        EnsureDefined(kind);
+        return Derive(runId, ReuseEventIdTag, scope, experienceId, kind);
+    }
+
+    /// <summary>Refuses a kind with no defined member, whose byte would derive an identifier no submission uses.</summary>
+    private static void EnsureDefined(ConfidenceEvidenceKind kind)
+    {
+        if (!Enum.IsDefined(kind))
+        {
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a defined ConfidenceEvidenceKind.");
+        }
+    }
+
     /// <summary>The <see cref="Reflection.ReflectionId"/> finalizing <paramref name="runId"/> asks the reflector to stamp, derived from the run so a retry reflects under the same identity.</summary>
     /// <param name="runId">The captured run.</param>
     public static Guid ReflectionIdFor(Guid runId) => Derive(runId, ReflectionIdTag);
@@ -464,6 +535,13 @@ public sealed class ExperienceFinalizationService
         // A closed set, and only on a record screening quarantined: an operator can see "the host sanitizer
         // rejects the kind" without reading a reason.
         ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ScreeningRefusalAttribute, result.Failure?.ScreeningRefusal?.ToString());
+
+        // How many records the reuse-evidence step submitted for (skipped ones not included), only when it is on and the
+        // record is durable. A count, never which records.
+        if (Options.ReuseEvidence != ReuseEvidenceMode.Off && result.IsDurable)
+        {
+            ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.ReuseEvidenceSubmittedAttribute, result.ReuseEvidence.Count(entry => !entry.Skipped));
+        }
 
         ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Finalize, result.Outcome.ToString());
         return result;
@@ -969,7 +1047,7 @@ public sealed class ExperienceFinalizationService
 
         if (stored.Record.Revision > 0)
         {
-            return AlreadyFinalized(stored.Record, evaluation);
+            return await WithReuseEvidenceAsync(AlreadyFinalized(stored.Record, evaluation), request.Authorization, cancellationToken).ConfigureAwait(false);
         }
 
         // The earlier call created the record but never confirmed it. Finish that same commit, from
@@ -1050,7 +1128,7 @@ public sealed class ExperienceFinalizationService
             if (commit.Outcome is LifecycleTransitionOutcome.StaleRevision or LifecycleTransitionOutcome.Conflict
                 && await TryReadFinalizedAsync(request, record, cancellationToken).ConfigureAwait(false) is { } finalized)
             {
-                return AlreadyFinalized(finalized, evaluation);
+                return await WithReuseEvidenceAsync(AlreadyFinalized(finalized, evaluation), request.Authorization, cancellationToken).ConfigureAwait(false);
             }
 
             // The record exists and is still a Candidate. Report it, and why it was going to be
@@ -1089,6 +1167,10 @@ public sealed class ExperienceFinalizationService
         // re-embeds.
         var indexing = await TryIndexAsync(request, committed, cancellationToken).ConfigureAwait(false);
 
+        // Stage 8 -- Reuse evidence, opt-in, after the record is durable and indexed: this run's own record is what
+        // independence verification reads to know the run, its round and its exposures.
+        var (reuseEvidence, truncated) = await TryApplyReuseEvidenceAsync(request.Authorization, committed, cancellationToken).ConfigureAwait(false);
+
         return new FinalizeExperienceResult(
             targetStatus == ExperienceStatus.Validated ? FinalizationOutcome.Validated : FinalizationOutcome.Quarantined,
             FinalizationStage.CommitInitialEvent,
@@ -1102,8 +1184,193 @@ public sealed class ExperienceFinalizationService
             indexing)
         {
             ReflectionRedactedFieldPaths = redactedPaths ?? [],
+            ReuseEvidence = reuseEvidence,
+            ReuseEvidenceTruncated = truncated,
         };
     }
+
+    /// <summary>Adds the reuse-evidence step's report to a durable result that carries a record.</summary>
+    private async Task<FinalizeExperienceResult> WithReuseEvidenceAsync(
+        FinalizeExperienceResult result,
+        AuthorizationContext authorization,
+        CancellationToken cancellationToken)
+    {
+        if (!result.IsDurable || result.Record is not { } record)
+        {
+            return result;
+        }
+
+        var (reuseEvidence, truncated) = await TryApplyReuseEvidenceAsync(authorization, record, cancellationToken).ConfigureAwait(false);
+        return reuseEvidence.Count == 0 && !truncated
+            ? result
+            : result with { ReuseEvidence = reuseEvidence, ReuseEvidenceTruncated = truncated };
+    }
+
+    /// <summary>
+    /// The opt-in reuse-evidence step (<see cref="ExperienceFinalizationOptions.ReuseEvidence"/>): for each record the
+    /// run was given that is readable in its scope and on its task, machine evidence through the lifecycle service,
+    /// bound to the round finalization closed. Best effort: every refusal and every exception is reported, never
+    /// retried and never thrown, because the run's record is already durable. Every exposure it does not submit for
+    /// is reported as skipped, with the reason.
+    /// </summary>
+    /// <remarks>
+    /// Everything comes from the durable record -- its verification status, closed round, task, source run and
+    /// exposures -- so a replay of an already-finalized run derives exactly the same submissions, under the same
+    /// identifiers, and the store reports the originals rather than counting them again. The step is bounded by
+    /// <see cref="ExperienceFinalizationOptions.ReuseEvidenceTimeout"/>. Even a cancellation or a timeout is reported
+    /// rather than thrown, for the reason the indexing hook gives: throwing would deny that the record is durable. Either
+    /// ends the step, and the list is marked truncated: the records not yet reached are not reported.
+    /// </remarks>
+    private async Task<(IReadOnlyList<ReuseEvidenceResult> Results, bool Truncated)> TryApplyReuseEvidenceAsync(
+        AuthorizationContext authorization,
+        ExperienceRecord record,
+        CancellationToken cancellationToken)
+    {
+        if (Options.ReuseEvidence == ReuseEvidenceMode.Off)
+        {
+            return ([], false);
+        }
+
+        ConfidenceEvidenceKind kind;
+        if (record.Outcome.Status == TaskVerificationStatus.Verified)
+        {
+            kind = ConfidenceEvidenceKind.Supporting;
+        }
+        else if (record.Outcome.Status == TaskVerificationStatus.Failed && Options.ContradictOnFailure)
+        {
+            kind = ConfidenceEvidenceKind.Contradicting;
+        }
+        else
+        {
+            return ([], false);
+        }
+
+        // No closed round, no machine key: evidence would only be refused.
+        if (record.ClosedRoundId is not { } roundId || record.Provenance?.ExposedTo is not { Count: > 0 } exposures)
+        {
+            return ([], false);
+        }
+
+        // Filter, then cap: a padded provenance (repeats, self-references, empty IDs) cannot push real exposures past
+        // the bound.
+        var candidates = exposures
+            .Where(exposure => exposure is not null && exposure.ExperienceId != Guid.Empty && exposure.ExperienceId != record.ExperienceId)
+            .Select(exposure => exposure.ExperienceId)
+            .Distinct()
+            .Take(RunExposure.MaxPerRun)
+            .ToList();
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(Options.ReuseEvidenceTimeout);
+        var token = budget.Token;
+
+        var results = new List<ReuseEvidenceResult>();
+        foreach (var experienceId in candidates)
+        {
+            try
+            {
+                token.ThrowIfCancellationRequested();
+
+                var read = await _store
+                    .GetAsync(authorization, record.Scope, experienceId, ScopeCheckRead, token)
+                    .ConfigureAwait(false);
+
+                if (SkipReason(read, record) is { } skipped)
+                {
+                    results.Add(new ReuseEvidenceResult(experienceId, kind, Outcome: null, skipped) { Skipped = true });
+                    continue;
+                }
+
+                var applied = await _lifecycleService.ApplyEvidenceAsync(
+                    authorization,
+                    new ApplyConfidenceEvidenceRequest(
+                        EventId: ReuseEventIdFor(record.SourceRunId, record.Scope, experienceId, kind),
+                        ExperienceId: experienceId,
+                        Scope: record.Scope,
+                        EvidenceId: ReuseEvidenceIdFor(record.SourceRunId, record.Scope, experienceId, kind),
+                        Kind: kind,
+                        Source: ConfidenceEvidenceSource.Machine,
+                        RunId: record.SourceRunId,
+                        VerificationRoundId: roundId,
+                        Reason: ReuseEvidenceReason(record, kind),
+                        Producer: ReuseEvidenceProducer,
+                        // The run's finalization time, read off its stored record, so a replay sends the same event.
+                        OccurredAt: record.CreatedAt),
+                    token).ConfigureAwait(false);
+
+                // A replay: the store reported evidence it already held under this ID, which counted when it was first
+                // submitted. Reported as not counted, so summing Counted over every call never counts it twice. A fresh
+                // commit always lands at the revision after the one it was computed against.
+                var replay = applied.Outcome == ConfidenceUpdateOutcome.Applied
+                    && applied.Counted
+                    && applied.Event is { } submitted
+                    && applied.Revision != submitted.ExpectedRevision + 1;
+
+                results.Add(new ReuseEvidenceResult(experienceId, kind, applied.Outcome, applied.Reason)
+                {
+                    Counted = applied.Outcome == ConfidenceUpdateOutcome.Applied && applied.Counted && !replay,
+                    Replay = replay,
+                    Refusal = applied.Refusal,
+                });
+            }
+            catch (Exception ex)
+            {
+                var stopped = ex is OperationCanceledException || token.IsCancellationRequested;
+                var reason = !stopped
+                    ? $"Applying reuse evidence threw {ex.GetType().FullName}; the run's record is durable and nothing about it changed. Finalize the run again to resubmit."
+                    : cancellationToken.IsCancellationRequested
+                        ? "Cancelled before the reuse evidence for this record was confirmed; the run's record is durable. Finalize the run again to resubmit."
+                        : $"Timed out after {Options.ReuseEvidenceTimeout.TotalSeconds.ToString("R", CultureInfo.InvariantCulture)}s, before the reuse evidence for this record was confirmed; the run's record is durable. Finalize the run again to resubmit.";
+
+                results.Add(new ReuseEvidenceResult(experienceId, kind, Outcome: null, reason) { ExceptionType = ex.GetType().FullName });
+
+                if (stopped)
+                {
+                    return (results, true);
+                }
+            }
+        }
+
+        return (results, false);
+    }
+
+    /// <summary>Why the reuse-evidence step does not submit for the record a read returned, or <see langword="null"/> when it does.</summary>
+    private static string? SkipReason(ExperienceRecordGetResult read, ExperienceRecord run)
+    {
+        if (read.Outcome != ExperienceStoreOutcome.Found)
+        {
+            return $"The record could not be read in the run's scope ({read.Outcome}); no evidence was submitted.";
+        }
+
+        if (read.Record is not { } target)
+        {
+            return "The store reported the record found but returned none; no evidence was submitted.";
+        }
+
+        if (read.SharedByGrant)
+        {
+            return "The record is readable only through a sharing grant; the lending scope owns its confidence, so no evidence was submitted.";
+        }
+
+        if (!string.Equals(target.TaskId, run.TaskId, StringComparison.Ordinal))
+        {
+            return "The record is on another task; no evidence was submitted.";
+        }
+
+        if (target.SourceRunId == run.SourceRunId)
+        {
+            return "The record came from this run; no evidence was submitted.";
+        }
+
+        return null;
+    }
+
+    /// <summary>The content-free reason every piece of reuse evidence about a run carries, derived from its stored record so a replay sends the same text.</summary>
+    private static string ReuseEvidenceReason(ExperienceRecord record, ConfidenceEvidenceKind kind) => string.Format(
+        CultureInfo.InvariantCulture,
+        "Reuse on the same task: run {0} was given this record and its verification {1}.",
+        record.SourceRunId.ToString("D"),
+        kind == ConfidenceEvidenceKind.Supporting ? "passed" : "failed");
 
     /// <summary>
     /// Runs the optional indexing hook for a record whose initial event this call just committed, and
@@ -1345,11 +1612,18 @@ public sealed class ExperienceFinalizationService
     /// own, and is unique by construction once the record ID is, so it stays run-only.
     /// </para>
     /// </summary>
-    private static Guid Derive(Guid runId, byte tag, Scope? scope = null)
+    private static Guid Derive(Guid runId, byte tag, Scope? scope = null) => Derive(runId, tag, scope, suffix: []);
+
+    /// <summary>
+    /// The derivation above, with <paramref name="suffix"/> appended after the scope fields (or after the prefix, with
+    /// no scope). An empty suffix derives exactly what the record-ID, initial-event-ID and reflection-ID derivations
+    /// always have.
+    /// </summary>
+    private static Guid Derive(Guid runId, byte tag, Scope? scope, ReadOnlySpan<byte> suffix)
     {
         Span<byte> hash = stackalloc byte[32];
 
-        if (scope is null)
+        if (scope is null && suffix.IsEmpty)
         {
             Span<byte> input = stackalloc byte[PrefixLength];
             WritePrefix(input, runId, tag);
@@ -1361,13 +1635,17 @@ public sealed class ExperienceFinalizationService
             WritePrefix(input.GetSpan(PrefixLength), runId, tag);
             input.Advance(PrefixLength);
 
-            AppendScopeField(input, scope.TenantId);
-            AppendScopeField(input, scope.ApplicationId);
-            AppendScopeField(input, scope.ProjectId);
-            AppendScopeField(input, scope.TeamId);
-            AppendScopeField(input, scope.AgentId);
-            AppendScopeField(input, scope.UserId);
+            if (scope is not null)
+            {
+                AppendScopeField(input, scope.TenantId);
+                AppendScopeField(input, scope.ApplicationId);
+                AppendScopeField(input, scope.ProjectId);
+                AppendScopeField(input, scope.TeamId);
+                AppendScopeField(input, scope.AgentId);
+                AppendScopeField(input, scope.UserId);
+            }
 
+            input.Write(suffix);
             SHA256.HashData(input.WrittenSpan, hash);
         }
 
@@ -1375,6 +1653,19 @@ public sealed class ExperienceFinalizationService
         id[6] = (byte)((id[6] & 0x0F) | 0x80);
         id[8] = (byte)((id[8] & 0x3F) | 0x80);
         return new Guid(id, bigEndian: true);
+    }
+
+    /// <summary>
+    /// Derives a reuse-evidence identifier: the scoped derivation of <see cref="Derive(Guid, byte, Scope?)"/> -- the fixed
+    /// namespace, the run ID, the tag and every scope field length-prefixed -- followed by the record ID and the
+    /// evidence kind.
+    /// </summary>
+    private static Guid Derive(Guid runId, byte tag, Scope scope, Guid experienceId, ConfidenceEvidenceKind kind)
+    {
+        Span<byte> suffix = stackalloc byte[17];
+        experienceId.TryWriteBytes(suffix[..16], bigEndian: true, out _);
+        suffix[16] = (byte)kind;
+        return Derive(runId, tag, scope, suffix);
     }
 
     private static void WritePrefix(Span<byte> input, Guid runId, byte tag)

@@ -629,6 +629,35 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   [The one-call setup](docs/guide/deployment.md#the-one-call-setup). The public API snapshots now include types in the
   `Microsoft.Extensions.DependencyInjection` namespace, which the generator left out by default.
 
+### Verified reuse can move confidence (story 18.6)
+
+- **The problem it fixes.** Confidence moved only when a host submitted evidence itself, so for almost every host
+  every lesson stayed at 2/3 forever, although the library already knows when a run that was given a lesson then
+  verified on the same task.
+- **New `ExperienceFinalizationOptions.ReuseEvidence`** (`ReuseEvidenceMode.Off`, the default, or `SameTask`) and
+  **`ContradictOnFailure`** (default `false`). Under `SameTask`, once a run's record is durable (including an
+  `AlreadyFinalized` replay), finalization submits machine evidence through `ApplyEvidenceAsync` for each record the
+  run was exposed to that is readable in its scope and has the same `TaskId`: supporting when the run verified,
+  contradicting when it failed and `ContradictOnFailure` is set. It is bound to the run and the round its finalization
+  closed, so independence verification applies unchanged. Evidence and event IDs are derived from the run, its scope,
+  the record and the kind (`ExperienceFinalizationService.ReuseEvidenceIdFor`, `ReuseEventIdFor`), so a replay counts
+  nothing twice and a writer in another scope cannot take them first; the producer is `ExperienceFinalizationService.ReuseEvidenceProducer`. An undefined mode is refused.
+- **Reported, never acted on.** New `FinalizeExperienceResult.ReuseEvidence`, one `ReuseEvidenceResult` per distinct
+  record the run was given (`ExperienceId`, `Kind`, `Outcome`, `Reason`, plus `Counted`, `Replay`, `Skipped`,
+  `Refusal` and `ExceptionType`), and `ReuseEvidenceTruncated`. A record on another task, shared by a grant, from this
+  run, or not readable in the run's scope is reported as `Skipped`; a refusal is reported and not retried; an exception
+  is caught and reported; a replay reports `Replay = true` and `Counted = false`. The step is bounded by the new
+  `ExperienceFinalizationOptions.ReuseEvidenceTimeout` (10 seconds); a cancellation or the timeout stops it and sets
+  `ReuseEvidenceTruncated`. The finalization outcome never changes, and finalizing the run again recovers lost evidence
+  (and backfills a run finalized with the option off). Each submission is a `confidence.apply` operation nested in
+  `finalize`, which carries the new span attribute `agentexperience.reuse_evidence.submitted`.
+- **One-call setup.** `AgentExperienceOptions.ReuseEvidence` and `ContradictOnFailure` set the same options;
+  `ContradictOnFailure` without `ReuseEvidence` is refused. They replace an `ExperienceFinalizationOptions` registered as
+  an instance before `AddAgentExperience` with a copy carrying them, refuse one registered through a factory or a
+  type, and building an agent throws when one registered afterwards disagrees with them.
+- **Unchanged by default.** With the option off nothing new happens. See
+  [Letting reuse move confidence](docs/guide/confidence.md#letting-reuse-move-confidence).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so
