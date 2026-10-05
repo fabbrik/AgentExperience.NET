@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Diagnostics;
+using AgentExperience.Core.Sanitization;
 
 namespace AgentExperience.Core.Capture;
 
@@ -24,7 +25,7 @@ namespace AgentExperience.Core.Capture;
 /// <para>
 /// <b>Sanitization scope, one step wider than the letter of "every tool call's
 /// Arguments/Result/Error":</b> an attempt's own <see cref="AppendAttemptRequest.Result"/>/
-/// <see cref="AppendAttemptRequest.Error"/> are sanitized too, under the same <c>"ToolResult"</c>
+/// <see cref="AppendAttemptRequest.Error"/> are sanitized too, under the same <see cref="SanitizationKinds.ToolResult"/>
 /// <c>Kind</c> as a tool call's -- both are the same kind of thing (sanitized, tool-produced
 /// textual output), just at a different granularity, and the epic's own policy-before-persistence
 /// requirement ("sanitize task context, tool arguments, tool results, and evidence before anything
@@ -90,9 +91,9 @@ namespace AgentExperience.Core.Capture;
 /// </remarks>
 public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
 {
-    private const string ToolArgumentsKind = "ToolArguments";
-    private const string ToolResultKind = "ToolResult";
-    private const string TextValueFieldName = "value";
+    private const string ToolArgumentsKind = SanitizationKinds.ToolArguments;
+    private const string ToolResultKind = SanitizationKinds.ToolResult;
+    private const string TextValueFieldName = SanitizationKinds.ValueField;
     private const string TruncationPlaceholder = "[truncated: value exceeded the configured limit]";
 
     private readonly ISanitizer _sanitizer;

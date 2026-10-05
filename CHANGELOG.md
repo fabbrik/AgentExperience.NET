@@ -576,6 +576,59 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   [Injection: options](docs/guide/injection.md#options) and
   [Finalization](docs/guide/finalization.md#finalizing-from-the-maf-adapter).
 
+### One-call setup (story 18.5)
+
+- **The problem it fixes.** Getting one MAF agent to learn took about 80 lines and 14 `using`s: a hand-built
+  `SanitizationPolicy` under magic-string kinds, `CaptureLimits`, each store and service registered by hand, a
+  hand-built `ExperienceContextProvider`, and a `FinalizeExperienceRequest` whose round, timestamp and storage decision
+  the library could fill itself.
+- **New `services.AddAgentExperience(options => ...)`** (MAF package, in the `Microsoft.Extensions.DependencyInjection`
+  namespace). Registers Core with safe defaults, retrieval and the injection provider, each with `TryAdd`, and returns
+  an `IAgentExperienceBuilder`. Calling it twice throws. `AgentExperienceOptions`: `ResolveIdentity` (required, async,
+  returns an `ExperienceIdentity(Authorization, Scope)` from the host's authentication; `null` means the invocation is
+  neither injected nor captured), `TaskId` (default `"default"`) or `ResolveTaskId`, `Verify` (optional, async,
+  returns an `ExperienceVerification(RequiredChecks, Evidence, ArtifactRevision)`; `null` stores nothing; without it
+  runs are captured but never stored), `Sanitization`, `CaptureLimits`, `Injection` and `Capture` hooks applied after
+  the defaults, and `TimeProvider`. The library fills in the rest of the finalization request: a new
+  `ClosedVerificationRound` (identifier from `NewId`), the verdict's revision as the current one,
+  `StorageDecision.Permit`, the finalization time and the identity's authorization.
+  `ExperienceVerificationContext.CreateEvidence(...)` builds evidence bound to the round.
+- **Storage on the builder.** `.UseInMemoryStorageForDevelopment()` (InMemory package, the same development-only
+  guard) and `.UsePostgres(connectionString)` or `.UsePostgres(dataSource)` (Postgres package: the data source, the
+  record store and the candidate source; a connection string beside an already-registered data source throws rather
+  than being ignored). Without a choice, `UseAgentExperience` and `GetAgentExperienceContextProvider` throw
+  `InvalidOperationException` naming the choices. Migrations stay an explicit owner step. The builder methods extend
+  the new BCL-only `AgentExperience.Abstractions.IAgentExperienceBuilder<TServices>`, so the storage packages still
+  depend on Abstractions only.
+- **Agent side.** `AIAgentBuilder.UseAgentExperience(provider)` wires capture and, through `Verify`, finalization.
+  MAF's agent builder takes only message-level context providers, which do not see the session and history injection
+  works with, so the provider goes on `ChatClientAgentOptions.AIContextProviders` through
+  `provider.GetAgentExperienceContextProvider()`; `UseAgentExperience` alone captures but injects nothing, and every agent
+  shares the container's one injection configuration. Capture resolves the identity once per invocation, bounded by
+  `IdentityTimeout` (default 5 seconds), and injection reuses the outcome; injection matches on `DerivedTaskText` and
+  skips when there is none. A run keeps the identity it was opened under: continuing it under another is refused, and a
+  run the open-run bound closes is finalized under its own. `FinalizationTimeout` defaults to 2 minutes under the
+  one-call setup, since `Verify` often runs tests; evidence naming another round or revision is reported and nothing is
+  stored; `ExperienceVerificationContext.Create(...)` lets a host unit-test `Verify`. The capture of each agent is
+  disposed with the container. A second storage choice, a different data source beside a registered one, or an
+  `options.TimeProvider` other than a registered `TimeProvider` throws.
+- **Defaults.** New `AgentExperienceDefaults` (Core): `Sanitization` keeps **no** tool argument until the host
+  allowlists it, keeps the result text, and redacts `password`, `secret`, `token`, `apiKey`, `api_key`,
+  `authorization` and `connectionString` in any case (depth 4, 50 fields, values up to 1,000,000 characters, so long
+  output is cut by capture rather than refused by the sanitizer); `SanitizationAllowing(...)` keeps named arguments;
+  `CaptureLimits` is 10 attempts, 50 tool calls, 4,000 characters for results and errors. New `SanitizationKinds.ToolArguments`,
+  `ToolResult` and `ValueField` constants replace the magic strings in the docs and samples.
+- **Changed.** The properties of `ExperienceCaptureOptions` and `ExperienceInjectionOptions` are now `set` rather than
+  `init`, so the hooks can adjust them. `UseExperienceCapture` and the `ExperienceContextProvider` constructor take a
+  copy, so changing the options after the agent or provider is built has no effect, exactly as before.
+- **Breaking (binary).** Changing `init` to `set` changes the setters' signatures: source compatible, but an assembly
+  compiled against an earlier preview that sets these properties must be recompiled.
+- **Unchanged.** The explicit wiring behaves exactly as before.
+- **Docs.** The README quick start uses the one-call setup, in-memory first, with a short PostgreSQL variant; the
+  previous long form is now [Explicit wiring](docs/guide/deployment.md#explicit-wiring), beside
+  [The one-call setup](docs/guide/deployment.md#the-one-call-setup). The public API snapshots now include types in the
+  `Microsoft.Extensions.DependencyInjection` namespace, which the generator left out by default.
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

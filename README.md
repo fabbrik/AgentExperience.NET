@@ -44,7 +44,7 @@ flowchart LR
     inject -. "the next run<br/>is captured too" .-> capture
 ```
 
-1. **Capture.** `UseExperienceCapture` wraps a MAF agent and records every invocation as an *Experience Run*.
+1. **Capture.** `UseAgentExperience` (or, wired by hand, `UseExperienceCapture`) wraps a MAF agent and records every invocation as an *Experience Run*.
    Content is sanitized before it is kept; unsafe content is refused, not stored.
 2. **Verify.** Your own required checks, over evidence from a verification round you closed. No model is involved.
 3. **Reflect.** A lesson with reuse guidance, preconditions and warnings, traceable to the evidence it came from.
@@ -82,129 +82,89 @@ dotnet add package AgentExperience.Storage.Postgres --prerelease
 dotnet add package AgentExperience.Storage.Postgres.Vectors --prerelease
 ```
 
-The MAF adapter brings in Core and Abstractions. To try the loop without a database, register
-`AddAgentExperienceInMemoryStorageForDevelopment()` from `AgentExperience.Storage.InMemory` in place of the PostgreSQL
-stores; it is for development and tests only, and keeps nothing across a restart.
+The MAF adapter brings in Core and Abstractions. To try the loop without a database, add
+`AgentExperience.Storage.InMemory` and choose `.UseInMemoryStorageForDevelopment()` in place of `.UsePostgres(...)`;
+it is for development and tests only, and keeps nothing across a restart.
 
 ## Quick start
 
-This wires steps 1 to 6 for one MAF agent: apply the schema, register the services, inject past lessons before each
-run, and capture, verify and store each run after it (step 7 is in [Reuse feedback](docs/guide/reuse-feedback.md)).
-It targets the next preview, which is not yet published: on `0.1.0-preview.6`, use the synchronous `ResolveRequest`
-and `ResolveFinalization` and build the task text yourself, since `ResolveRequestAsync`, `ResolveFinalizationAsync`
-and `DerivedTaskText` are not in that release. Before you run it, create the two database roles it names (a few
-lines of SQL, in [Deployment](docs/guide/deployment.md#creating-the-roles)); for a throwaway local database with a
-single role, skip the `ApplyApplicationRolePrivilegesAsync` call, which refuses the role running it. You supply four
-things:
-`chatClient` (any `Microsoft.Extensions.AI` `IChatClient`), two connection strings, and `EvidenceForAsync`, which
-runs your own checks (for example, a test run) and turns them into `Evidence` for the round you closed.
+This wires steps 1 to 6 for one MAF agent, with the in-memory storage (development and tests only, nothing survives
+a restart): inject past lessons before each run, and capture, verify and store each run after it (step 7 is in
+[Reuse feedback](docs/guide/reuse-feedback.md)). It targets the next preview, which is not yet published:
+`0.1.0-preview.6` has only the [explicit wiring](docs/guide/deployment.md#explicit-wiring). You supply `chatClient`
+(any `Microsoft.Extensions.AI` `IChatClient`) and `RunTestsAsync`, your own check of the run (for example, a test run).
+The in-memory storage refuses to run when `DOTNET_ENVIRONMENT` or `ASPNETCORE_ENVIRONMENT` names anything but
+`Development`, `Test` or `Testing`; a console app with neither set, like this one, needs nothing.
 
 ```csharp
 using AgentExperience.Abstractions;
-using AgentExperience.Core.Capture;
-using AgentExperience.Core.DependencyInjection;
-using AgentExperience.Core.Finalization;
-using AgentExperience.Core.Retrieval;
-using AgentExperience.Core.Sanitization;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework;
-using AgentExperience.MicrosoftAgentFramework.Injection;
-using AgentExperience.Storage.Postgres;
-using AgentExperience.Storage.Postgres.DependencyInjection;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
 
-// 1. Apply the schema, on every deploy, as the database owner role.
-await using (var owner = NpgsqlDataSource.Create(ownerConnectionString))
+var services = new ServiceCollection();
+services.AddAgentExperience(options =>
 {
-    await ExperienceSchemaMigrator.MigrateAsync(owner, CancellationToken.None);
+    // Who the run is for: from your own authentication, never from model output. Null: no memory for this run.
+    options.ResolveIdentity = (context, cancellationToken) => ValueTask.FromResult<ExperienceIdentity?>(new(
+        new AuthorizationContext("contoso", "svc-support-agent", Roles: [], IssuedAt: DateTimeOffset.UtcNow),
+        new Scope("contoso", "support", "tickets")));
+    options.TaskId = "triage-ticket";
+    // Your own checks, never the model's word. Without Verify, runs are captured but nothing is stored.
+    options.Verify = async (context, cancellationToken) =>
+    {
+        var result = await RunTestsAsync(context.Run, cancellationToken) ? CheckResult.Pass : CheckResult.Fail;
+        return new ExperienceVerification(
+            RequiredChecks: [new RequiredCheck("tests-pass", "TestResult")],
+            Evidence: [context.CreateEvidence("tests-pass", "TestResult", result, producer: "ci", "build-42")],
+            ArtifactRevision: "build-42");
+    };
+}).UseInMemoryStorageForDevelopment();
+await using var provider = services.BuildServiceProvider();
+
+var injection = provider.GetAgentExperienceContextProvider();  // the lessons that apply, before the model is called
+AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [injection] })
+    .AsBuilder().UseAgentExperience(provider).Build();            // capture, verify and store, after each run
+var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
+```
+
+What happens: the first run finds nothing to inject and runs normally. After it, `Verify` runs your check; if it
+passed, the run's lesson is stored as `Validated`, and if not, as `Quarantined` and never reused. The next run on a
+similar task can get that lesson in its context, if its task text matches and the lesson clears the confidence floor
+(0.5; a new validated lesson starts at 2/3). The task text is the user's latest message, cleaned up and cut to 512
+UTF-16 code units (see [Injection](docs/guide/injection.md#the-task-text)); it is stored as the run's description as
+written, so a host whose prompts can hold sensitive data should redact it first, by wrapping `ResolveRun` in
+`options.Capture`. `Verify` runs before the caller gets its answer, within a 2-minute `FinalizationTimeout` the
+one-call setup sets for it (change it through `options.Capture`).
+
+Injection needs both lines at the end: `UseAgentExperience` alone captures and stores but injects nothing until the
+agent has the provider in `AIContextProviders`. The container holds one provider, so every agent built this way gets
+the same injection settings; for per-agent settings, use the [explicit wiring](docs/guide/deployment.md#explicit-wiring).
+The defaults are safe: no tool argument value is captured until you allowlist it, for example with
+`options.Sanitization = AgentExperienceDefaults.SanitizationAllowing("ticketId")` (`AgentExperience.Core.DependencyInjection`),
+and secret-named fields are redacted. Nothing here throws into the agent: failures are reported through callbacks you
+set with `options.Capture` and `options.Injection`, and a slow or unavailable store, or a `ResolveIdentity` slower than
+`options.IdentityTimeout` (5 seconds), means no memory for that run, not a failed run.
+
+**With PostgreSQL**, add the `AgentExperience.Storage.Postgres` package. You also supply two connection strings:
+`ownerConnectionString`, for the role that applies the schema on every deploy, and `appConnectionString`, for the
+application role the stores connect as (create both roles first: a few lines of SQL, in
+[Deployment](docs/guide/deployment.md#creating-the-roles)):
+
+```csharp
+await using (var owner = NpgsqlDataSource.Create(ownerConnectionString))       // using Npgsql;
+{
+    await ExperienceSchemaMigrator.MigrateAsync(owner, CancellationToken.None);   // using AgentExperience.Storage.Postgres;
     await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
         owner, new ExperienceApplicationRoleOptions("agent_experience_app"), CancellationToken.None);
 }
 
-// 2. Register the services. The stores connect as the application role.
-var toolPolicy = new SanitizationPolicy(
-    AllowedFieldNames: new HashSet<string> { "ticketId", "strategy" },   // kept
-    SecretFieldNames: new HashSet<string> { "apiKey" },                  // redacted
-    MaxDepth: 4, MaxFieldCount: 50, MaxValueLength: 4_000, MaxFieldNameLength: 100);
-
-var services = new ServiceCollection();
-services.AddSingleton(NpgsqlDataSource.Create(appConnectionString));
-services.AddAgentExperiencePostgresStore();
-services.AddAgentExperiencePostgresCandidateSource();
-services.AddAgentExperienceCore(
-    new SanitizationOptions(new Dictionary<string, SanitizationPolicy>
-    {
-        ["ToolArguments"] = toolPolicy,
-        ["ToolResult"] = toolPolicy,
-    }),
-    new CaptureLimits(MaxAttemptsPerRun: 10, MaxToolCallsPerAttempt: 50, MaxResultLength: 4_000, MaxErrorLength: 4_000));
-services.AddAgentExperienceRetrieval();
-await using var provider = services.BuildServiceProvider();
-
-// 3. Scope and authority come from your own authentication, never from model output.
-var scope = new Scope(TenantId: "contoso", ApplicationId: "support", ProjectId: "tickets");
-var authorization = new AuthorizationContext(
-    TenantId: "contoso", PrincipalId: "svc-support-agent", Roles: [], IssuedAt: DateTimeOffset.UtcNow);
-
-// 4. Before each run: retrieve applicable lessons and inject them as a labeled Historical Reference.
-var injection = new ExperienceContextProvider(
-    provider.GetRequiredService<ExperienceRetrievalService>(),
-    provider.GetRequiredService<IExperienceRecordStore>(),
-    new ExperienceInjectionOptions
-    {
-        // The user's latest words, bounded; with none, return null to skip injection for this run.
-        // Async, with the invocation's token: look up the caller's authorization and scope here if you need I/O.
-        ResolveRequestAsync = (context, cancellationToken) => ValueTask.FromResult(context.DerivedTaskText is { } taskText
-            ? new RetrieveExperienceRequest(authorization, scope, TaskText: taskText)
-            : null),
-    });
-
-// 5. After each run: capture what happened, verify it with your checks, and store the lesson.
-AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [injection] })
-    .AsBuilder()
-    .UseExperienceCapture(provider.GetRequiredService<IExperienceCaptureService>(), new ExperienceCaptureOptions
-    {
-        ResolveRun = context => new ExperienceRunDescriptor(
-            TaskId: "triage-ticket", Scope: scope, TaskDescription: context.DerivedTaskText),
-        FinalizationService = provider.GetRequiredService<ExperienceFinalizationService>(),
-        ResolveFinalizationAsync = async (context, cancellationToken) =>
-        {
-            var round = new ClosedVerificationRound(Guid.NewGuid(), ArtifactRevision: "build-42");
-            return new FinalizeExperienceRequest(
-                RunId: context.Run.RunId,
-                Authorization: authorization,
-                ClosedRound: round,
-                RequiredChecks: [new RequiredCheck("tests-pass", ExpectedKind: "TestResult")],
-                // Your own checks, never the model's word.
-                Evidence: await EvidenceForAsync(context.Run, round, cancellationToken),
-                CurrentArtifactRevision: "build-42",
-                StorageDecision: StorageDecision.Permit,
-                FinalizedAt: DateTimeOffset.UtcNow);
-        },
-        OnCaptureFailure = failure => Console.Error.WriteLine($"capture failed at {failure.Stage}"),
-    })
-    .Build();
-
-var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
+services.AddAgentExperience(options => { /* as above */ }).UsePostgres(appConnectionString);
 ```
 
-What happens: the first run finds nothing to inject and runs normally. After it, if your `tests-pass` evidence
-passed, its lesson is stored as `Validated`; if not, it is stored as `Quarantined` and never reused. The next run on a
-similar task can get that lesson in its context, if its task text matches and the lesson clears the confidence
-floor (0.5; a new validated lesson starts at 2/3). `DerivedTaskText` is the user's latest message (with the one
-before it, from the same input or the session's history, when the latest is a short follow-up such as "and retry"),
-never injected context or a tool result, cleaned up and cut to 512 UTF-16 code units (see
-[Injection](docs/guide/injection.md#the-task-text)). Capture sees only the invocation's own input, so there the
-follow-up is joined only to an earlier message in that input. It is the user's own words, unredacted: stored as the
-run's `TaskDescription` it is stored as written, so a host whose prompts can hold sensitive data should redact it
-first. Nothing here throws into the agent: capture and injection failures are reported through callbacks, and a slow
-or unavailable database means no memory for that run, not a failed run.
-
-For a runnable version with no database and no
-credentials, see [the sample](#run-the-sample).
+The setup never migrates a schema on its own. For a runnable version with no database and no credentials, see
+[the sample](#run-the-sample); for every service wired by hand, see [Explicit wiring](docs/guide/deployment.md#explicit-wiring).
 
 ## Status: a preview, not production ready
 

@@ -194,6 +194,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
         ArgumentNullException.ThrowIfNull(retrieval);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(options);
+
+        // A copy: the options are settable, and what was validated here must be what every invocation runs under.
+        options = options.Snapshot();
         var approachArguments = options.Validate(nameof(options));
         var capabilityGate = CapabilityGate.Create(options.ReceivingAgent, nameof(options));
 

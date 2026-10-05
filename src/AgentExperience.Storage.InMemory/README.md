@@ -27,9 +27,12 @@ Requires `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12** and
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Storage.InMemory.DependencyInjection;
 
-builder.Services.AddAgentExperienceCore();
+builder.Services.AddAgentExperienceCore(AgentExperienceDefaults.Sanitization, AgentExperienceDefaults.CaptureLimits);
 builder.Services.AddAgentExperienceInMemoryStorageForDevelopment();
 ```
+
+Under the one-call setup, choose it on the builder instead:
+`services.AddAgentExperience(...).UseInMemoryStorageForDevelopment()`, which makes the same registration.
 
 That is the only registration, and its name says what it is for. It registers the three ports as singletons, sharing
 one record store. A candidate source or feedback store you registered first keeps your implementation, but a

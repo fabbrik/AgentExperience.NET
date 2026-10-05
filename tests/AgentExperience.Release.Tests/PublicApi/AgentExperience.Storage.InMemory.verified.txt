@@ -35,3 +35,11 @@ namespace AgentExperience.Storage.InMemory
         public bool AllowProductionEnvironment { get; set; }
     }
 }
+namespace Microsoft.Extensions.DependencyInjection
+{
+    public static class AgentExperienceInMemoryBuilderExtensions
+    {
+        public static TBuilder UseInMemoryStorageForDevelopment<TBuilder>(this TBuilder builder, System.Action<AgentExperience.Storage.InMemory.InMemoryStorageOptions>? configure = null)
+            where TBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
+    }
+}

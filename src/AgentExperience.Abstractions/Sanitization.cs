@@ -6,7 +6,7 @@ namespace AgentExperience.Abstractions;
 /// policy (task context, tool arguments, tool results, evidence, ...) without this package
 /// knowing what any specific implementation's policy is.
 /// </summary>
-/// <param name="Kind">Identifies what this payload represents, e.g. "TaskContext", "ToolArguments", "ToolResult", "Evidence".</param>
+/// <param name="Kind">Identifies what this payload represents, e.g. "TaskContext", "ToolArguments", "ToolResult", "Evidence". Core names the kinds its capture submits in <c>AgentExperience.Core.Sanitization.SanitizationKinds</c>.</param>
 /// <param name="Fields">The raw, unsanitized field values.</param>
 public sealed record RawPayload(
     string Kind,

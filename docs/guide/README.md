@@ -9,7 +9,8 @@ rely on any guarantee described here.
 These pages describe the `main` branch, which the published `0.1.0-preview.6` packages match; anything added to
 `main` after that release is listed in the [changelog's Unreleased section](../../CHANGELOG.md#unreleased). Code snippets use
 placeholder variables (`authorization`, `scope`, `hostScope`, `sanitizationOptions`, `captureLimits`, `logger`, …)
-for values you build as in the [quick start](../../README.md#quick-start).
+for values you build as in the [explicit wiring](deployment.md#explicit-wiring). The [quick start](../../README.md#quick-start)
+uses the [one-call setup](deployment.md#the-one-call-setup), which builds them for you.
 
 ## The learning loop, page by page
 
@@ -105,3 +106,4 @@ These terms have a specific meaning in this library.
 | OpenTelemetry-compatible spans and metrics through the BCL's `ActivitySource` and `Meter` | `AgentExperience.Core`, `AgentExperience.MicrosoftAgentFramework`, `AgentExperience.Storage.Postgres` |
 | In-memory record store, candidate source and reuse-feedback store, **for development and tests only**: data is lost when the process ends, none of the PostgreSQL guarantees apply, search matches every query word but does not stem, with relevance values unlike PostgreSQL's, and the registration refuses any environment but Development, Test or Testing unless overridden. Passes the same store conformance suite as PostgreSQL | `AgentExperience.Storage.InMemory` |
 | Dependency-injection registration for each package; every registration uses `TryAdd`, so your own implementation wins | all but `AgentExperience.Abstractions` |
+| The one-call setup, `services.AddAgentExperience(...)` with `.UseInMemoryStorageForDevelopment()` or `.UsePostgres(...)`, and `UseAgentExperience` on the agent builder | `AgentExperience.MicrosoftAgentFramework`, with `AgentExperience.Storage.InMemory` or `AgentExperience.Storage.Postgres` |

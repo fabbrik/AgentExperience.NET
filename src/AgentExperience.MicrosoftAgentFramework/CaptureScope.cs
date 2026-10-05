@@ -81,28 +81,37 @@ internal sealed class CaptureScope
     /// <summary>The agent this invocation's capture wraps: the inner agent the capture middleware delegates to.</summary>
     internal AIAgent? Agent { get; private init; }
 
+    /// <summary>The identity the run was opened under, in the one-call setup; <see langword="null"/> under the explicit wiring.</summary>
+    internal ExperienceIdentity? Identity { get; private init; }
+
     /// <summary>
     /// Whether <paramref name="agent"/> -- the agent a context provider was invoked for -- is the agent this scope
     /// captures, compared through the <see cref="ChatClientAgent"/> each resolves to, so a delegating wrapper and the
     /// chat client agent it wraps are the same agent. A nested agent inherits this scope through the async flow but
     /// is a different agent, and a <see langword="null"/> agent is never this one.
     /// </summary>
-    internal bool Captures(AIAgent? agent)
+    internal bool Captures(AIAgent? agent) => SameAgent(Agent, agent);
+
+    /// <summary>
+    /// Whether <paramref name="agent"/> is <paramref name="captured"/>, compared through the <see cref="ChatClientAgent"/>
+    /// each resolves to. See <see cref="Captures"/>.
+    /// </summary>
+    internal static bool SameAgent(AIAgent? captured, AIAgent? agent)
     {
-        if (agent is null || Agent is null)
+        if (agent is null || captured is null)
         {
             return false;
         }
 
-        if (ReferenceEquals(agent, Agent))
+        if (ReferenceEquals(agent, captured))
         {
             return true;
         }
 
         try
         {
-            var captured = Agent.GetService<ChatClientAgent>();
-            return captured is not null && ReferenceEquals(captured, agent.GetService<ChatClientAgent>() ?? agent);
+            var inner = captured.GetService<ChatClientAgent>();
+            return inner is not null && ReferenceEquals(inner, agent.GetService<ChatClientAgent>() ?? agent);
         }
         catch (Exception)
         {
@@ -150,12 +159,22 @@ internal sealed class CaptureScope
         OpenRunRegistry registry,
         IEnumerable<ChatMessage> messages,
         AgentSession? session,
-        AIAgent agent)
+        AIAgent agent) =>
+        TryBegin(service, options, registry, new ExperienceRunContext(messages, session, agent));
+
+    /// <inheritdoc cref="TryBegin(IExperienceCaptureService, ExperienceCaptureOptions, OpenRunRegistry, IEnumerable{ChatMessage}, AgentSession?, AIAgent)"/>
+    internal static CaptureScope? TryBegin(
+        IExperienceCaptureService service,
+        ExperienceCaptureOptions options,
+        OpenRunRegistry registry,
+        ExperienceRunContext context)
     {
+        var session = context.Session;
+        var agent = context.Agent;
         ExperienceRunDescriptor? descriptor;
         try
         {
-            descriptor = options.ResolveRun(new ExperienceRunContext(messages, session, agent));
+            descriptor = options.ResolveRun(context);
         }
         catch (Exception ex)
         {
@@ -214,6 +233,29 @@ internal sealed class CaptureScope
                 return null;
             }
 
+            // A run keeps the identity of the invocation that opened it: continuing it under another principal or
+            // scope would append that caller's attempt to, and finalize it under, someone else's run.
+            if (context.Identity is { } identity)
+            {
+                bool refused;
+                lock (claimed.Gate)
+                {
+                    claimed.Identity ??= identity;
+                    refused = !claimed.Identity.SamePrincipal(identity);
+                }
+
+                if (refused)
+                {
+                    Report(options, new ExperienceCaptureFailure(
+                        ExperienceCaptureFailureStage.StartRun,
+                        runId,
+                        "The run was opened under a different identity, so this invocation may not continue it; it runs uncaptured.",
+                        null));
+                    Unclaim(registry, claimed, createdEntry);
+                    return null;
+                }
+            }
+
             startedAt = options.TimeProvider.GetUtcNow();
             startTimestamp = options.TimeProvider.GetTimestamp();
 
@@ -249,7 +291,18 @@ internal sealed class CaptureScope
         // A continued run's entry already carries its bound, and this leaves it as it is.
         registry.ArmAtOpen(claimed, runStartedAt);
 
-        var scope = new CaptureScope(service, options, registry, claimed, descriptor, runId, runStartedAt, startedAt, startTimestamp) { Agent = agent };
+        // The identity the run was opened under, so finalization -- here or when the bound closes it -- uses it.
+        ExperienceIdentity? runIdentity;
+        lock (claimed.Gate)
+        {
+            runIdentity = claimed.Identity;
+        }
+
+        var scope = new CaptureScope(service, options, registry, claimed, descriptor, runId, runStartedAt, startedAt, startTimestamp)
+        {
+            Agent = agent,
+            Identity = runIdentity,
+        };
 
         if (session is not null)
         {
@@ -550,6 +603,7 @@ internal sealed class CaptureScope
             _service,
             _options,
             RunId,
+            Identity,
             failure => ReportFailure(failure.Stage, failure.Reason, failure.Exception),
             () => _registry.IsDisposed,
             cancellationToken).ConfigureAwait(false);
@@ -657,6 +711,7 @@ internal sealed class CaptureScope
         IExperienceCaptureService service,
         ExperienceCaptureOptions options,
         Guid runId,
+        ExperienceIdentity? identity,
         Action<ExperienceCaptureFailure> report,
         Func<bool> isDisposed,
         CancellationToken cancellationToken)
@@ -684,7 +739,7 @@ internal sealed class CaptureScope
                 return;
             }
 
-            var context = new ExperienceFinalizationContext(run);
+            var context = new ExperienceFinalizationContext(run) { Identity = identity };
             if (options.ResolveFinalizationAsync is { } resolveAsync)
             {
                 request = await resolveAsync(context, cancellationToken).ConfigureAwait(false);
@@ -856,7 +911,7 @@ internal sealed class CaptureScope
         Report(_options, new ExperienceCaptureFailure(stage, RunId, reason, exception));
     }
 
-    private static void Report(ExperienceCaptureOptions options, ExperienceCaptureFailure failure)
+    internal static void Report(ExperienceCaptureOptions options, ExperienceCaptureFailure failure)
     {
         try
         {

@@ -324,10 +324,17 @@ public sealed record ExperienceInjectionDecisionContext(
 /// Host configuration for <see cref="ExperienceContextProvider"/>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The provider is added to an agent by the host, through
 /// <c>ChatClientAgentOptions.AIContextProviders</c>; unlike capture there is no builder extension,
 /// because the capture middleware never constructs <c>ChatClientAgentOptions</c> and injection has
-/// nothing to hook into a pipeline.
+/// nothing to hook into a pipeline. Under the one-call setup, <c>GetAgentExperienceContextProvider()</c>
+/// returns the provider the container built.
+/// </para>
+/// <para>
+/// The properties are settable so a configuration hook (<c>AgentExperienceOptions.Injection</c>) can adjust them. The
+/// provider takes a copy when it is constructed, so changing the options afterwards has no effect on it.
+/// </para>
 /// </remarks>
 public sealed class ExperienceInjectionOptions
 {
@@ -347,7 +354,7 @@ public sealed class ExperienceInjectionOptions
     /// <see cref="ExperienceCandidateQuery.MaxTaskTextLength"/> characters, or retrieval refuses the
     /// request and the invocation gets no context.
     /// </remarks>
-    public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? ResolveRequest { get; init; }
+    public Func<ExperienceInjectionContext, RetrieveExperienceRequest?>? ResolveRequest { get; set; }
 
     /// <summary>
     /// Turns one invocation into a retrieval request, asynchronously: the host-established authorization, the exact
@@ -372,13 +379,13 @@ public sealed class ExperienceInjectionOptions
     /// of the provider's own pre-model budget; the provider puts no timeout around it.
     /// </para>
     /// </remarks>
-    public Func<ExperienceInjectionContext, CancellationToken, ValueTask<RetrieveExperienceRequest?>>? ResolveRequestAsync { get; init; }
+    public Func<ExperienceInjectionContext, CancellationToken, ValueTask<RetrieveExperienceRequest?>>? ResolveRequestAsync { get; set; }
 
     /// <summary>
     /// The record and byte bounds one injected block runs under. Defaults to
     /// <see cref="ExperienceInjectionLimits.Default"/> (8 records, 16 KB).
     /// </summary>
-    public ExperienceInjectionLimits Limits { get; init; } = ExperienceInjectionLimits.Default;
+    public ExperienceInjectionLimits Limits { get; set; } = ExperienceInjectionLimits.Default;
 
     /// <summary>
     /// Session tracking, on by default with <see cref="ExperienceInjectionSessionLimits.Default"/> (32 record
@@ -416,7 +423,7 @@ public sealed class ExperienceInjectionOptions
     /// in a block; the provider's constructor refuses anything smaller.
     /// </para>
     /// </remarks>
-    public ExperienceInjectionSessionLimits? SessionLimits { get; init; } = ExperienceInjectionSessionLimits.Default;
+    public ExperienceInjectionSessionLimits? SessionLimits { get; set; } = ExperienceInjectionSessionLimits.Default;
 
     /// <summary>
     /// The <see cref="AgentSession.StateBag"/> key session tracking keeps its account under. Defaults to
@@ -450,7 +457,7 @@ public sealed class ExperienceInjectionOptions
     /// <see cref="SessionLimits"/> set to <see langword="null"/>.
     /// </para>
     /// </remarks>
-    public string SessionStateKey { get; init; } = ExperienceContextProvider.SessionStateKey;
+    public string SessionStateKey { get; set; } = ExperienceContextProvider.SessionStateKey;
 
     /// <summary>The most characters <see cref="SessionStateKey"/> may have.</summary>
     public const int MaxSessionStateKeyLength = 128;
@@ -474,7 +481,7 @@ public sealed class ExperienceInjectionOptions
     /// and hand it the result.
     /// </para>
     /// </remarks>
-    public Func<ExperienceInjectionDecisionContext, InjectionDecision>? DecideInjection { get; init; }
+    public Func<ExperienceInjectionDecisionContext, InjectionDecision>? DecideInjection { get; set; }
 
     /// <summary>
     /// Optional. What the agent receiving the Historical Reference can and may do, so that a record whose
@@ -511,7 +518,7 @@ public sealed class ExperienceInjectionOptions
     /// <see langword="null"/>, empty or whitespace tool name (in either collection) or a risk class that is not a defined <see cref="ToolRiskClass"/>.
     /// </para>
     /// </remarks>
-    public ReceivingAgentCapabilities? ReceivingAgent { get; init; }
+    public ReceivingAgentCapabilities? ReceivingAgent { get; set; }
 
     /// <summary>
     /// Whether records whose free text a model wrote (<see cref="Reflection.Authorship"/> is anything but
@@ -546,20 +553,20 @@ public sealed class ExperienceInjectionOptions
     /// that is not a defined <see cref="ModelAuthoredLessonPolicy"/> is refused when the provider is constructed.
     /// </para>
     /// </remarks>
-    public ModelAuthoredLessonPolicy ModelAuthoredLessons { get; init; } = ModelAuthoredLessonPolicy.Include;
+    public ModelAuthoredLessonPolicy ModelAuthoredLessons { get; set; } = ModelAuthoredLessonPolicy.Include;
 
     /// <summary>
     /// Optional. Receives the content-free account of every injection attempt -- injected, empty,
     /// skipped, timed out, denied, or failed -- including each omission and its reason. Exceptions
     /// thrown by the callback are swallowed.
     /// </summary>
-    public Action<ExperienceInjectionResult>? OnContextInjected { get; init; }
+    public Action<ExperienceInjectionResult>? OnContextInjected { get; set; }
 
     /// <summary>
     /// The clock the final eligibility re-check measures its timeout and record expiry with.
     /// Defaults to <see cref="TimeProvider.System"/>.
     /// </summary>
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>
     /// Optional, empty by default. Per tool name, the argument keys whose values the injected
@@ -633,7 +640,7 @@ public sealed class ExperienceInjectionOptions
     /// character, or one of <c>= ( ) , " \</c> is refused with an <see cref="ArgumentException"/> there.
     /// </para>
     /// </remarks>
-    public IDictionary<string, IReadOnlyList<string>> ApproachArguments { get; init; } =
+    public IDictionary<string, IReadOnlyList<string>> ApproachArguments { get; set; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
     /// <summary>
@@ -650,7 +657,7 @@ public sealed class ExperienceInjectionOptions
     /// field. A record borrowed through a sharing grant never shows an excerpt, only the class. A value that is not
     /// a defined <see cref="AttemptFailureDetail"/> is refused when the provider is constructed.
     /// </remarks>
-    public AttemptFailureDetail FailureDetail { get; init; } = AttemptFailureDetail.ErrorClass;
+    public AttemptFailureDetail FailureDetail { get; set; } = AttemptFailureDetail.ErrorClass;
 
     /// <summary>
     /// How the block lays out each record. <see cref="HistoricalReferenceRendering.Compact"/> (the default) keeps the
@@ -665,7 +672,7 @@ public sealed class ExperienceInjectionOptions
     /// the same budget. A value that is not a defined <see cref="HistoricalReferenceRendering"/> is refused when the
     /// provider is constructed.
     /// </remarks>
-    public HistoricalReferenceRendering Rendering { get; init; } = HistoricalReferenceRendering.Compact;
+    public HistoricalReferenceRendering Rendering { get; set; } = HistoricalReferenceRendering.Compact;
 
     /// <summary>
     /// The chat role the block's message is sent in: <see cref="HistoricalReferenceMessageRole.User"/> (the default)
@@ -678,7 +685,22 @@ public sealed class ExperienceInjectionOptions
     /// and the block arrives alongside the invocation's own messages: test <see cref="HistoricalReferenceMessageRole.System"/>
     /// with your provider before relying on it.
     /// </remarks>
-    public HistoricalReferenceMessageRole MessageRole { get; init; } = HistoricalReferenceMessageRole.User;
+    public HistoricalReferenceMessageRole MessageRole { get; set; } = HistoricalReferenceMessageRole.User;
+
+    /// <summary>A shallow copy, taken before validation, so a later change to these options changes nothing.</summary>
+    internal ExperienceInjectionOptions Snapshot()
+    {
+        var copy = (ExperienceInjectionOptions)MemberwiseClone();
+
+        // The one mutable member: copied too, keeping its comparer, so the provider shares nothing with the caller.
+        copy.ApproachArguments = ApproachArguments switch
+        {
+            null => null!,
+            Dictionary<string, IReadOnlyList<string>> dictionary => new Dictionary<string, IReadOnlyList<string>>(dictionary, dictionary.Comparer),
+            _ => new Dictionary<string, IReadOnlyList<string>>(ApproachArguments, StringComparer.Ordinal),
+        };
+        return copy;
+    }
 
     /// <summary>
     /// Validates this instance, in the same style as

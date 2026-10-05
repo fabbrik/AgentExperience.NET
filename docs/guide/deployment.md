@@ -1,6 +1,7 @@
 # Deployment
 
-**In short.** Each package registers its own services, so a host wires the whole loop in a few lines. The schema is
+**In short.** One call, `services.AddAgentExperience(...)`, wires the whole loop with safe defaults, and each package
+also registers its own services for a host that wires them by hand. The schema is
 applied explicitly, on every deploy, by a PostgreSQL **owner** role; the application itself connects as a separate
 **application** role that owns nothing and gets exactly the privileges the stores need. That two-role shape is the
 supported deployment, and it is what makes the append-only guards and the single erasure path bind the application's
@@ -10,6 +11,64 @@ is exact.
 Supported: .NET 10 (`net10.0` only); PostgreSQL 15, 16, 17 and 18; `Microsoft.Agents.AI` `[1.22.0, 2.0.0)`. A host
 on .NET 8 or 9 stays on `0.1.0-preview.3`, the last release that targets `net8.0` and `net9.0`. See
 [Compatibility evidence](../compatibility-evidence.md#supported-matrix).
+
+## The one-call setup
+
+`services.AddAgentExperience(...)` (in `AgentExperience.MicrosoftAgentFramework`) registers Core, retrieval and the
+injection provider with safe defaults, and returns a builder to choose the storage on. `UseAgentExperience(provider)` on
+the agent builder then wires capture, verification and storage, and `provider.GetAgentExperienceContextProvider()` is
+the agent's context provider. The [README quick start](../../README.md#quick-start) shows it whole.
+
+```csharp
+services.AddAgentExperience(options =>
+{
+    options.ResolveIdentity = (context, cancellationToken) => ...;   // required: your authentication, never model output
+    options.TaskId = "triage-ticket";                                // or ResolveTaskId, per invocation; default "default"
+    options.Verify = (context, cancellationToken) => ...;           // optional: without it nothing is stored
+    // Optional, each with a safe default:
+    // options.Sanitization = ...;   AgentExperienceDefaults.Sanitization: no tool argument kept until allowlisted
+    //                               (AgentExperienceDefaults.SanitizationAllowing("ticketId") keeps one), results kept
+    //                               and cut by CaptureLimits, secret-named fields redacted
+    // options.CaptureLimits = ...;  AgentExperienceDefaults.CaptureLimits: 10 attempts, 50 tool calls, 4,000 characters
+    // options.Injection = injection => ...;   adjusts ExperienceInjectionOptions after the defaults
+    // options.Capture = capture => ...;       adjusts ExperienceCaptureOptions after the defaults (OnCaptureFailure, ...)
+    // options.TimeProvider = ...;             the clock; the container's, else the system clock (a different
+    //                                         instance from a registered TimeProvider throws)
+    // options.IdentityTimeout = ...;          how long ResolveIdentity may take; 5 seconds
+})
+.UsePostgres(appConnectionString);   // or .UsePostgres(dataSource), or .UseInMemoryStorageForDevelopment()
+```
+
+What the library fills in, so the host does not:
+
+| | The one-call setup | Explicit wiring |
+| --- | --- | --- |
+| Who the run is for | `ResolveIdentity` returns an `ExperienceIdentity(Authorization, Scope)`, used for capture, retrieval and finalization alike; `null` means no capture and no injection for that invocation | Each resolver builds its own `AuthorizationContext` and `Scope` |
+| Run description | `TaskId` (or `ResolveTaskId`), the identity's scope, and `DerivedTaskText` | `ResolveRun` |
+| Retrieval request | The identity and `DerivedTaskText`; no text means no injection | `ResolveRequestAsync` |
+| Finalization request | `Verify` returns the required checks, the evidence and the artifact revision; the library adds a new `ClosedVerificationRound` (identifier from `NewId`), that revision as the current one, `StorageDecision.Permit`, the finalization time and the authorization. `context.CreateEvidence(...)` builds evidence bound to the round; evidence naming another round or revision is reported and nothing is stored. `ExperienceVerificationContext.Create(...)` builds a context for unit-testing `Verify` | `ResolveFinalizationAsync` builds the whole `FinalizeExperienceRequest` |
+
+The identity is resolved once per invocation, before capture, and injection reuses the answer (an identity, none, or a
+failure); only an agent built without `UseAgentExperience` has injection ask on its own. Past `IdentityTimeout` the
+invocation runs with no memory and the timeout is reported. A run keeps the identity it was opened under: an
+invocation that continues it under another principal or scope is refused (reported at `StartRun`, and run uncaptured),
+and a run the open-run bound closes is finalized under its own identity. `Verify` runs inside `FinalizationTimeout`,
+which the one-call setup sets to 2 minutes rather than capture's 5 seconds, since checks often run tests; the caller
+waits for it, so lower it, or verify out of band, if that is too long. Set it, like any capture option, through
+`options.Capture`; a hook that sets the synchronous `ResolveFinalization` beside `Verify` is refused. The capture of
+every agent built with `UseAgentExperience` is disposed with the container. Storage is chosen on the builder, once:
+`.UseInMemoryStorageForDevelopment()` (`AgentExperience.Storage.InMemory`, with the same development-only guard as
+`AddAgentExperienceInMemoryStorageForDevelopment`) or `.UsePostgres(...)` (`AgentExperience.Storage.Postgres`: the
+data source, the record store and the candidate source). A second choice, or one beside an already-registered record
+store or a different data source, throws. Without one, `UseAgentExperience` and
+`GetAgentExperienceContextProvider` throw `InvalidOperationException` naming the choices. Nothing migrates the schema:
+that stays an explicit step for the owner role ([Applying the schema](#applying-the-schema)). Grants, reuse feedback,
+encryption, vectors, signing and independence options are registered with the calls below, beside the one-call setup.
+
+`AddAgentExperience` registers with `TryAdd`, so a service the host registered first is kept; calling it twice throws.
+MAF's agent builder can add only a message-level context provider, which does not see the chat client agent's session
+and history the injection provider works with, so the provider goes on `ChatClientAgentOptions.AIContextProviders`
+rather than on the builder.
 
 ## Wiring it all together
 
@@ -55,9 +114,9 @@ services.AddAgentExperienceRetrieval();                         // ExperienceRet
 services.AddAgentExperienceReuseFeedback();                     // ExperienceReuseFeedbackService, over the ledger
                                                                 //    above and the lifecycle service
 
-// Injection has no registration of its own: ExperienceContextProvider needs a per-host resolver and
-// risk decision, so the host constructs it and adds it to ChatClientAgentOptions.AIContextProviders.
-// See the injection guide.
+// Wired by hand, injection has no registration of its own: ExperienceContextProvider needs a per-host
+// resolver and risk decision, so the host constructs it and adds it to ChatClientAgentOptions.AIContextProviders
+// (see the injection guide). The one-call setup above registers one for you.
 ```
 
 The ports are registered independently: a host that only writes experience never has to register the search, one
@@ -77,6 +136,115 @@ The MAF adapter can drive finalization for you: set `FinalizationService` and `R
 `ExperienceCaptureOptions` and every successfully captured invocation is finalized right after it is completed. See
 [Finalization](finalization.md#finalizing-from-the-maf-adapter). `AssessmentTokenIssuer` is deliberately not
 registered: construct it in your review flow, where a person decides (see [Confidence](confidence.md)).
+
+## Explicit wiring
+
+The one-call setup is a composition of these public pieces, and they keep working unchanged. Wire them by hand when
+you need what the setup does not offer: a sanitization policy per tool, a different authorization for retrieval and
+for storage, a storage decision other than `Permit`, or a round your review flow closes. This wires steps 1 to 6 for
+one MAF agent over PostgreSQL: apply the schema, register the services, inject past lessons before each run, and
+capture, verify and store each run after it. For a throwaway local database with a single role, skip the
+`ApplyApplicationRolePrivilegesAsync` call, which refuses the role running it. You supply `chatClient`, two connection
+strings, and `EvidenceForAsync`, which runs your own checks and turns them into `Evidence` for the round you closed.
+
+```csharp
+using AgentExperience.Abstractions;
+using AgentExperience.Core.Capture;
+using AgentExperience.Core.DependencyInjection;
+using AgentExperience.Core.Finalization;
+using AgentExperience.Core.Retrieval;
+using AgentExperience.Core.Sanitization;
+using AgentExperience.Core.Verification;
+using AgentExperience.MicrosoftAgentFramework;
+using AgentExperience.MicrosoftAgentFramework.Injection;
+using AgentExperience.Storage.Postgres;
+using AgentExperience.Storage.Postgres.DependencyInjection;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
+
+// 1. Apply the schema, on every deploy, as the database owner role.
+await using (var owner = NpgsqlDataSource.Create(ownerConnectionString))
+{
+    await ExperienceSchemaMigrator.MigrateAsync(owner, CancellationToken.None);
+    await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+        owner, new ExperienceApplicationRoleOptions("agent_experience_app"), CancellationToken.None);
+}
+
+// 2. Register the services. The stores connect as the application role.
+var toolPolicy = new SanitizationPolicy(
+    AllowedFieldNames: new HashSet<string> { "ticketId", "strategy" },   // kept
+    SecretFieldNames: new HashSet<string> { "apiKey" },                  // redacted
+    MaxDepth: 4, MaxFieldCount: 50, MaxValueLength: 4_000, MaxFieldNameLength: 100);
+
+var services = new ServiceCollection();
+services.AddSingleton(NpgsqlDataSource.Create(appConnectionString));
+services.AddAgentExperiencePostgresStore();
+services.AddAgentExperiencePostgresCandidateSource();
+services.AddAgentExperienceCore(
+    new SanitizationOptions(new Dictionary<string, SanitizationPolicy>
+    {
+        [SanitizationKinds.ToolArguments] = toolPolicy,
+        [SanitizationKinds.ToolResult] = toolPolicy,
+    }),
+    new CaptureLimits(MaxAttemptsPerRun: 10, MaxToolCallsPerAttempt: 50, MaxResultLength: 4_000, MaxErrorLength: 4_000));
+services.AddAgentExperienceRetrieval();
+await using var provider = services.BuildServiceProvider();
+
+// 3. Scope and authority come from your own authentication, never from model output.
+var scope = new Scope(TenantId: "contoso", ApplicationId: "support", ProjectId: "tickets");
+var authorization = new AuthorizationContext(
+    TenantId: "contoso", PrincipalId: "svc-support-agent", Roles: [], IssuedAt: DateTimeOffset.UtcNow);
+
+// 4. Before each run: retrieve applicable lessons and inject them as a labeled Historical Reference.
+var injection = new ExperienceContextProvider(
+    provider.GetRequiredService<ExperienceRetrievalService>(),
+    provider.GetRequiredService<IExperienceRecordStore>(),
+    new ExperienceInjectionOptions
+    {
+        // The user's latest words, bounded; with none, return null to skip injection for this run.
+        // Async, with the invocation's token: look up the caller's authorization and scope here if you need I/O.
+        ResolveRequestAsync = (context, cancellationToken) => ValueTask.FromResult(context.DerivedTaskText is { } taskText
+            ? new RetrieveExperienceRequest(authorization, scope, TaskText: taskText)
+            : null),
+    });
+
+// 5. After each run: capture what happened, verify it with your checks, and store the lesson.
+AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [injection] })
+    .AsBuilder()
+    .UseExperienceCapture(provider.GetRequiredService<IExperienceCaptureService>(), new ExperienceCaptureOptions
+    {
+        ResolveRun = context => new ExperienceRunDescriptor(
+            TaskId: "triage-ticket", Scope: scope, TaskDescription: context.DerivedTaskText),
+        FinalizationService = provider.GetRequiredService<ExperienceFinalizationService>(),
+        ResolveFinalizationAsync = async (context, cancellationToken) =>
+        {
+            var round = new ClosedVerificationRound(Guid.NewGuid(), ArtifactRevision: "build-42");
+            return new FinalizeExperienceRequest(
+                RunId: context.Run.RunId,
+                Authorization: authorization,
+                ClosedRound: round,
+                RequiredChecks: [new RequiredCheck("tests-pass", ExpectedKind: "TestResult")],
+                // Your own checks, never the model's word.
+                Evidence: await EvidenceForAsync(context.Run, round, cancellationToken),
+                CurrentArtifactRevision: "build-42",
+                StorageDecision: StorageDecision.Permit,
+                FinalizedAt: DateTimeOffset.UtcNow);
+        },
+        OnCaptureFailure = failure => Console.Error.WriteLine($"capture failed at {failure.Stage}"),
+    })
+    .Build();
+
+var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
+```
+
+`DerivedTaskText` is the user's latest message (with the one before it, from the same input or the session's history,
+when the latest is a short follow-up such as "and retry"), never injected context or a tool result, cleaned up and cut
+to 512 UTF-16 code units (see [Injection](injection.md#the-task-text)). Capture sees only the invocation's own input, so
+there the follow-up is joined only to an earlier message in that input. It is the user's own words, unredacted: stored
+as the run's `TaskDescription` it is stored as written, so a host whose prompts can hold sensitive data should redact it
+first.
 
 ## Applying the schema
 

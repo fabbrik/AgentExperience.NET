@@ -498,7 +498,13 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
             // report -- the same order CaptureScope.FinalizeAsync uses, for the same reason.
             timeout = new CancellationTokenSource();
             var token = timeout.Token;
-            var work = Task.Run(() => CompleteAndFinalizeAsync(runId, atBound, token), CancellationToken.None);
+            ExperienceIdentity? identity;
+            lock (entry.Gate)
+            {
+                identity = entry.Identity;
+            }
+
+            var work = Task.Run(() => CompleteAndFinalizeAsync(runId, identity, atBound, token), CancellationToken.None);
             await work.WaitAsync(options.FinalizationTimeout, options.TimeProvider).ConfigureAwait(false);
 
             timeout.Dispose();
@@ -538,7 +544,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
         }
     }
 
-    private async Task CompleteAndFinalizeAsync(Guid runId, bool atBound, CancellationToken cancellationToken)
+    private async Task CompleteAndFinalizeAsync(Guid runId, ExperienceIdentity? identity, bool atBound, CancellationToken cancellationToken)
     {
         var completed = await service
             .CompleteRunAsync(runId, options.NewId(), RunExecutionStatus.Cancelled, options.TimeProvider.GetUtcNow(), cancellationToken)
@@ -582,7 +588,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
             return;
         }
 
-        await CaptureScope.FinalizeExperienceAsync(service, options, runId, Report, () => IsDisposed, cancellationToken).ConfigureAwait(false);
+        await CaptureScope.FinalizeExperienceAsync(service, options, runId, identity, Report, () => IsDisposed, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -673,6 +679,12 @@ internal sealed class OpenRun(Guid runId)
 
     /// <summary>Whether the timer provider fired the bound synchronously while it was being created.</summary>
     internal bool FiredWhileArming { get; set; }
+
+    /// <summary>
+    /// The identity the run was opened under, in the one-call setup: a continuation under another one is refused, and
+    /// a run the bound closes is finalized under it. <see langword="null"/> under the explicit wiring.
+    /// </summary>
+    internal ExperienceIdentity? Identity { get; set; }
 
     /// <summary>The armed duration bound, created once -- when the run is opened -- and disposed when the run is forgotten.</summary>
     internal ITimer? Timer { get; set; }

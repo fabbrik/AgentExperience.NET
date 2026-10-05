@@ -66,14 +66,14 @@ public static class SampleHost
     /// </summary>
     private static readonly SanitizationOptions Sanitization = new(new Dictionary<string, SanitizationPolicy>(StringComparer.Ordinal)
     {
-        ["ToolArguments"] = new SanitizationPolicy(
+        [SanitizationKinds.ToolArguments] = new SanitizationPolicy(
             AllowedFieldNames: new HashSet<string>(StringComparer.Ordinal) { "ticketId", "strategy" },
             SecretFieldNames: new HashSet<string>(StringComparer.Ordinal) { SampleTools.SecretArgumentName },
             MaxDepth: 2,
             MaxFieldCount: 10,
             MaxValueLength: 4_000,
             MaxFieldNameLength: 100),
-        ["ToolResult"] = new SanitizationPolicy(
+        [SanitizationKinds.ToolResult] = new SanitizationPolicy(
             AllowedFieldNames: new HashSet<string>(StringComparer.Ordinal) { "value" },
             SecretFieldNames: new HashSet<string>(StringComparer.Ordinal),
             MaxDepth: 2,

@@ -12,6 +12,11 @@ Package: `AgentExperience.MicrosoftAgentFramework`, over Core's `IExperienceCapt
 
 ## Usage
 
+The [one-call setup](deployment.md#the-one-call-setup) (`services.AddAgentExperience(...)` and
+`UseAgentExperience(provider)`) wires capture for you, with safe sanitization and limits, the run described by your
+`TaskId`, the resolved identity's scope and the user's own words, and verification through `Verify`. Adjust any option
+below through its `options.Capture` hook. Wired by hand, it looks like this:
+
 ```csharp
 using AgentExperience.Core.Capture;
 using AgentExperience.Core.Sanitization;
@@ -87,9 +92,13 @@ because MAF forwards those to the model provider.
 ## Sanitization happens at capture
 
 Sanitization is the first gate, and it is fail-closed at capture time rather than at storage time. The default
-sanitizer applies a per-`Kind` policy (tool arguments are `"ToolArguments"`, results and errors `"ToolResult"`): a
-field you allowlisted is kept, a field you marked secret is redacted as a whole value, and anything else is dropped.
-A `Kind` with no policy at all is rejected, never passed through.
+sanitizer applies a per-`Kind` policy (tool arguments are `SanitizationKinds.ToolArguments`, results and errors
+`SanitizationKinds.ToolResult`, carried in its one `SanitizationKinds.ValueField` field): a field you allowlisted is
+kept, a field you marked secret is redacted as a whole value, and anything else is dropped. A `Kind` with no policy at
+all is rejected, never passed through. `AgentExperienceDefaults.Sanitization` (in `AgentExperience.Core.DependencyInjection`)
+is a safe starting point: it keeps no tool argument until you allowlist it by name, keeps results and errors, and
+redacts secret-named fields (`password`, `secret`, `token`, `apiKey`, `api_key`, `authorization`, `connectionString`,
+in any case).
 
 When content cannot be sanitized, `AppendAttemptAsync` returns `AppendAttemptOutcome.SanitizationRejected` and the
 sanitizer's own `Reason`, the attempt is not recorded, the run stays open, and **nothing is stored anywhere** —

@@ -22,6 +22,30 @@ Requires `Microsoft.Agents.AI` **1.22.0 or any later 1.x** (declared `[1.22.0, 2
 tests the floor and the newest 1.x on every change and on a weekly schedule. MAF 2.0 and later are outside the range,
 and NuGet warns (NU1608) when a host resolves one. Brings in `AgentExperience.Core`.
 
+## The one-call setup
+
+`services.AddAgentExperience(...)` registers everything capture, injection and verification need, with safe defaults
+(no tool argument value is captured until you allowlist it, and secret-named fields are redacted). Choose the storage
+on the builder it returns, with `.UseInMemoryStorageForDevelopment()` (`AgentExperience.Storage.InMemory`) or
+`.UsePostgres(connectionString)` (`AgentExperience.Storage.Postgres`), then:
+
+```csharp
+AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        AIContextProviders = [provider.GetAgentExperienceContextProvider()],   // injection, before the model
+    })
+    .AsBuilder()
+    .UseAgentExperience(provider)                                             // capture and verification, after
+    .Build();
+```
+
+`UseAgentExperience` alone captures but injects nothing: the agent needs the provider in `AIContextProviders` too.
+`options.ResolveIdentity` (required) says who each invocation runs for, from your own authentication;
+`options.Verify` runs your own checks on each completed run, and without it nothing is stored. The
+[README quick start](https://github.com/fabbrik/AgentExperience.NET#quick-start) shows it whole, and
+[the deployment guide](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/deployment.md#the-one-call-setup)
+lists every option. The sections below are the explicit wiring, which keeps working unchanged.
+
 ## Capture
 
 ```csharp

@@ -199,3 +199,13 @@ namespace AgentExperience.Storage.Postgres
         Subtree = 1,
     }
 }
+namespace Microsoft.Extensions.DependencyInjection
+{
+    public static class AgentExperiencePostgresBuilderExtensions
+    {
+        public static TBuilder UsePostgres<TBuilder>(this TBuilder builder, Npgsql.NpgsqlDataSource dataSource)
+            where TBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
+        public static TBuilder UsePostgres<TBuilder>(this TBuilder builder, string connectionString)
+            where TBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
+    }
+}
