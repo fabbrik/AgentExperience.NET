@@ -50,7 +50,9 @@ internal static class ApplicationRolePrivileges
     /// <summary>
     /// The <c>SECURITY DEFINER</c> functions -- the three purges and <c>0016</c>'s sealing transition -- by
     /// signature, and the opt-in that grants each. Every one is revoked from <c>PUBLIC</c> by its script, and
-    /// the verification refuses any <c>SECURITY DEFINER</c> function the role can reach without its opt-in.
+    /// the verification refuses any <c>SECURITY DEFINER</c> function the role can reach without its opt-in. The fifth,
+    /// <c>0024</c>'s text search (<see cref="TextSearchFunction"/>), is handled beside them: its opt-in is
+    /// <see cref="ExperienceApplicationRoleOptions.EnableRowLevelSecurity"/>, and its definition is verified too.
     /// </summary>
     internal static IReadOnlyList<(string Signature, Func<ExperienceApplicationRoleOptions, bool> Granted)> PurgeFunctions { get; } =
     [
@@ -99,6 +101,28 @@ internal static class ApplicationRolePrivileges
                 connection, transaction, "SELECT to_regprocedure(@signature)::oid", cancellationToken, ("signature", signature)).ConfigureAwait(false)
                 ?? throw Refused($"the function {signature} does not exist; run ExperienceSchemaMigrator.MigrateAsync first");
             purgeOids[oid] = granted(options);
+        }
+
+        // Story 17.7: the text search behind row-level security, granted exactly while row-level security is on.
+        var textSearchOid = await ScalarAsync<uint?>(
+            connection, transaction, "SELECT to_regprocedure(@signature)::oid", cancellationToken, ("signature", TextSearchFunction.Signature)).ConfigureAwait(false);
+        if (textSearchOid is { } searchOid)
+        {
+            purgeOids[searchOid] = options.EnableRowLevelSecurity;
+
+            // Checked before the GRANT below, which a function owned by another role would refuse with a bare error.
+            if (options.EnableRowLevelSecurity && !await ScalarAsync<bool>(
+                connection, transaction,
+                "SELECT p.proowner = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'agent_experience.experience_records'::pg_catalog.regclass) " +
+                "FROM pg_catalog.pg_proc p WHERE p.oid = pg_catalog.to_regprocedure(@signature)",
+                cancellationToken, ("signature", TextSearchFunction.Signature)).ConfigureAwait(false))
+            {
+                throw Refused($"the function {TextSearchFunction.Signature} is not owned by the tables' owner, so it is not the canonical definition");
+            }
+        }
+        else if (options.EnableRowLevelSecurity)
+        {
+            throw Refused($"the function {TextSearchFunction.Signature} does not exist; run ExperienceSchemaMigrator.MigrateAsync first");
         }
 
         foreach (var statement in Statements(role.QuotedName, existing, options))
@@ -158,6 +182,11 @@ internal static class ApplicationRolePrivileges
             await VerifyHelperFunctionsAsync(connection, transaction, canonicalFunctions, violations, cancellationToken).ConfigureAwait(false);
         }
 
+        if (options.EnableRowLevelSecurity)
+        {
+            await VerifyTextSearchFunctionAsync(connection, transaction, role, violations, cancellationToken).ConfigureAwait(false);
+        }
+
         if (violations.Count > 0)
         {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
@@ -168,6 +197,10 @@ internal static class ApplicationRolePrivileges
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        // Row-level security and the text search function's grant may both have changed: every candidate source in this
+        // process detects its route again on its next search.
+        TextSearchRoute.PrivilegesChanged();
     }
 
     /// <summary>
@@ -207,6 +240,69 @@ internal static class ApplicationRolePrivileges
                 yield return $"GRANT EXECUTE ON FUNCTION {signature} TO {role}";
             }
         }
+
+        // Story 17.7: the text search behind row-level security, only while row-level security is on. ApplyAsync has
+        // already refused when it is asked to enable row-level security on a schema without the function.
+        if (options.EnableRowLevelSecurity)
+        {
+            yield return $"GRANT EXECUTE ON FUNCTION {TextSearchFunction.Signature} TO {role}";
+        }
+    }
+
+    /// <summary>
+    /// Before row-level security is enabled: the text search function (story 17.7) is exactly <see cref="TextSearchFunction"/>
+    /// -- <c>SECURITY DEFINER</c>, PL/pgSQL, <c>STABLE</c>, not leakproof, the pinned <c>search_path</c> alone, owned by the
+    /// tables' owner, the canonical arguments and result, and the canonical body byte for byte. Unlike the helpers it is
+    /// never re-created here: it runs with the owner's rights, so one altered by hand is refused, not quietly replaced.
+    /// Its <c>EXECUTE</c> is verified with the other <c>SECURITY DEFINER</c> functions'.
+    /// </summary>
+    private static async Task VerifyTextSearchFunctionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, RoleFacts role, List<string> violations, CancellationToken cancellationToken)
+    {
+        // The function reads experience_grants as the owner, so it shares a record through a grant only as long as the
+        // application role could read that grant itself: SELECT on the table is required while row-level security is on.
+        await using (var grants = new NpgsqlCommand(
+            "SELECT pg_catalog.to_regclass('agent_experience.experience_grants') IS NOT NULL " +
+            "AND pg_catalog.has_table_privilege(@role, 'agent_experience.experience_grants', 'SELECT')",
+            connection,
+            transaction))
+        {
+            grants.Parameters.Add(new NpgsqlParameter<uint>("role", NpgsqlTypes.NpgsqlDbType.Oid) { TypedValue = role.Oid });
+            if (await grants.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true)
+            {
+                violations.Add($"{TextSearchFunction.Signature}: the text search function needs the application role to hold SELECT on experience_grants");
+            }
+        }
+
+        await using var command = new NpgsqlCommand(
+            "SELECT p.prosecdef, p.provolatile::text, p.proleakproof, p.proretset, l.lanname::text, p.proconfig, " +
+            "p.proowner = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'agent_experience.experience_records'::pg_catalog.regclass), " +
+            "pg_catalog.pg_get_function_arguments(p.oid), pg_catalog.pg_get_function_result(p.oid), p.prosrc " +
+            "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang " +
+            "WHERE p.oid = pg_catalog.to_regprocedure(@signature)",
+            connection,
+            transaction);
+        command.Parameters.Add(new NpgsqlParameter<string>("signature", TextSearchFunction.Signature));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            || !reader.GetBoolean(0)
+            || reader.GetString(1) != "s"
+            || reader.GetBoolean(2)
+            || !reader.GetBoolean(3)
+            || reader.GetString(4) != "plpgsql"
+            || reader.IsDBNull(5)
+            || !reader.GetFieldValue<string[]>(5).SequenceEqual([TextSearchFunction.Config], StringComparer.Ordinal)
+            || !reader.GetBoolean(6)
+            || !string.Equals(reader.GetString(7), TextSearchFunction.Arguments, StringComparison.Ordinal)
+            || !string.Equals(reader.GetString(8), TextSearchFunction.Result, StringComparison.Ordinal)
+            || !string.Equals(Lf(reader.GetString(9)), Lf(TextSearchFunction.Body), StringComparison.Ordinal))
+        {
+            violations.Add($"{TextSearchFunction.Signature}: the text search function is not the canonical definition; " +
+                "re-run, as the owner, the CREATE OR REPLACE FUNCTION statement that " +
+                "PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName) returns");
+        }
+
+        static string Lf(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -866,7 +962,7 @@ internal static class ApplicationRolePrivileges
                 }
                 else if (!expected && reachable)
                 {
-                    violations.Add($"{name}: the role can EXECUTE a purge function the host did not opt into");
+                    violations.Add($"{name}: the role can EXECUTE a SECURITY DEFINER function the host did not opt into");
                 }
             }
             else if (securityDefiner && reachable)

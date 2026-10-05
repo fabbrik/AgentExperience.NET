@@ -258,6 +258,23 @@ instead.
   re-embed. Plaintext mode, Core and the schema are unchanged. What the row still says: the embedding vector and the
   full-text vector, which PostgreSQL must read in the clear to search, survive in every copy. See
   [Crypto-shredding](guide/crypto-shredding.md#search-and-why-the-residual-is-what-it-is).
+- **KL-17** (row-level security) is **narrowed** by story 17.7. Its clause that full-text search cannot use its GIN
+  index beneath the policies, so a text search scans every live record of the declared tenant, was removable by code,
+  and is gone. While row-level security is enabled on `experience_records`, the text channel now searches through
+  `agent_experience.search_experience_text` (migration `0024`), a `SECURITY DEFINER` function owned by the schema
+  owner, whom the policies do not bind, so `@@` is no longer behind the policy's barrier and the planner uses the GIN
+  indexes again. The function returns nothing unless bounds are declared, admits a row only through the read policy's
+  own admission over `0019`'s helpers, then applies the store's own predicates from the same SQL constants, so its
+  answers are the store's with row-level security off; its security review is in its header and in
+  [Enabling row-level security](guide/deployment.md#enabling-row-level-security). The privileges call grants it only
+  while it enables row-level security and refuses to enable it over a function altered by hand. With row-level security
+  off nothing changes. Two of the row's remaining clauses carried a reason that did not match them and are rewritten:
+  a caller-chosen record ID colliding with another tenant's reports `Conflict` because record IDs are globally unique by
+  design (making them per-scope would rekey every table; finalization's own derived IDs mix in the scope, so they
+  cannot collide across tenants), and an exposure of an unknown record is kept as `Unresolved` by design, so feedback
+  for a record erased since injection still records, and checking existence under row-level security would itself
+  reveal it. What the row still says: the bounds are settings any session may set, disclosure levels are enforced in
+  the library's code, those two clauses, and a new one: under the policies the search uses the table-wide GIN index, so its cost reflects matches in every tenant, a weak timing and statistics side channel (a tenant-leading GIN index needs `btree_gin`, which the library does not require).
 
 ## How the project got here
 

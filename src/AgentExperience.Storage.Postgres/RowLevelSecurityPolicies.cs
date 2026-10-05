@@ -255,11 +255,18 @@ $body$;
         $"{prefix}team_id, {prefix}agent_id, {prefix}user_id)::text IN (SELECT agent_experience.rls_granted_keys())";
 
     /// <summary>A record or embedding a read may see: its scope inside the bounds, or a live grant shares it.</summary>
-    private static string Readable() =>
-        $"{Join(Boundary(string.Empty), "        ")}\n" +
+    private static string Readable() => Readable(string.Empty);
+
+    /// <summary>
+    /// <see cref="Readable()"/> over a <paramref name="prefix"/>-qualified row: the read policy's own admission, through
+    /// the same helpers, for <see cref="TextSearchFunction"/> (story 17.7), which runs as the owner and so must apply it
+    /// itself. With an empty prefix it is the policy text exactly.
+    /// </summary>
+    internal static string Readable(string prefix) =>
+        $"{Join(Boundary(prefix), "        ")}\n" +
         "        AND (\n" +
-        $"            ({Join(Below(string.Empty), "            ")})\n" +
-        $"            OR {GrantKey(string.Empty)})";
+        $"            ({Join(Below(prefix), "            ")})\n" +
+        $"            OR {GrantKey(prefix)})";
 
     private static List<Policy> Build()
     {

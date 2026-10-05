@@ -344,6 +344,41 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `ExpectedRevision` 0) instead of computing `InitialEventIdFor`, which matches nothing for a record finalized before
   this release.
 
+### Text search keeps its GIN index under row-level security (story 17.7)
+
+- **The problem it fixes.** With `EnableRowLevelSecurity` on (story 15.1), the text channel's `@@` match is not
+  leakproof, so PostgreSQL applied it only after the read policy and could not use the GIN indexes: every text search
+  scanned every live record of the declared tenant, which made row-level security and large tenants incompatible
+  (KL-17).
+- **`search_experience_text` (migration `0024`).** A new `SECURITY DEFINER` function, owned by the schema owner, runs
+  the text channel's search as the owner, whom the policies do not bind, so the planner uses
+  `ix_experience_records_search` and `ix_experience_records_search_sealed` again. It returns nothing unless bounds are
+  declared, admits a row only through the read policy's own admission over `0019`'s helpers, and applies every
+  predicate of the store's own search, built from the same SQL constants; `pg_temp` is last on its pinned
+  `search_path` and `EXECUTE` is revoked from `PUBLIC`. Its security review is in its header and in
+  [Enabling row-level security](docs/guide/deployment.md#enabling-row-level-security).
+- **When it is used.** `PostgresExperienceCandidateSource` calls it only while row-level security is enabled on
+  `experience_records` and the connecting role may execute it, detected once per data source and again after each
+  privileges call in the process; a call refused because the function was revoked or dropped since falls back to the
+  store's own statement. The cached route is also re-detected after five minutes, so another process's privileges
+  call takes effect within that time. The function returns nothing for a requested scope outside the declared bounds.
+  With row-level security off, the SQL the store sends is unchanged. Results are identical
+  either way: rows, order, relevance, shared flags, permitting grants and the access rows recorded.
+- **The privileges call.** `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` on the function exactly while
+  `EnableRowLevelSecurity` is set, refuses to enable row-level security when the function is missing (run
+  `MigrateAsync` first) or is not byte for byte the canonical definition (it is never re-created by the call), and,
+  like any other `SECURITY DEFINER` function, refuses it when the role can execute it without that opt-in. It also
+  requires `SELECT` on `experience_grants` while row-level security is on. There is no opt-out: enabling row-level
+  security requires the function.
+- **Action for a host with row-level security on:** run `MigrateAsync` (which applies `0024`), then the privileges
+  call, as usual on every deploy. Until the privileges call has granted the function, searches keep the previous
+  behaviour.
+- **KL-17** drops its GIN-index clause, and states accurate reasons for two others: a colliding caller-chosen record
+  ID reports `Conflict` because record IDs are globally unique by design, and an exposure of an unknown record is kept
+  as `Unresolved` by design. It gains one stated boundary: the search uses the table-wide GIN index, so its cost
+  reflects matches in every tenant (a weak timing side channel). See
+  [Limits history](docs/limits-history.md#narrowed-after-010-preview6).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so
