@@ -42,7 +42,7 @@ AIAgent agent = chatClientAgent
         ResolveRun = context => new ExperienceRunDescriptor(
             TaskId: "triage-ticket",
             Scope: hostScope,                  // established by the host, never taken from model output
-            TaskDescription: "Triage an incoming support ticket"),
+            TaskDescription: context.DerivedTaskText),   // the user's own words, stored as written: redact first if needed
         OnCaptureFailure = failure => logger.LogWarning("Capture failed at {Stage}: {Reason}", failure.Stage, failure.Reason),
     })
     .Build();
@@ -82,12 +82,13 @@ var provider = new ExperienceContextProvider(
     recordStore,                  // IExperienceRecordStore: the final eligibility check re-reads through it
     new ExperienceInjectionOptions
     {
-        ResolveRequest = context => new RetrieveExperienceRequest(
-            Authorization: hostAuthorization,      // host-established; nothing in the invocation may widen it
-            Scope: hostScope,
-            TaskText: context.Messages
-                .LastOrDefault(m => m.Role == ChatRole.User && !string.IsNullOrWhiteSpace(m.Text))?.Text
-                ?? fallbackTaskDescription),        // never Last(): the list can be empty
+        // The user's latest words, bounded; with none (an image-only turn, say), return null to skip injection.
+        ResolveRequest = context => context.DerivedTaskText is { } taskText
+            ? new RetrieveExperienceRequest(
+                Authorization: hostAuthorization,  // host-established; nothing in the invocation may widen it
+                Scope: hostScope,
+                TaskText: taskText)
+            : null,
         DecideInjection = decision => riskPolicy.Allows(decision.Current)
             ? InjectionDecision.Permit
             : InjectionDecision.Deny("risk policy"),

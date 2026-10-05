@@ -165,7 +165,99 @@ public sealed record ExperienceInjectionLimits(int MaxRecords, int MaxBytes)
 public sealed record ExperienceInjectionContext(
     IReadOnlyList<ChatMessage> Messages,
     AgentSession? Session,
-    AIAgent Agent);
+    AIAgent Agent)
+{
+    private DerivedTaskTextCache? _derivedTaskText;
+
+    /// <summary>
+    /// The full request the provider saw before MAF's input filter, paired with the <see cref="Messages"/> list it was
+    /// given alongside, so a <c>with</c> that replaces <see cref="Messages"/> derives from the new list instead.
+    /// </summary>
+    private (IReadOnlyList<ChatMessage> ForMessages, IReadOnlyList<ChatMessage> Request)? _derivationSource;
+
+    /// <summary>A copy for <c>with</c>: the same members and derivation source, and a fresh, unread derived text.</summary>
+    /// <param name="original">The context being copied.</param>
+    private ExperienceInjectionContext(ExperienceInjectionContext original)
+    {
+        Messages = original.Messages;
+        Session = original.Session;
+        Agent = original.Agent;
+        _derivationSource = original._derivationSource;
+    }
+
+    /// <summary>
+    /// The task text <see cref="ExperienceTaskText.Derive(IEnumerable{ChatMessage}, int)"/> derives for this invocation
+    /// (at most <see cref="ExperienceTaskText.DefaultMaxLength"/> UTF-16 code units), or <see langword="null"/> when no
+    /// user message qualifies. Nothing uses it unless the host does. The recommended wiring in
+    /// <see cref="ExperienceInjectionOptions.ResolveRequest"/> is
+    /// <c>context.DerivedTaskText is { } text ? new RetrieveExperienceRequest(..., TaskText: text) : null</c>: return
+    /// <see langword="null"/> to skip injection when it is <see langword="null"/>, and fall back to other text only when
+    /// the host has a meaningful task label of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What it reads.</b> When <see cref="ExperienceContextProvider"/> builds the context, the whole request MAF
+    /// handed the provider before its input filter: the new input <em>and</em> the replayed chat history, so a short
+    /// follow-up such as "and retry" is joined to the previous turn's request (see <see cref="ExperienceTaskText"/>;
+    /// history is used for that join only, never as the latest request, and injected context never). A context built
+    /// any other way, or one whose <see cref="Messages"/> a <c>with</c> replaced, reads <see cref="Messages"/>. The
+    /// cross-turn join needs the history replayed into the request; with history the service keeps (a conversation ID)
+    /// there is none to join.
+    /// </para>
+    /// <para>
+    /// <b>Computed on first read.</b> The messages are snapshotted then, so a host that changes the same list
+    /// afterwards still sees the earlier text. It is computed at most once per instance (a <c>with</c> copy computes its
+    /// own). If reading the messages throws, the first read throws that exception and every later read returns
+    /// <see langword="null"/>.
+    /// </para>
+    /// <para>
+    /// <b>Not part of equality.</b> Equality and <see cref="object.ToString"/> look at <see cref="Messages"/>,
+    /// <see cref="Session"/> and <see cref="Agent"/> only, so two equal contexts, one built by the provider (which reads
+    /// the history too) and one built by hand, can derive different text.
+    /// </para>
+    /// <para>It is the user's own words, unredacted; see <see cref="ExperienceTaskText"/>.</para>
+    /// </remarks>
+    public string? DerivedTaskText => DerivedTaskTextCache.For(ref _derivedTaskText).Get(() =>
+        _derivationSource is { } source && ReferenceEquals(source.ForMessages, Messages) ? source.Request : Messages);
+
+    /// <summary>
+    /// Sets the request <see cref="DerivedTaskText"/> derives from, for the provider: the messages before MAF's input
+    /// filter, history included.
+    /// </summary>
+    /// <param name="request">The unfiltered request messages, snapshotted by the caller.</param>
+    /// <returns>This context.</returns>
+    internal ExperienceInjectionContext WithDerivationSource(IReadOnlyList<ChatMessage>? request)
+    {
+        if (request is not null)
+        {
+            _derivationSource = (Messages, request);
+        }
+
+        return this;
+    }
+
+    /// <summary>Equal when <see cref="Messages"/>, <see cref="Session"/> and <see cref="Agent"/> are.</summary>
+    /// <param name="other">The context to compare with.</param>
+    /// <returns><see langword="true"/> when the two contexts are equal.</returns>
+    public bool Equals(ExperienceInjectionContext? other) =>
+        other is not null
+        && (ReferenceEquals(this, other)
+            || (EqualityComparer<IReadOnlyList<ChatMessage>>.Default.Equals(Messages, other.Messages)
+                && EqualityComparer<AgentSession?>.Default.Equals(Session, other.Session)
+                && EqualityComparer<AIAgent>.Default.Equals(Agent, other.Agent)));
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => HashCode.Combine(Messages, Session, Agent);
+
+    // The derived text is the user's own words, so it stays out of ToString, which hosts log.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Messages = ").Append(Messages)
+            .Append(", Session = ").Append(Session)
+            .Append(", Agent = ").Append(Agent);
+        return true;
+    }
+}
 
 /// <summary>
 /// What the host sees when it is asked whether one specific record may be injected into this

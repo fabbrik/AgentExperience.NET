@@ -61,8 +61,11 @@
     {
         public ExperienceRunContext(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> Messages, Microsoft.Agents.AI.AgentSession? Session, Microsoft.Agents.AI.AIAgent Agent) { }
         public Microsoft.Agents.AI.AIAgent Agent { get; init; }
+        public string? DerivedTaskText { get; }
         public System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> Messages { get; init; }
         public Microsoft.Agents.AI.AgentSession? Session { get; init; }
+        public bool Equals(AgentExperience.MicrosoftAgentFramework.ExperienceRunContext? other) { }
+        public override int GetHashCode() { }
     }
     public sealed class ExperienceRunDescriptor : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor>
     {
@@ -71,6 +74,14 @@
         public AgentExperience.Abstractions.Scope Scope { get; init; }
         public string? TaskDescription { get; init; }
         public string TaskId { get; init; }
+    }
+    public static class ExperienceTaskText
+    {
+        public const int DefaultMaxLength = 512;
+        public const string FollowUpSeparator = " — ";
+        public const int FollowUpThreshold = 64;
+        public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength = 512) { }
+        public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength, int followUpThreshold) { }
     }
 }
 namespace AgentExperience.MicrosoftAgentFramework.Injection
@@ -88,14 +99,18 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public ExperienceContextProvider(AgentExperience.Core.Retrieval.ExperienceRetrievalService retrieval, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions options) { }
         public override System.Collections.Generic.IReadOnlyList<string> StateKeys { get; }
         protected override System.Threading.Tasks.ValueTask InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext context, System.Threading.CancellationToken cancellationToken = default) { }
+        protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public sealed class ExperienceInjectionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext>
     {
         public ExperienceInjectionContext(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages, Microsoft.Agents.AI.AgentSession? Session, Microsoft.Agents.AI.AIAgent Agent) { }
         public Microsoft.Agents.AI.AIAgent Agent { get; init; }
+        public string? DerivedTaskText { get; }
         public System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages { get; init; }
         public Microsoft.Agents.AI.AgentSession? Session { get; init; }
+        public bool Equals(AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext? other) { }
+        public override int GetHashCode() { }
     }
     public sealed class ExperienceInjectionDecisionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext>
     {

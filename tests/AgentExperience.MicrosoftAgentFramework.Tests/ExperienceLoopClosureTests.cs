@@ -4,6 +4,7 @@ using AgentExperience.Core.Reflections;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework.Injection;
+using AgentExperience.Storage.InMemory;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -40,6 +41,72 @@ public class ExperienceLoopClosureTests
             MaxValueLength: 10_000,
             MaxFieldNameLength: 100),
     });
+
+    [Fact]
+    public async Task A_run_described_by_DerivedTaskText_is_stored_with_it_and_found_by_text_search_on_those_words()
+    {
+        var store = new InMemoryExperienceRecordStore(new FrozenTimeProvider(InjectionRecords.Now));
+        var capture = new InMemoryExperienceCaptureService(new DefaultSanitizer(Sanitization), new CaptureLimits(10, 50, 10_000, 10_000));
+        var finalization = new ExperienceFinalizationService(capture, new DefaultExperienceReflector(), store, new ExperienceLifecycleService(store));
+        var finalized = new List<FinalizeExperienceResult>();
+        var described = new List<string?>();
+
+        var agent = new ChatClientAgent(new RecordingChatClient(), new ChatClientAgentOptions())
+            .AsBuilder()
+            .UseExperienceCapture(capture, new ExperienceCaptureOptions
+            {
+                ResolveRun = context =>
+                {
+                    described.Add(context.DerivedTaskText);
+                    return new ExperienceRunDescriptor(TaskId, TestScope, TaskDescription: context.DerivedTaskText);
+                },
+                CaptureToolCalls = false,
+                FinalizationService = finalization,
+                ResolveFinalization = context => new FinalizeExperienceRequest(
+                    RunId: context.Run.RunId,
+                    Authorization: Authorization,
+                    ClosedRound: Round,
+                    RequiredChecks: [new RequiredCheck("tests", "TestResult")],
+                    Evidence:
+                    [
+                        new Evidence(
+                            EvidenceId: Guid.Parse("77777777-0000-0000-0000-000000000002"),
+                            VerificationRoundId: Round.RoundId,
+                            ArtifactRevision: ArtifactRevision,
+                            CheckId: "tests",
+                            Kind: "TestResult",
+                            Result: CheckResult.Pass,
+                            Producer: "ci",
+                            Detail: null,
+                            CapturedAt: InjectionRecords.Now),
+                    ],
+                    CurrentArtifactRevision: ArtifactRevision,
+                    StorageDecision: StorageDecision.Permit,
+                    FinalizedAt: InjectionRecords.Now),
+                OnRunFinalized = finalized.Add,
+            })
+            .Build();
+
+        // Capture sees only this invocation's input, so the follow-up joins the message before it in the same input.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, "Reconcile the  ledger\tfor invoice\u200B 7731"), new ChatMessage(ChatRole.User, "then close it")]);
+
+        const string expected = "Reconcile the ledger for invoice 7731 \u2014 then close it";
+        Assert.Equal([expected], described);
+        var outcome = Assert.Single(finalized);
+        Assert.Equal(FinalizationOutcome.Validated, outcome.Outcome);
+        var read = await store.GetAsync(Authorization, TestScope, outcome.ExperienceId!.Value, CancellationToken.None);
+        Assert.Equal(expected, read.Record!.TaskSummary);
+
+        // Neither the task ID nor the default reflector's lesson says "ledger" or "invoice": the summary is what matches.
+        Assert.DoesNotContain("ledger", read.Record.TaskId, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ledger", read.Record.Reflection!.Lesson, StringComparison.OrdinalIgnoreCase);
+        var retrieval = new ExperienceRetrievalService(
+            new InMemoryExperienceCandidateSource(store), RetrievalPolicy.Default, RankingWeights.Default, new FrozenTimeProvider(InjectionRecords.Now));
+        var found = await retrieval.RetrieveAsync(new RetrieveExperienceRequest(Authorization, TestScope, "ledger invoice reconcile"));
+
+        Assert.Equal([outcome.ExperienceId.Value], found.Records.Select(r => r.Record.ExperienceId));
+    }
 
     [Fact]
     public async Task A_finalized_run_becomes_the_next_invocations_Historical_Reference()
