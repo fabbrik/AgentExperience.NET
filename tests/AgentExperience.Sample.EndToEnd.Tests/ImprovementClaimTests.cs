@@ -80,8 +80,8 @@ public class ImprovementClaimTests
 
         // It is not enough to avoid the words: the report has to say what it did not measure.
         Assert.Contains("does not demonstrate", report, StringComparison.Ordinal);
-        Assert.Contains("story 4.4", report, StringComparison.Ordinal);
-        Assert.Contains("story 4.4", SampleReadme(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("reuse baseline", report, StringComparison.Ordinal);
+        Assert.Contains("reuse baseline", SampleReadme(), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("does not", RepositorySampleSection(), StringComparison.OrdinalIgnoreCase);
     }
 

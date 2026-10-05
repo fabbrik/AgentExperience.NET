@@ -40,7 +40,7 @@ public sealed record RetrieveExperienceRequest(
     /// Optional. <see langword="true"/> to leave out every model-authored record: one whose reflection exists and whose
     /// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or whose
     /// <see cref="Reflection.Producer"/> starts with <c>AgentExperience.ChatClientExperienceReflector/</c>, the library's
-    /// own model-backed reflector (story 17.1). The service passes it to every channel it searches, as <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>
+    /// own model-backed reflector. The service passes it to every channel it searches, as <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>
     /// and <see cref="ExperienceVectorQuery.ExcludeModelAuthored"/>, so each source applies it before its own limit and
     /// <see cref="Limit"/> is filled with the strongest records that are not model-authored. <see langword="false"/>
     /// (the default) leaves retrieval exactly as it is without this property.
@@ -52,7 +52,7 @@ public sealed record RetrieveExperienceRequest(
     /// <see cref="RetrievalExclusionReason.ModelAuthored"/>: a source that does not honour the request, or a stored
     /// authorship flag that disagrees with the opened record. Such a record never reaches
     /// <see cref="ExperienceRetrievalResult.Records"/>, but it did take a place in that source's candidate window. A
-    /// PostgreSQL row sealed without its authorship flag is left out by the source itself (story 17.1). The
+    /// PostgreSQL row sealed without its authorship flag is left out by the source itself. The
     /// injection provider sets this property when <c>ModelAuthoredLessons</c> is <c>Exclude</c> and still checks every
     /// record it re-reads.
     /// </remarks>
@@ -179,14 +179,14 @@ public enum RetrievalExclusionReason
     /// <summary>
     /// The request set <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/> and the record's reflection counts as
     /// model-authored (its authorship is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or its producer
-    /// is the library's own model-backed reflector), yet a source still returned it
-    /// (story 14.4). Sources normally leave such records out themselves, so they are never listed here.
+    /// is the library's own model-backed reflector), yet a source still returned it.
+    /// Sources normally leave such records out themselves, so they are never listed here.
     /// </summary>
     ModelAuthored,
 
     /// <summary>
     /// The request set <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, provenance signing is configured,
-    /// and the record counts as model-authored only because its content is unconfirmed (story 17.2): no claims version
+    /// and the record counts as model-authored only because its content is unconfirmed: no claims version
     /// 2 signature under a key in the ring verifies over it (it was signed before that version, is unsigned and not in
     /// the cutover set, or changed after it was signed). Its declared authorship is not trusted. Stores cannot check
     /// signatures, so such a record is listed here whenever a source returns it.

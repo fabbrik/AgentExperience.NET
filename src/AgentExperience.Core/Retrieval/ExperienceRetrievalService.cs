@@ -140,8 +140,7 @@ public sealed class ExperienceRetrievalService
     /// <summary>
     /// How many searches this service has abandoned on a timeout (or a cancellation) that are still
     /// running against the store: incremented when a search is abandoned, decremented exactly once when
-    /// it finally ends. At <see cref="RetrievalPolicy.MaxAbandonedSearches"/> no new search is started
-    /// (story 16.5).
+    /// it finally ends. At <see cref="RetrievalPolicy.MaxAbandonedSearches"/> no new search is started.
     /// </summary>
     private int _abandonedSearches;
 
@@ -257,7 +256,7 @@ public sealed class ExperienceRetrievalService
 
     /// <summary>
     /// Creates a retrieval service as the eight-argument constructor does, which also decides authorship against the
-    /// host's provenance signing configuration (story 17.2).
+    /// host's provenance signing configuration.
     /// </summary>
     /// <param name="candidateSource">Where scope-, status- and confidence-filtered text matches come from.</param>
     /// <param name="policy">The timeout, confidence floor, expiry, recency half-life, and candidate bound. Both channels run under it.</param>
@@ -306,8 +305,8 @@ public sealed class ExperienceRetrievalService
     /// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or its
     /// <see cref="Reflection.Producer"/> names the library's own model-backed reflector
     /// (<see cref="ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix"/>); or, with provenance signing
-    /// configured, its content is not confirmed (<see cref="IsContentConfirmed"/>), so a record signed before story
-    /// 17.2, unsigned, or changed after it was signed counts. It is the decision this service's exclusion
+    /// configured, its content is not confirmed (<see cref="IsContentConfirmed"/>), so a record signed by
+    /// <c>0.1.0-preview.6</c> or earlier, unsigned, or changed after it was signed counts. It is the decision this service's exclusion
     /// re-check makes, exposed so injection decides on the record it re-read exactly as retrieval did.
     /// </summary>
     /// <param name="record">The record as it will be rendered.</param>

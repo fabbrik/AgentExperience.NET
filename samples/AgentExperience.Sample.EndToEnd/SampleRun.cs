@@ -121,7 +121,7 @@ public sealed class SampleRun
         // ---- Stages 1 and 2: one Experience Run, two attempts. --------------------------------
         // The capture contract models a second try at the same task as a second AppendAttemptAsync
         // on the same run, and the host drives it directly here so the contract underneath the
-        // adapter is visible. Since story 4.6 the adapter can do the same thing: an invocation whose
+        // adapter is visible. The adapter can do the same thing: an invocation whose
         // ExperienceRunDescriptor carries ContinuesRunId appends its attempt to that run, and
         // ShouldCompleteRun decides which invocation closes it. Run B below uses
         // UseExperienceCapture in its ordinary, single-invocation form.

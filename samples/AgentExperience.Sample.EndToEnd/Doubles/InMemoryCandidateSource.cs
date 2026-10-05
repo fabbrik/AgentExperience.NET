@@ -45,8 +45,8 @@ internal sealed class InMemoryCandidateSource(InMemoryRecordStore store) : IExpe
             .Where(record => record.Scope == query.Scope
                 && query.EligibleStatuses.Contains(record.Status)
                 && record.ReuseConfidence >= query.MinimumConfidence
-                // Story 14.4: fail closed, as the port asks -- any authorship but Deterministic is model-authored, and
-                // a record with no reflection is kept. Story 17.1: so is the library's own model-backed reflector's
+                // Fail closed, as the port asks -- any authorship but Deterministic is model-authored, and
+                // a record with no reflection is kept. So is the library's own model-backed reflector's
                 // producer, whatever authorship it declares.
                 && !(query.ExcludeModelAuthored
                     && record.Reflection is { } reflection

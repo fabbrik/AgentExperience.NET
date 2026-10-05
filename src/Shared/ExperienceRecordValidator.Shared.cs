@@ -322,7 +322,7 @@ internal static partial class ExperienceRecordValidator
 
     /// <summary>
     /// An event may carry evidence that moves no counter only when it is host-trusted evidence recorded without
-    /// counting (<c>HostTrustedEvidenceEffect.RecordedOnly</c>, story 17.3), and then it must move nothing else either:
+    /// counting (<c>HostTrustedEvidenceEffect.RecordedOnly</c>), and then it must move nothing else either:
     /// not the score, and not the status. Any other evidence event that moves no counter is refused, as it always was
     /// (the PostgreSQL ledger states the same rule as a CHECK, from <c>0023</c>).
     /// </summary>

@@ -115,9 +115,9 @@ nothing is written. The sample does not exercise either; it records once.
 
 - **Anything about model quality.** The model is a scripted fixture, the clock is a fixture, and
   the identifiers are a counter. Nothing here measures what injected experience does to a real
-  model's behaviour. That measurement was planned as **story 4.4**, the controlled reuse baseline in
+  model's behaviour. That measurement is the job of the **reuse baseline** in
   `tests/AgentExperience.ReuseBaseline`; it also uses scripted models, so it measures the mechanism, not a real
-  model. A live-model experiment is in progress and has no results yet.
+  model. The opt-in live-model experiment is in `experiments/AgentExperience.LiveReuse`.
 - **Quarantine.** A run whose verification does not resolve to `Verified` is finalized as
   `FinalizationOutcome.Quarantined`: the record is durable, it carries no Reflection, and it is
   never eligible for reuse. Staging one here would add a dead end to the narrative, so the sample

@@ -150,7 +150,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private static readonly IReadOnlyList<Guid> NoIds = [];
 
     /// <summary>
-    /// One lock per session and state key, shared by every provider in the process (story 17.4), so the
+    /// One lock per session and state key, shared by every provider in the process, so the
     /// read-modify-write of one account is never interleaved with another invocation's. Keyed by the session
     /// instance and held weakly, so a session that is collected takes its locks with it; two providers with
     /// different keys keep different accounts and so never wait for each other.
@@ -173,7 +173,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <summary>
     /// How many eligibility re-reads this provider has abandoned that are still running against the
     /// store: incremented when a read is abandoned, decremented exactly once when it finally ends. At
-    /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> no new read is started (story 16.5).
+    /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> no new read is started.
     /// </summary>
     private int _abandonedReads;
 

@@ -35,6 +35,8 @@
     <!-- The checked-in transcript the sample's stdout is compared against byte for byte. Embedded so
          the comparison does not depend on where the repository root is at test time. -->
     <EmbeddedResource Include="GoldenTranscript.txt" LogicalName="AgentExperience.Sample.EndToEnd.Tests.GoldenTranscript.txt" />
+    <!-- The Historical Reference block run B's model is handed, which the repository README shows verbatim. -->
+    <EmbeddedResource Include="GoldenInjectedBlock.txt" LogicalName="AgentExperience.Sample.EndToEnd.Tests.GoldenInjectedBlock.txt" />
     <!-- The repository README, so the "Run the sample" section's claims are scanned by the same
          deny-list as the sample's own README and its printed report. -->
     <EmbeddedResource Include="..\..\README.md" LogicalName="AgentExperience.Sample.EndToEnd.Tests.RootREADME.md" />

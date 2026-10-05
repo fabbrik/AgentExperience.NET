@@ -1,7 +1,7 @@
 namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
-/// The canonical row-level security policies (story 15.1): every <c>rls_*</c> policy <c>0019</c> creates on this
+/// The canonical row-level security policies: every <c>rls_*</c> policy <c>0019</c> creates on this
 /// package's tables and the vectors package's <c>0020</c> creates on <c>experience_embeddings</c>, as the exact DDL
 /// those scripts contain. The privileges call re-runs this DDL, under the migrator's lock, every time it enables row-level
 /// security, so a policy altered or dropped by hand since the migration is put back before anything is enabled; and
@@ -259,7 +259,7 @@ $body$;
 
     /// <summary>
     /// <see cref="Readable()"/> over a <paramref name="prefix"/>-qualified row: the read policy's own admission, through
-    /// the same helpers, for <see cref="TextSearchFunction"/> (story 17.7), which runs as the owner and so must apply it
+    /// the same helpers, for <see cref="TextSearchFunction"/>, which runs as the owner and so must apply it
     /// itself. With an empty prefix it is the policy text exactly.
     /// </summary>
     internal static string Readable(string prefix) =>

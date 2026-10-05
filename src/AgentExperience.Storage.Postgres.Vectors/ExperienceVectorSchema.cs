@@ -30,7 +30,7 @@ public static class ExperienceVectorSchema
     public const string EmbeddingsScriptName = "0004_add_experience_embeddings.sql";
 
     /// <summary>
-    /// The script that creates <c>experience_embeddings</c>' row-level security policies (story 15.1), on the
+    /// The script that creates <c>experience_embeddings</c>' row-level security policies, on the
     /// helper functions the base adapter's <c>0019_row_level_security.sql</c> creates -- so the base migration must
     /// run first, and this script stops with a message saying so when it has not. Like <c>0019</c> it switches
     /// nothing on; <c>ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync</c> does, when the host asks.

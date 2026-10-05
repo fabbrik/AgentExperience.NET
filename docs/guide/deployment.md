@@ -497,7 +497,7 @@ re-creates policies and switches row-level security it takes `ACCESS EXCLUSIVE` 
 traffic that locks the same tables in another order can deadlock with it; PostgreSQL then rolls the call's
 transaction back (`40P01 deadlock detected`). As a mitigation, not a cure, the call retries the whole transaction —
 it is all-or-nothing and idempotent — up to three attempts in all, after a short jittered wait (50–150 ms, then
-100–300 ms) that honours the caller's cancellation token (story 16.6). Only a deadlock is retried. A deadlock on the
+100–300 ms) that honours the caller's cancellation token. Only a deadlock is retried. A deadlock on the
 third attempt throws `ExperienceStoreException` saying the call was a deadlock victim three times in a row; every
 other failure is thrown exactly as before. The call writes nothing to any log, so that message is the only report of
 a retry.
@@ -548,7 +548,7 @@ only as strong as its code. It is not a supported production deployment.
 
 The two roles keep the application role away from the schema's guards. They do not stop a store statement whose own
 scope predicate is wrong from reading or writing another tenant's rows: that isolation rests on the predicates every
-statement carries. Row-level security is an optional second layer under them (story 15.1). With it on, PostgreSQL
+statement carries. Row-level security is an optional second layer under them. With it on, PostgreSQL
 itself admits the application role only to the rows inside the authorization bounds of the operation it is running,
 so one predicate's mistake is cut back to what the host authorized.
 
@@ -631,7 +631,7 @@ own scope argument first: while the calling transaction has declared bounds, a s
 holds `BYPASSRLS` — roles the policies do not bind either. With row-level security disabled, an undeclared caller is
 unaffected, as before.
 
-**Text search keeps its index** (story 17.7). Under the policies, `@@` — the full-text match — is not leakproof, so
+**Text search keeps its index**. Under the policies, `@@` — the full-text match — is not leakproof, so
 PostgreSQL would apply it only after the read policy and could not use the GIN indexes. So while row-level security is
 enabled on `experience_records` and the application role may execute it, the text channel runs its search through
 `agent_experience.search_experience_text` (`0024`), a `SECURITY DEFINER` function owned by the schema owner, and the
@@ -708,10 +708,10 @@ read `experience_grants` still reads its own scope through the stores' exact-sco
 policy answers "nothing is granted" when the grant table is missing or unreadable.
 
 **What it costs.** About 0.7 ms per operation for the transaction and the declaration, on the benchmark machine. The
-per-search cost with row-level security on was not re-measured after story 17.7. Text search keeps its GIN index through `search_experience_text` (above); before story 17.7 it lost it under the policies
+per-search cost with row-level security on was not re-measured after `search_experience_text` was added. Text search keeps its GIN index through `search_experience_text` (above); in `0.1.0-preview.6` and earlier it lost it under the policies
 and scanned every live record of the declared tenant. The vector channel keeps its HNSW index. See
-[Row-level security](../benchmarks.md#row-level-security-story-151) for the plans and numbers measured for story
-15.1, before the function existed.
+[Row-level security](../benchmarks.md#row-level-security-story-151) for the plans and numbers measured when row-level
+security shipped, before the function existed.
 
 ### Upgrading an existing single-role database
 

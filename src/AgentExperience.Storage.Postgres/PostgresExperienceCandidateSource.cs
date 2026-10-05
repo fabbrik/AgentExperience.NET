@@ -34,9 +34,9 @@ namespace AgentExperience.Storage.Postgres;
 /// other, not to a relevance from a different query.
 /// </para>
 /// <para>
-/// <b>The authorship exclusion</b> (<see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>, story 14.4) reads
+/// <b>The authorship exclusion</b> (<see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>) reads
 /// <c>0021</c>'s plaintext flag, so it runs before the limit in both modes. It keeps only records the flag marks
-/// deterministic and fails closed on the rest (story 17.1): a sealed row stored without its flag -- sealed before
+/// deterministic and fails closed on the rest: a sealed row stored without its flag -- sealed before
 /// <c>0021</c>, whose payload the migration could not open, sealed during a rolling deploy by an instance still on the
 /// previous build, or written by any writer that left the flag out -- is left out of an excluding search as if a model
 /// wrote it, and takes no place in its window. The owner-run
@@ -52,7 +52,7 @@ namespace AgentExperience.Storage.Postgres;
 /// <c>onGrantsUnavailable</c> callback.
 /// </para>
 /// <para>
-/// <b>Under row-level security</b> (story 17.7) the search runs through <see cref="TextSearchFunction"/>,
+/// <b>Under row-level security</b> the search runs through <see cref="TextSearchFunction"/>,
 /// <c>agent_experience.search_experience_text</c>, which applies the read policy's admission and then exactly this
 /// statement's predicates as the owner, so the GIN indexes stay usable; it is used only while row-level security is
 /// enabled on <c>experience_records</c> and the role holds <c>EXECUTE</c> on it, which the privileges call grants
@@ -136,9 +136,9 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     internal const string SearchFilters = SearchFilterHead + SearchFilterTail;
 
     /// <summary>
-    /// The authorship exclusion (story 14.4), <c>0021</c>'s flag, applied before the limit like the status filter and
+    /// The authorship exclusion, <c>0021</c>'s flag, applied before the limit like the status filter and
     /// the confidence floor. It keeps <c>false</c> only: <c>NULL</c> is a sealed row stored without its flag, whose
-    /// authorship SQL cannot read, and it fails closed (story 17.1) -- left out like <c>true</c>, until the owner's
+    /// authorship SQL cannot read, and it fails closed -- left out like <c>true</c>, until the owner's
     /// backfill writes its flag. It is <see cref="ModelAuthoredPredicate"/>, unqualified, which resolves to <c>r</c>
     /// here as every column does.
     /// </summary>
@@ -154,7 +154,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// <summary>
     /// The grant-aware statement up to and including its scope predicate: the select list, the <c>FROM</c> with the
     /// lateral grant join, and the readable predicate. Shared with <see cref="TextSearchFunction"/>, which appends the
-    /// row-level security admission (story 17.7) between it and the filters.
+    /// row-level security admission between it and the filters.
     /// </summary>
     internal const string ReadableSearchHead =
         SearchSelect + PostgresExperienceRecordStore.SharedByGrantColumn + ", "
@@ -346,7 +346,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     /// <summary>
     /// Runs the search, through <see cref="TextSearchFunction"/> while row-level security is on and the role may call it
-    /// (story 17.7), and through the store's own statement otherwise. A call that fails as an undefined function or an
+    ///, and through the store's own statement otherwise. A call that fails as an undefined function or an
     /// insufficient privilege re-detects the route: when the function is now gone or no longer granted -- the deployment
     /// changed since the route was cached -- the store's own statement runs, which the policies confine exactly as before;
     /// when it is still usable, the error came from inside it and is rethrown.

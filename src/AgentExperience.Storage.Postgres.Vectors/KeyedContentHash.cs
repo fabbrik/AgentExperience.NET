@@ -4,7 +4,7 @@ using AgentExperience.Abstractions;
 namespace AgentExperience.Storage.Postgres.Vectors;
 
 /// <summary>
-/// How an encrypted deployment stores an embedding's content hash (story 17.5): never the plain
+/// How an encrypted deployment stores an embedding's content hash: never the plain
 /// <see cref="ExperienceEmbeddingDescriptor.ComputeContentHash"/> value, which anyone holding a copy of the row could
 /// confirm a guessed summary against, but an HMAC of it under a subkey of the record's own data key. Destroying that
 /// key on erasure makes the stored value impossible to recompute, in every backup, replica and WAL segment alike, so it

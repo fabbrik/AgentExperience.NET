@@ -52,7 +52,7 @@ public enum HumanDecision
 /// </summary>
 /// <remarks>
 /// <b>An evaluator's own internal failure is caught and reported as <see cref="CheckResult.Unknown"/>
-/// evidence with a safe diagnostic</b> (a Boundary this story establishes): <see cref="WorkflowCompletion"/>,
+/// evidence with a safe diagnostic</b>: <see cref="WorkflowCompletion"/>,
 /// <see cref="HumanApproval"/>, and <see cref="HumanCorrection"/> classify a caller-supplied enum
 /// value; an enum value outside the ones explicitly handled here (e.g. an unchecked numeric cast)
 /// is the one way one of these otherwise-pure functions could fail internally. That failure is

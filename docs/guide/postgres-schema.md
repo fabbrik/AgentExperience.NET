@@ -498,7 +498,7 @@ and changes nothing that is shown on upgrade:
 
 ### 0019: row-level security
 
-`0019_row_level_security.sql` creates the policies for the optional second isolation layer (story 15.1). It switches
+`0019_row_level_security.sql` creates the policies for the optional second isolation layer. It switches
 nothing on: a policy on a table whose row-level security is disabled has no effect, and
 `ApplyApplicationRolePrivilegesAsync` enables it only when `ExperienceApplicationRoleOptions.EnableRowLevelSecurity`
 is set (see [Enabling row-level security](deployment.md#enabling-row-level-security)).
@@ -541,7 +541,7 @@ erasure, which deletes a record's embedding when the table exists (guarded by `t
 
 ### 0021: reflection authorship
 
-`0021_reflection_authorship.sql` keeps each record's reflection authorship beside its payload (story 14.4), so an
+`0021_reflection_authorship.sql` keeps each record's reflection authorship beside its payload, so an
 excluding search (`ExperienceCandidateQuery.ExcludeModelAuthored`, which retrieval sets from
 `RetrieveExperienceRequest.ExcludeModelAuthored` and injection sets under `ModelAuthoredLessons = Exclude`) can leave
 model-authored records out in SQL, **before** its `LIMIT`. See
@@ -568,14 +568,14 @@ model-authored records out in SQL, **before** its `LIMIT`. See
   store writes it from the record's reflection when it seals a record, and `0016`'s sealing function leaves the
   plaintext row's flag as it was. Any tombstone gets `false`, so the erasure needs no change, and the `NOT VALID` check
   `experience_records_authorship_only_when_live` keeps every other value off a tombstone.
-- **The filter** is `reflection_model_authored IS FALSE` (it was `IS NOT TRUE` until story 17.1), in the text
+- **The filter** is `reflection_model_authored IS FALSE` (it was `IS NOT TRUE` up to `0.1.0-preview.6`), in the text
   channel's search and the vectors package's search and compatibility probes. It keeps `false` only, so an unknown
   (`NULL`) flag fails closed and is left out like `true`. Under the out-of-band HNSW index the vector channel
   applies it, like its other filters, to the neighbours the index walk produced, so it can return fewer than its limit
   (see [Indexing](indexing.md#the-hnsw-index-is-created-out-of-band)).
 - **A sealed row stored without its flag.** That is a row sealed before `0021` (the migration cannot open it), a row
   an instance still running the previous build seals during a rolling deploy — until every instance runs this
-  version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. Since story 17.1 an
+  version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. After `0.1.0-preview.6` an
   excluding search leaves it out, as if a model wrote it, so it takes no place in the candidate window; a deterministic
   record among them is not found by an excluding search until its flag is written. The owner-run
   `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` opens each with its record key and writes its flag; see
@@ -621,7 +621,7 @@ model-authored records out in SQL, **before** its `LIMIT`. See
 
 ### 0022: library reflector authorship
 
-`0022_library_reflector_authorship.sql` (story 17.1) makes the SQL rule agree with the one rule the library's C# code
+`0022_library_reflector_authorship.sql` makes the SQL rule agree with the one rule the library's C# code
 applies everywhere it decides authorship: a reflection is model-authored when its authorship is anything but
 `Deterministic`, **or** when its producer starts with `AgentExperience.ChatClientExperienceReflector/` (compared
 ordinally) — the library's own model-backed reflector, whose records written before it declared authorship say
@@ -633,7 +633,7 @@ ordinally) — the library's own model-backed reflector, whose records written b
   closed). A sealed payload is still `NULL`. `0021`'s trigger calls the function by name, so every plaintext write from
   now on is classified by the new rule.
 - **The recompute** updates the live plaintext rows whose stored flag differs from the new rule — in practice the
-  library reflector's records written by a build between stories 14.2 and 14.3, which read `false` until now (no
+  library reflector's records written by an unreleased build before `0.1.0-preview.5`, which read `false` until now (no
   published release wrote any, so on most databases it rewrites nothing). Sealed rows and tombstones are not touched,
   and running the script again changes nothing. It takes row locks on the rows it rewrites only, but it reads every
   live plaintext payload to find them, inside the migrator's one transaction and under its command timeout (30
@@ -647,12 +647,12 @@ ordinally) — the library's own model-backed reflector, whose records written b
   carries `0021`'s `false`, and neither this script nor the backfill revisits it; the retrieval service and the
   injection provider still exclude it once opened. No published release can hold one: the reflector shipped in
   `0.1.0-preview.5`, the release that also made it declare `Model`, so only a database written by an unreleased build
-  between stories 14.2 and 14.3 could.
+  before that release could.
 - No table, column, index or function signature is added, so the application role's manifest is unchanged.
 
 ### 0023: recorded-only evidence
 
-`0023_recorded_only_evidence.sql` (story 17.3) lets host-trusted evidence ride a lifecycle event without moving the
+`0023_recorded_only_evidence.sql` lets host-trusted evidence ride a lifecycle event without moving the
 record, for a host that opts out of verification and sets `ExperienceIndependenceOptions.HostTrustedEvidence =
 RecordedOnly` (see [Keeping host-trusted evidence out of the ranked score](confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score)):
 
@@ -675,7 +675,7 @@ RecordedOnly` (see [Keeping host-trusted evidence out of the ranked score](confi
 
 ### 0024: text search function
 
-`0024_text_search_function.sql` (story 17.7) keeps the text index usable under row-level security. With the policies
+`0024_text_search_function.sql` keeps the text index usable under row-level security. With the policies
 on, `@@` is not leakproof, so PostgreSQL applies it only after `rls_records_select` and cannot use the GIN indexes. The
 script creates **`agent_experience.search_experience_text(...)`**, the text channel's search run as the owner, whom the
 policies do not bind:
@@ -699,18 +699,18 @@ policies do not bind:
 ## Script comments that were written before the work they point at shipped
 
 Because a journaled script is never edited, a few script *comments* still describe later work as future work, and
-name it by the planning story it was scheduled under. They ship inside the package as embedded resources, so here is
+name it by the planning item it was scheduled under. They ship inside the package as embedded resources, so here is
 what each one now means. None of them changes what a script does; they are comments only.
 
 | Script | Its comment says | What actually shipped |
 | --- | --- | --- |
-| `0006` | Purging an event is an operator action (`ALTER TABLE … DISABLE TRIGGER`) "until the library ships a purge path (roadmap story 4.5 …)" | Shipped as `0010`, whose header says so and supersedes that runbook: one `SECURITY DEFINER` purge function under a transaction-scoped marker, no trigger ever disabled. Do not use `0006`'s runbook — see [Deletion and retention](deletion-and-retention.md) |
-| `0007` | Listing the evidence ledger, a foreign key to `experience_records`, and retention over `confidence_evidence` "all belong to roadmap story 4.5" | Retention shipped in `0010`: erasing a record removes every evidence row naming it, with the index that needs. The foreign key was deliberately **not** added (`0010` explains why). Listing the ledger through the port was decided against: lifecycle history already carries each counted update's prior and new values, and no acceptance criterion needs uncounted duplicates |
-| `0008` | Retention of the feedback ledger is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Shipped in `0010`: erasing a record removes its exposure rows and any submission left empty, with the index that needs. `0006`'s runbook is superseded as above |
-| `0008` | The aggregations "roadmap story 4.4 needs — by run, by trial label, by scope" will come with their own indexes | The reuse baseline measured reuse through in-memory port doubles, not SQL over this ledger, so no aggregation query and no index was added. Add one with the first query that needs it |
+| `0006` | Purging an event is an operator action (`ALTER TABLE … DISABLE TRIGGER`) until the library ships a purge path (naming a roadmap item) | Shipped as `0010`, whose header says so and supersedes that runbook: one `SECURITY DEFINER` purge function under a transaction-scoped marker, no trigger ever disabled. Do not use `0006`'s runbook — see [Deletion and retention](deletion-and-retention.md) |
+| `0007` | Listing the evidence ledger, a foreign key to `experience_records`, and retention over `confidence_evidence` all belong to a later roadmap item | Retention shipped in `0010`: erasing a record removes every evidence row naming it, with the index that needs. The foreign key was deliberately **not** added (`0010` explains why). Listing the ledger through the port was decided against: lifecycle history already carries each counted update's prior and new values, and no acceptance criterion needs uncounted duplicates |
+| `0008` | Retention of the feedback ledger is deferred to a roadmap item, to be done with `0006`'s runbook | Shipped in `0010`: erasing a record removes its exposure rows and any submission left empty, with the index that needs. `0006`'s runbook is superseded as above |
+| `0008` | The aggregations the reuse baseline needs (by run, by trial label, by scope) will come with their own indexes | The reuse baseline measured reuse through in-memory port doubles, not SQL over this ledger, so no aggregation query and no index was added. Add one with the first query that needs it |
 | `0006`, `0010`, `0012` | The guards do not bind the tables' owner, "which the application role is because it created them"; the purge path is "an auditability mechanism, not a privilege boundary"; an application role that is not the migrating role must be granted `EXECUTE` by hand | The two-role deployment is now the supported one: the application role owns nothing and holds no `DELETE` on any ledger, so neither the owner's escape hatch nor a hand-set marker is available to it, and `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` when the host opts in. The owner and superusers remain unbound. See [Deploying with two roles](deployment.md#deploying-with-two-roles) |
 | `0010` | "Backups, replicas, WAL and logical-replication streams … are host-owned and out of reach of this schema", and the dead tuple "STILL CARRIES THE ERASED TEXT" | Still exactly true in plaintext mode. In encrypted mode every one of those copies holds only ciphertext whose key the erasure destroyed; what stays readable is the derived search data. See [Crypto-shredding](crypto-shredding.md) |
-| `0009` | Retention of the grant access log is "deferred to roadmap story 4.5", to be done with `0006`'s runbook | Erasing a record deliberately **keeps** access rows — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](deletion-and-retention.md#retention-for-the-grant-access-log) |
+| `0009` | Retention of the grant access log is deferred to a roadmap item, to be done with `0006`'s runbook | Erasing a record deliberately **keeps** access rows — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](deletion-and-retention.md#retention-for-the-grant-access-log) |
 
 ## Data semantics
 

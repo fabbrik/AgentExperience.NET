@@ -25,8 +25,7 @@ namespace AgentExperience.Core.Verification;
 /// keeps attempt/round history.
 /// </para>
 /// <para>
-/// <b>Per-check resolution</b> (the two AC4 conflict clauses, reconciled -- see this story's Design
-/// Notes): for each <see cref="RequiredCheck"/>, gather only the selected evidence carrying its
+/// <b>Per-check resolution</b> (two conflict rules, reconciled): for each <see cref="RequiredCheck"/>, gather only the selected evidence carrying its
 /// <see cref="RequiredCheck.CheckId"/> <em>and</em> a <see cref="Evidence.Kind"/> its
 /// <see cref="RequiredCheck.ExpectedKind"/> accepts. No
 /// evidence at all is a missing check (<see cref="CheckResult.Unknown"/>); any
@@ -49,7 +48,7 @@ namespace AgentExperience.Core.Verification;
 /// <b>Completion score</b> is the fraction of required checks that resolved to
 /// <see cref="CheckResult.Pass"/> (<c>0</c> for an empty required set), reported alongside the
 /// <see cref="Outcome"/> on <see cref="VerificationResult"/> -- never folded into or substituted for
-/// the verdict itself, per this story's frozen Boundaries.
+/// the verdict itself.
 /// </para>
 /// <para>
 /// <b>Cancellation</b> propagates as a thrown exception, checked cooperatively, distinct from a

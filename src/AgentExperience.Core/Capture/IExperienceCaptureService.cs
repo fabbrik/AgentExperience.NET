@@ -67,9 +67,9 @@ public sealed record AppendAttemptRequest(
 /// ordering is correct by construction; <see cref="CompleteRunAsync"/> finalizes the run's
 /// <see cref="RunExecutionStatus"/>. <see cref="ExperienceRun.Outcome"/> (task verification) is
 /// never set here -- every run this service produces keeps a <see langword="null"/>
-/// <see cref="ExperienceRun.Outcome"/>; a later evaluator (Story 1.5) owns setting it. Capture
-/// aggregates sanitized experience only: no persistence (in-memory only; Epic 2 owns durable
-/// storage) and no verification/evaluation logic. Every operation returns a typed outcome for an
+/// <see cref="ExperienceRun.Outcome"/>; a later evaluator owns setting it. Capture
+/// aggregates sanitized experience only: no persistence (in-memory only; durable storage is the
+/// record store's job) and no verification/evaluation logic. Every operation returns a typed outcome for an
 /// expected condition (a duplicate/conflicting id, an unknown run, a rejected/over-capacity
 /// attempt) rather than throwing; an exception is reserved for genuinely invalid input (a
 /// <see langword="null"/> required argument).
@@ -96,7 +96,7 @@ public interface IExperienceCaptureService
     /// that bound with <see cref="StartRunOutcome.CapacityExceeded"/>, storing nothing.
     /// </param>
     /// <param name="taskId">Identifies which task this run is attempting.</param>
-    /// <param name="taskDescription">Optional human-readable description of the task. Not sanitized by this service (Story 1.2 scopes sanitization to tool-call/attempt content only).</param>
+    /// <param name="taskDescription">Optional human-readable description of the task. Not sanitized by this service, which sanitizes tool-call and attempt content only.</param>
     /// <param name="scope">The tenancy/ownership scope this run belongs to.</param>
     /// <param name="environment">The runtime environment this run executes in.</param>
     /// <param name="provenance">Where this run's capture originates. Its <see cref="Provenance.ExposedTo"/> must be empty (an <see cref="ArgumentException"/> otherwise): exposure is recorded through <see cref="RecordExposure"/>, never claimed up front.</param>

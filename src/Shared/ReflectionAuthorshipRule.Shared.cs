@@ -23,7 +23,7 @@ namespace AgentExperience.Storage.InMemory;
 /// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/> (so a
 /// tampered or future value counts), or when its <see cref="Reflection.Producer"/> starts with
 /// <see cref="LibraryModelReflectorProducerPrefix"/>: the library's own model-backed reflector wrote it, including a
-/// record it wrote before it marked its reflections <see cref="ReflectionAuthorship.Model"/> (story 14.3). Only the
+/// record it wrote before it marked its reflections <see cref="ReflectionAuthorship.Model"/>. Only the
 /// library's own prefix is recognised; a third-party reflector's authorship is what it declared.
 /// </summary>
 internal static class ReflectionAuthorshipRule

@@ -139,7 +139,7 @@ is stored as before: it is derived from the erased text, erasure deletes it from
 before the erasure — backups, replicas, WAL, the dead tuple — still holds it. That is part of the KL-2 boundary in
 [Known limits and documented boundaries](../known-limits.md#documented-boundaries).
 
-The content hash is not needed to search, so since story 17.5 an encrypted deployment does not write it in the clear.
+The content hash is not needed to search, so after `0.1.0-preview.6` an encrypted deployment does not write it in the clear.
 The write stores `keyed:` followed by base64 of HMAC-SHA256 of the plain hash, under a subkey derived from the
 record's data key with HKDF-SHA256 and the fixed label `aexp:embedding-content-hash:v1`. It looks the key up first and
 creates one only for a live plaintext record in exactly the write's scope (written before the upgrade), so an unknown
@@ -317,7 +317,7 @@ maintenance path, never from request handling. `DropHnswIndexAsync` removes it a
 
 **Filters and the index.** When the planner uses the HNSW index, pgvector walks it for the nearest `hnsw.ef_search`
 entries (40 by default) and applies the search's other predicates — scope, status, the confidence floor, and the
-authorship exclusion when the request asks for it (story 14.4) — to what that walk found. So the vector channel can
+authorship exclusion when the request asks for it — to what that walk found. So the vector channel can
 return *fewer* than its limit when many near neighbours are filtered out, model-authored ones included; the exclusion
 is applied before the `LIMIT`, but not before the index's own candidate list. The text channel is unaffected. A host
 that needs the channel to keep looking can raise `hnsw.ef_search`, or, on pgvector 0.8 or later, set

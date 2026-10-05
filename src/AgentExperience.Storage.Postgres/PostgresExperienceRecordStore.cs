@@ -187,7 +187,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     internal const string GetReadablePredicate = ReadableWithNamedGrantPredicate;
 
     /// <summary>
-    /// <see cref="GetSql"/> for several records in one statement (story 5.6, KL-1): the identical select,
+    /// <see cref="GetSql"/> for several records in one statement (KL-1): the identical select,
     /// join and readability predicate, with only the ID match widened from one parameter to an array.
     /// The lateral join is evaluated per row, so each row names its own permitting grant exactly as a
     /// single read of it would; and the whole batch is read from one snapshot.
@@ -315,7 +315,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
     /// <summary>
     /// Whether another row in the ledger already holds this row's independence key for the same record as counted
-    /// evidence or as recorded-only evidence that rode an event (story 17.3) -- every counted row has an event, so both
+    /// evidence or as recorded-only evidence that rode an event -- every counted row has an event, so both
     /// are "has an event", which <c>0023</c>'s partial index serves. Asked only for a recorded-only submission, right
     /// after its own row went in under the savepoint: the partial unique index cannot answer it, because neither row
     /// is counted. Two such submissions racing from one revision cannot both commit, because
@@ -407,7 +407,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     private const string UpdateProjectionSql = UpdateProjectionSetSql + UpdateProjectionWhereSql;
 
     /// <summary>
-    /// The projection update for host-trusted evidence recorded only (story 17.3): the status (which the validator
+    /// The projection update for host-trusted evidence recorded only: the status (which the validator
     /// has already pinned to the prior one) and the revision, and deliberately not <c>updated_at</c>, which
     /// retrieval's recency and <c>MaxAge</c> read -- evidence that must not steer the record must not keep it recent.
     /// </summary>
@@ -714,7 +714,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         $"AND {LivePredicate} AND payload_version = 1 FOR UPDATE";
 
     /// <summary>
-    /// The authorship backfill's worklist (story 17.1): live sealed records stored without <c>0021</c>'s flag, past the
+    /// The authorship backfill's worklist: live sealed records stored without <c>0021</c>'s flag, past the
     /// caller's cursor, in ID order, read whole so every key can be fetched in one batch before any row is locked.
     /// </summary>
     private const string UnflaggedSealedPageSql =
@@ -2496,7 +2496,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <summary>
-    /// The owner-run authorship backfill (story 17.1), from the start of the worklist. See
+    /// The owner-run authorship backfill, from the start of the worklist. See
     /// <see cref="BackfillSealedAuthorshipAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/>.
     /// </summary>
     /// <param name="authorization">What the host has established the caller may do.</param>
@@ -2514,7 +2514,7 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         BackfillSealedAuthorshipAsync(authorization, scope, batchSize, match, startAfter: null, cancellationToken);
 
     /// <summary>
-    /// The owner-run authorship backfill (story 17.1): examines up to <paramref name="batchSize"/> live sealed records in
+    /// The owner-run authorship backfill: examines up to <paramref name="batchSize"/> live sealed records in
     /// <paramref name="scope"/> -- or, with <see cref="ScopeMatch.Subtree"/>, in that scope and every scope beneath it --
     /// whose <c>0021</c> authorship flag is unknown (<c>NULL</c>), in ID order after <paramref name="startAfter"/>; opens
     /// each payload with the record's key, decides its authorship by the rule every store shares, and writes the flag.

@@ -150,7 +150,7 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `MessageRole` | `User` | The chat role the block is sent in: `User` or `System`. Some chat APIs reject, move or merge a system message that is not first, so test `System` with your provider. See [The payload](#the-payload). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. Synchronous on purpose: with session tracking on it runs while the session's lock is held. Per-candidate I/O has no async hook: prefetch what it needs, keyed by scope, in `ResolveRequestAsync`, or decide offline. |
 | `ReceivingAgent` | none (off) | The receiving agent's tools and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
-| `ModelAuthoredLessons` (since story 14.3) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since story 14.4); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
+| `ModelAuthoredLessons` (since `0.1.0-preview.5`) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since `0.1.0-preview.6`); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. No result is emitted when the caller cancels the invocation: the cancellation propagates instead. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
 
@@ -601,14 +601,14 @@ rely on**, and the approval boundary remains the control for any tool call a les
 
   `Authored:` and `End authored:` are field labels, so a record's own text cannot start a line with either to forge
   or close the label early. A record whose reflection is deterministic, or that has none, gets neither line and keeps
-  its field order: its entry is what it was before story 14.3, **except** that a line of its own text starting with
+  its field order: its entry is what it was before `0.1.0-preview.5`, **except** that a line of its own text starting with
   `Authored:` or `End authored:` is now neutralized like any other field label.
 - **It fails closed.** Any authorship value that is not `Deterministic`, an undefined or future one read back from a
   store included, is labelled and excluded as model-authored. So is any reflection whose `Producer` starts with
   `AgentExperience.ChatClientExperienceReflector/`, the library's own model-backed reflector, whatever authorship it
-  declares (story 17.1): its records written before it declared authorship are covered too. No other producer is read.
+  declares: its records written before it declared authorship are covered too. No other producer is read.
 - **It can be kept out.** `ModelAuthoredLessons = ModelAuthoredLessonPolicy.Exclude` keeps every model-authored record
-  out of the block. Since story 14.4 the provider sets `RetrieveExperienceRequest.ExcludeModelAuthored` on the
+  out of the block. Since `0.1.0-preview.6` the provider sets `RetrieveExperienceRequest.ExcludeModelAuthored` on the
   resolved request (it never clears a host's own `true`), and retrieval passes it to every candidate source (the text
   channel and the vector channel alike), which applies it **before** its own limit, like the status and confidence
   filters. So retrieval's window (`RetrieveExperienceRequest.Limit`, or the policy's candidate limit) is filled with
@@ -629,14 +629,14 @@ rely on**, and the approval boundary remains the control for any tool call a les
   reflection by the same rule as the stores (its `Producer` counts only when it is the library's own reflector). An undefined policy value is refused when the provider is constructed.
 - **Unknown authorship fails closed.** A PostgreSQL row sealed without its authorship flag has no authorship SQL can
   read — rows sealed before migration `0021`, rows an instance still running an earlier build seals during a rolling
-  deploy, and any a writer inserts without the flag. Since story 17.1 its source leaves it out of an excluding search,
+  deploy, and any a writer inserts without the flag. After `0.1.0-preview.6` its source leaves it out of an excluding search,
   as if a model wrote it, so it takes no place in the candidate window; a deterministic record among them is not
   injected under `Exclude` until the owner-run `BackfillSealedAuthorshipAsync` writes its flag (see
   [Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading)).
 - **Unconfirmed content counts as model-authored when signing is on.** With provenance signing configured, retrieval
   and the provider decide on the same record (the provider asks `ExperienceRetrievalService.IsModelAuthored` and
   `IsContentConfirmed` about the record it re-read, and the writer fences by that answer): a record whose content no
-  claims version 2 signature confirms (story 17.2) is omitted under `Exclude` as
+  claims version 2 signature confirms is omitted under `Exclude` as
   `InjectionOmissionReason.UnconfirmedContent` (retrieval lists it as `RetrievalExclusionReason.UnconfirmedContent`),
   or labelled and fenced whatever it declares. In the compact rendering its header is `--- RECORD n ---`, with no
   task, and its `Confidence:` line carries the lifecycle status but no verification status (`Confidence: 0.67 · Validated`); the fence holds a `Task:` line, a `Verification:`
@@ -895,7 +895,7 @@ stage older than it is committed as unsure even if its invocation is still runni
 then deliver its records again (charged and tracked, never lost). At most eight stages are kept pending: staging a
 ninth first commits the oldest the same way.
 
-**Concurrent invocations on one session** (since story 17.4). Within one process, the account is read, decided on
+**Concurrent invocations on one session** (after `0.1.0-preview.6`). Within one process, the account is read, decided on
 and written back under a lock per `AgentSession` instance and state key, shared by every provider in the process and
 released when the session is collected; two providers with different keys never wait for each other. It is held from
 loading the account to saving it, through retrieval and the final eligibility check, and around settling — never
@@ -917,7 +917,7 @@ injects with the same session and the same state key: that invocation would wait
 invocation holds until its cancellation token is cancelled, and with a token that cannot be cancelled it waits
 indefinitely.
 
-A session restored from the version 1 format (before story 17.4) recorded no staging time for its pending stage, so
+A session restored from the version 1 format (`0.1.0-preview.6` and earlier) recorded no staging time for its pending stage, so
 that stage is committed as unsure on load, as it was before, and the state is saved back in version 2 at the
 session's next invocation. **Rolling back** to a build before 17.4: it reads version 2 as an unreadable state, so a
 session saved by this build injects nothing there until the host removes its state key, which resets the session's

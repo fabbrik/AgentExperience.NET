@@ -57,7 +57,7 @@ public sealed record Reflection(
     /// too; no other producer is inferred from. A model-authored reflection (any value but
     /// <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts, or that producer) is held to
     /// finalization's content guard and labelled as such when injected. With provenance signing configured, this property
-    /// and the free-text fields are covered by the record's version 2 signature (story 17.2), and a record whose content
+    /// and the free-text fields are covered by the record's version 2 signature, and a record whose content
     /// no such signature confirms counts as model-authored whatever this property says. Omitted from System.Text.Json output when it is
     /// <see cref="ReflectionAuthorship.Deterministic"/>, so a deterministic reflection serializes exactly as it
     /// did before this property existed, and an absent member reads back as <c>Deterministic</c>.
@@ -69,7 +69,7 @@ public sealed record Reflection(
 /// <summary>
 /// The conventions every component that decides a <see cref="Reflection"/>'s authorship applies, including a host's
 /// own <see cref="IExperienceCandidateSource"/> or <see cref="IExperienceEmbeddingIndex"/> honouring
-/// <c>ExcludeModelAuthored</c> (story 17.1).
+/// <c>ExcludeModelAuthored</c>.
 /// </summary>
 public static class ReflectionAuthorshipConventions
 {

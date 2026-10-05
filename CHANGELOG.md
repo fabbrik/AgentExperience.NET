@@ -658,6 +658,11 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **Unchanged by default.** With the option off nothing new happens. See
   [Letting reuse move confidence](docs/guide/confidence.md#letting-reuse-move-confidence).
 
+### Documentation restructured (story 18.7)
+
+- The README now leads with a real injected lesson, the quick start and which reflector to choose; a new
+  [Concepts in five minutes](docs/guide/concepts.md) page explains the model; user-facing text names releases instead of internal story numbers. No behaviour change.
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

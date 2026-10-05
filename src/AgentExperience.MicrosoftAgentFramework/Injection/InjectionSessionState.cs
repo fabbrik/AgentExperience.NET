@@ -79,7 +79,7 @@ internal sealed record PendingDelivery(Guid Stage, int Bytes, IReadOnlyList<Deli
 /// re-read in the request's own authorization and scope, and a notice for one only ever says it is withdrawn.
 /// </para>
 /// <para>
-/// <b>Several invocations can be in flight at once</b> (story 17.4). Each stages its own delivery, keyed by its stage
+/// <b>Several invocations can be in flight at once</b>. Each stages its own delivery, keyed by its stage
 /// ID, and settles only that one; until it is settled, every decision counts it as delivered (see
 /// <see cref="ForDecisions"/>).
 /// </para>
@@ -96,7 +96,7 @@ internal sealed record InjectionSessionState(
     /// </summary>
     internal const int FormatVersion = 2;
 
-    /// <summary>The format before story 17.4: at most one pending stage, stored as an object or null.</summary>
+    /// <summary>The format up to <c>0.1.0-preview.6</c>: at most one pending stage, stored as an object or null.</summary>
     internal const int LegacyFormatVersion = 1;
 
     /// <summary>
@@ -510,7 +510,7 @@ internal sealed class SessionStateDocument
 }
 
 /// <summary>
-/// The stored shape of <see cref="InjectionSessionState"/> in format version 1, before story 17.4: at most one pending
+/// The stored shape of <see cref="InjectionSessionState"/> in format version 1, up to <c>0.1.0-preview.6</c>: at most one pending
 /// stage. Read only; every save writes <see cref="SessionStateDocument"/>.
 /// </summary>
 internal sealed class LegacySessionStateDocument
