@@ -69,6 +69,35 @@ public sealed record CaptureLimits(
         init => field = EnsurePositive(value, nameof(MaxErrorLength));
     } = EnsurePositive(MaxErrorLength, nameof(MaxErrorLength));
 
+    /// <summary>
+    /// The most <em>completed</em> runs an <see cref="InMemoryExperienceCaptureService"/> keeps, finalized or
+    /// not. Past it, the run that completed earliest is dropped first, and
+    /// from then on it answers exactly as a run that never existed. Open runs are never counted or dropped
+    /// by this bound. Defaults to 10,000; must be strictly positive.
+    /// </summary>
+    public int MaxRetainedCompletedRuns
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(MaxRetainedCompletedRuns));
+    } = 10_000;
+
+    /// <summary>
+    /// How long an <see cref="InMemoryExperienceCaptureService"/> keeps a <em>completed</em> run, finalized
+    /// or not, measured on the service's <see cref="TimeProvider"/>'s monotonic timestamp
+    /// (<see cref="TimeProvider.GetTimestamp"/>) from when it recorded the completion, so wall-clock steps
+    /// do not change it. An older run is dropped on the service's next call, and from then on it
+    /// answers exactly as a run that never existed. Open runs are never dropped by this bound. Defaults to
+    /// 24 hours; must be strictly positive.
+    /// </summary>
+    public TimeSpan CompletedRunRetention
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(CompletedRunRetention));
+    } = TimeSpan.FromHours(24);
+
     private static int EnsurePositive(int value, string paramName) =>
         value > 0 ? value : throw new ArgumentOutOfRangeException(paramName, value, "Capture limits must be strictly positive.");
+
+    private static TimeSpan EnsurePositive(TimeSpan value, string paramName) =>
+        value > TimeSpan.Zero ? value : throw new ArgumentOutOfRangeException(paramName, value, "Capture limits must be strictly positive.");
 }

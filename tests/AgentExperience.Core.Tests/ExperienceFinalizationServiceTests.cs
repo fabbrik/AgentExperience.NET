@@ -379,6 +379,64 @@ public class ExperienceFinalizationServiceTests
     }
 
     [Fact]
+    public async Task A_finalized_run_stays_held_so_a_retry_replays_it_and_reusing_its_id_is_still_a_conflict()
+    {
+        // Story 16.1: finalization never drops the captured run; only the capture service's retention bounds do.
+        var harness = await Harness.WithCompletedRunAsync();
+
+        var first = await harness.FinalizeAsync();
+        Assert.Equal(FinalizationOutcome.Validated, first.Outcome);
+        Assert.True(harness.Capture.TryGetRun(harness.RunId, out _));
+
+        var retry = await harness.FinalizeAsync(finalizedAt: Now.AddMinutes(5));
+        Assert.Equal(FinalizationOutcome.AlreadyFinalized, retry.Outcome);
+        Assert.Equal(first.ExperienceId, retry.ExperienceId);
+
+        var reused = harness.Capture.StartRun(
+            harness.RunId,
+            taskId: "task-1",
+            taskDescription: "a test task",
+            scope: TestScope,
+            environment: new EnvironmentFingerprint("host-1", "net10.0", "test-os", null, new Dictionary<string, string>()),
+            provenance: new Provenance("unit-tests", "1.0.0", Now, null),
+            startedAt: Now.AddMinutes(6));
+        Assert.Equal(StartRunOutcome.Conflict, reused.Outcome);
+        Assert.Single(harness.Store.Creates);
+    }
+
+    [Fact]
+    public async Task Once_the_capture_service_drops_the_run_by_age_finalizing_it_again_finds_no_run_and_leaves_the_record_alone()
+    {
+        var clock = new TimestampClock();
+        var harness = await Harness.WithCompletedRunAsync(captureClock: clock);
+
+        var first = await harness.FinalizeAsync();
+        Assert.Equal(FinalizationOutcome.Validated, first.Outcome);
+
+        clock.Advance(new CaptureLimits(50, 50, 10_000, 10_000).CompletedRunRetention);
+        var late = await harness.FinalizeAsync(finalizedAt: Now.AddDays(2));
+
+        Assert.Equal(FinalizationOutcome.RunNotFound, late.Outcome);
+        Assert.False(late.IsDurable);
+        Assert.Single(harness.Store.Creates);
+        Assert.Single(harness.Store.Commits);
+        Assert.Equal(ExperienceStatus.Validated, harness.Store.StatusOf(first.ExperienceId!.Value));
+        Assert.Equal(1, harness.Store.RevisionOf(first.ExperienceId.Value));
+    }
+
+    /// <summary>A capture clock whose monotonic timestamp moves only when told to.</summary>
+    private sealed class TimestampClock : TimeProvider
+    {
+        private long _timestamp;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void Advance(TimeSpan by) => _timestamp += by.Ticks;
+    }
+
+    [Fact]
     public async Task A_quarantined_replay_still_names_the_stage_that_quarantined_it()
     {
         var harness = await Harness.WithCompletedRunAsync();
@@ -883,11 +941,12 @@ public class ExperienceFinalizationServiceTests
 
         public Guid RunId { get; private set; }
 
-        public static Harness Create(IExperienceReflector? reflector = null, IExperienceCaptureService? captureService = null)
+        public static Harness Create(IExperienceReflector? reflector = null, IExperienceCaptureService? captureService = null, TimeProvider? captureClock = null)
         {
             var capture = new InMemoryExperienceCaptureService(
                 new DefaultSanitizer(PermissiveOptions),
-                new CaptureLimits(50, 50, 10_000, 10_000));
+                new CaptureLimits(50, 50, 10_000, 10_000),
+                captureClock ?? TimeProvider.System);
             var store = new FakeStore();
 
             return new Harness
@@ -902,9 +961,9 @@ public class ExperienceFinalizationServiceTests
             };
         }
 
-        public static async Task<Harness> WithCompletedRunAsync(IExperienceReflector? reflector = null)
+        public static async Task<Harness> WithCompletedRunAsync(IExperienceReflector? reflector = null, TimeProvider? captureClock = null)
         {
-            var harness = Create(reflector);
+            var harness = Create(reflector, captureClock: captureClock);
             harness.RunId = harness.StartRun();
             await harness.AppendAttemptAsync(harness.RunId);
             var completed = await harness.Capture.CompleteRunAsync(harness.RunId, Guid.NewGuid(), RunExecutionStatus.Completed, Now.AddMinutes(1));

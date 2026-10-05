@@ -61,6 +61,19 @@ namespace AgentExperience.Core.Capture;
 /// same ID with different content -- is a <see cref="CompleteRunOutcome.Conflict"/>, so a run
 /// finalizes exactly once.
 /// </para>
+/// <para>
+/// <b>How long a run is kept:</b> an open run is kept until it completes -- these bounds never drop one,
+/// because the MAF adapter's open-run bound already closes a run left open. A completed run is kept until
+/// it is older than <see cref="CaptureLimits.CompletedRunRetention"/>, or until more than
+/// <see cref="CaptureLimits.MaxRetainedCompletedRuns"/> completed runs are held, the earliest completed
+/// dropped first. Finalization does not drop a run, so while a run is held a finalization retry still
+/// answers <c>AlreadyFinalized</c> and reusing its ID is still a conflict. Age is measured on the injected
+/// <see cref="TimeProvider"/>'s monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>) from when
+/// this service recorded the completion, so a wall-clock step forward or back changes nothing. Both bounds
+/// are applied lazily, before every call of this service answers, from a queue kept in completion order:
+/// each completed run is queued once and dropped at most once, so the cost per call is amortized constant,
+/// and no background timer runs. A dropped run answers every call exactly as a run that never existed.
+/// </para>
 /// </remarks>
 public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
 {
@@ -71,18 +84,39 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
 
     private readonly ISanitizer _sanitizer;
     private readonly CaptureLimits _limits;
+    private readonly TimeProvider _timeProvider;
     private readonly ConcurrentDictionary<Guid, RunState> _runs = new();
+
+    // Completed runs still held, earliest completion first. Guarded by _retentionGate, which is only ever
+    // taken for constant work per entry and only ever *inside* a run's own Gate, never around one.
+    private readonly Queue<CompletedRun> _completed = new();
+    private readonly object _retentionGate = new();
+
+    // The monotonic timestamp of the head of _completed (long.MaxValue when nothing is held): read
+    // without the lock so that a call with nothing yet to expire never takes it.
+    private long _oldestCompletedAtTimestamp = long.MaxValue;
+
+    /// <summary>Creates an <see cref="InMemoryExperienceCaptureService"/> that measures retention on <see cref="TimeProvider.System"/>.</summary>
+    /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
+    /// <param name="limits">The positive capture limits this instance enforces.</param>
+    public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits)
+        : this(sanitizer, limits, TimeProvider.System)
+    {
+    }
 
     /// <summary>Creates an <see cref="InMemoryExperienceCaptureService"/>.</summary>
     /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
     /// <param name="limits">The positive capture limits this instance enforces.</param>
-    public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits)
+    /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
+    public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits, TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(sanitizer);
         ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(timeProvider);
 
         _sanitizer = sanitizer;
         _limits = limits;
+        _timeProvider = timeProvider;
     }
 
     /// <inheritdoc />
@@ -159,12 +193,22 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             StartedAt: startedAt,
             EndedAt: null);
 
-        if (!_runs.TryAdd(runId, new RunState(run)))
-        {
-            return Continue(runId, taskId, scope);
-        }
+        EvictExpired();
 
-        return new StartRunResult(StartRunOutcome.Started, run, null);
+        // A run dropped between the failed add and the read is gone, so the ID names no run and a new one
+        // is opened under it -- exactly as if the drop had happened before this call.
+        while (true)
+        {
+            if (_runs.TryAdd(runId, new RunState(run)))
+            {
+                return new StartRunResult(StartRunOutcome.Started, run, null);
+            }
+
+            if (_runs.TryGetValue(runId, out var existing))
+            {
+                return Continue(existing, runId, taskId, scope);
+            }
+        }
     }
 
     /// <summary>
@@ -179,15 +223,10 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// well means a caller that meant to continue a run learns so before it captures anything,
     /// instead of discovering it when its attempt is rejected.
     /// </remarks>
-    private StartRunResult Continue(Guid runId, string taskId, Scope scope)
+    private static StartRunResult Continue(RunState state, Guid runId, string taskId, Scope scope)
     {
-        // Nothing ever removes a run from the dictionary, so the only way this misses is a future
-        // change that adds removal; refusing is then still the safe answer.
-        if (!_runs.TryGetValue(runId, out var state))
-        {
-            return new StartRunResult(StartRunOutcome.Conflict, null, $"A run with RunId '{runId}' already exists.");
-        }
-
+        // A run dropped after it was read here was completed (only completed runs are ever dropped), so
+        // the finalized check below refuses it -- the answer it would have had a moment earlier.
         lock (state.Gate)
         {
             if (state.Completion is not null)
@@ -208,6 +247,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// <inheritdoc />
     public bool TryGetRun(Guid runId, [NotNullWhen(true)] out ExperienceRun? run)
     {
+        EvictExpired();
+
         if (_runs.TryGetValue(runId, out var state))
         {
             lock (state.Gate)
@@ -242,6 +283,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                 throw new ArgumentException("An exposure's revision must not be negative.", nameof(exposures));
             }
         }
+
+        EvictExpired();
 
         if (!_runs.TryGetValue(runId, out var state))
         {
@@ -338,6 +381,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.ToolCalls);
         cancellationToken.ThrowIfCancellationRequested();
+
+        EvictExpired();
 
         if (!_runs.TryGetValue(runId, out var state))
         {
@@ -508,6 +553,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        EvictExpired();
+
         if (!_runs.TryGetValue(runId, out var state))
         {
             return new CompleteRunResult(CompleteRunOutcome.RunNotFound, $"No run with RunId '{runId}' exists.");
@@ -530,9 +577,86 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             state.Completion = (completionEventId, executionStatus, endedAt);
             state.Run = state.Run with { ExecutionStatus = executionStatus, EndedAt = endedAt };
 
+            Retain(runId, state);
+
             return new CompleteRunResult(CompleteRunOutcome.Recorded, Reason: null);
         }
     }
+
+    /// <summary>
+    /// Queues a just-completed run at the tail of the completion order and, if that puts more completed
+    /// runs on hold than <see cref="CaptureLimits.MaxRetainedCompletedRuns"/>, drops the earliest. Called
+    /// under <paramref name="state"/>'s lock.
+    /// </summary>
+    private void Retain(Guid runId, RunState state)
+    {
+        lock (_retentionGate)
+        {
+            // A monotonic timestamp read under the lock, so the queue is in completion order and its head
+            // is always the run that expires first, whatever the wall clock does.
+            var completedAt = _timeProvider.GetTimestamp();
+            _completed.Enqueue(new CompletedRun(runId, state, completedAt));
+
+            while (_completed.Count > _limits.MaxRetainedCompletedRuns)
+            {
+                DropOldest();
+            }
+
+            DropExpired(completedAt);
+            PublishOldest();
+        }
+    }
+
+    /// <summary>
+    /// Drops every completed run older than <see cref="CaptureLimits.CompletedRunRetention"/>. Nothing is
+    /// locked when the earliest held completion is not yet due; otherwise the call waits for the lock, so
+    /// it never answers for a run that is already due to be dropped.
+    /// </summary>
+    private void EvictExpired()
+    {
+        var oldest = Volatile.Read(ref _oldestCompletedAtTimestamp);
+        if (oldest == long.MaxValue)
+        {
+            return;
+        }
+
+        var now = _timeProvider.GetTimestamp();
+        if (!IsExpired(oldest, now))
+        {
+            return;
+        }
+
+        lock (_retentionGate)
+        {
+            DropExpired(now);
+            PublishOldest();
+        }
+    }
+
+    /// <summary>Drops completed runs from the head of the queue while they are older than the retention. Called under <see cref="_retentionGate"/>.</summary>
+    private void DropExpired(long now)
+    {
+        while (_completed.TryPeek(out var head) && IsExpired(head.CompletedAt, now))
+        {
+            DropOldest();
+        }
+    }
+
+    private bool IsExpired(long completedAtTimestamp, long now) =>
+        _timeProvider.GetElapsedTime(completedAtTimestamp, now) >= _limits.CompletedRunRetention;
+
+    /// <summary>Drops the completed run at the head of the queue. Called under <see cref="_retentionGate"/> with the queue non-empty.</summary>
+    private void DropOldest()
+    {
+        var head = _completed.Dequeue();
+
+        // Only this exact run: never a different run that holds the ID.
+        _runs.TryRemove(new KeyValuePair<Guid, RunState>(head.RunId, head.State));
+    }
+
+    /// <summary>Publishes the head's completion time for the lock-free check in <see cref="EvictExpired"/>. Called under <see cref="_retentionGate"/>.</summary>
+    private void PublishOldest() =>
+        Volatile.Write(ref _oldestCompletedAtTimestamp, _completed.TryPeek(out var head) ? head.CompletedAt : long.MaxValue);
 
     /// <summary>
     /// Decides, under <paramref name="state"/>'s lock, whether <paramref name="request"/> can be
@@ -766,4 +890,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         public readonly Dictionary<Guid, AppendAttemptRequest> SeenAttempts = new();
         public (Guid EventId, RunExecutionStatus Status, DateTimeOffset EndedAt)? Completion;
     }
+
+    /// <summary>One completed run on the completion queue, and the monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>) at which this service recorded its completion.</summary>
+    private readonly record struct CompletedRun(Guid RunId, RunState State, long CompletedAt);
 }
