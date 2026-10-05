@@ -28,4 +28,9 @@
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Story 17.2: signs records from the documented canonical encodings, independently of Core's internal signer. -->
+    <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
+  </ItemGroup>
+
 </Project>

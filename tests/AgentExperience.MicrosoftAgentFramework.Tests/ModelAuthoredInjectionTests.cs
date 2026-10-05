@@ -1,7 +1,9 @@
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.MicrosoftAgentFramework.Reflections;
 using AgentExperience.Storage.InMemory;
+using AgentExperience.Tests.Shared;
 using Microsoft.Agents.AI;
 
 namespace AgentExperience.MicrosoftAgentFramework.Tests;
@@ -401,6 +403,267 @@ public class ModelAuthoredInjectionTests
         Assert.Empty(harness.Last.Omitted);
     }
 
+    // ---- Story 17.2: with signing configured, content no v2 signature confirms counts as model-authored ----------
+
+    private static readonly byte[] SigningKey = [.. Enumerable.Range(0, 32).Select(value => (byte)(value * 5 + 2))];
+
+    private static ExperienceProvenanceSigningOptions SigningRing(params Guid[] trustUnsigned) =>
+        new(new Dictionary<string, byte[]> { ["key-1"] = SigningKey }, "key-1")
+        {
+            TrustUnsignedRecordIds = new HashSet<Guid>(trustUnsigned),
+        };
+
+    [Fact]
+    public async Task With_signing_a_v2_confirmed_deterministic_record_renders_unfenced_and_a_v1_one_is_fenced_or_excluded()
+    {
+        var confirmed = SignedRecords.SignV2(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic, lesson: "CONFIRMED-MARKER"), "key-1", SigningKey);
+        var v1 = SignedRecords.SignV1(Record(InjectionRecords.Id(2), ReflectionAuthorship.Deterministic, lesson: "V1-MARKER"), "key-1", SigningKey);
+
+        var include = new Harness { Signing = SigningRing() };
+        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude };
+        foreach (var harness in new[] { include, exclude })
+        {
+            harness.World.Publish(confirmed, relevance: 1d);
+            harness.World.Publish(v1, relevance: 0.5d);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var text = include.InjectedText()!;
+        Assert.Equal([InjectionRecords.Id(1), InjectionRecords.Id(2)], include.Last.InjectedExperienceIds);
+        Assert.Equal(1, text.Split('\n').Count(line => line == HistoricalReferenceWriter.ModelAuthoredLine));
+        var label = text.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine, StringComparison.Ordinal);
+        Assert.True(text.IndexOf("CONFIRMED-MARKER", StringComparison.Ordinal) < label);
+        Assert.True(text.IndexOf("V1-MARKER", StringComparison.Ordinal) > label);
+
+        Assert.Equal([InjectionRecords.Id(1)], exclude.Last.InjectedExperienceIds);
+        Assert.Equal(new ExcludedExperience(InjectionRecords.Id(2), RetrievalExclusionReason.UnconfirmedContent), Assert.Single(exclude.Last.Excluded));
+    }
+
+    [Fact]
+    public async Task An_unconfirmed_record_has_its_task_ID_and_Approach_line_inside_the_fence_and_none_of_it_above()
+    {
+        var plain = Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic, lesson: "LESSON-MARKER");
+        var record = SignedRecords.SignV1(
+            plain with
+            {
+                TaskId = "TASK-MARKER",
+                Environment = plain.Environment with
+                {
+                    HostName = "HOST-MARKER",
+                    Metadata = new Dictionary<string, string> { ["region"] = "META-MARKER" },
+                },
+            },
+            "key-1",
+            SigningKey);
+        var harness = new Harness { Signing = SigningRing() };
+        harness.World.Publish(record);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var lines = harness.InjectedText()!.Split('\n').ToList();
+        var source = lines.FindIndex(line => line.StartsWith("Source: ", StringComparison.Ordinal));
+        var open = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine);
+        var close = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredEndLine);
+        Assert.True(source >= 0 && source < open && open < close);
+        Assert.EndsWith(HistoricalReferenceWriter.UnconfirmedTaskNotice, lines[source], StringComparison.Ordinal);
+        Assert.DoesNotContain("TASK-MARKER", lines[source], StringComparison.Ordinal);
+        Assert.Equal("Task: TASK-MARKER", lines[open + 1]);
+        Assert.StartsWith("Recorded: ", lines[open + 2], StringComparison.Ordinal);
+        Assert.StartsWith("Environment: ", lines[open + 3], StringComparison.Ordinal);
+        Assert.Contains("HOST-MARKER", lines[open + 3], StringComparison.Ordinal);
+        Assert.Contains("META-MARKER", lines[open + 3], StringComparison.Ordinal);
+        Assert.StartsWith("Verification: ", lines[open + 4], StringComparison.Ordinal);
+        Assert.StartsWith("Evidence: ", lines[open + 5], StringComparison.Ordinal);
+        Assert.StartsWith("Approach: ", lines[open + 6], StringComparison.Ordinal);
+        Assert.Equal("Lesson: LESSON-MARKER", lines[open + 7]);
+
+        // Above the fence: only the record header and the lines the library computes.
+        var above = lines.Skip(lines.FindIndex(line => line.StartsWith("--- RECORD", StringComparison.Ordinal))).TakeWhile(line => line != HistoricalReferenceWriter.ModelAuthoredLine).ToList();
+        Assert.All(above.Skip(1), line => Assert.True(
+            line.StartsWith("Source: ", StringComparison.Ordinal)
+            || line.StartsWith("Confidence: ", StringComparison.Ordinal)
+            || line.StartsWith("Applicability ", StringComparison.Ordinal),
+            line));
+
+        // Nothing drawn from the record appears outside the fence.
+        var outside = lines.Take(open).Concat(lines.Skip(close + 1)).ToList();
+        Assert.DoesNotContain(outside, line => line.Contains("TASK-MARKER", StringComparison.Ordinal)
+            || line.Contains("HOST-MARKER", StringComparison.Ordinal)
+            || line.Contains("META-MARKER", StringComparison.Ordinal)
+            || line.StartsWith("Approach: ", StringComparison.Ordinal)
+            || line.StartsWith("Environment: ", StringComparison.Ordinal)
+            || line.StartsWith("Verification: ", StringComparison.Ordinal)
+            || line.StartsWith("Evidence: ", StringComparison.Ordinal)
+            || line.StartsWith("Recorded: ", StringComparison.Ordinal)
+            || line.Contains("LESSON-MARKER", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_unconfirmed_record_with_no_reflection_is_fenced_whole_or_excluded_as_unconfirmed()
+    {
+        var bare = SignedRecords.SignV1(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic) with { Reflection = null }, "key-1", SigningKey);
+        var include = new Harness { Signing = SigningRing() };
+        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude };
+        foreach (var harness in new[] { include, exclude })
+        {
+            harness.World.Publish(bare);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var lines = include.InjectedText()!.Split('\n').ToList();
+        var open = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine);
+        var close = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredEndLine);
+        Assert.True(open >= 0 && open < close);
+        var record = lines.FindIndex(line => line.StartsWith("--- RECORD", StringComparison.Ordinal));
+        var end = lines.FindIndex(line => line.StartsWith("--- END RECORD", StringComparison.Ordinal));
+        Assert.Equal(close + 1, end);
+        Assert.All(lines.Skip(record + 1).Take(open - record - 1), line => Assert.True(
+            line.StartsWith("Source: ", StringComparison.Ordinal)
+            || line.StartsWith("Confidence: ", StringComparison.Ordinal)
+            || line.StartsWith("Applicability ", StringComparison.Ordinal),
+            line));
+        Assert.Contains(lines.Skip(open).Take(close - open), line => line.StartsWith("Lesson: ", StringComparison.Ordinal));
+
+        Assert.Empty(exclude.Last.InjectedExperienceIds);
+        Assert.Equal(new ExcludedExperience(InjectionRecords.Id(1), RetrievalExclusionReason.UnconfirmedContent), Assert.Single(exclude.Last.Excluded));
+    }
+
+    [Fact]
+    public async Task A_v2_record_whose_approach_was_tampered_is_fenced_with_its_approach_inside_or_omitted_as_unconfirmed()
+    {
+        var genuine = SignedRecords.SignV2(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
+        var attempt = genuine.Attempts[^1];
+        var tampered = genuine with
+        {
+            Attempts = [.. genuine.Attempts.Take(genuine.Attempts.Count - 1), attempt with { ToolCalls = [attempt.ToolCalls[0] with { ToolName = "wipe_database" }] }],
+        };
+
+        var include = new Harness { Signing = SigningRing() };
+        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude };
+        foreach (var harness in new[] { include, exclude })
+        {
+            harness.World.Index(genuine, relevance: 1d);
+            harness.World.Store(tampered);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var lines = include.InjectedText()!.Split('\n').ToList();
+        var open = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine);
+        var close = lines.IndexOf(HistoricalReferenceWriter.ModelAuthoredEndLine);
+        var approach = lines.FindIndex(line => line.Contains("wipe_database", StringComparison.Ordinal));
+        Assert.True(open < approach && approach < close);
+        Assert.StartsWith("Approach: ", lines[approach], StringComparison.Ordinal);
+
+        Assert.Empty(exclude.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.UnconfirmedContent), Assert.Single(exclude.Last.Omitted));
+    }
+
+    [Fact]
+    public async Task With_signing_a_v2_record_tampered_before_the_re_read_is_fenced_or_omitted_by_the_provider()
+    {
+        // Retrieval ranked the genuine signed snapshot; the store now holds the same record with its lesson changed and
+        // its signature left as it was. The provider decides on the re-read record, as the writer renders it.
+        var genuine = SignedRecords.SignV2(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
+        var tampered = genuine with { Reflection = genuine.Reflection! with { Lesson = "TAMPERED-MARKER" } };
+
+        var include = new Harness { Signing = SigningRing() };
+        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude };
+        foreach (var harness in new[] { include, exclude })
+        {
+            harness.World.Index(genuine, relevance: 1d);
+            harness.World.Store(tampered);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var text = include.InjectedText()!;
+        var label = text.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine, StringComparison.Ordinal);
+        Assert.True(label >= 0);
+        Assert.True(text.IndexOf("TAMPERED-MARKER", StringComparison.Ordinal) > label);
+        Assert.True(text.IndexOf("TAMPERED-MARKER", StringComparison.Ordinal) < text.IndexOf(HistoricalReferenceWriter.ModelAuthoredEndLine, StringComparison.Ordinal));
+
+        Assert.Empty(exclude.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.UnconfirmedContent), Assert.Single(exclude.Last.Omitted));
+        Assert.DoesNotContain("TAMPERED-MARKER", exclude.InjectedText() ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task With_signing_an_unsigned_record_is_unfenced_only_when_the_cutover_lists_it_and_without_signing_nothing_changes()
+    {
+        var listedRecord = Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic, lesson: "LISTED-MARKER");
+        var unlistedRecord = Record(InjectionRecords.Id(2), ReflectionAuthorship.Deterministic, lesson: "UNLISTED-MARKER");
+        var v1Record = Record(InjectionRecords.Id(3), ReflectionAuthorship.Deterministic, lesson: "V1-MARKER");
+
+        var signed = new Harness { Signing = SigningRing(InjectionRecords.Id(1)) };
+        var excluding = new Harness { Signing = SigningRing(InjectionRecords.Id(1)), Policy = ModelAuthoredLessonPolicy.Exclude };
+        var unsigned = new Harness();
+        foreach (var harness in new[] { signed, excluding, unsigned })
+        {
+            harness.World.Publish(listedRecord, relevance: 1d);
+            harness.World.Publish(unlistedRecord, relevance: 0.6d);
+            harness.World.Publish(SignedRecords.SignV1(v1Record, "key-1", SigningKey), relevance: 0.5d);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var text = signed.InjectedText()!;
+        var label = text.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine, StringComparison.Ordinal);
+        Assert.True(text.IndexOf("LISTED-MARKER", StringComparison.Ordinal) < label);
+        Assert.True(text.IndexOf("UNLISTED-MARKER", StringComparison.Ordinal) > label);
+        Assert.True(text.IndexOf("V1-MARKER", StringComparison.Ordinal) > label);
+        Assert.Equal(2, text.Split('\n').Count(line => line == HistoricalReferenceWriter.ModelAuthoredLine));
+
+        // Under Exclude, the unsigned unlisted record and the v1 one are left out as unconfirmed, the listed one kept.
+        Assert.Equal([InjectionRecords.Id(1)], excluding.Last.InjectedExperienceIds);
+        Assert.Equal(
+            [
+                new ExcludedExperience(InjectionRecords.Id(2), RetrievalExclusionReason.UnconfirmedContent),
+                new ExcludedExperience(InjectionRecords.Id(3), RetrievalExclusionReason.UnconfirmedContent),
+            ],
+            excluding.Last.Excluded.OrderBy(exclusion => exclusion.ExperienceId));
+
+        Assert.DoesNotContain(HistoricalReferenceWriter.ModelAuthoredLine, unsigned.InjectedText()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_host_decision_is_told_the_provider_s_verdict_not_the_declared_authorship()
+    {
+        var confirmed = SignedRecords.SignV2(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
+        var unconfirmed = SignedRecords.SignV1(Record(InjectionRecords.Id(2), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
+        var model = SignedRecords.SignV2(Record(InjectionRecords.Id(3), ReflectionAuthorship.Model), "key-1", SigningKey);
+        var verdicts = new Dictionary<Guid, bool>();
+        var harness = new Harness
+        {
+            Signing = SigningRing(),
+            OnDecide = context => verdicts[context.Current.ExperienceId] = context.ModelAuthored,
+        };
+        harness.World.Publish(confirmed, relevance: 1d);
+        harness.World.Publish(unconfirmed, relevance: 0.9d);
+        harness.World.Publish(model, relevance: 0.8d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.False(verdicts[InjectionRecords.Id(1)]);
+        Assert.True(verdicts[InjectionRecords.Id(2)]);
+        Assert.True(verdicts[InjectionRecords.Id(3)]);
+    }
+
+    [Fact]
+    public void The_public_writer_decides_on_the_reflection_alone_unless_given_the_content_confirmation()
+    {
+        var record = Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic, lesson: "LESSON-MARKER");
+        var ranked = new RankedExperience(record, 0.9, []);
+
+        var alone = HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default);
+        Assert.DoesNotContain(HistoricalReferenceWriter.ModelAuthoredLine, alone.Text, StringComparison.Ordinal);
+
+        var confirmedAll = HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default, null, _ => true);
+        Assert.Equal(alone.Text, confirmedAll.Text);
+
+        var unconfirmed = HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default, null, _ => false);
+        Assert.Contains(HistoricalReferenceWriter.ModelAuthoredLine, unconfirmed.Text, StringComparison.Ordinal);
+        Assert.Contains(HistoricalReferenceWriter.UnconfirmedTaskNotice, unconfirmed.Text, StringComparison.Ordinal);
+        Assert.Throws<ArgumentNullException>(() => HistoricalReferenceWriter.Write([ranked], ExperienceInjectionLimits.Default, null, null!));
+    }
+
     private static void PublishFiveModelAboveThreeDeterministic(FakeExperienceWorld world)
     {
         for (var i = 1; i <= 5; i++)
@@ -452,6 +715,12 @@ public class ModelAuthoredInjectionTests
         /// <summary>The store the provider re-reads through; <see langword="null"/> is <see cref="World"/>.</summary>
         public IExperienceRecordStore? Store { get; init; }
 
+        /// <summary>Observes each host decision context.</summary>
+        public Action<ExperienceInjectionDecisionContext>? OnDecide { get; init; }
+
+        /// <summary>The provenance signing the default retrieval service decides authorship against (story 17.2).</summary>
+        public ExperienceProvenanceSigningOptions? Signing { get; init; }
+
         public ExperienceInjectionResult Last
         {
             get
@@ -473,7 +742,8 @@ public class ModelAuthoredInjectionTests
         {
             var clock = new FrozenTimeProvider(InjectionRecords.Now);
             return new(
-                Retrieval ?? new ExperienceRetrievalService(World, RetrievalPolicy.Default, RankingWeights.Default, clock),
+                Retrieval ?? new ExperienceRetrievalService(
+                    World, RetrievalPolicy.Default, RankingWeights.Default, clock, null, null, null, null, Signing),
                 Store ?? World,
                 new ExperienceInjectionOptions
                 {
@@ -487,6 +757,7 @@ public class ModelAuthoredInjectionTests
                     DecideInjection = decision =>
                     {
                         Decided?.Add(decision.Current.ExperienceId);
+                        OnDecide?.Invoke(decision);
                         return InjectionDecision.Permit;
                     },
                     OnContextInjected = result =>

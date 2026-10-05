@@ -414,7 +414,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 _options.Limits,
                 _approachArguments,
                 recheckOutcome.Withdrawn,
-                session?.RemainingBytes);
+                session?.RemainingBytes,
+                _retrieval.IsContentConfirmed);
         }
         catch (Exception ex)
         {
@@ -744,9 +745,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // Model-authored records the host excluded (story 14.3) take no slot, so they can never crowd the
             // deterministic records out of the record limit. Fail closed on authorship, as the writer does. Since
             // story 14.4 retrieval leaves them out already, so this is defence in depth.
-            if (_excludeModelAuthored && HistoricalReferenceWriter.IsModelAuthored(candidate.Record.Reflection))
+            if (_excludeModelAuthored && _retrieval.IsModelAuthored(candidate.Record))
             {
-                omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.ModelAuthored));
+                omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, AuthorshipOmission(candidate.Record.Reflection)));
                 continue;
             }
 
@@ -1040,11 +1041,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
             // Model-authored lessons the host excluded (story 14.3). Select already dropped every candidate that
             // was model-authored when ranked; this re-checks the re-read record, so one that changed since cannot
-            // slip through. Read from the record's own reflection by the shared rule, failing closed: any authorship
-            // that is not Deterministic counts, as does the library's own model-backed reflector. No detail.
-            if (_excludeModelAuthored && HistoricalReferenceWriter.IsModelAuthored(current.Reflection))
+            // slip through. Decided by the retrieval service on the re-read record, failing closed: any authorship
+            // that is not Deterministic counts, as does the library's own model-backed reflector, and, with
+            // provenance signing configured, content no claims version 2 signature confirms (story 17.2). The writer
+            // fences by the same decision. No detail.
+            var modelAuthored = _retrieval.IsModelAuthored(current);
+            if (_excludeModelAuthored && modelAuthored)
             {
-                omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.ModelAuthored));
+                omitted.Add(new OmittedExperience(experienceId, AuthorshipOmission(current.Reflection)));
                 continue;
             }
 
@@ -1073,7 +1077,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
                         result.SharedByGrant,
                         refreshed.PermittingGrantId,
                         refreshed.GrantDisclosure,
-                        refreshed.GrantApproachArguments));
+                        refreshed.GrantApproachArguments)
+                    {
+                        ModelAuthored = modelAuthored,
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -1457,6 +1464,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
     }
+
+    /// <summary>
+    /// Why a record the retrieval service counts as model-authored is omitted under <c>Exclude</c>:
+    /// <see cref="InjectionOmissionReason.ModelAuthored"/> when its reflection is model-authored by the shared rule,
+    /// <see cref="InjectionOmissionReason.UnconfirmedContent"/> when it counts only because its content is unconfirmed.
+    /// </summary>
+    private static InjectionOmissionReason AuthorshipOmission(Reflection? reflection) =>
+        HistoricalReferenceWriter.IsModelAuthored(reflection) ? InjectionOmissionReason.ModelAuthored : InjectionOmissionReason.UnconfirmedContent;
 
     /// <summary>
     /// One bounded store read's answer, or the fact that the bound ran out first. <see cref="Value"/> is

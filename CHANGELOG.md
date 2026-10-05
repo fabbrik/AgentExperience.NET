@@ -153,6 +153,56 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   [Backfilling authorship flags](docs/guide/crypto-shredding.md#backfilling-authorship-flags-after-upgrading).
 - **KL-18** drops both clauses; see [Limits history](docs/limits-history.md#narrowed-after-010-preview6).
 
+### The reflection is signed too (story 17.2)
+
+- **The problem it fixes.** Provenance signing (story 13.1) covered only a record's finalization claims, so a party
+  that could write the store could change a signed record's lesson, its approach, or flip its `Reflection.Authorship`
+  to `Deterministic`, and the result was then injected unfenced (KL-18).
+- **Claims version 2.** With `ExperienceProvenanceSigningOptions` configured, finalization signs `aexp-prov:v2`: the
+  version 1 claims, then a SHA-256 digest of everything injection renders from the record: `TaskId`, `TaskSummary`,
+  the outcome's status and evidence count, the `Environment`, the `Attempts` (tool names and argument values, through
+  their JSON form as the PostgreSQL store writes it, numbers by exact decimal value, so both stores read back the same
+  bytes), and the reflection's free text, evidence count,
+  `Authorship` and `Producer`. The signature's `Algorithm` is the new `ExperienceProvenanceSignature.HmacSha256ClaimsV2`
+  (`HMAC-SHA256.aexp-prov.v2`, within the characters every store accepts), so a verifier never guesses the version. A
+  version 1 signature (`HmacSha256`) still verifies for the finalization claims, and independence verification treats
+  it exactly as before. A version 2 record whose content changed after signing no longer verifies, so its run stops
+  vouching too. A run whose content has no canonical encoding (a lone surrogate, or a tool argument value with no JSON
+  form) now ends `Failed` at the create stage with nothing stored, and the failure says the claims or content could
+  not be encoded. No stored schema changes, and nothing re-signs existing records.
+- **Behaviour change: unconfirmed content is model-authored.** With signing configured, a record's content is
+  confirmed only by a version 2 signature that verifies under a key in the ring, or by `TrustUnsignedRecordIds` for a
+  listed unsigned record. Any other record counts as model-authored: `ExperienceRetrievalService` excludes it under
+  `ExcludeModelAuthored`, and injection omits it under `ModelAuthoredLessons = Exclude`, both with the new reason
+  `UnconfirmedContent` (`RetrievalExclusionReason.UnconfirmedContent`, `InjectionOmissionReason.UnconfirmedContent`)
+  when that is the only reason. Otherwise injection fences and labels it, and every line drawn from it moves inside
+  the fence: its task ID (a `Task:` line, the `Source:` line ending with `HistoricalReferenceWriter.UnconfirmedTaskNotice`),
+  its `Recorded:`, `Environment:`, `Verification:` and `Evidence:` lines and its `Approach:` line. A stored record whose
+  content cannot be encoded is unconfirmed and never fails a retrieval. **Records signed before this release are fenced as model-authored at injection and excluded under
+  `Exclude`**, as are records a host writes through `CreateAsync` without a signature. A store's candidate window is
+  not aware of signatures, so under `Exclude` such records still take candidate slots before retrieval drops them.
+  Without signing, nothing changes.
+- **Upgrade settings.** `ExperienceProvenanceSigningOptions.SignClaimsVersion` (new, default 2, only 1 or 2): set it
+  to 1 during a rolling deploy in which nodes on an earlier build still verify, since they refuse a version 2
+  signature; switch it back afterwards. `ExperienceProvenanceSigningOptions.ConfirmV1Content` (new, default `false`):
+  a transition setting that lets a valid version 1 signature confirm its record's content, accepting for those records
+  the exposure version 1 left open, while existing lessons are reviewed or replaced.
+  `ExperienceProvenanceSigningOptions.ConfirmContentRecordIds` (new, empty by default) is the per-record alternative:
+  listed records (signed version 1, including during a `SignClaimsVersion = 1` rollout, or unsigned) count as
+  confirmed once reviewed, unless their signature is present and does not verify.
+- **New API.** `ExperienceRetrievalService` gains a constructor that takes `provenanceSigning`, and public
+  `IsModelAuthored(ExperienceRecord)` and `IsContentConfirmed(ExperienceRecord)`, which the MAF provider uses on the
+  record it re-read. `AddAgentExperienceRetrieval` passes registered signing options (directly or as `IOptions<T>`) to
+  it. `ExperienceInjectionDecisionContext.ModelAuthored` (new, `true` unless set, which the provider always does) carries
+  the provider's verdict to `DecideInjection`; a
+  host should decide on it rather than on the declared authorship. `HistoricalReferenceWriter.Write` gains an overload
+  taking a content-confirmation function; the existing overloads decide on the reflection alone.
+  **Action for a host that constructs `ExperienceRetrievalService` by hand with signing on:** pass the same options
+  to the new constructor, or records are judged without the content check.
+- **KL-18** drops the clause that signing covers the finalization claims only; KL-11 now says a content edit is
+  caught only for version 2 records. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  [Signing provenance](docs/guide/confidence.md#signing-provenance).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

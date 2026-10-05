@@ -115,6 +115,15 @@ public enum InjectionOmissionReason
     /// before the capability gate and <see cref="ExperienceInjectionOptions.DecideInjection"/>. The omission carries no detail.
     /// </summary>
     ModelAuthored,
+
+    /// <summary>
+    /// Provenance signing is configured, the record counts as model-authored only because its content is unconfirmed
+    /// (story 17.2: no claims version 2 signature under a key in the ring verifies over it, see
+    /// <see cref="ExperienceRetrievalService.IsContentConfirmed"/>), and the host set
+    /// <see cref="ExperienceInjectionOptions.ModelAuthoredLessons"/> to <see cref="ModelAuthoredLessonPolicy.Exclude"/>.
+    /// Decided where <see cref="ModelAuthored"/> is. The omission carries no detail.
+    /// </summary>
+    UnconfirmedContent,
 }
 
 /// <summary>

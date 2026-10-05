@@ -213,7 +213,19 @@ public sealed record ExperienceInjectionDecisionContext(
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
     ExperienceGrantDisclosure? GrantDisclosure = null,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null)
+{
+    /// <summary>
+    /// The provider's verdict on <see cref="Current"/>: <see langword="true"/> when it will render the record as
+    /// model-authored, fenced and labelled. That is when its reflection's authorship is anything but
+    /// <see cref="ReflectionAuthorship.Deterministic"/>, its producer names the library's own model-backed reflector,
+    /// or, with provenance signing configured, its content is unconfirmed
+    /// (<see cref="ExperienceRetrievalService.IsModelAuthored"/>, story 17.2). Decide on this, never on
+    /// <c>Current.Reflection.Authorship</c>: the declared value is what a party that can write the store controls.
+    /// The provider always sets it; a context built without it defaults to <see langword="true"/> (fail closed).
+    /// </summary>
+    public bool ModelAuthored { get; init; } = true;
+}
 
 /// <summary>
 /// Host configuration for <see cref="ExperienceContextProvider"/>.

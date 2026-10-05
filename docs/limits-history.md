@@ -204,6 +204,21 @@ instead.
   reflection are unchanged; that is what the row still says. See
   [0022: library reflector authorship](guide/postgres-schema.md#0022-library-reflector-authorship) and
   [Backfilling authorship flags](guide/crypto-shredding.md#backfilling-authorship-flags-after-upgrading).
+- **KL-18** is **narrowed** again by story 17.2. Its clause that provenance signing covers the finalization claims
+  only, so a party that can write the store can change a reflection's text or authorship, was removable by code, and
+  is gone. With signing configured, finalization now signs claims version 2 (`aexp-prov:v2`, algorithm
+  `HMAC-SHA256.aexp-prov.v2`): the version 1 claims, then a SHA-256 digest of everything injection renders from the
+  record: its task ID and summary, outcome status and evidence count, environment, attempts (tool names and argument
+  values) and its reflection's free text, authorship and producer. A record whose content no version 2 signature
+  confirms (a version 1 signature, none, an unknown key, or one that no longer verifies), unless the cutover set lists
+  it unsigned, counts as model-authored: retrieval excludes it under `Exclude` and injection omits it, both as
+  `UnconfirmedContent`, or injection fences and labels it with its task ID and `Approach:` line inside the fence. A
+  version 1 signature still vouches for its finalization claims in independence verification, exactly as before.
+  `SignClaimsVersion = 1` keeps signing version 1 during a rolling deploy, and `ConfirmV1Content` lets a host accept
+  version 1 records' content while it reviews them. What the row still says: records signed before this change are
+  fenced rather than re-signed (re-signing would vouch for content nobody checked), the cutover set's unsigned records
+  stay editable, signing off leaves content unprotected, and a key holder can sign anything. See
+  [Signing provenance](guide/confidence.md#signing-provenance).
 
 ## How the project got here
 

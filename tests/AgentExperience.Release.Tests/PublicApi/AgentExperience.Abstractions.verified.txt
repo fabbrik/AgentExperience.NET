@@ -432,6 +432,7 @@
     public sealed class ExperienceProvenanceSignature : System.IEquatable<AgentExperience.Abstractions.ExperienceProvenanceSignature>
     {
         public const string HmacSha256 = "HMAC-SHA256";
+        public const string HmacSha256ClaimsV2 = "HMAC-SHA256.aexp-prov.v2";
         public ExperienceProvenanceSignature(string KeyId, string Algorithm, System.ReadOnlyMemory<byte> Value) { }
         public string Algorithm { get; init; }
         public string KeyId { get; init; }

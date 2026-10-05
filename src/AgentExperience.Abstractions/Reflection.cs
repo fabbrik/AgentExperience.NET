@@ -56,8 +56,9 @@ public sealed record Reflection(
     /// model-authored whatever this property says, so its records written before it declared authorship are covered
     /// too; no other producer is inferred from. A model-authored reflection (any value but
     /// <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts, or that producer) is held to
-    /// finalization's content guard and labelled as such when injected. Neither this property nor the free-text
-    /// fields are covered by the provenance signature: a party that can write the store can change them. Omitted from System.Text.Json output when it is
+    /// finalization's content guard and labelled as such when injected. With provenance signing configured, this property
+    /// and the free-text fields are covered by the record's version 2 signature (story 17.2), and a record whose content
+    /// no such signature confirms counts as model-authored whatever this property says. Omitted from System.Text.Json output when it is
     /// <see cref="ReflectionAuthorship.Deterministic"/>, so a deterministic reflection serializes exactly as it
     /// did before this property existed, and an absent member reads back as <c>Deterministic</c>.
     /// </summary>

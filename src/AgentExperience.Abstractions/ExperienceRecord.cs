@@ -86,11 +86,17 @@ public sealed record ExperienceRecord(
     /// <remarks>
     /// <para>
     /// Signing is opt-in (<c>ExperienceProvenanceSigningOptions</c> in <c>AgentExperience.Core</c>). With it
-    /// configured, finalization signs, under a host-held key, exactly the claims confidence verification relies
-    /// on -- <see cref="ExperienceId"/>, <see cref="Scope"/>, <see cref="SourceRunId"/>,
-    /// <see cref="ClosedRoundId"/>, <see cref="Origin"/> and <see cref="Provenance.ExposedTo"/> -- and
-    /// verification refuses a run whose record carries no signature, one under a key it does not hold, or one
-    /// that does not verify. Nothing else is signed: a record's content is not a claim about its run.
+    /// configured, finalization signs, under a host-held key, the claims confidence verification relies on --
+    /// <see cref="ExperienceId"/>, <see cref="Scope"/>, <see cref="SourceRunId"/>, <see cref="ClosedRoundId"/>,
+    /// <see cref="Origin"/> and <see cref="Provenance.ExposedTo"/> -- and verification refuses a run whose record
+    /// carries no signature, one under a key it does not hold, or one that does not verify. Since story 17.2 it
+    /// signs claims version 2 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>), which adds a digest of
+    /// everything injection renders from the record: <see cref="TaskId"/> and <see cref="TaskSummary"/>, the
+    /// <see cref="Outcome"/>'s status and evidence count, the <see cref="Environment"/> (all fields and attributes), the
+    /// <see cref="Attempts"/> (each tool call's name and argument values, numbers by exact decimal value), and the
+    /// reflection's free text, evidence count, <see cref="Reflection.Authorship"/> and <see cref="Reflection.Producer"/>. With signing configured, a record
+    /// whose content no version 2 signature confirms is treated as model-authored wherever authorship is decided.
+    /// Status, counters and timestamps change through the lifecycle and are not signed.
     /// </para>
     /// <para>
     /// A store persists it as given and never checks it; a store does not hold the key. It is not secret, but
@@ -105,12 +111,25 @@ public sealed record ExperienceRecord(
 /// the record (see <see cref="ExperienceRecord.ProvenanceSignature"/>).
 /// </summary>
 /// <param name="KeyId">The identifier of the host-held key it was made under. Never the key itself.</param>
-/// <param name="Algorithm">The signature algorithm: <see cref="HmacSha256"/>.</param>
+/// <param name="Algorithm">The signature algorithm and claims version: <see cref="HmacSha256ClaimsV2"/> for every signature finalization makes since story 17.2, or <see cref="HmacSha256"/> for one made before it.</param>
 /// <param name="Value">The signature bytes.</param>
 public sealed record ExperienceProvenanceSignature(string KeyId, string Algorithm, ReadOnlyMemory<byte> Value)
 {
-    /// <summary>The one algorithm this version signs and verifies with: <c>HMAC-SHA256</c>.</summary>
+    /// <summary>
+    /// HMAC-SHA256 over claims version 1 (<c>aexp-prov:v1</c>): the finalization claims only. Signatures made before
+    /// story 17.2 carry it, and still verify for those claims; finalization no longer makes them.
+    /// </summary>
     public const string HmacSha256 = "HMAC-SHA256";
+
+    /// <summary>
+    /// HMAC-SHA256 over claims version 2 (<c>aexp-prov:v2</c>): the version 1 claims, then a SHA-256 digest of the
+    /// record's content -- its task ID and summary, its outcome's status and evidence count, its environment (all fields
+    /// and attributes), its attempts (each tool call's name and argument values, numbers canonicalized by exact decimal
+    /// value), and its reflection's free text, evidence count, authorship and producer. What finalization signs
+    /// since story 17.2. The value names the claims version, so a verifier never has to guess it, and uses only the
+    /// characters a store accepts in an algorithm (<c>[A-Za-z0-9._-]</c>), so a store on an earlier build persists it too.
+    /// </summary>
+    public const string HmacSha256ClaimsV2 = "HMAC-SHA256.aexp-prov.v2";
 
     /// <summary>
     /// Value equality over every member, <see cref="Value"/> compared byte by byte rather than by the memory it

@@ -375,11 +375,15 @@ reflection payload, written only when it is not `Deterministic`). An undefined v
 model-authored, as does the library reflector's producer, for the guard, the label and `Exclude` alike: Core, the MAF
 adapter and both stores decide it by one shared rule, and PostgreSQL's migration `0022` states it again in SQL.
 
-**Neither authorship nor the free text is signed.** [Provenance signing](#signing-provenance) covers the record's
-finalization claims only. A party that can write the store (an application role with `AllowSealing` over a plaintext
-payload, or anything that bypasses the store) can change a reflection's text or flip its authorship to
-`Deterministic`, and the label and `Exclude` then follow the changed value. See KL-18 in
-[Known limits and documented boundaries](../known-limits.md#documented-boundaries).
+**Authorship and the free text are signed when signing is on.** With [provenance signing](confidence.md#signing-provenance)
+configured, finalization signs claims version 2, which covers everything injection renders from the record: the
+task text, outcome status, environment, attempts (tool names and argument values), and the reflection's free text,
+authorship and producer (story 17.2). A record whose content no version 2 signature confirms (signed before this
+release, unsigned and not in the cutover set, or changed after it was signed) counts as model-authored: it is labelled
+and fenced at injection and left out under `Exclude`, whatever authorship it declares. Without signing, a party that
+can write the store (an application role with `AllowSealing` over a plaintext payload, or anything that bypasses the
+store) can change a reflection's text or flip its authorship to `Deterministic`, and the label and `Exclude` then
+follow the changed value. See KL-18 in [Known limits and documented boundaries](../known-limits.md#documented-boundaries).
 
 **2. It is filtered.** After the hygiene layer and your sanitizer, a model-authored reflection goes through a fixed,
 deterministic content guard. It never calls a model and never touches a deterministic reflection. It checks the six
@@ -470,18 +474,26 @@ revoked or rewritten.
 
 Signing is opt-in. With an `ExperienceProvenanceSigningOptions` registered (or passed to the lifecycle service
 finalization is built over), every record `FinalizeAsync` creates carries
-`ExperienceRecord.ProvenanceSignature`: an HMAC-SHA256, under the ring's `CurrentKeyId`, over the record's
-finalization claims (its ID, scope, source run, closed round, origin and exposures), written in the same create as the
-record. Confidence verification then refuses a run whose record is unsigned, signed under a key that is not in the
-ring, or changed in any signed claim after it was signed. So a record written through `CreateAsync`, or a payload
-edited outside the library, cannot pass as finalized. Without the options, nothing is signed and nothing changes.
+`ExperienceRecord.ProvenanceSignature`: an HMAC-SHA256, under the ring's `CurrentKeyId`, over claims version 2 -- the
+record's finalization claims (its ID, scope, source run, closed round, origin and exposures) and a digest of its
+content (everything injection renders: task text, outcome status, environment, attempts and the reflection) -- written
+in the same create
+as the record. Confidence verification then refuses a run whose record is unsigned, signed under a key that is not in
+the ring, or changed in any signed claim or content after it was signed. So a record written through `CreateAsync`,
+or a payload edited outside the library, cannot pass as finalized, and its lesson counts as model-authored at
+retrieval and injection (story 17.2). Signatures made before story 17.2 cover the finalization claims only: they still
+vouch for their run, but their content is unconfirmed, so their lessons are fenced as model-authored. Without the
+options, nothing is signed and nothing changes.
 
 Finalization signs with the lifecycle service's ring by default. Options passed to finalization's own constructor take
 precedence, and are refused (`ArgumentException`) unless the lifecycle service it is built over checks their current
 key under the same ID: a record signed under a key the checker lacks would vouch for nothing. With signing on, a retry
 whose run already has a stored record that does not carry a valid signature ends `Failed` at the create stage,
 saying so, instead of replaying it as `AlreadyFinalized`. A run whose scope has no strict UTF-8 encoding (a lone
-surrogate) cannot be signed and also ends `Failed`, with nothing stored.
+surrogate), or whose record content has no canonical encoding (a lone surrogate, or a tool argument value with no
+JSON form), cannot be signed and also ends `Failed`, with nothing stored. During a rolling deploy in which nodes on an
+earlier build still verify, set `SignClaimsVersion = 1` so they can check what this one signs; see
+[Signing provenance](confidence.md#signing-provenance).
 
 ```csharp
 services.AddSingleton(new ExperienceProvenanceSigningOptions(

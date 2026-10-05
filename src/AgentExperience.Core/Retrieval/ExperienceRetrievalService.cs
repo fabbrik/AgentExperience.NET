@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Reflections;
 
@@ -134,6 +135,7 @@ public sealed class ExperienceRetrievalService
     private readonly IExperienceEmbeddingGenerator? _embeddingGenerator;
     private readonly IEnvironmentCompatibilityScorer _environmentScorer;
     private readonly ConfidenceDecayPolicy? _confidenceDecay;
+    private readonly ProvenanceSigner? _signer;
 
     /// <summary>
     /// How many searches this service has abandoned on a timeout (or a cancellation) that are still
@@ -249,6 +251,39 @@ public sealed class ExperienceRetrievalService
         IExperienceEmbeddingGenerator? embeddingGenerator,
         IEnvironmentCompatibilityScorer? environmentScorer,
         ConfidenceDecayPolicy? confidenceDecay)
+        : this(candidateSource, policy, weights, timeProvider, embeddingIndex, embeddingGenerator, environmentScorer, confidenceDecay, provenanceSigning: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a retrieval service as the eight-argument constructor does, which also decides authorship against the
+    /// host's provenance signing configuration (story 17.2).
+    /// </summary>
+    /// <param name="candidateSource">Where scope-, status- and confidence-filtered text matches come from.</param>
+    /// <param name="policy">The timeout, confidence floor, expiry, recency half-life, and candidate bound. Both channels run under it.</param>
+    /// <param name="weights">The weights applied to each normalized ranking component.</param>
+    /// <param name="timeProvider">The clock the timeout, expiry, recency, and confidence decay are measured with.</param>
+    /// <param name="embeddingIndex">Optional. Where scope-, status- and confidence-filtered vector matches come from.</param>
+    /// <param name="embeddingGenerator">Optional. What turns the request's task text into a query vector.</param>
+    /// <param name="environmentScorer">Optional. As for the eight-argument constructor.</param>
+    /// <param name="confidenceDecay">Optional. As for the eight-argument constructor.</param>
+    /// <param name="provenanceSigning">
+    /// Optional. The same signing options the lifecycle service checks against. With them, a record whose content is
+    /// not confirmed by a claims version 2 signature (or the options' cutover set) counts as model-authored (see
+    /// <see cref="IsModelAuthored"/>): excluded under <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, and
+    /// fenced as model-authored by injection. <see langword="null"/> decides authorship exactly as before. Copied.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    public ExperienceRetrievalService(
+        IExperienceCandidateSource candidateSource,
+        RetrievalPolicy policy,
+        RankingWeights weights,
+        TimeProvider timeProvider,
+        IExperienceEmbeddingIndex? embeddingIndex,
+        IExperienceEmbeddingGenerator? embeddingGenerator,
+        IEnvironmentCompatibilityScorer? environmentScorer,
+        ConfidenceDecayPolicy? confidenceDecay,
+        ExperienceProvenanceSigningOptions? provenanceSigning)
     {
         ArgumentNullException.ThrowIfNull(candidateSource);
         ArgumentNullException.ThrowIfNull(policy);
@@ -263,7 +298,35 @@ public sealed class ExperienceRetrievalService
         _embeddingGenerator = embeddingGenerator;
         _environmentScorer = environmentScorer ?? AttributeMatchEnvironmentScorer.Instance;
         _confidenceDecay = confidenceDecay;
+        _signer = ProvenanceSigner.Create(provenanceSigning);
     }
+
+    /// <summary>
+    /// Whether this service treats <paramref name="record"/>'s lesson as model-authored: its reflection's
+    /// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or its
+    /// <see cref="Reflection.Producer"/> names the library's own model-backed reflector
+    /// (<see cref="ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix"/>); or, with provenance signing
+    /// configured, its content is not confirmed (<see cref="IsContentConfirmed"/>), so a record signed before story
+    /// 17.2, unsigned, or changed after it was signed counts. It is the decision this service's exclusion
+    /// re-check makes, exposed so injection decides on the record it re-read exactly as retrieval did.
+    /// </summary>
+    /// <param name="record">The record as it will be rendered.</param>
+    /// <returns>Whether it counts as model-authored.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="record"/> is <see langword="null"/>.</exception>
+    public bool IsModelAuthored(ExperienceRecord record) => RecordAuthorship.IsModelAuthored(record, _signer);
+
+    /// <summary>
+    /// Whether this service confirms <paramref name="record"/>'s content: always without provenance signing; with it,
+    /// only when a claims version 2 signature under a key in the ring verifies over everything the injection writer
+    /// renders from the record (its task text, outcome status, environment, attempts and reflection), when the
+    /// options' cutover set lists it unsigned, or, under <see cref="ExperienceProvenanceSigningOptions.ConfirmV1Content"/>,
+    /// when a version 1 signature verifies. A record whose content is not confirmed counts as model-authored
+    /// (<see cref="IsModelAuthored"/>), and injection fences its task ID and <c>Approach:</c> line with its lesson.
+    /// </summary>
+    /// <param name="record">The record as it will be rendered.</param>
+    /// <returns>Whether its content is confirmed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="record"/> is <see langword="null"/>.</exception>
+    public bool IsContentConfirmed(ExperienceRecord record) => RecordAuthorship.IsContentConfirmed(record, _signer);
 
     /// <summary>The policy this service runs under.</summary>
     public RetrievalPolicy Policy => _policy;
@@ -732,11 +795,12 @@ public sealed class ExperienceRetrievalService
 
             // Story 14.4: the sources leave model-authored records out before their limits; this catches what one still
             // returned -- a source that does not honour the request. Fail closed on authorship, by the one shared rule
-            // (story 17.1: the library's own model-backed reflector counts whatever authorship it declared); a record
-            // with no reflection is kept.
-            if (request.ExcludeModelAuthored && ReflectionAuthorshipRule.IsModelAuthored(record.Reflection))
+            // (story 17.1: the library's own model-backed reflector counts whatever authorship it declared) and, with
+            // provenance signing configured, on content no claims version 2 signature confirms (story 17.2). Without
+            // signing, a record with no reflection is kept.
+            if (request.ExcludeModelAuthored && RecordAuthorship.ExclusionReason(record, _signer) is { } authorshipReason)
             {
-                excluded.Add(new ExcludedExperience(record.ExperienceId, RetrievalExclusionReason.ModelAuthored));
+                excluded.Add(new ExcludedExperience(record.ExperienceId, authorshipReason));
                 continue;
             }
 
