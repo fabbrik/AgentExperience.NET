@@ -799,6 +799,7 @@
         System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> CreateKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.ValueTask DestroyKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> GetKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceKeyLookup>> GetKeysAsync(System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceKeyReference> references, System.Threading.CancellationToken cancellationToken);
     }
     public interface IExperienceRecordStore
     {

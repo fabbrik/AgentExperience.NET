@@ -60,6 +60,36 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   timeout is reported. The bound is released by a `TimeProvider` timer, so a starved thread pool can still release it
   late. See [Pre-model latency budget](docs/guide/injection.md#pre-model-latency-budget).
 
+### Retrieval unwraps record keys in one batch (story 16.3)
+
+- **The problem it fixes.** With crypto-shredding on, every sealed row a read returned cost one key-store call, made
+  in turn while the data reader held its connection. At 10 ms per KMS unwrap, a 50-candidate text search took about
+  half a second, the whole default retrieval budget, and injection silently delivered nothing.
+- **Batch key lookup.** `IExperienceKeyStore.GetKeysAsync` (new) looks up several references in one call. It is a
+  default interface method that calls `GetKeyAsync` for each reference in order, so existing key stores keep working
+  unchanged; on a failure it disposes every key it already obtained. `EnvelopeExperienceKeyStore` overrides it to
+  look up and unwrap concurrently, at most 16 at a time by default; a new constructor overload takes
+  `maxConcurrentKeyLookups`, and `MaxConcurrentKeyLookups` and `DefaultMaxConcurrentKeyLookups` are new. Nothing is
+  cached: a destroyed key is never served by a later call.
+- **Retrieval reads.** The text search, the vector search and `GetManyAsync` (injection's eligibility re-read) now
+  read their rows into memory, close the reader, commit their read-only transaction and return the connection to the
+  pool, then make one `GetKeysAsync` call for every sealed row and decode. A slow key store no longer holds a reader,
+  a transaction or a pooled connection on these paths. The buffered rows are bounded by the candidate limit (the
+  searches) or the ID list given (`GetManyAsync`). Results, ordering, error types and access-audit rows are
+  unchanged; plaintext rows never reach the key store. Other reads still make one call per sealed record with their
+  reader open.
+- **Concurrency to plan for.** `maxConcurrentKeyLookups` bounds one `GetKeysAsync` call, not the process: one
+  injection can run the text search, the vector search and the re-read together, and hosts run retrievals in
+  parallel, so the unwraps in flight can reach the bound times the concurrent calls. With the envelope store, your
+  `IExperienceWrappedKeyRepository` and `IExperienceKeyEncryptionKey` implementations are now called concurrently and
+  must be thread-safe. One injection can unwrap the same record's key more than once (text, vector, re-read).
+- **Action for a custom key store over a remote KMS:** override `GetKeysAsync` to unwrap concurrently or through the
+  KMS's batch API; the default is still one call after another. A wrapper or decorator around a key store must
+  forward `GetKeysAsync`, or it falls back to sequential lookups. The new `EncryptedRetrievalBenchmarks` measures it at
+  10 ms per unwrap: 62.7 ms batched against 610.4 ms with concurrency limited to one, which exceeds the 500 ms
+  default retrieval timeout. With no unwrap latency, batching adds a small overhead (5.1 ms against 4.3 ms, within
+  the run's error). See [Key custody](docs/guide/crypto-shredding.md#key-custody-the-property-is-only-as-true-as-this).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

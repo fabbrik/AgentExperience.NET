@@ -477,27 +477,35 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         IReadOnlyList<ExperienceGrantDisclosure?> disclosures;
         try
         {
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            List<SnapshotRow> rows;
+            ExperienceVectorSearchOutcome? emptyOutcome;
+            await using (var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
+            {
+                // Each attempt is its own transaction with the bounds declared: a failed statement aborts the one it
+                // ran in, so the exact-scope retry cannot share it.
+                try
+                {
+                    (rows, emptyOutcome) = await ExperienceSessionContext.RunAsync(
+                        connection,
+                        authorization,
+                        transaction => ReadSearchRowsAsync(connection, transaction, query, dimension, statuses, _grants.Available, cancellationToken),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
+                {
+                    // No grant table, or no permission to read it: search the exact scope only.
+                    (rows, emptyOutcome) = await ExperienceSessionContext.RunAsync(
+                        connection,
+                        authorization,
+                        transaction => ReadSearchRowsAsync(connection, transaction, query, dimension, statuses, readable: false, cancellationToken),
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
 
-            // Each attempt is its own transaction with the bounds declared: a failed statement aborts the one it
-            // ran in, so the exact-scope retry cannot share it.
-            try
-            {
-                (result, disclosures) = await ExperienceSessionContext.RunAsync(
-                    connection,
-                    authorization,
-                    transaction => RunSearchAsync(connection, transaction, query, dimension, statuses, _grants.Available, _encryption, cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (_grants.ShouldFallBack(ex, "vector search", cancellationToken))
-            {
-                // No grant table, or no permission to read it: search the exact scope only.
-                (result, disclosures) = await ExperienceSessionContext.RunAsync(
-                    connection,
-                    authorization,
-                    transaction => RunSearchAsync(connection, transaction, query, dimension, statuses, readable: false, _encryption, cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
-            }
+            // Only now, with the read-only transaction committed and the connection back in the pool: nothing
+            // after decoding writes in that transaction (the access rows are appended below, on a connection of
+            // their own), so a slow key store holds no connection.
+            (result, disclosures) = await DecodeSearchRowsAsync(rows, emptyOutcome, _encryption, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (PostgresExperienceRecordStore.IsInfrastructureFailure(ex, cancellationToken))
         {
@@ -615,18 +623,21 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         }
     }
 
-    private static async Task<(ExperienceVectorSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> RunSearchAsync(
+    /// <summary>
+    /// Runs the search in the caller's transaction and reads its rows into memory, closing the reader. When it
+    /// matched nothing, the compatibility probe runs in the same transaction, so it sees exactly what the search
+    /// saw, grants included, and its answer is returned with the (empty) rows.
+    /// </summary>
+    private static async Task<(List<SnapshotRow> Rows, ExperienceVectorSearchOutcome? EmptyOutcome)> ReadSearchRowsAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         ExperienceVectorQuery query,
         int dimension,
         string[] statuses,
         bool readable,
-        ExperienceEncryption? encryption,
         CancellationToken cancellationToken)
     {
-        var candidates = new List<ExperienceCandidate>();
-        var disclosures = new List<ExperienceGrantDisclosure?>();
+        List<SnapshotRow> rows;
         await using (var command = new NpgsqlCommand(SearchSql(dimension, readable, query.ExcludeModelAuthored), connection, transaction))
         {
             var parameters = command.Parameters;
@@ -638,27 +649,12 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
-                if (await PostgresExperienceRecordStore.ReadRecordAsync(reader, encryption, cancellationToken).ConfigureAwait(false)
-                    is not { } record)
-                {
-                    continue;
-                }
-
-                candidates.Add(new ExperienceCandidate(
-                    record,
-                    ReadRelevance(reader),
-                    PostgresExperienceRecordStore.ReadSharedByGrant(reader),
-                    PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
-                disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(reader));
-            }
+            rows = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
         }
 
-        if (candidates.Count > 0)
+        if (rows.Count > 0)
         {
-            return (new(ExperienceVectorSearchOutcome.Found, candidates, NoErrors), disclosures);
+            return (rows, null);
         }
 
         // Only now -- an empty answer is the one case where "nothing similar" and "nothing
@@ -666,7 +662,49 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
         // probe sees exactly what the search saw, grants included, so a recipient whose only
         // comparable population arrives through a grant is told which mismatch it hit.
         var mismatch = await ProbeCompatibilityAsync(connection, transaction, query, statuses, readable, cancellationToken).ConfigureAwait(false);
-        return (new(mismatch ?? ExperienceVectorSearchOutcome.Found, NoCandidates, NoErrors), disclosures);
+        return (rows, mismatch ?? ExperienceVectorSearchOutcome.Found);
+    }
+
+    /// <summary>
+    /// Decodes the rows <see cref="ReadSearchRowsAsync"/> read, after its transaction committed and its
+    /// connection was released, fetching every sealed row's key in one key-store call.
+    /// </summary>
+    private static async Task<(ExperienceVectorSearchResult Result, IReadOnlyList<ExperienceGrantDisclosure?> Disclosures)> DecodeSearchRowsAsync(
+        List<SnapshotRow> rows,
+        ExperienceVectorSearchOutcome? emptyOutcome,
+        ExperienceEncryption? encryption,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<ExperienceCandidate>();
+        var disclosures = new List<ExperienceGrantDisclosure?>();
+        var records = await PostgresExperienceRecordStore.ReadRecordsAsync(rows, encryption, cancellationToken).ConfigureAwait(false);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
+            if (records[i] is not { } record)
+            {
+                continue;
+            }
+
+            var row = rows[i];
+            candidates.Add(new ExperienceCandidate(
+                record,
+                ReadRelevance(row),
+                PostgresExperienceRecordStore.ReadSharedByGrant(row),
+                PostgresExperienceRecordStore.ReadPermittingGrant(row)));
+            disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(row));
+        }
+
+        if (candidates.Count > 0)
+        {
+            return (new(ExperienceVectorSearchOutcome.Found, candidates, NoErrors), disclosures);
+        }
+
+        // Rows came back but every one was a sealed record whose key is destroyed. The probe used to run here,
+        // in the search's transaction, and in that case it always answered DimensionMismatch: the rows it
+        // counted satisfy both of its EXISTS (the search's filters and the query's model). That answer is kept
+        // without the round trip, so nothing a caller sees changes.
+        return (new(emptyOutcome ?? ExperienceVectorSearchOutcome.DimensionMismatch, NoCandidates, NoErrors), disclosures);
     }
 
     /// <summary>

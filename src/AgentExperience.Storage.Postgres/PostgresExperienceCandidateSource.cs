@@ -337,40 +337,51 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
         ExperienceCandidateQuery query,
         CancellationToken cancellationToken)
     {
-        await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
-        await using var command = session.CreateCommand(sql);
-        var parameters = command.Parameters;
-        PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
-        parameters.Add(new NpgsqlParameter<string>("task_text", NpgsqlDbType.Text) { TypedValue = query.TaskText });
+        // The rows are read into memory, the reader closed, the read-only transaction committed and the connection
+        // returned to the pool before any key is fetched: nothing after decoding writes in this transaction (the
+        // access rows are appended later, on a connection of their own), so a slow key store holds no connection.
+        // Every sealed row's key then comes from one key-store call, not one call per row.
+        List<SnapshotRow> rows;
+        await using (var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false))
+        {
+            await using (var command = session.CreateCommand(sql))
+            {
+                var parameters = command.Parameters;
+                PostgresExperienceRecordStore.AddScopeParameters(parameters, query.Scope);
+                parameters.Add(new NpgsqlParameter<string>("task_text", NpgsqlDbType.Text) { TypedValue = query.TaskText });
 
-        var statuses = query.EligibleStatuses.Distinct().Select(status => status.ToString()).ToArray();
-        parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
-        parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
-        parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+                var statuses = query.EligibleStatuses.Distinct().Select(status => status.ToString()).ToArray();
+                parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
+                parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
+                parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                rows = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
+            }
+
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         var candidates = new List<ExperienceCandidate>();
         var disclosures = new List<ExperienceGrantDisclosure?>();
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        var records = await PostgresExperienceRecordStore.ReadRecordsAsync(rows, _encryption, cancellationToken).ConfigureAwait(false);
+        for (var i = 0; i < rows.Count; i++)
         {
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
+            if (records[i] is not { } record)
             {
-                // A sealed record whose key was destroyed is erased: never a candidate, like a tombstone.
-                if (await PostgresExperienceRecordStore.ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false)
-                    is not { } record)
-                {
-                    continue;
-                }
-
-                candidates.Add(new ExperienceCandidate(
-                    record,
-                    ReadRelevance(reader),
-                    PostgresExperienceRecordStore.ReadSharedByGrant(reader),
-                    PostgresExperienceRecordStore.ReadPermittingGrant(reader)));
-                disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(reader));
+                continue;
             }
+
+            var row = rows[i];
+            candidates.Add(new ExperienceCandidate(
+                record,
+                ReadRelevance(row),
+                PostgresExperienceRecordStore.ReadSharedByGrant(row),
+                PostgresExperienceRecordStore.ReadPermittingGrant(row)));
+            disclosures.Add(PostgresExperienceRecordStore.ReadPermittingDisclosure(row));
         }
 
-        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
         return (new(ExperienceStoreOutcome.Found, candidates, NoErrors), disclosures);
     }
 
