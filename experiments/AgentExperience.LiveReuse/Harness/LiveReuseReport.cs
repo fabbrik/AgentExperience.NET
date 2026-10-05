@@ -194,7 +194,7 @@ public static class LiveReuseReport
         Line();
         Line("## Per-trial results");
         Line();
-        Line("Every evaluation trial, in the order it ran. None is ever dropped. `Block named` is the strategy on the Approach: line of the");
+        Line("Every evaluation trial, in the order it ran. None is ever dropped. `Block named` is the strategy on the working attempt's Tried: line of the");
         Line("Historical Reference the model was actually shown, read out of the text it was sent.");
         Line();
         Line("| Seq | Instance | Service | Condition | Accepted | Status | Live | Failed attempts | Strategies tried | Block named | Followed | Tool calls | Unauthorized | Model calls | Tokens in | Tokens out | Latency (ms) |");
@@ -265,7 +265,7 @@ public static class LiveReuseReport
     private static string ConclusionSentence(LiveExperimentResult result) => result.Conclusion switch
     {
         OverallConclusion.ReuseBenefitAttributableToContent =>
-            "With its own verified experience injected, the model needed fewer failed attempts than with memory disabled and than with the same block with its strategy withheld, by the pre-registered test, and stale experience gave it no such benefit. The model acted on the Approach: line; this does not show that the block's presence alone contributed nothing.",
+            "With its own verified experience injected, the model needed fewer failed attempts than with memory disabled and than with the same block with its strategy withheld, by the pre-registered test, and stale experience gave it no such benefit. The model acted on the working attempt's Tried: line; this does not show that the block's presence alone contributed nothing.",
         OverallConclusion.BenefitNotAttributableToContent =>
             "Memory-enabled passed the gate against memory-disabled, but either not against the placebo (the same block with its strategy withheld) or the stale experience passed too. A benefit that the placebo matches, or that survives wrong content, cannot be credited to what the record says, so no reuse benefit is claimed.",
         OverallConclusion.NoDemonstratedBenefit =>
@@ -288,8 +288,8 @@ public static class LiveReuseReport
         yield return $"{result.Design.Instances} instances. The sign test can detect only a large, consistent effect; NoDemonstratedBenefit here is not evidence that there is no smaller effect.";
         yield return "The sign test treats the instance pairs as independent. Each hidden strategy is the answer for two services, and a near-deterministic model with a fixed search order will tend to score both alike, so the effective sample is smaller than the instance count and the p-value is optimistic. The inference is over this fixed, pre-committed assignment, not over tasks in general.";
         yield return "A synthetic task family: a simulated database whose accepted rollout strategy is a stand-in for tacit, environment-specific knowledge. Real tasks usually leave the answer partly inferable, which would shrink the gap between the conditions.";
-        yield return "The working strategy reaches the block verbatim, on the Approach: line, through the story 6.2 ApproachArguments allowlist. This measures whether a model acts on a Historical Reference labelled as untrusted reference material, not whether it can generalize from vaguer lessons.";
-        yield return "The Approach: line lists every call of the stored run's final attempt, in order, and does not mark which one succeeded (tool results are never injected). A redundant extra call a model makes after the migration went live therefore appears on the line after the working strategy; the harness records the full sequence (`Stored record names`, `Block named`, joined with \" > \"), checks the block against it, and scores `Followed` against the first strategy on the line.";
+        yield return "The working strategy reaches the block verbatim, on the Tried: line of the attempt the Worked: line names, through the story 6.2 ApproachArguments allowlist. This measures whether a model acts on a Historical Reference labelled as untrusted reference material, not whether it can generalize from vaguer lessons.";
+        yield return "The final attempt's Tried: line (the attempt the Worked: line names) still lists every call of that attempt, in order, and does not mark which one succeeded (tool results are never injected); the harness reads that line only, not earlier attempts' Tried: lines. A redundant extra call a model makes after the migration went live therefore appears on the line after the working strategy; the harness records the full sequence (`Stored record names`, `Block named`, joined with \" > \"), checks the block against it, and scores `Followed` against the first strategy on the line.";
         yield return "Retrieval is not under test: records are scoped per service and each scope holds one record, so a memory-enabled trial always retrieves its own service's record. Retrieval quality over a crowded store is a separate question.";
         yield return "The negative control's record is stale (verified against a database that has since changed), not irrelevant; an irrelevant record is a different control and was not run.";
         yield return "Tokens are as the provider reports them; whether thinking tokens are included in the output count is the provider's accounting. Cost is an estimate from list prices. Latency includes the network and is never gated.";

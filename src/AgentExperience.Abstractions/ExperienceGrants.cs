@@ -138,8 +138,8 @@ public sealed record ExperienceGrant(
 /// </param>
 /// <param name="Disclosure">
 /// How much of the record injection may show the recipient's model. Defaults to
-/// <see cref="ExperienceGrantDisclosure.LessonOnly"/>, which withholds the <c>Approach:</c> line, and
-/// only that line: the reflection's prose is rendered unfiltered. A value the enum does not define is
+/// <see cref="ExperienceGrantDisclosure.LessonOnly"/>, which withholds the <c>Tried:</c> and <c>Worked:</c>
+/// lines, and only those lines: the reflection's prose is rendered unfiltered. A value the enum does not define is
 /// <see cref="ExperienceGrantOutcome.Invalid"/> on this field, and nothing is written. The level is
 /// immutable once issued.
 /// </param>
@@ -177,11 +177,12 @@ public sealed record ExperienceGrantRequest(
 /// <remarks>
 /// <para>
 /// The default value is the least disclosure, so a grant that never names a level withholds the
-/// <c>Approach:</c> line. A level is fixed for the life of the grant: to widen or narrow it, revoke the
+/// <c>Tried:</c> and <c>Worked:</c> lines. A level is fixed for the life of the grant: to widen or narrow it, revoke the
 /// grant and issue a new one.
 /// </para>
 /// <para>
-/// The level governs the <c>Approach:</c> line only. The lesson, reuse guidance, preconditions and
+/// The level governs the <c>Tried:</c> and <c>Worked:</c> lines only, and a level that shows them shows no more
+/// than the record's verified working attempt: never the owner's failed attempts or their error classes. The lesson, reuse guidance, preconditions and
 /// warnings come from the reflector and are rendered unfiltered, so a tool name a reflector wrote into
 /// that prose reaches the model under either level.
 /// </para>
@@ -194,14 +195,14 @@ public sealed record ExperienceGrantRequest(
 public enum ExperienceGrantDisclosure
 {
     /// <summary>
-    /// Injection omits the record's <c>Approach:</c> line, and says in the block that the grant
-    /// withholds it when the record has one. The reflection's prose is still rendered.
+    /// Injection omits the record's <c>Tried:</c> and <c>Worked:</c> lines, and says in the block that the grant
+    /// withholds them when the record has a verified working attempt to withhold. The reflection's prose is still rendered.
     /// </summary>
     LessonOnly = 0,
 
     /// <summary>
-    /// The lesson and the <c>Approach:</c> line with its tool names, exactly as the owner scope would see them, but
-    /// never an argument value, whatever either side allowlisted.
+    /// The lesson and the verified working attempt -- one <c>Tried:</c> line with its tool names, and the
+    /// <c>Worked:</c> line -- but never an argument value, whatever either side allowlisted.
     /// </summary>
     LessonAndApproach = 1,
 

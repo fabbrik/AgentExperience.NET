@@ -8,7 +8,7 @@ namespace AgentExperience.LiveReuse.Harness;
 /// <summary>How the scripted stand-in for a model behaves. Each one exists to prove one property of the harness.</summary>
 public enum ScriptedBehavior
 {
-    /// <summary>Tries the strategy on an injected block's Approach: line first, then the listing order.</summary>
+    /// <summary>Tries the strategy on an injected block's working-attempt Tried: line first, then the listing order.</summary>
     FollowsBlock,
 
     /// <summary>Never reads the block: the harness must then show no benefit in either comparison.</summary>
@@ -28,7 +28,7 @@ public enum ScriptedBehavior
 /// <remarks>
 /// It reads only what a real model would be sent -- the messages -- and never the task set: the service and the
 /// migration come from the task text's backticks, what it has already tried from the harness's work log in the
-/// conversation, and a hint from an injected block's Approach: line if there is one. Without a block its candidate
+/// conversation, and a hint from the Tried: line of the attempt an injected block's Worked: line names, if there is one. Without a block its candidate
 /// order is the tool description's listing order, which is exactly the prior a real model is not assumed to share.
 /// </remarks>
 public sealed partial class ScriptedOperatorModel(ScriptedBehavior behavior = ScriptedBehavior.FollowsBlock) : IChatClient

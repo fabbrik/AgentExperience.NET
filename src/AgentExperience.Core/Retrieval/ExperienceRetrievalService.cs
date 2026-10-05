@@ -321,7 +321,7 @@ public sealed class ExperienceRetrievalService
     /// renders from the record (its task text, outcome status, environment, attempts and reflection), when the
     /// options' cutover set lists it unsigned, or, under <see cref="ExperienceProvenanceSigningOptions.ConfirmV1Content"/>,
     /// when a version 1 signature verifies. A record whose content is not confirmed counts as model-authored
-    /// (<see cref="IsModelAuthored"/>), and injection fences its task ID and <c>Approach:</c> line with its lesson.
+    /// (<see cref="IsModelAuthored"/>), and injection fences its task ID and <c>Tried:</c> and <c>Worked:</c> lines with its lesson.
     /// </summary>
     /// <param name="record">The record as it will be rendered.</param>
     /// <returns>Whether its content is confirmed.</returns>

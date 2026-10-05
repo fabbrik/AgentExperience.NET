@@ -620,7 +620,7 @@ internal sealed class ProvenanceSigner
             buffer.WriteByte(0);
         }
 
-        // The attempts, as the Approach: line derives from them: each attempt's sequence number and whether it
+        // The attempts, as the Tried: and Worked: lines derive from them: each attempt's sequence number and whether it
         // failed, and each tool call's sequence number, name and arguments (keys sorted, values canonical).
         if (record.Attempts is { } attempts)
         {

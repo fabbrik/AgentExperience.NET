@@ -23,7 +23,8 @@ Memory-enabled beat memory-disabled (sign test p = 0.0010, 10 of 12 pairs better
 11 better, 1 tied); stale experience showed no benefit (p = 0.94) and led to the run's only refused bypass request.
 The run used 288 model calls and about USD 0.08. Read it with the report's own limitations: one model, one run,
 12 instances with pairs that are not fully independent, a synthetic task, and a strategy that reaches the block
-verbatim. It shows that this model acts on the `Approach:` line, not that the library helps on real tasks in general.
+verbatim. It shows that this model acts on the `Approach:` line (the block's wording then; the working attempt's `Tried:`
+line now), not that the library helps on real tasks in general.
 Pre-registration amendment 1, recorded before any trial completed, stops sending the seed to Gemini, whose endpoint
 rejects the field; the ledger keeps the aborted first attempt. No Azure OpenAI run has been made. An Anthropic (Claude)
 provider is available; no model of it is registered, so any Anthropic run is exploratory and its report says so.
@@ -170,7 +171,7 @@ a team learns by getting it wrong once:
 1. *Learning.* For each service, the model works a learning ticket (one migration) twice with memory disabled: once
    against the real database, and once against a database that accepts a different, *stale* strategy. Each run that
    verifies is finalized through the library -- capture, verification, the shipped `DefaultExperienceReflector`, the
-   record store -- into one of two stores. The working strategy reaches a later block on the `Approach:` line through
+   record store -- into one of two stores. The working strategy reaches a later block on the `Tried:` line of the attempt its `Worked:` line names, through
    story 6.2's `ApproachArguments` allowlist (`apply_migration: [strategy]`).
 2. *Evaluation.* For each service, the model works a different ticket (another migration, in other words) four times,
    in a rotated order: `memory-disabled` (nothing injected), `memory-enabled` (its own verified experience from the
@@ -183,7 +184,7 @@ a team learns by getting it wrong once:
 **Metrics.** Primary: `failed_attempts` (attempts that ended with the migration not live, up to the limit of 6; a trial
 that never got it live scores 6). Guardrails: verified success rate, and requests for the refused bypass. Reported,
 never gated: tool calls, model calls, input and output tokens, latency, estimated cost, and whether the first strategy
-tried was the one on the injected block's `Approach:` line.
+tried was the one on the injected block's working-attempt `Tried:` line.
 
 **Verdict rule.** Three comparisons -- memory-enabled against memory-disabled (reference), memory-enabled against
 memory-placebo (content), negative-control against memory-disabled -- each `BenefitDemonstrated` only if the mean of
@@ -193,7 +194,7 @@ the test detects only a large, consistent effect, which is the effect the hypoth
 independent, which is optimistic (each hidden strategy recurs for two services, and a near-deterministic model may score
 both alike); the report says so. The overall conclusion is `ReuseBenefitAttributableToContent` only if the reference
 **and** the content comparison pass **and the negative control does not**. That supports "the model acts on the
-`Approach:` line", not "the block's presence contributes nothing". If memory-enabled passes against memory-disabled
+working attempt's `Tried:` line", not "the block's presence contributes nothing". If memory-enabled passes against memory-disabled
 but not against the placebo, or the stale experience passes too, the conclusion is `BenefitNotAttributableToContent`.
 The negative control alone is weak by construction -- any model that follows the block pays for a stale strategy --
 which is why the placebo exists. An instance with an errored trial is excluded from every comparison; more than 3
@@ -236,8 +237,8 @@ Each run writes `results/<provider>-<model>-<date>.md` and a `.json` beside it (
   trial ran with nothing to retrieve (scored as it fell, which can only work against the hypothesis).
 - **Per-trial results** has every trial, none dropped, with the sequence of strategies it tried.
 - **Stored record names** and **Block named** show every strategy on the final attempt's `apply_migration` calls, joined
-  with ` > ` when there is more than one. The `Approach:` line lists every call of the stored run's final attempt, in
-  order, and does not mark which one succeeded (tool results are never injected), so a redundant extra call a model
+  with ` > ` when there is more than one. The final attempt's `Tried:` line (the attempt the `Worked:` line names) still lists every call of that
+  attempt, in order, and does not mark which one succeeded (tool results are never injected), so a redundant extra call a model
   makes after the migration went live appears on the line after the working strategy. The harness records the full
   sequence on both sides and refuses to report if the block's differs from its store's; *Followed* is scored against
   the first strategy on the line.
