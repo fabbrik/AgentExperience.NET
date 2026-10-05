@@ -218,6 +218,14 @@ services.AddAgentExperienceRetrieval();
 The whole call is bounded by `RetrievalPolicy.Timeout` (default 500 ms, maximum one day), measured with an injected
 `TimeProvider`.
 
+**Pre-model latency budget.** With injection, retrieval is the first of two bounded steps before the model call: the
+worst case is about `RetrievalPolicy.Timeout` plus the provider's `EligibilityCheckTimeout` (default 500 ms each,
+the host's `DecideInjection` time included in the latter), plus the host's own resolver callback. A search still
+running when the timeout expires is abandoned: it keeps running against the store in the background, so the store
+must tolerate concurrent use, and it may hold a pooled connection until its cancellation lands. The timeout is
+released by a `TimeProvider` timer, so a starved thread pool can still release it late. See
+[Pre-model latency budget](injection.md#pre-model-latency-budget).
+
 | Situation | Outcome | Records |
 | --- | --- | --- |
 | Ran inside the timeout | `Completed` | Every eligible record among the candidates considered, ranked and cut to the request's limit. Check `result.Truncated`: `true` means more matched than were considered |

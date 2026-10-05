@@ -65,6 +65,26 @@ internal sealed class ManualClock(DateTimeOffset start) : TimeProvider
         return timer;
     }
 
+    /// <summary>
+    /// Moves the clock forward in steps of <paramref name="step"/>, yielding to the thread pool between
+    /// steps, until <paramref name="task"/> completes; returns how far the clock was moved. For a bound
+    /// whose timer is armed on another thread at a moment the test cannot observe: the clock never moves
+    /// more than one step past the moment the timer was armed before it is checked again.
+    /// </summary>
+    public async Task<TimeSpan> AdvanceUntilAsync(Task task, TimeSpan step)
+    {
+        var moved = TimeSpan.Zero;
+        for (var attempt = 0; !task.IsCompleted && attempt < 2_000; attempt++)
+        {
+            Advance(step);
+            moved += step;
+            await Task.WhenAny(task, Task.Delay(5));
+        }
+
+        Assert.True(task.IsCompleted, "The task did not complete as the clock moved.");
+        return moved;
+    }
+
     /// <summary>Moves the clock forward, firing every live timer that falls due on the way.</summary>
     public void Advance(TimeSpan by)
     {
@@ -277,6 +297,9 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// <summary>Records whose single read throws, while every other read succeeds -- a store whose failures are per record.</summary>
     public HashSet<Guid> ThrowsFor { get; } = [];
 
+    /// <summary>What a record in <see cref="ThrowsFor"/> throws, when set; an <see cref="ExperienceStoreException"/> otherwise.</summary>
+    public Exception? ThrowsForException { get; set; }
+
     /// <summary>Whether <paramref name="scope"/> may read <paramref name="record"/>: its own scope, or an active grant.</summary>
     private bool Readable(ExperienceRecord record, Scope scope) =>
         record.Scope == scope || Grants.Contains((record.ExperienceId, scope));
@@ -363,6 +386,9 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// <summary>Thrown by a batched read declared <see cref="ExperienceReadPurpose.ScopeCheck"/> when set, while every other read succeeds.</summary>
     public Exception? ScopeCheckThrows { get; set; }
 
+    /// <summary>Awaited inside a batched read declared <see cref="ExperienceReadPurpose.ScopeCheck"/> when set, to exercise the bound on that read alone.</summary>
+    public Func<CancellationToken, Task>? ScopeCheckDelay { get; set; }
+
     public async Task<ExperienceCandidateSearchResult> SearchAsync(
         AuthorizationContext authorization,
         ExperienceCandidateQuery query,
@@ -442,7 +468,7 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
 
         if (ThrowsFor.Contains(experienceId))
         {
-            throw new ExperienceStoreException("this one record cannot be read.");
+            throw ThrowsForException ?? new ExperienceStoreException("this one record cannot be read.");
         }
 
         if (!authorization.Permits(scope) || Denied.Contains(experienceId))
@@ -577,6 +603,11 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         if (options.Purpose == ExperienceReadPurpose.ScopeCheck && ScopeCheckThrows is { } scopeCheckFailure)
         {
             throw scopeCheckFailure;
+        }
+
+        if (options.Purpose == ExperienceReadPurpose.ScopeCheck && ScopeCheckDelay is { } scopeCheckDelay)
+        {
+            await scopeCheckDelay(cancellationToken);
         }
 
         if (SequentialGetMany)
@@ -867,4 +898,33 @@ internal static class InjectionRecords
 
     /// <summary>An identifier that is easy to read in an assertion failure.</summary>
     public static Guid Id(int n) => new($"00000000-0000-0000-0000-{n:D12}");
+}
+
+/// <summary>A store read that never completes and ignores its token, recording the token it was handed.</summary>
+internal sealed class HungRead
+{
+    // Written on a pool thread and read on the test thread; boxed so it can be published with Volatile.
+    private object? _token;
+
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Enter(CancellationToken token)
+    {
+        Volatile.Write(ref _token, token);
+        Entered.TrySetResult();
+        return new TaskCompletionSource().Task;
+    }
+
+    /// <summary>Waits, on the real clock, for the abandoned read's token to be cancelled.</summary>
+    public async Task Cancelled()
+    {
+        bool IsCancelled() => Volatile.Read(ref _token) is CancellationToken { IsCancellationRequested: true };
+
+        for (var attempt = 0; !IsCancelled() && attempt < 1_000; attempt++)
+        {
+            await Task.Delay(5);
+        }
+
+        Assert.True(IsCancelled(), "The abandoned read's token was never cancelled.");
+    }
 }

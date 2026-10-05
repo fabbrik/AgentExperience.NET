@@ -33,7 +33,7 @@ var provider = new ExperienceContextProvider(
             TaskText: TaskTextFor(context),
             CorrelationId: traceId),
 
-        Limits = ExperienceInjectionLimits.Default,   // 8 records, 16 KB of UTF-8, re-checked within 2 s
+        Limits = ExperienceInjectionLimits.Default,   // 8 records, 16 KB of UTF-8, re-checked within 500 ms
 
         DecideInjection = decision => riskPolicy.Allows(decision.Current)
             ? InjectionDecision.Permit
@@ -71,7 +71,7 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.Messages` may be empty — read it with `LastOrDefault`, never `Last()`. |
-| `Limits` | 8 records, 16 KB, 2 s | The record and byte bounds (both drop whole records) and the bound on the final eligibility re-check. |
+| `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records) and the bound on the final eligibility re-check. |
 | `SessionLimits` | 32 records, 64 KB (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
 | `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Approach:` line may show. See [Showing selected argument values](#showing-selected-argument-values). |
@@ -431,7 +431,7 @@ call anyway; the tool body never runs. See the [security suite](../security-suit
 | Resolve | `ResolveRequest` turns the invocation into a `RetrieveExperienceRequest`. Returning `null` skips this invocation (`Skipped`); throwing injects nothing and is reported (`Failed`) |
 | Retrieve | `ExperienceRetrievalService` applies scope, status, confidence, expiry, and environment eligibility, then ranks. Its own timeout bounds the call |
 | Record limit | The top `Limits.MaxRecords` (default 8) in rank order are kept (with `ModelAuthoredLessons = Exclude`, model-authored records are omitted first and take no slot); the rest are recorded as `OverRecordLimit` and are never even re-read. The provider owns this limit — `HistoricalReferenceWriter.Write` *rejects* an untrimmed list rather than applying it a second time |
-| Final eligibility check | Every kept candidate is re-read through the store in **one** batched call, `IExperienceRecordStore.GetManyAsync`, in the request's own authorization and scope, and each is put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 2 s) |
+| Final eligibility check | Every kept candidate is re-read through the store in **one** batched call, `IExperienceRecordStore.GetManyAsync`, in the request's own authorization and scope, and each is put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 500 ms) |
 | Model-authored exclusion | With `ModelAuthoredLessons = Exclude`, a model-authored record is omitted as `ModelAuthored` at the record limit (taking no slot) and again after the re-read |
 | Capability gate | With `ReceivingAgent` set, a record whose approach calls a tool the agent lacks, or one riskier than it may use, is omitted as `ToolUnavailable` or `RiskClassExceeded`, before the host is asked about it |
 | Host decision | `DecideInjection` is asked about each survivor. A denial omits it as `HostDenied` whatever its stored confidence or status, and **never writes to the record**. Fail-closed: a callback that throws or returns `null` denies |
@@ -451,8 +451,18 @@ byte for byte. Three things follow from reading the batch in one call:
 - **The bound and the caller's token cover every decision, the last one included.** `EligibilityCheckTimeout` bounds
   the batch read and is re-checked before each record is decided and once more after the last, so a slow
   `DecideInjection` times the check out wherever it happens. The re-check compares the elapsed time on
-  `TimeProvider`, not only the expiry token, because the token flips only when its timer callback runs, and a starved
-  thread pool can run that late. A caller that cancels mid-check stops it before the next record is decided.
+  `TimeProvider`, not a timer callback, because a starved thread pool can run one late. A caller that cancels
+  mid-check stops it before the next record is decided.
+- **Every read is hard-bounded, not only asked to stop.** The batch read, each per-record fallback read, and the
+  session's withdrawal re-check read are each awaited for what is left of the one `EligibilityCheckTimeout` budget —
+  never a fresh one — the way retrieval bounds its search. A read still running when the budget runs out is abandoned:
+  its token is cancelled in the background, never on the invocation's thread, and the check reports the usual
+  timeout. So a store that ignores its token, or is slow to cancel (Npgsql opens a new connection to cancel a
+  statement), cannot hold the model call past the bound. Two things follow. The per-read bound is released by a
+  `TimeProvider` timer, so on a starved thread pool it can still fire late (the checks between records compare the
+  elapsed time itself). And an abandoned read keeps running against the store in the background until it observes its
+  cancellation: the store must tolerate concurrent use — not a scoped, non-thread-safe context — and a grant's access
+  rows may be written after the timeout has been reported.
 - **Rows are written for the whole selection at once.** The batch read delivers every kept candidate in one call, so
   a grant-delivered record gets its access row even when the check then times out before deciding it. The row records
   that the store handed the record over, and a timed-out check injects nothing.
@@ -470,6 +480,16 @@ a budget too small for the block's own header and footer could never fit a recor
 re-scoped, re-scored, or aged out between retrieval and injection is dropped. Once the block has been handed to a
 model, a later revocation cannot take it back; with session tracking on, the session's next invocation tells the
 model it is withdrawn (see [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices)).
+
+### Pre-model latency budget
+
+Before the model is called, the provider spends at most about `RetrievalPolicy.Timeout` (default 500 ms) on retrieval
+plus `Limits.EligibilityCheckTimeout` (default 500 ms) on the final eligibility check — about 1 s at the defaults —
+plus whatever the host's own `ResolveRequest` callback takes. `DecideInjection` runs inside the check, so its time
+counts against `EligibilityCheckTimeout`; one synchronous call is not cut short, but the check stops as soon as it
+returns past the bound. Store reads are hard-bounded: one still running when its bound runs out is abandoned, keeps
+running in the background, and may hold a pooled database connection until its cancellation lands. The bounds are
+released by `TimeProvider` timers, so a starved thread pool can still release them late.
 
 ## Records shared by a grant
 

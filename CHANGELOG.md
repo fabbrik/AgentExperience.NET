@@ -39,6 +39,27 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   at the defaults, so about twice the completed-only worst case), so size the two together. A run the age bound
   cancels is never finalized or reported by the service. See [How long runs are kept](docs/guide/capture.md#how-long-runs-are-kept).
 
+### The whole pre-model path is bounded, not only retrieval (story 16.2)
+
+- **The problem it fixes.** The injection provider's final eligibility re-read was bounded only cooperatively: a
+  store that ignored its cancellation token, or was slow to cancel, held the model call well past
+  `EligibilityCheckTimeout`, and the per-record fallback after a failed batch could make it worse.
+- **Hard bound.** The batch re-read, each per-record fallback read, and the session's withdrawal re-check read are
+  each awaited for what is left of one `EligibilityCheckTimeout` budget, as retrieval bounds its search. A read still
+  running at expiry is abandoned (cancelled in the background) and the check reports its usual timeout; nothing is
+  injected.
+- **Behaviour change.** `ExperienceInjectionLimits.DefaultEligibilityCheckTimeout` drops from 2 s to **500 ms**, so
+  the worst case before the model call is about 1 s at the defaults (retrieval's 500 ms plus the check's 500 ms,
+  which includes `DecideInjection` time, plus the host's `ResolveRequest`). A host whose store needs longer should set
+  `Limits.EligibilityCheckTimeout`. Hosts most at risk use a store that keeps the port's default `GetManyAsync`, which
+  reads one record at a time; the symptom is `Failed` injection results whose reason says the final eligibility check
+  exceeded its bound, with nothing injected.
+- **Abandoned reads keep running.** A read abandoned at the bound keeps running against the store in the background
+  until it observes its cancellation, so the store must tolerate concurrent use (not a scoped, non-thread-safe
+  context), it may hold a pooled connection until the cancel lands, and a grant's access rows may be written after the
+  timeout is reported. The bound is released by a `TimeProvider` timer, so a starved thread pool can still release it
+  late. See [Pre-model latency budget](docs/guide/injection.md#pre-model-latency-budget).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so
