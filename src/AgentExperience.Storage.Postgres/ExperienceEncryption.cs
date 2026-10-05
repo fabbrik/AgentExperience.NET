@@ -123,10 +123,79 @@ public sealed class ExperienceEncryption
         {
             { Status: ExperienceKeyStatus.Active, Key: { } key } => new RecordKey(reference, key),
             { Status: ExperienceKeyStatus.Destroyed } => null,
-            _ => throw new ExperienceStoreException(
-                "A sealed Experience Record has no key in the configured key store. The key store is misconfigured "
-                + "(the wrong or an empty store); the record is not reported as erased."),
+            _ => throw MissingKey(),
         };
+    }
+
+    /// <summary>
+    /// <see cref="ForReadAsync"/> for many records in <em>one</em> key-store call
+    /// (<see cref="IExperienceKeyStore.GetKeysAsync"/>), for the retrieval reads, which fetch every sealed row's
+    /// key together once their reader is closed and their connection released. Duplicate references are asked for once. Each answer
+    /// means what <see cref="ForReadAsync"/>'s does: a key, or destroyed (the record is erased); a reference
+    /// the store never held is the same configuration failure, thrown after every key obtained is disposed.
+    /// </summary>
+    internal async ValueTask<RecordKeyBatch> ForReadManyAsync(IEnumerable<ExperienceKeyReference> references, CancellationToken cancellationToken)
+    {
+        var distinct = references.Distinct().ToArray();
+        if (distinct.Length == 0)
+        {
+            return new RecordKeyBatch([]);
+        }
+
+        IReadOnlyList<ExperienceKeyLookup> lookups;
+        try
+        {
+            lookups = await KeyStore.GetKeysAsync(distinct, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            throw KeyStoreFailure("read", ex);
+        }
+
+        var keys = new Dictionary<ExperienceKeyReference, RecordKey?>(distinct.Length);
+        var batch = new RecordKeyBatch(keys);
+        var failure = lookups is null || lookups.Count != distinct.Length
+            ? new ExperienceStoreException("The key store answered a batch key lookup with a different number of results than it was asked for.")
+            : null;
+
+        for (var i = 0; i < (lookups?.Count ?? 0); i++)
+        {
+            var lookup = lookups![i];
+            if (failure is null && lookup is { Status: ExperienceKeyStatus.Active, Key: { } key })
+            {
+                keys[distinct[i]] = new RecordKey(distinct[i], key);
+                continue;
+            }
+
+            lookup.Key?.Dispose();
+            if (failure is null)
+            {
+                switch (lookup.Status)
+                {
+                    case ExperienceKeyStatus.Destroyed:
+                        keys[distinct[i]] = null;
+                        break;
+                    case ExperienceKeyStatus.NotFound:
+                        failure = MissingKey();
+                        break;
+                    default:
+                        // Active without a key, or a status the port does not define: the key store broke its
+                        // contract, which is not the same thing as a misconfigured (wrong or empty) store.
+                        failure = new ExperienceStoreException(
+                            "The key store answered a batch key lookup with an active status and no key, or with a status "
+                            + "IExperienceKeyStore does not define.");
+                        break;
+                }
+            }
+        }
+
+        if (failure is not null)
+        {
+            batch.Dispose();
+            throw failure;
+        }
+
+        return batch;
     }
 
     /// <summary>
@@ -172,6 +241,10 @@ public sealed class ExperienceEncryption
         }
     }
 
+    private static ExperienceStoreException MissingKey() => new(
+        "A sealed Experience Record has no key in the configured key store. The key store is misconfigured "
+        + "(the wrong or an empty store); the record is not reported as erased.");
+
     private static ExperienceStoreException KeyStoreFailure(string operation, Exception inner) =>
         new($"The Experience Record key store failed to {operation} a data key.", inner);
 
@@ -184,8 +257,43 @@ public sealed class ExperienceEncryption
         public ValueTask<ExperienceKeyLookup> GetKeyAsync(ExperienceKeyReference reference, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Plaintext mode has no key store.");
 
+        public ValueTask<IReadOnlyList<ExperienceKeyLookup>> GetKeysAsync(
+            IReadOnlyList<ExperienceKeyReference> references,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Plaintext mode has no key store.");
+
         public ValueTask DestroyKeyAsync(ExperienceKeyReference reference, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Plaintext mode has no key store.");
+    }
+}
+
+/// <summary>
+/// The keys one <see cref="ExperienceEncryption.ForReadManyAsync"/> call fetched, by reference. Disposing it
+/// zeroes every key.
+/// </summary>
+internal sealed class RecordKeyBatch : IDisposable
+{
+    private readonly Dictionary<ExperienceKeyReference, RecordKey?> _keys;
+
+    internal RecordKeyBatch(Dictionary<ExperienceKeyReference, RecordKey?> keys)
+    {
+        _keys = keys;
+    }
+
+    /// <summary>
+    /// The record's key, or <see langword="null"/> when it was destroyed (the record is erased). A reference
+    /// the batch was not asked for is a programming error.
+    /// </summary>
+    internal RecordKey? this[ExperienceKeyReference reference] => _keys.TryGetValue(reference, out var key)
+        ? key
+        : throw new InvalidOperationException("A key was not fetched for a sealed row in this batch.");
+
+    public void Dispose()
+    {
+        foreach (var key in _keys.Values)
+        {
+            key?.Dispose();
+        }
     }
 }
 

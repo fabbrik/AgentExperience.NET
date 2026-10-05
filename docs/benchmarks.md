@@ -17,8 +17,10 @@ dotnet run -c Release --project benchmarks/AgentExperience.Benchmarks -- --filte
   at the end. Without Docker it prints that the PostgreSQL benchmarks are skipped, and runs only the in-memory ones.
   If your Docker socket is not the default one (Rancher Desktop, for example), set
   `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`, as for the tests.
-- **One class**: `--filter '*RetrievalBenchmarks*'`, `'*InjectionBenchmarks*'`, `'*FinalizationBenchmarks*'` or
-  `'*ConfidenceBenchmarks*'`. The filter matches the whole name, so a bare `'*Confidence*'` also selects
+- **One class**: `--filter '*RetrievalBenchmarks*'`, `'*InjectionBenchmarks*'`, `'*FinalizationBenchmarks*'`,
+  `'*EncryptedRetrievalBenchmarks*'` or `'*ConfidenceBenchmarks*'`. `'*RetrievalBenchmarks*'` also selects
+  `EncryptedRetrievalBenchmarks`; use `'AgentExperience.Benchmarks.RetrievalBenchmarks*'` for the plaintext class
+  alone. The filter matches the whole name, so a bare `'*Confidence*'` also selects
   `RetrievalBenchmarks.ConfidenceDecay`.
 - **Time.** The baseline run below took 4 minutes 26 seconds, build included. Every case runs in one process with a
   short job (3 warmup and 10 measured iterations of about 250 ms), so the container starts and each dataset is seeded
@@ -45,6 +47,7 @@ runs. Their `Error` column shows it.
 | `RetrievalBenchmarks` | `ExperienceRetrievalService.RetrieveAsync`, text-only, with `RetrievalPolicy.Default` (its 500 ms timeout included) and `RankingWeights.Default` | A scope of 1,000 or 10,000 validated records, each the conformance suite's `FullRecord` varied by index. The task text matches a tenth of them (100 or 1,000), so the candidate limit of 50 truncates every search. `PreferredEnvironment` sets two preferred attributes for the default scorer ([story 10.1](guide/retrieval.md#preferring-an-environment)); `ConfidenceDecay` adds a four-domain decay policy ([story 10.3](guide/retrieval.md#decaying-confidence-by-domain)) |
 | `InjectionBenchmarks` | `ExperienceContextProvider` producing one [Historical Reference](guide/injection.md) block of 8 records: retrieval, the one batched re-read of the final eligibility check, the writer | The 1,000-record scope and default limits. The provider is invoked the way MAF invokes it before a run (`InvokingAsync`), so no agent run and no model are timed. Each operation uses a fresh session, so `WithSessionTracking` pays for a first invocation's session account |
 | `FinalizationBenchmarks` | `ExperienceFinalizationService.FinalizeAsync` of a completed run with two attempts and four tool calls, verified against a closed round | Capturing the runs happens in each iteration's setup and is not timed. Each iteration gets a new capture service and, in memory, a new store |
+| `EncryptedRetrievalBenchmarks` | `ExperienceRetrievalService.RetrieveAsync`, text-only, with crypto-shredding on and the retrieval timeout raised to 30 s, on PostgreSQL only | 1,000 sealed records shaped like `RetrievalBenchmarks`' (50 sealed candidates per search), keys held by `EnvelopeExperienceKeyStore` over a KEK that waits `UnwrapLatencyMs` (0 or 10) before every unwrap, standing in for a remote KMS. `Batched` is the shipped store (16 unwraps at a time); `OneAtATime` is the same store with concurrency limited to one (it does not reproduce the exact path before [story 16.3](guide/crypto-shredding.md#key-custody-the-property-is-only-as-true-as-this)) |
 | `ConfidenceBenchmarks` | `ExperienceLifecycleService.ApplyEvidenceAsync`: supporting machine evidence from a run not seen before, so every call is counted and committed | The service trusts host-supplied identifiers. The default, verifying mode's run lookup is not timed |
 
 Every class has `[MemoryDiagnoser]`. Each class's setup runs its operation once and fails the case if it did not do
@@ -118,6 +121,23 @@ include what PostgreSQL allocates.
   than the retrieval inside it (compare the 1,000-record rows), including the one `GetManyAsync` round trip.
 - **In memory, the store costs next to nothing**, so those rows are the library's own CPU and allocation cost, and the
   best rows to watch for a regression in Core or the adapter.
+
+## Encrypted retrieval (story 16.3)
+
+`EncryptedRetrievalBenchmarks` on the baseline machine above on 2026-10-05 (mean ± error, StdDev):
+
+| Unwrap latency | Batched | OneAtATime |
+| ---: | ---: | ---: |
+| 0 ms | 5.146 ± 1.862 ms (StdDev 1.232) | 4.312 ± 0.245 ms (StdDev 0.162) |
+| 10 ms | 62.669 ± 6.231 ms (StdDev 4.121) | 610.405 ± 8.341 ms (StdDev 5.517) |
+
+- **With a 10 ms unwrap, one at a time exceeds the 500 ms retrieval timeout**: 610.4 ms, 9.8 times the batched 62.7
+  ms. Under the default policy that retrieval would time out and inject nothing.
+- **With no unwrap latency, batching costs a small overhead**: 5.1 ms against 4.3 ms, within the batched row's wide
+  error. Allocation is the same (2.8 MB).
+- `OneAtATime` is the shipped store with `maxConcurrentKeyLookups: 1`. It limits concurrency to one but still reads the
+  rows first and makes one `GetKeysAsync` call with the connection released; it does not reproduce the exact pre-16.3
+  path, which looked each key up while the reader held its connection.
 
 ## Row-level security (story 15.1)
 

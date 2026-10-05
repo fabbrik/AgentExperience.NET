@@ -162,6 +162,64 @@ public interface IExperienceKeyStore
     ValueTask<ExperienceKeyLookup> GetKeyAsync(ExperienceKeyReference reference, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Returns several records' keys without creating any: result <c>i</c> answers
+    /// <paramref name="references"/>[<c>i</c>], with exactly the statuses and semantics of
+    /// <see cref="GetKeyAsync"/>. The PostgreSQL adapter's retrieval reads fetch every sealed row's key through
+    /// one call to this, so a store over a remote KMS should override it to look keys up and unwrap them
+    /// concurrently (or through the KMS's own batch API) rather than one after another.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The default calls <see cref="GetKeyAsync"/> for each reference, in order, so an existing implementation
+    /// keeps working unchanged. An override must keep the same rules: one result per reference, in order;
+    /// a destroyed reference answers <see cref="ExperienceKeyStatus.Destroyed"/> (never a key from a cache);
+    /// and when the call throws, every key it already obtained is disposed before the exception propagates.
+    /// The caller owns and disposes every returned key.
+    /// </para>
+    /// <para>
+    /// <b>A wrapper or decorator must forward this method</b> to the store it wraps. One that implements only
+    /// the single-key members gets this default, and so looks keys up one after another even when the wrapped
+    /// store batches them.
+    /// </para>
+    /// <para>
+    /// The PostgreSQL adapter calls it once per retrieval read (text search, vector search, and the eligibility
+    /// re-read), so one injection can ask for the same record's key more than once, and several calls can be in
+    /// flight at once. An override that runs lookups concurrently should bound them per call and expect that
+    /// bound to be multiplied by the number of concurrent calls.
+    /// </para>
+    /// </remarks>
+    /// <param name="references">The records. May be empty; may not be <see langword="null"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>One lookup per reference, in the same order.</returns>
+    async ValueTask<IReadOnlyList<ExperienceKeyLookup>> GetKeysAsync(
+        IReadOnlyList<ExperienceKeyReference> references,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(references);
+
+        var results = new ExperienceKeyLookup[references.Count];
+        var obtained = 0;
+        try
+        {
+            for (; obtained < results.Length; obtained++)
+            {
+                results[obtained] = await GetKeyAsync(references[obtained], cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            for (var i = 0; i < obtained; i++)
+            {
+                results[i].Key?.Dispose();
+            }
+
+            throw;
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Destroys the record's key, permanently. Idempotent: destroying a destroyed key, or a reference that
     /// never had one, succeeds and leaves the reference <see cref="ExperienceKeyStatus.Destroyed"/>.
     /// </summary>

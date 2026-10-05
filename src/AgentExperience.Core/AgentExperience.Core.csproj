@@ -24,6 +24,12 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Only so the suite can prove EnvelopeExperienceKeyStore's batch fan-out disposes every key it obtained
+         when one lookup fails: the keys it creates are otherwise unobservable. -->
+    <InternalsVisibleTo Include="AgentExperience.Core.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_CORE</DefineConstants>
   </PropertyGroup>

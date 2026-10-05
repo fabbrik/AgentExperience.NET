@@ -38,7 +38,7 @@ Findings-resolution pass accepted on 2026-09-07: closed all six findings from th
 - Epic 13: 13.1.
 - Epic 14: 14.1 → 14.2 → 14.3 → 14.4.
 - Epic 15: 15.1.
-- Epic 16: 16.1 → 16.4 → 16.2 → 16.3.
+- Epic 16: 16.1 → 16.4 → 16.2 → 16.3 → 16.5.
 - Epic 17: 17.1 → 17.2 → 17.3 → 17.4 → 17.5 → 17.6 → 17.7.
 - Epic 18: 18.1 → 18.2 → 18.3 → 18.4 → 18.5 → 18.6 → 18.7.
 - Epic 19: 19.1 → 19.2 → 19.3.
@@ -1771,6 +1771,20 @@ So that memory stays bounded without the MAF adapter's open-run timer.
 **Given** `InMemoryExperienceCaptureService` used without the MAF adapter
 **When** runs are started and never completed
 **Then** an optional open-run age bound (off by default, measured on the monotonic clock) completes them as abandoned so the completed-run bounds then apply, a count bound refuses new runs with a typed outcome once too many are open, and the MAF adapter's behaviour is unchanged.
+
+### Story 16.5: Stop Piling Up Abandoned Reads Against a Hung Store
+
+**Traces:** NFR3 · **Depends on:** 16.2
+
+As an operator,
+I want retrieval and the eligibility re-read to stop issuing new store reads while too many abandoned ones are still running,
+So that a store that hangs on every call cannot exhaust the connection pool or leak token registrations.
+
+**Acceptance Criteria:**
+
+**Given** a store whose reads hang and ignore cancellation
+**When** many invocations time out against it
+**Then** the number of abandoned reads still running is capped (configurable), a call over the cap fails fast with the existing timed-out or failed outcome without touching the store, an abandoned read's registration on the caller's token is released when it is abandoned rather than when the read ends, and normal reads are unaffected.
 
 ## Epic 17: Close the Boundary Residuals a Code Change Can Remove
 

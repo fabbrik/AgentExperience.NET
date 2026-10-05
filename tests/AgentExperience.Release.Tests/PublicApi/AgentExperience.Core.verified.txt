@@ -442,11 +442,15 @@ namespace AgentExperience.Core.KeyManagement
 {
     public sealed class EnvelopeExperienceKeyStore : AgentExperience.Abstractions.IExperienceKeyStore
     {
+        public const int DefaultMaxConcurrentKeyLookups = 16;
         public const int MaxRewrapBatchSize = 500;
         public EnvelopeExperienceKeyStore(AgentExperience.Abstractions.IExperienceKeyEncryptionKey keyEncryptionKey, AgentExperience.Abstractions.IExperienceWrappedKeyRepository repository) { }
+        public EnvelopeExperienceKeyStore(AgentExperience.Abstractions.IExperienceKeyEncryptionKey keyEncryptionKey, AgentExperience.Abstractions.IExperienceWrappedKeyRepository repository, int maxConcurrentKeyLookups) { }
+        public int MaxConcurrentKeyLookups { get; }
         public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> CreateKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.ValueTask DestroyKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.ValueTask<AgentExperience.Abstractions.ExperienceKeyLookup> GetKeyAsync(AgentExperience.Abstractions.ExperienceKeyReference reference, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceKeyLookup>> GetKeysAsync(System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceKeyReference> references, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.KeyManagement.ExperienceKeyRewrapResult> RewrapAsync(int batchSize, System.Threading.CancellationToken cancellationToken) { }
     }
     public sealed class ExperienceKeyRewrapResult : System.IEquatable<AgentExperience.Core.KeyManagement.ExperienceKeyRewrapResult>

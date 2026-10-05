@@ -1005,11 +1005,17 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     /// <see cref="PurgeAsync"/>), and a record is erased once its key is gone.
     /// </para>
     /// </summary>
-    private async ValueTask<ExperienceRecordGetResult> ResultFromRowAsync(DbDataReader reader, CancellationToken cancellationToken)
+    private async ValueTask<ExperienceRecordGetResult> ResultFromRowAsync(DbDataReader reader, CancellationToken cancellationToken) =>
+        ResultFromRow(reader, ReadDeleted(reader) ? null : await ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false));
+
+    /// <summary>
+    /// <see cref="ResultFromRowAsync"/> for a row whose record has already been decoded: <paramref name="record"/>
+    /// is <see langword="null"/> for a tombstone or a sealed row whose key was destroyed.
+    /// </summary>
+    private static ExperienceRecordGetResult ResultFromRow(DbDataReader reader, ExperienceRecord? record)
     {
         var sharedByGrant = ReadSharedByGrant(reader);
 
-        var record = ReadDeleted(reader) ? null : await ReadRecordAsync(reader, _encryption, cancellationToken).ConfigureAwait(false);
         if (record is null)
         {
             // An erased record. The owner is told so -- the ID is spent and no retry will make it
@@ -1184,22 +1190,38 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         Guid[] experienceIds,
         CancellationToken cancellationToken)
     {
-        await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
-        var found = new Dictionary<Guid, ExperienceRecordGetResult>(experienceIds.Length);
-        await using (var command = session.CreateCommand(sql))
+        // The rows are read into memory, the reader closed, the read-only transaction committed and the connection
+        // returned to the pool before any key is fetched: nothing after decoding writes in this transaction (the
+        // access rows are appended by GetManyAsync afterwards, on a connection of their own), so a slow key store
+        // holds no connection. The key store is then asked once, for every sealed live row together.
+        List<SnapshotRow> rows;
+        await using (var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false))
         {
-            command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", experienceIds));
-            AddScopeParameters(command.Parameters, scope);
-
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            await using (var command = session.CreateCommand(sql))
             {
-                // experience_id is the primary key, so a row per ID at most; the lateral join is LIMIT 1.
-                found[reader.GetGuid(0)] = await ResultFromRowAsync(reader, cancellationToken).ConfigureAwait(false);
+                command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", experienceIds));
+                AddScopeParameters(command.Parameters, scope);
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                rows = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
             }
+
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+        // A tombstone is answered without its key, exactly as the single read answers it.
+        var live = rows.Where(row => !ReadDeleted(row)).ToArray();
+        var records = await ReadRecordsAsync(live, _encryption, cancellationToken).ConfigureAwait(false);
+        var found = new Dictionary<Guid, ExperienceRecordGetResult>(experienceIds.Length);
+        var next = 0;
+        foreach (var row in rows)
+        {
+            var record = next < live.Length && ReferenceEquals(live[next], row) ? records[next++] : null;
+
+            // experience_id is the primary key, so a row per ID at most; the lateral join is LIMIT 1.
+            found[row.GetGuid(0)] = ResultFromRow(row, record);
+        }
+
         return found;
     }
 
@@ -3278,17 +3300,72 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         if (encryption is null)
         {
-            throw new ExperienceStoreException(
-                "Stored Experience Record is sealed (payload_version 2), and this component was constructed without an "
-                + "ExperienceEncryption. Give every component of an encrypted deployment the same ExperienceEncryption.");
+            throw SealedWithoutEncryption();
         }
 
         using var key = await encryption.ForReadAsync(experienceId, scope, cancellationToken).ConfigureAwait(false);
-        if (key is null)
+        return key is null ? null : DecodeSealedRecord(reader, key, storedPayload);
+    }
+
+    /// <summary>
+    /// <see cref="ReadRecordAsync"/> for many rows already read into memory (<see cref="SnapshotRow"/>), with
+    /// every sealed row's key fetched in <em>one</em> key-store call
+    /// (<see cref="ExperienceEncryption.ForReadManyAsync"/>). Result <c>i</c> answers <paramref name="rows"/>[<c>i</c>]
+    /// exactly as <see cref="ReadRecordAsync"/> would: the record, or <see langword="null"/> when it is sealed and
+    /// its key was destroyed; the same exceptions otherwise. Plaintext rows never reach the key store, and every
+    /// key is disposed before this returns.
+    /// </summary>
+    /// <param name="rows">Rows that selected <see cref="SelectColumns"/> first. The reader they came from must already be closed, and the retrieval reads also release its connection first.</param>
+    /// <param name="encryption">The component's encryption, or <see langword="null"/> in plaintext mode.</param>
+    /// <param name="cancellationToken">Cancels the key lookup.</param>
+    /// <returns>One entry per row, in order.</returns>
+    internal static async ValueTask<ExperienceRecord?[]> ReadRecordsAsync(
+        IReadOnlyList<DbDataReader> rows,
+        ExperienceEncryption? encryption,
+        CancellationToken cancellationToken)
+    {
+        var records = new ExperienceRecord?[rows.Count];
+        var sealedRows = new List<(int Index, ExperienceKeyReference Reference, string StoredPayload)>();
+        for (var i = 0; i < rows.Count; i++)
         {
-            return null;
+            var row = rows[i];
+            try
+            {
+                if (row.GetInt32(16) != SealedText.SealedPayloadVersion)
+                {
+                    records[i] = ReadRecord(row);
+                    continue;
+                }
+
+                sealedRows.Add((i, new ExperienceKeyReference(row.GetGuid(0), ReadRecordScope(row)), row.GetString(17)));
+            }
+            catch (Exception ex) when (ex is not (ExperienceStoreException or OperationCanceledException or NpgsqlException))
+            {
+                throw new ExperienceStoreException("Stored Experience Record could not be decoded.", ex);
+            }
         }
 
+        if (sealedRows.Count == 0)
+        {
+            return records;
+        }
+
+        if (encryption is null)
+        {
+            throw SealedWithoutEncryption();
+        }
+
+        using var keys = await encryption.ForReadManyAsync(sealedRows.Select(row => row.Reference), cancellationToken).ConfigureAwait(false);
+        foreach (var (index, reference, storedPayload) in sealedRows)
+        {
+            records[index] = keys[reference] is { } key ? DecodeSealedRecord(rows[index], key, storedPayload) : null;
+        }
+
+        return records;
+    }
+
+    private static ExperienceRecord DecodeSealedRecord(DbDataReader reader, RecordKey key, string storedPayload)
+    {
         var (taskId, payloadJson) = SealedText.ReadSealedRecordPlaintext(
             key.Open(SealedText.PayloadColumn, Guid.Empty, SealedText.ReadPayloadEnvelope(storedPayload)));
 
@@ -3301,6 +3378,10 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             throw new ExperienceStoreException("Stored Experience Record could not be decoded.", ex);
         }
     }
+
+    private static ExperienceStoreException SealedWithoutEncryption() => new(
+        "Stored Experience Record is sealed (payload_version 2), and this component was constructed without an "
+        + "ExperienceEncryption. Give every component of an encrypted deployment the same ExperienceEncryption.");
 
     /// <summary>The owner scope at ordinals 2-7 of <see cref="SelectColumns"/>.</summary>
     internal static Scope ReadRecordScope(DbDataReader reader) => new(

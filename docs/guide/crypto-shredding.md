@@ -79,7 +79,8 @@ data key encrypts only its own record's handful of values, far inside the 2³² 
 ## Key custody: the property is only as true as this
 
 Keys come from an `IExperienceKeyStore` (`AgentExperience.Abstractions`): `CreateKeyAsync` (get-or-create),
-`GetKeyAsync`, and `DestroyKeyAsync`, each for one record — its ID and its own scope. **A destroyed reference is
+`GetKeyAsync`, and `DestroyKeyAsync`, each for one record — its ID and its own scope — and `GetKeysAsync`, which looks
+up several records' keys in one call (below). **A destroyed reference is
 destroyed for ever**: the store never gives it a key again, which is what stops a late writer from making a
 half-erased record look live. A sealed row whose key the store has **never** held is a configuration failure (the
 wrong or an empty key store) and throws; only a destroyed key reads as erased.
@@ -105,8 +106,29 @@ Rules for the production key store, each of which the property depends on:
   never writes back a key destroyed meanwhile. Once it is done, retire the old KEK version in your KMS: every
   key-store backup wrapped under it becomes unusable too.
 - **No caching.** The store asks the key store on every read and never caches a key; a production key store that
-  caches extends its own erasure window by the cache's lifetime. The cost is one key-store call per sealed record
-  read, made in turn while the reader holds its connection: a search returning twenty sealed records makes twenty.
+  caches extends its own erasure window by the cache's lifetime. A destroyed key is never served by a later read.
+- **Retrieval fetches keys in one batch per read.** The text search, the vector search and the eligibility re-read
+  before injection (`GetManyAsync`) read their rows into memory, close the data reader, commit their read-only
+  transaction and return the connection to the pool, and only then make **one** `GetKeysAsync` call for every sealed
+  row they returned (plaintext rows and tombstones never reach the key store), so a slow KMS holds no reader,
+  transaction or pooled connection. The rows buffered in memory are bounded by the candidate limit for the two
+  searches and by the ID list given for `GetManyAsync`. Other reads — a single `GetAsync`, a query, history, grants,
+  the re-index scan — still make one call per sealed record, with their reader open.
+- **The envelope store unwraps a batch concurrently.** `EnvelopeExperienceKeyStore` answers `GetKeysAsync` by looking
+  up and unwrapping at most 16 keys at a time by default (`maxConcurrentKeyLookups` in its constructor). That bound is
+  **per call**: one injection can have the text search, the vector search and the re-read in flight, and a host runs
+  retrievals in parallel, so the unwraps in flight against your KMS can reach the bound times the number of concurrent
+  calls. Size it, and your KMS's rate limit, with that in mind. Because of this concurrency, your
+  `IExperienceWrappedKeyRepository` and `IExperienceKeyEncryptionKey` implementations are called from several threads
+  at once and **must be thread-safe**. One injection can also unwrap the same record's key more than once (once per
+  channel that returned it and once in the re-read): nothing is cached.
+- **A custom key store over a remote KMS should override `GetKeysAsync`**, to unwrap concurrently or through the KMS's
+  own batch API. The interface's default calls `GetKeyAsync` once per reference in turn, so a 50-row search at 10 ms
+  per unwrap costs more than the whole 500 ms default retrieval timeout
+  ([benchmark](../benchmarks.md#encrypted-retrieval-story-163)). An override answers every reference in order with
+  `GetKeyAsync`'s statuses, and disposes every key it obtained before it throws. **A wrapper or decorator around an
+  `IExperienceKeyStore` must forward `GetKeysAsync` to the store it wraps**: one that implements only the single-key
+  members gets the default, and so falls back to one lookup after another even when the wrapped store batches.
 - **It is on the erasure's critical path.** An unreachable key store makes every delete fail closed (below), and
   every read of a sealed record fail. So does a sealed row that will not open (a tampered value, or a key the store
   never held): the whole read, search or scan it is part of throws, loudly, rather than dropping the row. A failed
