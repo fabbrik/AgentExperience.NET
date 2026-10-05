@@ -243,6 +243,95 @@ public class ExperienceInjectionTests
         Assert.Null(result.Failure);
     }
 
+    // ---- The derived task text ------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_resolver_using_DerivedTaskText_joins_a_follow_up_to_the_previous_turn_and_never_reads_the_block()
+    {
+        var requested = new List<string>();
+        var resolverMessages = new List<int>();
+        var harness = new Harness
+        {
+            Resolve = context =>
+            {
+                lock (requested)
+                {
+                    requested.Add(context.DerivedTaskText ?? "(none)");
+                    resolverMessages.Add(context.Messages.Count);
+                }
+
+                // No derivable text: skip injection rather than search on a generic constant.
+                return context.DerivedTaskText is { } taskText
+                    ? new RetrieveExperienceRequest(Authorization, TestScope, taskText, CorrelationId: "corr-1")
+                    : null;
+            },
+        };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, lesson: "Check the lock table first."), relevance: 1d);
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        await agent.RunAsync("Deploy service X to prod", session);
+
+        Assert.Equal("Deploy service X to prod", harness.World.LastQuery!.TaskText);
+        Assert.NotNull(harness.InjectedText());
+
+        // The next turn's history holds the earlier request and the injected block (a User message). The follow-up is
+        // joined to the earlier request from history; the block is never read.
+        await agent.RunAsync("and retry", session);
+
+        Assert.Contains(
+            harness.Client.LastMessages!,
+            m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true
+                && m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.ChatHistory);
+        Assert.Equal(["Deploy service X to prod", "Deploy service X to prod \u2014 and retry"], requested);
+        Assert.Equal("Deploy service X to prod \u2014 and retry", harness.World.LastQuery!.TaskText);
+
+        // The resolver's Messages are still only the invocation's own input, as before.
+        Assert.Equal([1, 1], resolverMessages);
+
+        // An invocation with no user text skips injection.
+        await agent.RunAsync([new ChatMessage(ChatRole.User, [new DataContent(new byte[] { 1, 2, 3 }, "image/png")])], session);
+        Assert.Equal(InjectionOutcome.Skipped, harness.Results[^1].Outcome);
+    }
+
+    [Fact]
+    public async Task Concurrent_follow_ups_on_two_sessions_each_join_their_own_sessions_previous_turn()
+    {
+        using var overlap = new Barrier(2);
+        var gateFollowUps = false;
+        var derived = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var harness = new Harness
+        {
+            Resolve = context =>
+            {
+                if (Volatile.Read(ref gateFollowUps))
+                {
+                    // Both follow-ups are inside their resolvers at once before either reads its text.
+                    Assert.True(overlap.SignalAndWait(TimeSpan.FromSeconds(10)));
+                    derived.Add(context.DerivedTaskText ?? "(none)");
+                }
+
+                return null;
+            },
+        };
+        var provider = harness.Provider();
+        var agent = harness.Agent(provider);
+        var first = await agent.CreateSessionAsync();
+        var second = await agent.CreateSessionAsync();
+
+        await agent.RunAsync("Deploy service X to prod", first);
+        await agent.RunAsync("Rotate the signing keys for tenant 9", second);
+
+        Volatile.Write(ref gateFollowUps, true);
+        await Task.WhenAll(
+            Task.Run(() => agent.RunAsync("and retry", first)),
+            Task.Run(() => agent.RunAsync("and publish them", second)));
+
+        Assert.Equal(
+            ["Deploy service X to prod \u2014 and retry", "Rotate the signing keys for tenant 9 \u2014 and publish them"],
+            derived.Order(StringComparer.Ordinal));
+    }
+
     // ---- Matrix: Timeout ------------------------------------------------------------------------
 
     [Fact]

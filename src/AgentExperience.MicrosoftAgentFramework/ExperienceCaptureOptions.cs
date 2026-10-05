@@ -20,7 +20,70 @@ namespace AgentExperience.MicrosoftAgentFramework;
 public sealed record ExperienceRunContext(
     IEnumerable<ChatMessage> Messages,
     AgentSession? Session,
-    AIAgent Agent);
+    AIAgent Agent)
+{
+    private DerivedTaskTextCache? _derivedTaskText;
+
+    /// <summary>A copy for <c>with</c>: the same members and a fresh, unread derived text.</summary>
+    /// <param name="original">The context being copied.</param>
+    private ExperienceRunContext(ExperienceRunContext original)
+    {
+        Messages = original.Messages;
+        Session = original.Session;
+        Agent = original.Agent;
+    }
+
+    /// <summary>
+    /// The task text <see cref="ExperienceTaskText.Derive(IEnumerable{ChatMessage}, int)"/> derives from <see cref="Messages"/> (at most
+    /// <see cref="ExperienceTaskText.DefaultMaxLength"/> UTF-16 code units), or <see langword="null"/> when no user
+    /// message qualifies. Nothing uses it unless the host does: write
+    /// <c>TaskDescription: context.DerivedTaskText</c> in <see cref="ExperienceCaptureOptions.ResolveRun"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only this invocation's input.</b> Capture sees the messages the caller passed, not the session's chat history,
+    /// so a short follow-up is joined only to a previous user message in the same input; "and retry" sent on its own
+    /// is derived as "and retry", where the injection provider, which sees the replayed history, derives
+    /// "Deploy service X to prod — and retry". To describe the run the same way, pass the history the host keeps to
+    /// <see cref="ExperienceTaskText.Derive(IEnumerable{ChatMessage}, int)"/> together with <see cref="Messages"/>.
+    /// </para>
+    /// <para>
+    /// <b>Computed on first read.</b> <see cref="Messages"/> is snapshotted then, enumerated once, so a single-use
+    /// sequence is not consumed twice by this property and a later change to the same list is not seen. It is computed
+    /// at most once per instance (a <c>with</c> copy computes its own) and is part of neither equality nor
+    /// <see cref="object.ToString"/>. If reading <see cref="Messages"/> throws, the first read throws that exception
+    /// and every later read returns <see langword="null"/>.
+    /// </para>
+    /// <para>
+    /// It is the user's own words: stored as <see cref="ExperienceRunDescriptor.TaskDescription"/> it is stored
+    /// unredacted, as a task description always was, so a host with sensitive prompts should pass it through its own
+    /// redaction first. See <see cref="ExperienceTaskText"/>.
+    /// </para>
+    /// </remarks>
+    public string? DerivedTaskText => DerivedTaskTextCache.For(ref _derivedTaskText).Get(() => Messages);
+
+    /// <summary>Equal when <see cref="Messages"/>, <see cref="Session"/> and <see cref="Agent"/> are.</summary>
+    /// <param name="other">The context to compare with.</param>
+    /// <returns><see langword="true"/> when the two contexts are equal.</returns>
+    public bool Equals(ExperienceRunContext? other) =>
+        other is not null
+        && (ReferenceEquals(this, other)
+            || (EqualityComparer<IEnumerable<ChatMessage>>.Default.Equals(Messages, other.Messages)
+                && EqualityComparer<AgentSession?>.Default.Equals(Session, other.Session)
+                && EqualityComparer<AIAgent>.Default.Equals(Agent, other.Agent)));
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => HashCode.Combine(Messages, Session, Agent);
+
+    // The derived text is the user's own words, so it stays out of ToString, which hosts log.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Messages = ").Append(Messages)
+            .Append(", Session = ").Append(Session)
+            .Append(", Agent = ").Append(Agent);
+        return true;
+    }
+}
 
 /// <summary>
 /// The host's description of one MAF invocation, used to open its <see cref="ExperienceRun"/>.

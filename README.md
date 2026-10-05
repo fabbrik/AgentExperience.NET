@@ -152,7 +152,10 @@ var injection = new ExperienceContextProvider(
     provider.GetRequiredService<IExperienceRecordStore>(),
     new ExperienceInjectionOptions
     {
-        ResolveRequest = _ => new RetrieveExperienceRequest(authorization, scope, TaskText: "triage a stuck refund"),
+        // The user's latest words, bounded; with none, return null to skip injection for this run.
+        ResolveRequest = context => context.DerivedTaskText is { } taskText
+            ? new RetrieveExperienceRequest(authorization, scope, TaskText: taskText)
+            : null,
     });
 
 // 5. After each run: capture what happened, verify it with your checks, and store the lesson.
@@ -160,7 +163,8 @@ AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIC
     .AsBuilder()
     .UseExperienceCapture(provider.GetRequiredService<IExperienceCaptureService>(), new ExperienceCaptureOptions
     {
-        ResolveRun = _ => new ExperienceRunDescriptor(TaskId: "triage-ticket", Scope: scope),
+        ResolveRun = context => new ExperienceRunDescriptor(
+            TaskId: "triage-ticket", Scope: scope, TaskDescription: context.DerivedTaskText),
         FinalizationService = provider.GetRequiredService<ExperienceFinalizationService>(),
         ResolveFinalization = context =>
         {
@@ -185,9 +189,14 @@ var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. 
 What happens: the first run finds nothing to inject and runs normally. After it, if your `tests-pass` evidence
 passed, its lesson is stored as `Validated`; if not, it is stored as `Quarantined` and never reused. The next run on a
 similar task can get that lesson in its context, if its task text matches and the lesson clears the confidence
-floor (0.5; a new validated lesson starts at 2/3). In a real host, derive `TaskText` from the invocation's messages
-rather than a constant (see [Injection](docs/guide/injection.md#wiring-it)). Nothing here throws into the agent: capture and injection failures are
-reported through callbacks, and a slow or unavailable database means no memory for that run, not a failed run.
+floor (0.5; a new validated lesson starts at 2/3). `DerivedTaskText` is the user's latest message (with the one
+before it, from the same input or the session's history, when the latest is a short follow-up such as "and retry"),
+never injected context or a tool result, cleaned up and cut to 512 UTF-16 code units (see
+[Injection](docs/guide/injection.md#the-task-text)). Capture sees only the invocation's own input, so there the
+follow-up is joined only to an earlier message in that input. It is the user's own words, unredacted: stored as the
+run's `TaskDescription` it is stored as written, so a host whose prompts can hold sensitive data should redact it
+first. Nothing here throws into the agent: capture and injection failures are reported through callbacks, and a slow
+or unavailable database means no memory for that run, not a failed run.
 
 For a runnable version with no database and no
 credentials, see [the sample](#run-the-sample).

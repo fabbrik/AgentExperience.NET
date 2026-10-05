@@ -30,13 +30,41 @@ AIAgent agent = chatClientAgent
         ResolveRun = context => new ExperienceRunDescriptor(
             TaskId: "triage-ticket",
             Scope: hostScope,                  // established by the host, never taken from model output
-            TaskDescription: "Triage an incoming support ticket"),
+            TaskDescription: context.DerivedTaskText),   // the user's own words; redact first if needed
         OnCaptureFailure = failure => logger.LogWarning("Capture failed at {Stage}: {Reason}", failure.Stage, failure.Reason),
     })
     .Build();
 
 var response = await agent.RunAsync("...", session);
 ```
+
+`context.DerivedTaskText` is the user's latest message (with the one before it when the latest is a short follow-up),
+cleaned up and cut to 512 UTF-16 code units, or `null` when there is none; the rule is in
+[Injection: the task text](injection.md#the-task-text). The description becomes the record's task summary, which
+text search matches alongside the task ID and the lesson, so leaving it null leaves a record findable only by those
+two. The derived text is the user's own words and is stored **unsanitized**, as `TaskDescription` always has been (and
+a model-backed reflector is shown it): a host whose prompts can hold secrets or personal data should pass it through
+its own redaction before returning it. Nothing sets the description for you.
+
+**Capture and injection can derive different text for the same turn.** `ResolveRun` sees only the invocation's new
+input, never the session's chat history, while the injection provider also reads the replayed history. The two
+differ exactly when the latest request is shorter than `ExperienceTaskText.FollowUpThreshold` (64) UTF-16 code units
+and the new input holds no earlier user message, but the history does: for "and retry" after "Deploy service X to
+prod", injection retrieves on `Deploy service X to prod — and retry` while capture describes the run as `and retry`.
+To describe the run the same way, derive from the history your host keeps plus the new input:
+
+```csharp
+ResolveRun = context => new ExperienceRunDescriptor(
+    TaskId: "triage-ticket",
+    Scope: hostScope,
+    // previousTurns: the user messages your host kept from earlier turns of this conversation.
+    TaskDescription: ExperienceTaskText.Derive([.. previousTurns, .. context.Messages])),
+```
+
+Messages you pass this way carry no `ChatHistory` stamp, so they count as input, and the latest request is still the
+last user message with text: put the new input last. (An image-only new input then yields the last kept turn rather
+than `null`.) The property is computed on first read from a snapshot of
+`context.Messages`, enumerated once; if enumerating it throws, that first read throws and later reads return `null`.
 
 Call `UseExperienceCapture` first on the builder so capture is the outermost layer. It registers:
 
@@ -77,7 +105,7 @@ Sanitization is name-based: it cannot guarantee that every arbitrary secret hidi
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `ResolveRun` | required | Maps messages, session, and agent to a task ID, scope, task description, and optionally the ID of a run this invocation continues. If it throws or returns a null descriptor, task ID, or scope, the invocation runs uncaptured and the failure is reported. |
+| `ResolveRun` | required | Maps messages, session, and agent to a task ID, scope, task description (`context.DerivedTaskText` is a ready one), and optionally the ID of a run this invocation continues. If it throws or returns a null descriptor, task ID, or scope, the invocation runs uncaptured and the failure is reported. |
 | `ShouldCompleteRun` | always complete | Decides, after the attempt is recorded, whether this invocation's run is finished. `false` keeps it open for a further attempt. The default is exactly the behaviour every host had before continuation existed. |
 | `MaxOpenRunDuration` | 5 min | How long a run may stay open across invocations before the adapter completes it itself and reports. Must be positive and at most `uint.MaxValue - 1` milliseconds. |
 | `MaxAttemptsPerOpenRun` | 8 | The most attempts a run the adapter is holding open may accumulate before it is completed anyway and reported. Must be positive. Separate from the capture service's own `CaptureLimits.MaxAttemptsPerRun`; whichever is reached first ends the run. |

@@ -30,11 +30,15 @@ var provider = new ExperienceContextProvider(
     recordStore,                  // IExperienceRecordStore: the final eligibility check re-reads through it
     new ExperienceInjectionOptions
     {
-        ResolveRequest = context => new RetrieveExperienceRequest(
-            Authorization: hostAuthorization,      // host-established; nothing in the invocation may widen it
-            Scope: hostScope,
-            TaskText: TaskTextFor(context),
-            CorrelationId: traceId),
+        // The user's latest words (see "The task text" below). With none -- an image-only turn, say --
+        // return null to skip injection for this invocation rather than search on a generic phrase.
+        ResolveRequest = context => context.DerivedTaskText is { } taskText
+            ? new RetrieveExperienceRequest(
+                Authorization: hostAuthorization,  // host-established; nothing in the invocation may widen it
+                Scope: hostScope,
+                TaskText: taskText,
+                CorrelationId: traceId)
+            : null,
 
         Limits = ExperienceInjectionLimits.Default,   // 8 records, 16 KB of UTF-8, re-checked within 500 ms
 
@@ -47,21 +51,6 @@ var provider = new ExperienceContextProvider(
             result.InjectedCount, result.PayloadBytes, result.Omitted.Count),
     });
 
-static string TaskTextFor(ExperienceInjectionContext context)
-{
-    // Not `Last()`: the list can be empty, and a resolver that throws injects nothing for that
-    // invocation, reporting it only through OnContextInjected. Not the last message either:
-    // mid-conversation that is a tool result, not the task.
-    var text = context.Messages
-        .LastOrDefault(m => m.Role == ChatRole.User && !string.IsNullOrWhiteSpace(m.Text))?.Text;
-
-    // Retrieval refuses blank text, and anything over ExperienceCandidateQuery.MaxTaskTextLength
-    // (4096 characters), so clamp rather than hand it something it will reject.
-    return string.IsNullOrWhiteSpace(text)
-        ? fallbackTaskDescription
-        : text[..Math.Min(text.Length, ExperienceCandidateQuery.MaxTaskTextLength)];
-}
-
 var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 {
     ChatOptions = new ChatOptions { Tools = tools },
@@ -69,11 +58,74 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 });
 ```
 
+## The task text
+
+Retrieval matches on `RetrieveExperienceRequest.TaskText`, so what you put there decides which lessons come back.
+`context.DerivedTaskText` is one fixed, deterministic derivation of it from the invocation's messages. The
+recommended wiring is the one above: use it as the task text, and return `null` from the resolver to skip injection
+when it is `null`; fall back to other text only when your host has a meaningful task label of its own. The same rule
+is public as `ExperienceTaskText.Derive(messages, maxLength)`, and capture's `ExperienceRunContext` has the same
+property (see [Capture](capture.md#usage)).
+
+Nothing uses it unless your resolver does: the block, the omissions and the outcomes are what they were. One thing
+does change for every invocation, read or not: the provider keeps a reference to the request MAF handed it before
+its input filter, chat history included, until the context is built. A list or array is kept as it is; any other
+sequence is materialized into an array once, and MAF reads that same array, so a single-use sequence is still
+enumerated once. The copy the derivation works on is made only when the property is first read.
+
+- **The latest request.** Only `User` messages count. The latest request is the last of them with text whose MAF
+  source is `External` (what MAF reports for a message with no source) and that comes after the last message
+  attributed to `ChatHistory`. A replayed turn, injected context (this provider's own block included), a message
+  with a custom source, a tool result, an assistant message and a system message are never taken for it. So a new
+  input with no text (an image-only turn) gives `null`, never an older message. A message's text is its text parts
+  joined with a space; an image or any other part is ignored. This relies on MAF stamping replayed history as
+  `ChatHistory`: a custom history component that adds messages without that stamp makes them count as new input.
+- **A short follow-up.** When the latest request is shorter than `ExperienceTaskText.FollowUpThreshold` (64) UTF-16
+  code units — "and retry" — the previous user message with text is put before it, separated by
+  `ExperienceTaskText.FollowUpSeparator` (" — "): `Deploy service X to prod — and retry`. That previous message is
+  `External` or `ChatHistory`, never a context provider's or a custom source's, so the join works across turns: the
+  provider derives from the request before MAF's input filter, while `context.Messages` is still the filtered,
+  external input, as before. The join needs the history replayed into the request; when the service keeps the
+  conversation (a conversation ID, a Responses thread), there is no history to join and the follow-up stands alone.
+  The rule counts length only and knows no language, so a short request that stands on its own ("Why is the build
+  red?") is joined to the one before it too. `Derive(messages, maxLength, followUpThreshold)` tunes the threshold;
+  0 turns the join off.
+- **Never a block.** A message that contains the block's begin marker (checked also with invisible characters
+  removed) or carries the `AgentExperience.HistoricalReference` stamp is skipped entirely, as the latest request and
+  as the previous message: a user who pastes an earlier block into a prompt gets no derived text from that message,
+  their own words in it included.
+- **Cleaned up and bounded.** Control and format characters are removed (zero-width spaces, bidirectional controls,
+  TAG characters), and unpaired surrogates too, with two exceptions that carry meaning: a zero-width joiner or
+  non-joiner (U+200D, U+200C) between two kept letters, marks or symbols (Persian, Indic scripts, emoji sequences),
+  decided on the next character that is kept; and the tags of an emoji subdivision flag (U+1F3F4, up to 8 tag
+  characters, then the cancel tag U+E007F). Tags anywhere else are removed, so they cannot carry hidden text.
+  Whitespace runs, newlines included, become one space, and the ends are trimmed. No Unicode normalization is
+  applied. The result is at most `ExperienceTaskText.DefaultMaxLength` (512) UTF-16 code units, and no cut splits a
+  surrogate pair or leaves a joiner or a flag's unfinished tags at the end. When the join would be longer, the
+  previous message is cut so the separator and the whole latest request fit; a latest request longer than that on
+  its own is cut and the previous message dropped. `Derive` takes any maximum from 1 to
+  `ExperienceCandidateQuery.MaxTaskTextLength` (4096, the most retrieval accepts) and refuses anything else with
+  `ArgumentOutOfRangeException`; a maximum too small for even the first character (1, before an emoji) gives `null`.
+- **`null` when there is nothing.** No qualifying message, or a result that is blank, gives `null`. Retrieval refuses
+  blank text, so return `null` from the resolver (skip) or supply your own text.
+- **Computed on first read.** The messages are snapshotted then, so changing the same list afterwards does not change
+  the answer. It is computed at most once per context instance (a `with` copy computes its own). If reading the
+  messages throws, the first read throws (in the resolver, which reports the invocation as `Failed`) and later reads
+  return `null`.
+- **Not part of equality.** The context's equality and `ToString` look at `Messages`, `Session` and `Agent` only, so
+  an equal context built by hand can derive different text from the one the provider built, which also reads the
+  history.
+
+**It is the user's own words.** No model is called and nothing is redacted: it is used for retrieval as written. If
+you also store it as the run's `TaskDescription`, it is stored unsanitized, as a task description always has been,
+and becomes part of the durable record. A host whose users can put secrets or personal data in a prompt should pass
+it through its own redaction first. It recognises no language: no stemming, no stop words, no translation.
+
 ## Options
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.Messages` may be empty — read it with `LastOrDefault`, never `Last()`. |
+| `ResolveRequest` | required | Turns one invocation into a `RetrieveExperienceRequest`. Return `null` to skip that invocation. `context.DerivedTaskText` is a ready task text (see [The task text](#the-task-text)); if you read `context.Messages` yourself, it may be empty — read it with `LastOrDefault`, never `Last()`. |
 | `Limits` | 8 records, 16 KB, 500 ms | The record and byte bounds (both drop whole records), the bound on the final eligibility re-check, and `MaxAbandonedReads` (default 16), the cap on its abandoned reads still running (see [Pre-model latency budget](#pre-model-latency-budget)). |
 | `SessionLimits` | 32 records, 64 KB, 5-minute window (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices; `InFlightStageWindow` is how long an unsettled delivery counts as in flight. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |

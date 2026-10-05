@@ -476,6 +476,50 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   that passes a literal `null` as the fourth argument of `Write` is now ambiguous; cast it to the intended type. See
   [Injection](docs/guide/injection.md#the-payload).
 
+### The task text can be derived from the conversation (story 18.3)
+
+- **The problem it fixes.** Retrieval matches on `RetrieveExperienceRequest.TaskText`, which every host had to build
+  itself in `ResolveRequest`, and `ExperienceRunDescriptor.TaskDescription` was usually left null, so stored records
+  were findable only by their task ID and lesson.
+- **New `ExperienceTaskText.Derive(messages, maxLength = 512)`** and `Derive(messages, maxLength,
+  followUpThreshold)`, with the public constants `DefaultMaxLength` (512), `FollowUpThreshold` (64) and
+  `FollowUpSeparator` (" — "). One deterministic rule, no model call, no language-specific processing:
+  - the latest request is the last `User` message with text whose MAF source is `External` (or unset) and that comes
+    after the last `ChatHistory` message; a custom, provider or history source never counts. A new input with no text
+    (image-only) gives `null`. Its text parts are joined with a space. It relies on MAF stamping replayed history as
+    `ChatHistory`; an unstamped custom history component's messages count as new input;
+  - when it is shorter than the threshold (64 UTF-16 code units; 0 turns this off), the previous user message with
+    text, `External` or `ChatHistory` only, is put before it, separated by " — " (`Deploy service X to prod — and
+    retry`). The rule is length-only, so a short standalone request is joined too. Across turns this needs the history
+    replayed into the request; with service-managed history (a conversation ID) there is nothing to join;
+  - a message containing the Historical Reference begin marker, or carrying its stamp, is skipped entirely: a user who
+    pastes an earlier block into a prompt gets no derived text from that message, their own words in it included;
+  - control and format characters (and unpaired surrogates) are removed, except a zero-width joiner or non-joiner
+    between kept letters, marks or symbols and a well-formed emoji subdivision flag's tags; tag characters anywhere
+    else are removed. Whitespace is collapsed and the ends trimmed; no Unicode normalization;
+  - lengths are UTF-16 code units; no cut splits a surrogate pair or leaves a joiner or unfinished flag tags at the
+    end. An over-long join cuts the previous message so the separator and the whole latest request fit; a latest
+    request over the maximum on its own is cut and the previous message dropped. `null` when nothing qualifies, the
+    result is blank, or the maximum cannot hold even the first character. `maxLength` must be 1 to
+    `ExperienceCandidateQuery.MaxTaskTextLength` (4096) and the threshold non-negative, or it throws
+    `ArgumentOutOfRangeException`.
+- **New `DerivedTaskText` on `ExperienceInjectionContext` and `ExperienceRunContext`.** Read-only, computed on first
+  read from a snapshot of the messages, at most once per instance (a `with` copy computes its own). If reading the
+  messages throws, the first read throws and later reads return `null`. In the injection provider it reads the
+  request before MAF's input filter, history included, so a follow-up joins the previous turn; `context.Messages` is
+  unchanged. In capture it reads only the invocation's own input, so the two differ for a short follow-up whose
+  previous request is only in history; the capture guide shows deriving from the host's own history instead. The
+  positional parameters are unchanged; the property is left out of both records' equality and `ToString` (their
+  `Equals` and `GetHashCode` are now written out, with the same meaning), so equal contexts can derive different text.
+- **What changes for every invocation.** Nothing derives or stores the text unless the host reads it. But
+  `ExperienceContextProvider` now overrides `InvokingCoreAsync` and keeps a reference to the full unfiltered request
+  (history included) on every invocation until the resolver's context is built, whether or not `DerivedTaskText` is
+  read. A request that is not a list or array is materialized into an array once, and MAF reads that same array.
+- **It is the user's own words.** It is used for retrieval as written, and stored as `TaskDescription` it is stored
+  unsanitized, as a task description always was. Hosts whose prompts can hold sensitive data should redact it first.
+- **Docs.** The README quick start and the injection and capture guides use it, returning `null` from `ResolveRequest`
+  to skip injection when there is no text. See [Injection: the task text](docs/guide/injection.md#the-task-text).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

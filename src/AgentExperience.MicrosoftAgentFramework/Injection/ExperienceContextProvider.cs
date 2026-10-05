@@ -13,8 +13,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>How to wire it.</b> This is a "simple tier" <see cref="AIContextProvider"/>: it overrides only
-/// <see cref="ProvideAIContextAsync"/> and lets MAF do the merging and message-source stamping. Add
+/// <b>How to wire it.</b> This is a "simple tier" <see cref="AIContextProvider"/>: it overrides
+/// <see cref="ProvideAIContextAsync"/> and lets MAF do the merging and message-source stamping (its
+/// <see cref="InvokingCoreAsync"/> override only keeps the unfiltered request for
+/// <see cref="ExperienceInjectionContext.DerivedTaskText"/>, then calls MAF's own). Add
 /// it to an agent yourself, through <see cref="ChatClientAgentOptions.AIContextProviders"/> --
 /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/> never constructs those
 /// options, so capture and injection are configured separately and either can be used without the
@@ -208,6 +210,60 @@ public sealed class ExperienceContextProvider : AIContextProvider
     }
 
     /// <summary>
+    /// The request messages MAF handed this provider <em>before</em> its input filter (history included), for
+    /// <see cref="ExperienceInjectionContext.DerivedTaskText"/> only. Set for one <see cref="InvokingCoreAsync"/> on
+    /// its own async flow, so concurrent invocations never see each other's, and cleared as soon as the context is
+    /// built, so nothing started later on that flow keeps the history alive.
+    /// </summary>
+    private readonly AsyncLocal<IReadOnlyList<ChatMessage>?> _unfilteredRequest = new();
+
+    /// <summary>
+    /// Keeps a reference to the unfiltered request messages for the derived task text, then runs MAF's own filtering,
+    /// merging and source stamping unchanged. A list or array is kept as it is, with no copy; any other sequence is
+    /// materialized once and handed on to MAF as that same array, so a single-use sequence is enumerated once. The
+    /// resolver's <see cref="ExperienceInjectionContext.Messages"/> stay the filtered (external) messages, as before.
+    /// </summary>
+    /// <param name="context">The invocation MAF is about to run.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The merged context MAF's base implementation returns.</returns>
+    protected override async ValueTask<AIContext> InvokingCoreAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<ChatMessage>? unfiltered = null;
+        try
+        {
+            if (context?.AIContext is { Messages: { } messages } aiContext)
+            {
+                if (messages is IReadOnlyList<ChatMessage> list)
+                {
+                    unfiltered = list;
+                }
+                else
+                {
+                    var materialized = messages.ToArray();
+                    aiContext.Messages = materialized;
+                    unfiltered = materialized;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Never into the invocation: without it the derived text reads the filtered messages.
+        }
+
+        _unfilteredRequest.Value = unfiltered;
+        try
+        {
+            return await base.InvokingCoreAsync(context!, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _unfilteredRequest.Value = null;
+        }
+    }
+
+    /// <summary>
     /// Retrieves, re-checks, and injects the Historical Reference for one invocation, or injects
     /// nothing and reports why.
     /// </summary>
@@ -261,13 +317,18 @@ public sealed class ExperienceContextProvider : AIContextProvider
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        // Taken once and cleared on this flow, so background work started below (an abandoned read, say) does not
+        // carry the history array in its captured execution context.
+        var unfilteredRequest = _unfilteredRequest.Value;
+        _unfilteredRequest.Value = null;
+
         RetrieveExperienceRequest? request;
         try
         {
             request = _options.ResolveRequest(new ExperienceInjectionContext(
                 context.AIContext.Messages as IReadOnlyList<ChatMessage> ?? context.AIContext.Messages?.ToArray() ?? [],
                 context.Session,
-                context.Agent));
+                context.Agent).WithDerivationSource(unfilteredRequest));
         }
         catch (Exception ex)
         {
