@@ -87,11 +87,21 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <b>A delivery is charged when MAF says it happened.</b> The block's delivery is staged in the session
 /// state when it is handed to MAF, and committed in <see cref="InvokedCoreAsync"/> once MAF reports the
 /// invocation succeeded. A failed invocation discards it -- MAF keeps no history for it, so its records
-/// are not deduplicated against a block the session never kept, and its withdrawal notices stay owed. A
-/// stage nothing settled, such as a stream its consumer abandoned before MAF reported, is committed at the
-/// session's next invocation: when unsure, the session is charged, its records are tracked so they can still
-/// be withdrawn but are not deduplicated against, and its withdrawal notices stay owed. The account is only as trustworthy as
-/// the host's session storage, and invocations that run concurrently on one session race on it.
+/// are not deduplicated against a block the session never kept, and its withdrawal notices stay owed. Each
+/// invocation settles only its own stage. Until a stage is settled, every decision counts it as delivered: its
+/// records are charged, tracked and not delivered again, and its withdrawal notices stay owed -- but only within
+/// <see cref="ExperienceInjectionSessionLimits.InFlightStageWindow"/> of its staging. A stage older than that, such as
+/// a stream its consumer abandoned before MAF reported (MAF never signals one), is committed at the session's next
+/// invocation as unsure: the session is charged, its records are tracked so they can still be withdrawn but are not
+/// deduplicated against, so they are delivered again, and its withdrawal notices stay owed. At most eight stages are
+/// kept pending; staging a ninth first commits the oldest the same way.
+/// </para>
+/// <para>
+/// <b>Invocations on one session are serialized within a process.</b> A lock per session and state key, shared
+/// by every provider in the process, is held from reading the account to writing it back, and around settling, so two concurrent
+/// invocations never read the same account and never overwrite each other's stage. It is never held across the
+/// model call. The account is still only as trustworthy as the host's session storage: two processes resuming the
+/// same serialized session do not share the lock.
 /// </para>
 /// <para>
 /// <b>Labeling is not a control.</b> The injected block says it is untrusted reference material, and
@@ -136,6 +146,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
     internal const string StageKey = "AgentExperience.HistoricalReference.Stage";
 
     private static readonly IReadOnlyList<Guid> NoIds = [];
+
+    /// <summary>
+    /// One lock per session and state key, shared by every provider in the process (story 17.4), so the
+    /// read-modify-write of one account is never interleaved with another invocation's. Keyed by the session
+    /// instance and held weakly, so a session that is collected takes its locks with it; two providers with
+    /// different keys keep different accounts and so never wait for each other.
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<AgentSession, System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>> SessionLocks = new();
 
     private static readonly IReadOnlyList<OmittedExperience> NoOmissions = [];
 
@@ -282,6 +300,43 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // not only for the ones that produced a result to read it back off.
         InjectionDiagnostics.Tag(trace, InjectionDiagnostics.CorrelationIdAttribute, request.CorrelationId);
 
+        // Story 17.4: the session's account is read, decided on, and written back under the session's lock, so a
+        // concurrent invocation on the same session waits for this one's stage instead of reading the same account
+        // and overwriting it. Waiting honours the invocation's token; the lock is released before the model is called.
+        var gate = _options.SessionLimits is not null && context.Session is { } locked ? LockFor(locked) : null;
+        if (gate is not null)
+        {
+            // An invocation cancelled before it starts throws the plain OperationCanceledException every other
+            // cancellation here does; one cancelled while waiting throws the wait's TaskCanceledException.
+            cancellationToken.ThrowIfCancellationRequested();
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            return await InjectResolvedAsync(context, request, trace, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate?.Release();
+        }
+    }
+
+    /// <summary>The lock that serializes this provider's account in <paramref name="session"/> within this process.</summary>
+    private SemaphoreSlim LockFor(AgentSession session) =>
+        SessionLocks.GetValue(session, static _ => new(StringComparer.Ordinal))
+            .GetOrAdd(_stateKey, static _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>
+    /// The rest of <see cref="InjectAsync"/> once the request is resolved: with session tracking, run under the
+    /// session's lock.
+    /// </summary>
+    private async ValueTask<AIContext> InjectResolvedAsync(
+        InvokingContext context,
+        RetrieveExperienceRequest request,
+        InjectionTrace trace,
+        CancellationToken cancellationToken)
+    {
         // The session's account, when tracking is on and there is a session to keep it in. A state that
         // does not read is neither trusted nor overwritten: nothing is injected, because the provider can
         // no longer tell what the session was given, what it may still be given, or what it is owed.
@@ -443,7 +498,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // nothing is injected.
             try
             {
-                session.Stage(Delivery(payload, recheckOutcome.Injectable));
+                session.Stage(Delivery(payload, recheckOutcome.Injectable, _options.TimeProvider.GetUtcNow()));
                 session.Save();
             }
             catch (Exception ex)
@@ -468,9 +523,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
             [HistoricalReferenceKey] = true,
         };
 
-        if (session?.State.Pending is { } staged)
+        if (session?.Staged is { } staged)
         {
-            properties[StageKey] = staged.Stage.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
+            properties[StageKey] = staged.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         var injected = new AIContext
@@ -560,7 +615,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
     /// <summary>
     /// The session's account for this invocation, or <see langword="null"/> when tracking is off or there
-    /// is no session. A stage an earlier invocation left unsettled is committed first.
+    /// is no session. Stages other invocations left pending stay pending: they may still be in flight, and only the
+    /// invocation that staged one settles it.
     /// </summary>
     private SessionTracker? OpenSession(AgentSession? agentSession, out bool unreadable)
     {
@@ -570,7 +626,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return null;
         }
 
-        if (!InjectionSessionState.TryLoad(agentSession.StateBag, _stateKey, out var state, out var absent))
+        var now = _options.TimeProvider.GetUtcNow();
+        if (!InjectionSessionState.TryLoad(agentSession.StateBag, _stateKey, out var state, out var absent, out var legacy))
         {
             unreadable = true;
             return null;
@@ -583,11 +640,20 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return new SessionTracker(agentSession, _stateKey, state, limits, dirty: true);
         }
 
-        // An earlier invocation's stage that MAF never settled -- a stream abandoned before it reported,
-        // say. The block was handed over, so the session is charged for it: when unsure, charge. But its
-        // withdrawal notices stay owed: MAF keeps no history for an abandoned stream, so a notice marked
-        // delivered here could be lost for good. When unsure, withdraw again.
-        return new SessionTracker(agentSession, _stateKey, state.Commit(settled: false), limits, dirty: state.Pending is not null);
+        // A stage staged within the in-flight window is left pending: its invocation may still be running, and it
+        // settles its own. Every decision counts it as delivered (SessionTracker.State). An older one is taken as
+        // abandoned -- a stream abandoned before MAF reported, which MAF never signals -- and committed exactly as
+        // before stages were kept per invocation: the block was handed over, so the session is charged for it (when
+        // unsure, charge), but its records are not trusted as delivered and its withdrawal notices stay owed, since
+        // MAF keeps no history for an abandoned stream. A state in the earlier format is rewritten in the current one
+        // on the way out, whatever else this invocation does.
+        var current = state.CommitAbandoned(now, limits.InFlightStageWindow);
+        return new SessionTracker(
+            agentSession,
+            _stateKey,
+            current,
+            limits,
+            dirty: legacy || current.Pending.Count != state.Pending.Count);
     }
 
     /// <summary>
@@ -624,7 +690,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     }
 
     /// <summary>What this invocation's block gives the session, as it will be tracked.</summary>
-    private static PendingDelivery Delivery(HistoricalReferencePayload payload, List<RankedExperience> injectable)
+    private static PendingDelivery Delivery(HistoricalReferencePayload payload, List<RankedExperience> injectable, DateTimeOffset stagedAt)
     {
         var delivered = new List<DeliveredRecord>(payload.ExperienceIds.Count);
         foreach (var experienceId in payload.ExperienceIds)
@@ -646,29 +712,39 @@ public sealed class ExperienceContextProvider : AIContextProvider
             });
         }
 
-        return new PendingDelivery(Guid.NewGuid(), payload.ByteCount, delivered, payload.RetractedExperienceIds);
+        return new PendingDelivery(Guid.NewGuid(), payload.ByteCount, delivered, payload.RetractedExperienceIds)
+        {
+            StagedAt = stagedAt,
+        };
     }
 
-    /// <summary>Whether <paramref name="messages"/> holds the block that staged <paramref name="stage"/>.</summary>
-    private static bool Carries(IEnumerable<ChatMessage>? messages, Guid stage)
+    /// <summary>
+    /// The stages of the blocks a context provider injected into this invocation: messages MAF attributes to an
+    /// <see cref="AgentRequestMessageSourceType.AIContextProvider"/> that carry a stage ID. A block that reaches the
+    /// request from the chat history, or that the host sent again as its own input, is attributed otherwise and
+    /// settles nothing.
+    /// </summary>
+    private static HashSet<Guid> StagesCarried(IEnumerable<ChatMessage>? messages)
     {
+        var stages = new HashSet<Guid>();
         if (messages is null)
         {
-            return false;
+            return stages;
         }
 
-        var text = stage.ToString("N", System.Globalization.CultureInfo.InvariantCulture);
         foreach (var message in messages)
         {
             if (message?.AdditionalProperties is { } properties
                 && properties.TryGetValue(StageKey, out var value)
-                && string.Equals(value?.ToString(), text, StringComparison.Ordinal))
+                && message.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.AIContextProvider
+                && Guid.TryParseExact(value?.ToString(), "N", out var stage)
+                && stage != Guid.Empty)
             {
-                return true;
+                stages.Add(stage);
             }
         }
 
-        return false;
+        return stages;
     }
 
     /// <summary>
@@ -687,23 +763,47 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return;
         }
 
+        // The stages the blocks injected into this invocation carry. Only those this provider's account holds as
+        // pending are settled: another provider's (under another key) and settled ones are not.
+        var stages = StagesCarried(context.RequestMessages);
+        if (stages.Count == 0)
+        {
+            return;
+        }
+
+        // Under the account's lock, so a concurrent invocation's read-modify-write cannot interleave with this one and
+        // lose either stage. Not with the invocation's token: a cancelled invocation's token is already cancelled, and
+        // its stage must still be discarded. The critical section is short and never calls out.
+        var gate = LockFor(agentSession);
+        await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            if (!InjectionSessionState.TryLoad(agentSession.StateBag, _stateKey, out var state)
-                || state.Pending is not { } pending
-                || !Carries(context.RequestMessages, pending.Stage))
+            if (!InjectionSessionState.TryLoad(agentSession.StateBag, _stateKey, out var state))
             {
-                // Nothing staged, a stage this invocation's request did not carry -- another invocation's,
-                // which only that one may settle -- or a state that does not read, which the next
-                // invocation reports.
+                // A state that does not read, which the next invocation reports.
                 return;
             }
 
-            (context.InvokeException is null ? state.Commit() : state.Discard()).Save(agentSession.StateBag, _stateKey);
+            var settled = state;
+            foreach (var stage in stages)
+            {
+                // A stage not pending (already committed as unsure, past the in-flight window or to make room, or the
+                // key was reset) settles nothing.
+                settled = settled.Settle(stage, succeeded: context.InvokeException is null);
+            }
+
+            if (!ReferenceEquals(settled, state))
+            {
+                settled.Save(agentSession.StateBag, _stateKey);
+            }
         }
         catch (Exception)
         {
-            // Settling is bookkeeping. An unsettled stage is committed by the next invocation.
+            // Settling is bookkeeping. A stage nothing settles stays pending until it is committed as unsure.
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -1301,12 +1401,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             try
             {
-                // Only an unsettled earlier stage, committed on the way in, can have changed it.
+                // Only a first use, or a state read in the earlier format, can have changed it.
                 session.Save();
             }
             catch (Exception)
             {
-                // The commit is found and made again on the next invocation.
+                // Written again on the next invocation.
             }
         }
 
@@ -1527,8 +1627,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     }
 
     /// <summary>
-    /// One invocation's view of its session's account: the state as loaded (with any unsettled earlier
-    /// stage committed), the limits it runs under, and what this invocation staged.
+    /// One invocation's view of its session's account: the state as loaded (stages other invocations left pending
+    /// included), the limits it runs under, and what this invocation staged.
     /// </summary>
     private sealed class SessionTracker(
         AgentSession session,
@@ -1539,8 +1639,17 @@ public sealed class ExperienceContextProvider : AIContextProvider
     {
         private bool _dirty = dirty;
 
-        /// <summary>The account, as this invocation sees and changes it.</summary>
-        public InjectionSessionState State { get; private set; } = state;
+        /// <summary>The account as stored, pending stages kept apart.</summary>
+        private InjectionSessionState _stored = state;
+
+        /// <summary>
+        /// The account every decision is taken on: the stored one with every pending stage counted as delivered but
+        /// unsure (<see cref="InjectionSessionState.ForDecisions"/>). With nothing pending, exactly the stored one.
+        /// </summary>
+        public InjectionSessionState State { get; private set; } = state.ForDecisions();
+
+        /// <summary>The stage this invocation added, once it has staged its delivery.</summary>
+        public Guid? Staged { get; private set; }
 
         /// <summary>What the session's byte budget has left for records.</summary>
         public long RemainingBytes => Math.Max(0, limits.MaxBytes - State.BytesUsed);
@@ -1561,7 +1670,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
         /// <summary>Stages this invocation's delivery, to be settled when MAF reports how it ended.</summary>
         public void Stage(PendingDelivery pending)
         {
-            State = State with { Pending = pending };
+            _stored = _stored.WithStage(pending);
+            State = _stored.ForDecisions();
+            Staged = pending.Stage;
             _dirty = true;
         }
 
@@ -1570,7 +1681,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             if (_dirty)
             {
-                State.Save(session.StateBag, key);
+                _stored.Save(session.StateBag, key);
                 _dirty = false;
             }
         }
@@ -1578,7 +1689,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
         /// <summary>The account as reported: counting what this invocation staged as though it succeeds.</summary>
         public ExperienceInjectionSessionUsage Usage()
         {
-            var settled = State.Commit();
+            // This invocation's own stage settled as a success; any other still counted as delivered, as decided.
+            var settled = (Staged is { } own ? _stored.Settle(own, succeeded: true) : _stored).ForDecisions();
             return new ExperienceInjectionSessionUsage(
                 settled.RecordsUsed,
                 settled.BytesUsed,

@@ -532,10 +532,10 @@ public class SessionInjectionTests
         var id = InjectionRecords.Id(1);
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
-        var earlier = new InjectionSessionState(10, 1, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = first }], null);
+        var earlier = new InjectionSessionState(10, 1, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = first }], []);
         var staged = earlier with
         {
-            Pending = new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = second }], []),
+            Pending = [new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = second }], [])],
         };
 
         var merged = Assert.Single(staged.Commit(settled: false).Delivered).ArgumentsGrantId;
@@ -547,7 +547,7 @@ public class SessionInjectionTests
 
         var same = earlier with
         {
-            Pending = new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = first }], []),
+            Pending = [new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(id, 1, true, false) { ArgumentsGrantId = first }], [])],
         };
         Assert.Equal(first, Assert.Single(same.Commit(settled: false).Delivered).ArgumentsGrantId);
     }
@@ -793,7 +793,18 @@ public class SessionInjectionTests
         "42",
         "[]",
         "{}",
+        """{"v":3,"bytes":0,"records":0,"delivered":[],"pending":[]}""",
+        """{"v":"1","bytes":0,"records":0,"delivered":[]}""",
         """{"v":2,"bytes":0,"records":0,"delivered":[]}""",
+        """{"v":2,"bytes":0,"records":0,"delivered":[],"pending":null}""",
+        """{"v":2,"bytes":0,"records":0,"delivered":[],"pending":{"stage":"00000000-0000-0000-0000-00000000000a","bytes":1,"delivered":[],"withdrawn":[]}}""",
+        """{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[null]}""",
+        """{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[{"stage":"00000000-0000-0000-0000-00000000000a","bytes":1,"delivered":[],"withdrawn":[]},{"stage":"00000000-0000-0000-0000-00000000000a","bytes":1,"delivered":[],"withdrawn":[]}]}""",
+        """{"v":1,"bytes":0,"records":0,"delivered":[],"pending":[]}""",
+        TooManyStages(),
+        TooManyStagedAcrossStages(),
+        """{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[{"stage":"00000000-0000-0000-0000-00000000000a","bytes":1,"delivered":[],"withdrawn":[]}]}""",
+        """{"v":1,"bytes":0,"records":0,"delivered":[],"pending":{"stage":"00000000-0000-0000-0000-00000000000a","staged":"2026-01-01T00:00:00+00:00","bytes":1,"delivered":[],"withdrawn":[]}}""",
         """{"v":1,"bytes":-1,"records":0,"delivered":[]}""",
         """{"v":1,"bytes":0,"records":-1,"delivered":[]}""",
         """{"v":1,"bytes":0,"records":0,"delivered":null}""",
@@ -896,7 +907,8 @@ public class SessionInjectionTests
 
         var state = JsonNode.Parse(session.StateBag.Serialize().GetRawText())![ExperienceContextProvider.SessionStateKey]!.AsObject();
         Assert.Equal(["v", "bytes", "records", "delivered", "pending"], state.Select(p => p.Key));
-        Assert.Null(state["pending"]);
+        Assert.Equal(InjectionSessionState.FormatVersion, state["v"]!.GetValue<int>());
+        Assert.Empty(state["pending"]!.AsArray());
         var entry = Assert.Single(state["delivered"]!.AsArray())!.AsObject();
         Assert.Equal(["id", "rev", "grantApproach", "withdrawn", "confirmed"], entry.Select(p => p.Key));
         Assert.Equal(id, entry["id"]!.GetValue<Guid>());
@@ -1017,7 +1029,7 @@ public class SessionInjectionTests
     }
 
     [Fact]
-    public async Task A_stream_abandoned_before_MAF_settles_it_is_charged_at_the_next_invocation()
+    public async Task A_stream_abandoned_before_MAF_settles_it_is_held_within_the_in_flight_window()
     {
         var harness = new Harness();
         var id = InjectionRecords.Id(1);
@@ -1030,9 +1042,34 @@ public class SessionInjectionTests
             break;
         }
 
-        // When unsure, the session is charged -- the block was handed to the model -- but the block is not
-        // assumed to be in the history, which MAF did not write for the abandoned turn: the record is
-        // delivered again rather than hidden, and both deliveries are charged.
+        // Nothing tells an abandoned stream from one still running (story 17.4), so within the in-flight window its
+        // stage stays pending: the session is charged for it -- the block was handed to the model -- and its record
+        // counts as delivered, so it is not repeated while the stage may still settle.
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal(InjectionOmissionReason.AlreadyDelivered, Assert.Single(harness.Last.Omitted).Reason);
+        Assert.Equal(1, harness.Last.Session!.RecordsUsed);
+        Assert.Single(StoredState(session)["pending"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task A_stream_abandoned_before_MAF_settles_it_is_charged_at_the_next_invocation()
+    {
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness { Clock = clock };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        await foreach (var _ in agent.RunStreamingAsync("refund ticket stuck on a lock", session))
+        {
+            break;
+        }
+
+        // Past the in-flight window the stage is taken as abandoned. When unsure, the session is charged -- the block
+        // was handed to the model -- but the block is not assumed to be in the history, which MAF did not write for
+        // the abandoned turn: the record is delivered again rather than hidden, and both deliveries are charged.
+        clock.Advance(ExperienceInjectionSessionLimits.DefaultInFlightStageWindow + TimeSpan.FromSeconds(1));
         await agent.RunAsync("refund ticket stuck on a lock", session);
         Assert.Equal([id], harness.Last.InjectedExperienceIds);
         Assert.Equal(2, harness.Last.Session!.RecordsUsed);
@@ -1041,6 +1078,35 @@ public class SessionInjectionTests
         // From here it is confirmed, and deduplicated.
         await agent.RunAsync("refund ticket stuck on a lock", session);
         Assert.Equal(InjectionOmissionReason.AlreadyDelivered, Assert.Single(harness.Last.Omitted).Reason);
+    }
+
+    [Fact]
+    public async Task The_in_flight_window_is_configurable_and_validated()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(5), ExperienceInjectionSessionLimits.Default.InFlightStageWindow);
+        Assert.Throws<ArgumentOutOfRangeException>(() => ExperienceInjectionSessionLimits.Default with { InFlightStageWindow = TimeSpan.Zero });
+        Assert.Throws<ArgumentOutOfRangeException>(() => ExperienceInjectionSessionLimits.Default with { InFlightStageWindow = TimeSpan.FromSeconds(-1) });
+
+        // A one-second window: a stage two seconds old is abandoned, and its record delivered again.
+        var clock = new ManualClock(InjectionRecords.Now);
+        var harness = new Harness
+        {
+            Clock = clock,
+            SessionLimits = ExperienceInjectionSessionLimits.Default with { InFlightStageWindow = TimeSpan.FromSeconds(1) },
+        };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        await foreach (var _ in agent.RunStreamingAsync("refund ticket stuck on a lock", session))
+        {
+            break;
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+        Assert.Empty(StoredState(session)["pending"]!.AsArray());
     }
 
     [Fact]
@@ -1099,16 +1165,19 @@ public class SessionInjectionTests
         harness.World.Store(InjectionRecords.Record(revoked, TestScope) with { Status = ExperienceStatus.Revoked, Revision = 2 });
         harness.World.Publish(InjectionRecords.Record(delivered, TestScope));
         var agent = harness.Agent();
-        var staged = $$$"""{"v":1,"bytes":100,"records":1,"delivered":[{"id":"{{{revoked:D}}}","rev":1,"grantApproach":false,"withdrawn":false,"confirmed":true}],"pending":{"stage":"{{{Guid.NewGuid():D}}}","bytes":50,"delivered":[{"id":"{{{delivered:D}}}","rev":1,"grantApproach":false,"withdrawn":false,"confirmed":true}],"withdrawn":["{{{revoked:D}}}"]}}""";
+        // Staged now, so A is within the in-flight window.
+        var staged = $$$"""{"v":2,"bytes":100,"records":1,"delivered":[{"id":"{{{revoked:D}}}","rev":1,"grantApproach":false,"withdrawn":false,"confirmed":true}],"pending":[{"stage":"{{{Guid.NewGuid():D}}}","staged":"{{{InjectionRecords.Now:O}}}","bytes":50,"delivered":[{"id":"{{{delivered:D}}}","rev":1,"grantApproach":false,"withdrawn":false,"confirmed":true}],"withdrawn":["{{{revoked:D}}}"]}]}""";
         var session = await Restore(agent, staged);
 
         await agent.RunAsync("refund ticket stuck on a lock", session);
 
         Assert.Equal([revoked], harness.Last.RetractedExperienceIds);
 
-        // A's record is charged and tracked, but not assumed delivered: it is delivered again.
-        Assert.Equal([delivered], harness.Last.InjectedExperienceIds);
-        Assert.Equal(3, harness.Last.Session!.RecordsUsed);
+        // A's record is charged and held while A may still settle (story 17.4): it is not delivered again.
+        Assert.Empty(harness.Last.InjectedExperienceIds);
+        Assert.Equal(InjectionOutcome.Retracted, harness.Last.Outcome);
+        Assert.Contains(harness.Last.Omitted, o => o.ExperienceId == delivered && o.Reason == InjectionOmissionReason.AlreadyDelivered);
+        Assert.Equal(2, harness.Last.Session!.RecordsUsed);
     }
 
     [Fact]
@@ -1470,6 +1539,481 @@ public class SessionInjectionTests
         Assert.Equal([InjectionRecords.Id(11)], separate.Last.InjectedExperienceIds);
     }
 
+    // ---- Concurrent invocations on one session (story 17.4) ----------------------------------------
+
+    /// <summary>
+    /// Two invocations on one session, started together. Each search waits until both invocations have resolved their
+    /// request -- that is, until both are inside the provider -- so without the session's lock both would read the
+    /// same account before either wrote it. The model call whose block carries <c>Lesson one.</c> (the best record,
+    /// which whichever invocation decides first delivers) waits for <see cref="Release"/>, so its stage is still
+    /// pending while the other invocation decides; the constructor's <c>other</c> answers every other model call.
+    /// </summary>
+    private sealed class Race
+    {
+        private int _resolved;
+
+        public Race(Harness harness, Func<Task>? other = null)
+        {
+            harness.World.SearchDelay = async _ => await BothInside.Task;
+            harness.Client.Delay = received => received.Any(message => message.Text.Contains("Lesson one.", StringComparison.Ordinal))
+                ? Release.Task
+                : other?.Invoke() ?? Task.CompletedTask;
+        }
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource BothInside { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RetrieveExperienceRequest? Resolve(ExperienceInjectionContext context)
+        {
+            if (Interlocked.Increment(ref _resolved) == 2)
+            {
+                BothInside.TrySetResult();
+            }
+
+            return new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: "corr-1");
+        }
+    }
+
+    /// <summary>How long a race test waits before failing rather than hanging, should the lock ever be lost.</summary>
+    private static readonly TimeSpan RaceBound = TimeSpan.FromSeconds(30);
+
+    [Fact]
+    public async Task Two_concurrent_invocations_deliver_a_record_once_in_total()
+    {
+        Race? race = null;
+        var harness = new Harness { Resolve = context => race!.Resolve(context) };
+        race = new Race(harness);
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope, lesson: "Lesson one."));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        var runs = new[] { agent.RunAsync("refund ticket stuck on a lock", session), agent.RunAsync("refund ticket stuck on a lock", session) };
+
+        // The other invocation decides, and finishes, while the delivering one's model call -- outside the lock --
+        // is still running.
+        await await Task.WhenAny(runs).WaitAsync(RaceBound);
+        race.Release.SetResult();
+        await Task.WhenAll(runs);
+
+        Assert.Equal(2, harness.Results.Count);
+        Assert.Single(harness.Results, result => result.InjectedExperienceIds.Contains(id));
+        Assert.Contains(harness.Results, result => result.Omitted.Any(o => o.ExperienceId == id && o.Reason == InjectionOmissionReason.AlreadyDelivered));
+
+        var state = StoredState(session);
+        Assert.Equal(1, state["records"]!.GetValue<int>());
+        Assert.Empty(state["pending"]!.AsArray());
+        var entry = Assert.Single(state["delivered"]!.AsArray())!;
+        Assert.True(entry["confirmed"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Two_concurrent_invocations_that_both_succeed_are_both_charged()
+    {
+        Race? race = null;
+        var harness = new Harness
+        {
+            Resolve = context => race!.Resolve(context),
+            Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+        };
+        race = new Race(harness);
+        var (one, two) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(one, TestScope, lesson: "Lesson one."), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(two, TestScope, lesson: "Lesson two."), relevance: 0.9d);
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        var runs = new[] { agent.RunAsync("refund ticket stuck on a lock", session), agent.RunAsync("refund ticket stuck on a lock", session) };
+        await await Task.WhenAny(runs).WaitAsync(RaceBound);
+
+        // The second settled its own stage only: the first's is still pending beside the second's delivery.
+        var midway = StoredState(session);
+        Assert.Equal(one, Assert.Single(Assert.Single(midway["pending"]!.AsArray())!["delivered"]!.AsArray())!["id"]!.GetValue<Guid>());
+        Assert.Equal(two, Assert.Single(midway["delivered"]!.AsArray())!["id"]!.GetValue<Guid>());
+
+        race.Release.SetResult();
+        await Task.WhenAll(runs);
+
+        // Each block delivered a different record, and both are charged.
+        Assert.Equal([[one], [two]], harness.Results.Select(result => result.InjectedExperienceIds.ToList()).OrderBy(ids => ids[0]).ToList());
+        var state = StoredState(session);
+        Assert.Equal(2, state["records"]!.GetValue<int>());
+        Assert.Equal(harness.Results.Sum(result => (long)result.PayloadBytes), state["bytes"]!.GetValue<long>());
+        Assert.Empty(state["pending"]!.AsArray());
+        Assert.Equal(2, state["delivered"]!.AsArray().Count(entry => entry!["confirmed"]!.GetValue<bool>()));
+
+        // And neither is delivered again.
+        harness.World.SearchDelay = null;
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Empty(harness.Last.InjectedExperienceIds);
+        Assert.Equal(2, harness.Last.Omitted.Count(o => o.Reason == InjectionOmissionReason.AlreadyDelivered));
+    }
+
+    [Fact]
+    public async Task Of_two_concurrent_invocations_a_failed_one_discards_only_its_own_stage()
+    {
+        Race? race = null;
+        var harness = new Harness
+        {
+            Resolve = context => race!.Resolve(context),
+            Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+        };
+        race = new Race(harness, () => throw new InvalidOperationException("the model is down"));
+        var (one, two) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(one, TestScope, lesson: "Lesson one."), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(two, TestScope, lesson: "Lesson two."), relevance: 0.9d);
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        var runs = new[] { agent.RunAsync("refund ticket stuck on a lock", session), agent.RunAsync("refund ticket stuck on a lock", session) };
+        var failed = await Task.WhenAny(runs).WaitAsync(RaceBound);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => failed);
+
+        // The failed invocation's stage is gone, uncharged; the first's is untouched.
+        var midway = StoredState(session);
+        var pending = Assert.Single(midway["pending"]!.AsArray())!;
+        Assert.Equal(one, Assert.Single(pending["delivered"]!.AsArray())!["id"]!.GetValue<Guid>());
+        Assert.Equal(0, midway["records"]!.GetValue<int>());
+        Assert.Empty(midway["delivered"]!.AsArray());
+
+        race.Release.SetResult();
+        await runs.Single(run => run != failed);
+
+        var state = StoredState(session);
+        Assert.Equal(1, state["records"]!.GetValue<int>());
+        Assert.Empty(state["pending"]!.AsArray());
+        Assert.Equal(one, Assert.Single(state["delivered"]!.AsArray())!["id"]!.GetValue<Guid>());
+
+        // The failed block never reached the history, so its record is delivered on the next invocation.
+        harness.World.SearchDelay = null;
+        harness.Client.Delay = null;
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal([two], harness.Last.InjectedExperienceIds);
+    }
+
+    [Fact]
+    public async Task An_invocation_cancelled_while_waiting_for_the_session_lock_throws_and_changes_nothing()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searches = 0;
+        var resolved = 0;
+        var secondResolved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var harness = new Harness
+        {
+            // The resolver runs just before the lock is waited for, so the second resolving means it has reached it.
+            Resolve = _ =>
+            {
+                if (Interlocked.Increment(ref resolved) == 2)
+                {
+                    secondResolved.TrySetResult();
+                }
+
+                return new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: "corr-1");
+            },
+        };
+        harness.World.SearchDelay = async _ =>
+        {
+            Interlocked.Increment(ref searches);
+            entered.TrySetResult();
+            await release.Task;
+        };
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        // The first holds the session's lock inside retrieval; the second waits for it and is cancelled.
+        var first = agent.RunAsync("refund ticket stuck on a lock", session);
+        await entered.Task;
+        using var cancel = new CancellationTokenSource();
+        var second = agent.RunAsync("refund ticket stuck on a lock", session, cancellationToken: cancel.Token);
+        await secondResolved.Task.WaitAsync(RaceBound);
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second.WaitAsync(RaceBound));
+
+        // It never got past the lock: only the first invocation ever searched.
+        Assert.Equal(1, Volatile.Read(ref searches));
+
+        release.SetResult();
+        await first;
+        Assert.Equal([id], Assert.Single(harness.Results).InjectedExperienceIds);
+        Assert.Equal(1, StoredState(session)["records"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void The_default_in_flight_window_is_the_capture_adapters_default_open_run_bound()
+    {
+        var capture = new ExperienceCaptureOptions { ResolveRun = _ => throw new InvalidOperationException("not run") };
+        Assert.Equal(capture.MaxOpenRunDuration, ExperienceInjectionSessionLimits.DefaultInFlightStageWindow);
+    }
+
+    [Fact]
+    public async Task Two_providers_on_one_agent_each_settle_their_own_stage()
+    {
+        var a = new Harness();
+        a.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope));
+        var b = new Harness { SessionStateKey = "Tenant-B.InjectionSession" };
+        b.World.Publish(InjectionRecords.Record(InjectionRecords.Id(11), TestScope));
+        var agent = new ChatClientAgent(a.Client, new ChatClientAgentOptions { AIContextProviders = [a.Provider(), b.Provider()] });
+        var session = await agent.CreateSessionAsync();
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        // Each block carries its own stage; each provider settles the one its own account holds.
+        foreach (var key in new[] { ExperienceContextProvider.SessionStateKey, "Tenant-B.InjectionSession" })
+        {
+            var state = StoredState(session, key);
+            Assert.Empty(state["pending"]!.AsArray());
+            Assert.True(Assert.Single(state["delivered"]!.AsArray())!["confirmed"]!.GetValue<bool>());
+        }
+    }
+
+    [Fact]
+    public async Task A_stamped_block_the_host_resends_or_the_history_carries_settles_nothing()
+    {
+        var harness = new Harness { Resolve = _ => null };
+        var agent = harness.Agent();
+        var stage = Guid.NewGuid();
+        var json = $$"""{"v":2,"bytes":10,"records":0,"delivered":[],"pending":[{{StageJson(stage, 10, [InjectionRecords.Id(1)])}}]}""";
+        var session = await Restore(agent, json);
+        var resent = new ChatMessage(ChatRole.User, "an earlier block, sent again")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                [ExperienceContextProvider.StageKey] = stage.ToString("N"),
+            },
+        };
+
+        // The host sends a stamped block as its own input, and the invocation succeeds: it is not this provider's
+        // block for this invocation, so it settles nothing.
+        await agent.RunAsync(resent, session);
+        Assert.Equal(stage, Assert.Single(StoredState(session)["pending"]!.AsArray())!["stage"]!.GetValue<Guid>());
+
+        // On the next turn the same block reaches the request from the history, and the invocation, which injects
+        // nothing, fails: the stage is not discarded either.
+        harness.Client.Throws = new InvalidOperationException("the model is down");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync("refund ticket stuck on a lock", session));
+        Assert.Contains(harness.Client.LastMessages!, message => message.AdditionalProperties?.ContainsKey(ExperienceContextProvider.StageKey) == true);
+        Assert.Equal(stage, Assert.Single(StoredState(session)["pending"]!.AsArray())!["stage"]!.GetValue<Guid>());
+        Assert.Equal(0, StoredState(session)["records"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task An_invocation_cancelled_during_the_model_call_discards_its_stage_uncharged()
+    {
+        var harness = new Harness();
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+        using var cancel = new CancellationTokenSource();
+        harness.Client.Delay = async _ =>
+        {
+            await cancel.CancelAsync();
+            cancel.Token.ThrowIfCancellationRequested();
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => agent.RunAsync("refund ticket stuck on a lock", session, cancellationToken: cancel.Token).WaitAsync(RaceBound));
+
+        // Settled with a cancelled token all the same: the stage is gone and nothing was charged.
+        var state = StoredState(session);
+        Assert.Empty(state["pending"]!.AsArray());
+        Assert.Equal(0, state["records"]!.GetValue<int>());
+        Assert.Empty(state["delivered"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task An_invocation_that_settles_while_another_holds_the_lock_is_committed_after_that_save()
+    {
+        var aModel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aInModel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bInSearch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bSearch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searches = 0;
+        var harness = new Harness { Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 } };
+        var (one, two) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(one, TestScope, lesson: "Lesson one."), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(two, TestScope, lesson: "Lesson two."), relevance: 0.9d);
+        harness.World.SearchDelay = async _ =>
+        {
+            if (Interlocked.Increment(ref searches) == 2)
+            {
+                bInSearch.TrySetResult();
+                await bSearch.Task;
+            }
+        };
+        harness.Client.Delay = async received =>
+        {
+            if (received.Any(message => message.Text.Contains("Lesson one.", StringComparison.Ordinal)))
+            {
+                aInModel.TrySetResult();
+                await aModel.Task;
+            }
+        };
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        // A staged and is in its model call; B holds the lock inside retrieval; A's model call then returns, and A
+        // waits for the lock to settle while B is still deciding.
+        var a = agent.RunAsync("refund ticket stuck on a lock", session);
+        await aInModel.Task.WaitAsync(RaceBound);
+        var b = agent.RunAsync("refund ticket stuck on a lock", session);
+        await bInSearch.Task.WaitAsync(RaceBound);
+        aModel.SetResult();
+        bSearch.SetResult();
+        await Task.WhenAll(a, b).WaitAsync(RaceBound);
+
+        // B's save did not overwrite A's settle, nor A's settle B's stage: both are committed and confirmed.
+        var state = StoredState(session);
+        Assert.Empty(state["pending"]!.AsArray());
+        Assert.Equal(2, state["records"]!.GetValue<int>());
+        Assert.Equal(
+            [one, two],
+            state["delivered"]!.AsArray().Where(entry => entry!["confirmed"]!.GetValue<bool>()).Select(entry => entry!["id"]!.GetValue<Guid>()).Order());
+    }
+
+    [Fact]
+    public async Task A_stage_dated_beyond_the_window_ahead_is_committed_as_unsure_and_its_record_injected_again()
+    {
+        var harness = new Harness();
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var future = InjectionRecords.Now + ExperienceInjectionSessionLimits.DefaultInFlightStageWindow + TimeSpan.FromMinutes(1);
+        var stage = $$"""{"stage":"{{Guid.NewGuid():D}}","staged":"{{future:O}}","bytes":10,"delivered":[{"id":"{{id:D}}","rev":1,"grantApproach":false,"withdrawn":false,"confirmed":true}],"withdrawn":[]}""";
+        var session = await Restore(agent, $$"""{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[{{stage}}]}""");
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        // A staging time the clock cannot have produced is not trusted to be in flight.
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+        Assert.Equal(2, harness.Last.Session!.RecordsUsed);
+        Assert.Empty(StoredState(session)["pending"]!.AsArray());
+    }
+
+    [Fact]
+    public void Abandoned_stages_are_bounded_and_the_oldest_is_committed_as_unsure()
+    {
+        var state = InjectionSessionState.Empty;
+        var stages = Enumerable.Range(1, InjectionSessionState.MaxPendingStages + 1)
+            .Select(n => new PendingDelivery(Guid.NewGuid(), 10, [new DeliveredRecord(InjectionRecords.Id(n), 1, false, false)], []))
+            .ToList();
+        foreach (var stage in stages)
+        {
+            state = state.WithStage(stage);
+        }
+
+        // Nine stages nothing settled: at most eight pending, and the oldest charged but not trusted as delivered.
+        Assert.Equal(InjectionSessionState.MaxPendingStages, state.Pending.Count);
+        Assert.Equal(stages.Skip(1).Select(stage => stage.Stage), state.Pending.Select(stage => stage.Stage));
+        var oldest = Assert.Single(state.Delivered);
+        Assert.Equal(InjectionRecords.Id(1), oldest.ExperienceId);
+        Assert.False(oldest.Confirmed);
+        Assert.Equal((10, 1), (state.BytesUsed, state.RecordsUsed));
+
+        // Every decision counts the pending ones as delivered, and charged.
+        var decided = state.ForDecisions();
+        Assert.Equal(90, decided.BytesUsed);
+        Assert.Equal(9, decided.RecordsUsed);
+        Assert.All(stages.Skip(1), stage => Assert.True(decided.ActiveFor(stage.Delivered[0].ExperienceId)!.Confirmed));
+
+        // And it survives a round trip through the stored form.
+        Assert.True(InjectionSessionState.TryParse(state.ToNode(), out var reloaded));
+        Assert.Equal(state.Pending.Select(stage => stage.Stage), reloaded.Pending.Select(stage => stage.Stage));
+
+        // Staging times survive the round trip, offset included.
+        var stagedAt = new DateTimeOffset(2026, 3, 4, 5, 6, 7, 891, TimeSpan.FromHours(-3));
+        var timed = InjectionSessionState.Empty.WithStage(stages[0] with { StagedAt = stagedAt });
+        Assert.True(InjectionSessionState.TryParse(timed.ToNode(), out var timedBack));
+        Assert.Equal(stagedAt, Assert.Single(timedBack.Pending).StagedAt);
+        Assert.Equal(stagedAt.Offset, timedBack.Pending[0].StagedAt.Offset);
+    }
+
+    [Fact]
+    public async Task A_ninth_stage_commits_the_oldest_abandoned_one_as_unsure()
+    {
+        var harness = new Harness();
+        var fresh = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(fresh, TestScope));
+        var agent = harness.Agent();
+        var oldestRecord = InjectionRecords.Id(101);
+        var stages = Enumerable.Range(1, InjectionSessionState.MaxPendingStages)
+            .Select(n => StageJson(InjectionRecords.Id(700 + n), 10, [InjectionRecords.Id(100 + n)]));
+        var session = await Restore(agent, $$"""{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[{{string.Join(",", stages)}}]}""");
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        // The invocation staged a ninth, which pushed the oldest out as unsure, then settled its own.
+        Assert.Equal([fresh], harness.Last.InjectedExperienceIds);
+        var state = StoredState(session);
+        Assert.Equal(InjectionSessionState.MaxPendingStages - 1, state["pending"]!.AsArray().Count);
+        var unsure = state["delivered"]!.AsArray().Single(entry => entry!["id"]!.GetValue<Guid>() == oldestRecord)!;
+        Assert.False(unsure["confirmed"]!.GetValue<bool>());
+        Assert.Equal(2, state["records"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task A_version_1_state_commits_its_stage_as_unsure_on_load_and_is_saved_back_as_version_2()
+    {
+        var harness = new Harness();
+        var (held, fresh) = (InjectionRecords.Id(1), InjectionRecords.Id(2));
+        harness.World.Publish(InjectionRecords.Record(held, TestScope), relevance: 1d);
+        harness.World.Publish(InjectionRecords.Record(fresh, TestScope), relevance: 0.5d);
+        var agent = harness.Agent();
+        var stage = Guid.NewGuid();
+        var v1 = $$$"""{"v":1,"bytes":10,"records":1,"delivered":[],"pending":{{{StageJson(stage, 10, [held], v1: true)}}}}""";
+        var session = await Restore(agent, v1);
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        // A version 1 stage recorded no staging time, so it is outside any window: committed as unsure on load, as
+        // before story 17.4 -- charged, and its record delivered again beside the new one.
+        Assert.Equal([held, fresh], harness.Last.InjectedExperienceIds);
+        Assert.Equal(4, harness.Last.Session!.RecordsUsed);
+
+        var state = StoredState(session);
+        Assert.Equal(2, state["v"]!.GetValue<int>());
+        Assert.Empty(state["pending"]!.AsArray());
+        Assert.DoesNotContain(stage.ToString("D"), state.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_version_1_state_is_rewritten_as_version_2_even_when_nothing_is_injected()
+    {
+        var harness = new Harness();
+        var agent = harness.Agent();
+        var session = await Restore(agent, """{"v":1,"bytes":0,"records":0,"delivered":[],"pending":null}""");
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+
+        Assert.Equal(InjectionOutcome.NothingToInject, harness.Last.Outcome);
+        var state = StoredState(session);
+        Assert.Equal(2, state["v"]!.GetValue<int>());
+        Assert.Empty(state["pending"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task One_invocation_at_a_time_leaves_nothing_pending_and_takes_no_lock_without_a_session()
+    {
+        var harness = new Harness();
+        var id = InjectionRecords.Id(1);
+        harness.World.Publish(InjectionRecords.Record(id, TestScope));
+        var agent = harness.Agent();
+        var session = await agent.CreateSessionAsync();
+
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Empty(StoredState(session)["pending"]!.AsArray());
+        await agent.RunAsync("refund ticket stuck on a lock", session);
+        Assert.Equal(InjectionOmissionReason.AlreadyDelivered, Assert.Single(harness.Last.Omitted).Reason);
+
+        // No session: nothing tracked, nothing to serialize, the same block every time.
+        await agent.RunAsync("refund ticket stuck on a lock");
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+    }
+
     private static string TooManyEntries()
     {
         var entries = Enumerable.Range(1, ExperienceInjectionSessionLimits.MaxTrackedRecords + 1)
@@ -1491,6 +2035,27 @@ public class SessionInjectionTests
         var staged = Enumerable.Range(1001, 60).Select(Entry);
         return $$$"""{"v":1,"bytes":0,"records":0,"delivered":[{{{string.Join(",", held)}}}],"pending":{"stage":"00000000-0000-0000-0000-00000000000a","bytes":1,"delivered":[{{{string.Join(",", staged)}}}],"withdrawn":[]}}""";
     }
+
+    private static string StageJson(Guid stage, int bytes, IEnumerable<Guid> delivered, bool v1 = false) =>
+        $$"""{"stage":"{{stage:D}}",{{(v1 ? "" : $"\"staged\":\"{InjectionRecords.Now:O}\",")}}"bytes":{{bytes}},"delivered":[{{string.Join(",", delivered.Select(id => $$"""{"id":"{{id:D}}","rev":1,"grantApproach":false,"withdrawn":false,"confirmed":true}"""))}}],"withdrawn":[]}""";
+
+    private static string TooManyStages()
+    {
+        var stages = Enumerable.Range(1, InjectionSessionState.MaxPendingStages + 1).Select(n => StageJson(InjectionRecords.Id(500 + n), 1, []));
+        return $$"""{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[{{string.Join(",", stages)}}]}""";
+    }
+
+    private static string TooManyStagedAcrossStages()
+    {
+        // Each stage alone fits; the union of what they track does not.
+        var first = StageJson(InjectionRecords.Id(901), 1, Enumerable.Range(1, 120).Select(InjectionRecords.Id));
+        var second = StageJson(InjectionRecords.Id(902), 1, Enumerable.Range(1001, 120).Select(InjectionRecords.Id));
+        return $$"""{"v":2,"bytes":0,"records":0,"delivered":[],"pending":[{{first}},{{second}}]}""";
+    }
+
+    /// <summary>The session's stored account, as JSON.</summary>
+    private static JsonObject StoredState(AgentSession session, string key = ExperienceContextProvider.SessionStateKey) =>
+        JsonNode.Parse(session.StateBag.Serialize().GetRawText())![key]!.AsObject();
 
     /// <summary>A session whose state bag holds <paramref name="json"/> under the session key, as a restored session would.</summary>
     private static async Task<AgentSession> Restore(ChatClientAgent agent, string json)
@@ -1615,12 +2180,21 @@ internal sealed class ScriptedStreamingClient : IChatClient
 
     public Exception? Throws { get; set; }
 
-    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    /// <summary>Awaited by every non-streaming call before it answers, with the messages it received; it may throw to fail that call.</summary>
+    public Func<IReadOnlyList<ChatMessage>, Task>? Delay { get; set; }
+
+    public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        LastMessages = messages.ToList();
+        var received = messages.ToList();
+        LastMessages = received;
+        if (Delay is { } delay)
+        {
+            await delay(received);
+        }
+
         return Throws is { } failure
-            ? Task.FromException<ChatResponse>(failure)
-            : Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello, world")));
+            ? throw failure
+            : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello, world"));
     }
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(

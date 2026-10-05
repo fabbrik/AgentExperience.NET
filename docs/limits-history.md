@@ -234,6 +234,19 @@ instead.
   that does not set it keeps the earlier behaviour, and evidence counted before the setting changed stays counted
   (nothing is backfilled). See
   [Keeping host-trusted evidence out of the ranked score](guide/confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score).
+- **KL-12** (a withdrawn record's text staying in a reused session) is **narrowed** by story 17.4. Its clause that
+  concurrent invocations on one session race on the session's tracking was removable by code within one process, and
+  is gone. The provider now holds a lock per `AgentSession` instance and state key, shared by every provider in the
+  process, from loading the account to saving it and around settling (never across the model call), and the account
+  keeps one pending stage per in-flight invocation (state format version 2; version 1 still loads). Every decision
+  counts a pending stage as delivered: charged, not delivered again, re-checked for withdrawal, its notices still
+  owed. Each invocation settles only its own stage. A stage is held only within
+  `ExperienceInjectionSessionLimits.InFlightStageWindow` (default 5 minutes) of its staging; an older one, such as an
+  abandoned stream's, is committed as unsure as before, so its records are eligible again. At most eight stay pending,
+  the oldest committed as unsure beyond that. So two concurrent invocations deliver a revision once in total, both are
+  charged, and a failed one discards only its own stage. What the row still says: two processes resuming the same
+  serialized session each keep their own copy, the host can delete or replace the state key, and a model cannot unread
+  a block. See [Reused sessions](guide/injection.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
 
 ## How the project got here
 

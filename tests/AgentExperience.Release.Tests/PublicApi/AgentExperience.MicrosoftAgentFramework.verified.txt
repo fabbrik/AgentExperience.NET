@@ -156,9 +156,11 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const int DefaultMaxRecords = 32;
         public const int MaxTrackedRecords = 200;
         public ExperienceInjectionSessionLimits(int MaxRecords, int MaxBytes) { }
+        public System.TimeSpan InFlightStageWindow { get; init; }
         public int MaxBytes { get; init; }
         public int MaxRecords { get; init; }
         public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits Default { get; }
+        public static System.TimeSpan DefaultInFlightStageWindow { get; }
     }
     public sealed class ExperienceInjectionSessionUsage : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionUsage>
     {
