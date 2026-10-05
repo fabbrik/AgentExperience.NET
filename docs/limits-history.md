@@ -247,6 +247,17 @@ instead.
   charged, and a failed one discards only its own stage. What the row still says: two processes resuming the same
   serialized session each keep their own copy, the host can delete or replace the state key, and a model cannot unread
   a block. See [Reused sessions](guide/injection.md#reused-sessions-a-budget-no-repeats-and-withdrawal-notices).
+- **KL-2** (erasure not reaching a copy of the derived search data) is **narrowed** by story 17.5. Its clause that,
+  with crypto-shredding, an erased record's embedding content hash survives in every copy was removable by code, and
+  is gone: the content hash is not needed to search, so with an `ExperienceEncryption` the vectors store now writes
+  `keyed:` and base64 of HMAC-SHA256 of the plain hash under a subkey of the record's data key (HKDF-SHA256, label
+  `aexp:embedding-content-hash:v1`) instead of the plain SHA-256, and the re-index scan translates it back for Core by
+  recomputing and comparing in constant time, with its keys fetched in one key-store call. Once erasure destroys the
+  key, the value a backup, replica or WAL segment holds no longer confirms a guessed summary (two copies still show
+  whether the summary changed between them). A hash stored in the clear for a record that has a key costs one
+  re-embed. Plaintext mode, Core and the schema are unchanged. What the row still says: the embedding vector and the
+  full-text vector, which PostgreSQL must read in the clear to search, survive in every copy. See
+  [Crypto-shredding](guide/crypto-shredding.md#search-and-why-the-residual-is-what-it-is).
 
 ## How the project got here
 

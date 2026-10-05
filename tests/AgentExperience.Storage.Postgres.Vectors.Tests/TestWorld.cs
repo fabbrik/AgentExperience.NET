@@ -192,6 +192,21 @@ internal sealed class TestWorld
             reader.GetInt32(7));
     }
 
+    /// <summary>
+    /// What <c>content_hash</c> holds for <paramref name="plainHash"/>: the hash itself in plaintext mode, and in
+    /// encrypted mode the hash keyed under the record's key (story 17.5).
+    /// </summary>
+    public async Task<string> ExpectedStoredContentHashAsync(Guid experienceId, string plainHash)
+    {
+        if (!EncryptionMode.IsOn)
+        {
+            return plainHash;
+        }
+
+        using var key = await EncryptionMode.Shared.ForReadAsync(experienceId, Scope, CancellationToken.None);
+        return KeyedContentHash.Key(key!, plainHash);
+    }
+
     public async Task<long> CountEmbeddingsAsync(Guid experienceId) =>
         await ScalarAsync<long>("SELECT count(*) FROM agent_experience.experience_embeddings WHERE experience_id = @id", experienceId);
 

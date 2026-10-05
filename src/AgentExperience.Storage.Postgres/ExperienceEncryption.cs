@@ -132,14 +132,20 @@ public sealed class ExperienceEncryption
     /// (<see cref="IExperienceKeyStore.GetKeysAsync"/>), for the retrieval reads, which fetch every sealed row's
     /// key together once their reader is closed and their connection released. Duplicate references are asked for once. Each answer
     /// means what <see cref="ForReadAsync"/>'s does: a key, or destroyed (the record is erased); a reference
-    /// the store never held is the same configuration failure, thrown after every key obtained is disposed.
+    /// the store never held is the same configuration failure, thrown after every key obtained is disposed --
+    /// unless <paramref name="allowMissing"/>, for readers that may meet rows written before the upgrade, which have no
+    /// key: such a reference is then answered as missing (<see cref="RecordKeyBatch.IsMissing"/>), like
+    /// <see cref="LookupAsync"/>'s third state.
     /// </summary>
-    internal async ValueTask<RecordKeyBatch> ForReadManyAsync(IEnumerable<ExperienceKeyReference> references, CancellationToken cancellationToken)
+    internal async ValueTask<RecordKeyBatch> ForReadManyAsync(
+        IEnumerable<ExperienceKeyReference> references,
+        CancellationToken cancellationToken,
+        bool allowMissing = false)
     {
         var distinct = references.Distinct().ToArray();
         if (distinct.Length == 0)
         {
-            return new RecordKeyBatch([]);
+            return new RecordKeyBatch([], []);
         }
 
         IReadOnlyList<ExperienceKeyLookup> lookups;
@@ -153,7 +159,8 @@ public sealed class ExperienceEncryption
         }
 
         var keys = new Dictionary<ExperienceKeyReference, RecordKey?>(distinct.Length);
-        var batch = new RecordKeyBatch(keys);
+        var missing = new HashSet<ExperienceKeyReference>();
+        var batch = new RecordKeyBatch(keys, missing);
         var failure = lookups is null || lookups.Count != distinct.Length
             ? new ExperienceStoreException("The key store answered a batch key lookup with a different number of results than it was asked for.")
             : null;
@@ -174,6 +181,9 @@ public sealed class ExperienceEncryption
                 {
                     case ExperienceKeyStatus.Destroyed:
                         keys[distinct[i]] = null;
+                        break;
+                    case ExperienceKeyStatus.NotFound when allowMissing:
+                        missing.Add(distinct[i]);
                         break;
                     case ExperienceKeyStatus.NotFound:
                         failure = MissingKey();
@@ -241,7 +251,7 @@ public sealed class ExperienceEncryption
         }
     }
 
-    private static ExperienceStoreException MissingKey() => new(
+    internal static ExperienceStoreException MissingKey() => new(
         "A sealed Experience Record has no key in the configured key store. The key store is misconfigured "
         + "(the wrong or an empty store); the record is not reported as erased.");
 
@@ -275,14 +285,23 @@ internal sealed class RecordKeyBatch : IDisposable
 {
     private readonly Dictionary<ExperienceKeyReference, RecordKey?> _keys;
 
-    internal RecordKeyBatch(Dictionary<ExperienceKeyReference, RecordKey?> keys)
+    private readonly HashSet<ExperienceKeyReference> _missing;
+
+    internal RecordKeyBatch(Dictionary<ExperienceKeyReference, RecordKey?> keys, HashSet<ExperienceKeyReference> missing)
     {
         _keys = keys;
+        _missing = missing;
     }
 
     /// <summary>
+    /// Whether the store never held a key for the reference: only answered when the batch was fetched with
+    /// <c>allowMissing</c>, for a row written before the upgrade.
+    /// </summary>
+    internal bool IsMissing(ExperienceKeyReference reference) => _missing.Contains(reference);
+
+    /// <summary>
     /// The record's key, or <see langword="null"/> when it was destroyed (the record is erased). A reference
-    /// the batch was not asked for is a programming error.
+    /// the batch was not asked for, or one that is missing, is a programming error.
     /// </summary>
     internal RecordKey? this[ExperienceKeyReference reference] => _keys.TryGetValue(reference, out var key)
         ? key
@@ -329,6 +348,29 @@ internal sealed class RecordKey : IDisposable
     /// <summary><see cref="Open"/> for a nullable column.</summary>
     internal string? OpenNullable(string column, Guid rowId, string? stored) =>
         stored is null ? null : Open(column, rowId, stored);
+
+    /// <summary>
+    /// HMAC-SHA256 of <paramref name="value"/> (UTF-8) under a subkey derived from this record's data key with
+    /// HKDF-SHA256 and <paramref name="purpose"/> as its info label, so the data key itself never keys anything but
+    /// AES-GCM and each purpose gets its own, unrelated subkey. Destroying the data key makes every such value
+    /// impossible to recompute.
+    /// </summary>
+    internal byte[] KeyedDigest(string purpose, string value)
+    {
+        Span<byte> subkey = stackalloc byte[32];
+        var info = Encoding.UTF8.GetBytes(purpose);
+        var data = Encoding.UTF8.GetBytes(value);
+        try
+        {
+            HKDF.DeriveKey(HashAlgorithmName.SHA256, _key.Span, subkey, salt: [], info);
+            return HMACSHA256.HashData(subkey, data);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(subkey);
+            CryptographicOperations.ZeroMemory(data);
+        }
+    }
 
     public void Dispose() => _key.Dispose();
 }
