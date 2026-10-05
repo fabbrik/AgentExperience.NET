@@ -160,6 +160,14 @@ public static class ExperienceSchemaMigrator
     /// and cannot write the tombstone shape into <c>experience_records</c> itself (it cannot update those
     /// columns). The owner role and superusers remain unbound; that is inherent in PostgreSQL.
     /// </para>
+    /// <para>
+    /// Concurrent calls are serialized by the migrator's advisory lock. Another session's locks -- store
+    /// traffic, say -- can still cross the transaction's, and when PostgreSQL rolls the transaction back as a
+    /// deadlock victim (<c>40P01</c>) the whole transaction is retried, up to three attempts in all, after a
+    /// short jittered wait. The retry is a mitigation: the cause is the order in which the call and store
+    /// traffic take their locks, so run the call when traffic is low. A deadlock on the last attempt is thrown
+    /// as an <see cref="ExperienceStoreException"/> saying so; every other failure is thrown as before.
+    /// </para>
     /// </remarks>
     /// <param name="ownerDataSource">
     /// A data source connecting as the role that owns the schema (or a superuser). Never disposed here.
@@ -167,15 +175,16 @@ public static class ExperienceSchemaMigrator
     /// </param>
     /// <param name="options">The application role and its two opt-ins.</param>
     /// <param name="cancellationToken">
-    /// Cancels the call at any point; the privilege changes are one transaction, so a cancelled call
-    /// changes nothing.
+    /// Cancels the call at any point, including while it waits to retry after a deadlock, which ends the
+    /// call; the privilege changes are one transaction, so a cancelled call changes nothing.
     /// </param>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
     /// <exception cref="ExperienceStoreException">
     /// The role was refused, the schema is not migrated, the calling role was refused a <c>GRANT</c> or
     /// <c>REVOKE</c> (the data source does not connect as the owner of every object in the schema), the
-    /// effective privileges did not match, or the database was unreachable.
-    /// Nothing was changed.
+    /// effective privileges did not match, the transaction was chosen as a deadlock victim on every attempt
+    /// (most likely against live store traffic: run the call when traffic is low), or the database was
+    /// unreachable. Nothing was changed.
     /// </exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public static Task ApplyApplicationRolePrivilegesAsync(
@@ -185,13 +194,56 @@ public static class ExperienceSchemaMigrator
     {
         ArgumentNullException.ThrowIfNull(ownerDataSource);
         ArgumentNullException.ThrowIfNull(options);
+        return ApplyApplicationRolePrivilegesCoreAsync(ownerDataSource, options, ApplicationRolePrivileges.ApplyAsync, cancellationToken);
+    }
+
+    /// <summary>
+    /// How many times the privileges transaction is attempted when PostgreSQL picks it as a deadlock victim
+    /// (<c>40P01</c>). The transaction is all-or-nothing and idempotent, so a victim is retried whole.
+    /// </summary>
+    internal const int PrivilegesDeadlockAttempts = 3;
+
+    /// <summary>
+    /// The test seam behind the public call: the same session lock, deadlock retry and exception contract,
+    /// over a replaceable transaction body, so a test can inject <c>40P01</c> deterministically.
+    /// </summary>
+    internal static Task ApplyApplicationRolePrivilegesCoreAsync(
+        NpgsqlDataSource ownerDataSource,
+        ExperienceApplicationRoleOptions options,
+        Func<NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken, Task> applyTransaction,
+        CancellationToken cancellationToken)
+    {
         return RunUnderLockAsync(
             ownerDataSource,
             async () =>
             {
                 try
                 {
-                    await ApplicationRolePrivileges.ApplyAsync(ownerDataSource, options, cancellationToken).ConfigureAwait(false);
+                    for (var attempt = 1; ; attempt++)
+                    {
+                        try
+                        {
+                            await applyTransaction(ownerDataSource, options, cancellationToken).ConfigureAwait(false);
+                            break;
+                        }
+                        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DeadlockDetected
+                            && attempt < PrivilegesDeadlockAttempts
+                            && !cancellationToken.IsCancellationRequested)
+                        {
+                            // Story 16.6: the session lock serializes privileges calls, but not other sessions
+                            // (store traffic) whose locks the transaction's ACCESS EXCLUSIVE locks can cross.
+                            // PostgreSQL rolled the victim back whole; wait briefly, jittered, and run it again.
+                            try
+                            {
+                                await Task.Delay(DeadlockBackoff(attempt), cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                            {
+                                // Surfaced exactly as a cancellation during a statement is: the same type, message and inner exception.
+                                throw TranslatePrivilegeFailure(ex, cancellationToken);
+                            }
+                        }
+                    }
                 }
                 catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
                 {
@@ -202,6 +254,10 @@ public static class ExperienceSchemaMigrator
             },
             cancellationToken);
     }
+
+    /// <summary>50-150 ms after the first deadlock, 100-300 ms after the second: short, and never in step.</summary>
+    private static TimeSpan DeadlockBackoff(int attempt) =>
+        TimeSpan.FromMilliseconds(attempt * (50 + Random.Shared.Next(0, 101)));
 
     private static async Task<T> RunUnderLockAsync<T>(
         NpgsqlDataSource dataSource,
@@ -365,6 +421,13 @@ public static class ExperienceSchemaMigrator
             ? new OperationCanceledException("Applying the application role's privileges was cancelled.", ex, cancellationToken)
             : ex switch
             {
+                // Story 16.6: only the last attempt's deadlock gets here; the earlier ones were retried. The attempt
+                // count is the one diagnostic: the migrator logs nothing, and the message carries no SQL or role.
+                PostgresException { SqlState: PostgresErrorCodes.DeadlockDetected } => new ExperienceStoreException(
+                    $"The application role's privileges were not applied: the transaction was chosen as a deadlock victim " +
+                    $"{PrivilegesDeadlockAttempts} times in a row, most likely against live store traffic; run it when traffic " +
+                    "is low. Nothing was changed.", ex),
+
                 // The server refused a GRANT or REVOKE: the caller is not the owner of the schema and of every
                 // object in it (a vectors table created by a superuser is the usual one).
                 PostgresException { SqlState: PostgresErrorCodes.InsufficientPrivilege } => new ExperienceStoreException(
