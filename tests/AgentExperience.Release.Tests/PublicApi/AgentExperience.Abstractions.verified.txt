@@ -932,6 +932,10 @@
         Deterministic = 0,
         Model = 1,
     }
+    public static class ReflectionAuthorshipConventions
+    {
+        public const string LibraryModelReflectorProducerPrefix = "AgentExperience.ChatClientExperienceReflector/";
+    }
     public enum ReuseAttributionSource
     {
         None = 0,

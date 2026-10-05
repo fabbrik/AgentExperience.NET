@@ -42,7 +42,8 @@ namespace AgentExperience.Core.Reflections;
 /// </description></item>
 /// <item><description>
 /// <b>The content guard, for model-authored text only.</b> A reflection whose
-/// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/> is then
+/// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or whose
+/// <see cref="Reflection.Producer"/> names the library's own model-backed reflector, is then
 /// refused, as <see cref="ReflectionScreeningRefusal.UnsafeContent"/>, when a screened field holds a whole URL,
 /// hostname or IP address that is not in the run content its reflector was given (see
 /// <see cref="IReflectionRunContent"/>; with none, every one is refused), a <c>data:</c>, <c>javascript:</c>,
@@ -245,9 +246,11 @@ public static class ReflectionScreening
             var second = Hygiene(lesson, lists, guidance, first.SourceIndexes, limits, afterSanitizer: true);
 
             // Layer 3, for model-authored text only: the content guard, over exactly what would be stored. Fail
-            // closed: anything that is not Deterministic counts as model-authored. With no run content, every
-            // URL, hostname and IP address is refused.
-            if (reflection.Authorship != ReflectionAuthorship.Deterministic)
+            // closed: anything that is not Deterministic counts as model-authored, as does a reflection the library's
+            // own model-backed reflector produced (ReflectionAuthorshipRule), judged on the cleaned producer that will
+            // be stored, so what the guard sees is what every later reader decides on. With no run content, every URL,
+            // hostname and IP address is refused.
+            if (ReflectionAuthorshipRule.IsModelAuthored(reflection with { Producer = producer }))
             {
                 GuardModelAuthored(second, ModelAuthoredContentGuard.LinksOf(runContent));
             }

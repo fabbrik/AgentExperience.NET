@@ -24,6 +24,9 @@
     <!-- Story 11.2: the PostgreSQL store's validation rules for the core ports, compiled here from the same source
          file (src/Shared), so this store refuses exactly what that one refuses. -->
     <Compile Include="..\Shared\ExperienceRecordValidator.Shared.cs" Link="Shared\ExperienceRecordValidator.Shared.cs" />
+    <!-- Story 17.1: the one rule that decides whether a reflection counts as model-authored, shared by Core, the MAF
+         adapter and both stores so every authorship decision agrees. -->
+    <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />
   </ItemGroup>
 
   <ItemGroup>

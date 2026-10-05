@@ -38,8 +38,9 @@ public sealed record RetrieveExperienceRequest(
 
     /// <summary>
     /// Optional. <see langword="true"/> to leave out every model-authored record: one whose reflection exists and whose
-    /// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>. The
-    /// service passes it to every channel it searches, as <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>
+    /// <see cref="Reflection.Authorship"/> is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or whose
+    /// <see cref="Reflection.Producer"/> starts with <c>AgentExperience.ChatClientExperienceReflector/</c>, the library's
+    /// own model-backed reflector (story 17.1). The service passes it to every channel it searches, as <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/>
     /// and <see cref="ExperienceVectorQuery.ExcludeModelAuthored"/>, so each source applies it before its own limit and
     /// <see cref="Limit"/> is filled with the strongest records that are not model-authored. <see langword="false"/>
     /// (the default) leaves retrieval exactly as it is without this property.
@@ -48,10 +49,10 @@ public sealed record RetrieveExperienceRequest(
     /// It is applied twice. Each source applies it before its own limit, so the window fills with records that are not
     /// model-authored, and a record a source leaves out is never in <see cref="ExperienceRetrievalResult.Excluded"/>.
     /// Then the service checks every candidate a source still returned, failing closed on authorship, and excludes it as
-    /// <see cref="RetrievalExclusionReason.ModelAuthored"/>: a source that does not honour the request, or a PostgreSQL
-    /// row sealed without its authorship flag (sealed before migration <c>0021</c>, or written by an instance that
-    /// predates it during a rolling deploy), whose authorship only the opened record shows. Such a record never reaches
-    /// <see cref="ExperienceRetrievalResult.Records"/>, but it did take a place in that source's candidate window. The
+    /// <see cref="RetrievalExclusionReason.ModelAuthored"/>: a source that does not honour the request, or a stored
+    /// authorship flag that disagrees with the opened record. Such a record never reaches
+    /// <see cref="ExperienceRetrievalResult.Records"/>, but it did take a place in that source's candidate window. A
+    /// PostgreSQL row sealed without its authorship flag is left out by the source itself (story 17.1). The
     /// injection provider sets this property when <c>ModelAuthoredLessons</c> is <c>Exclude</c> and still checks every
     /// record it re-reads.
     /// </remarks>
@@ -176,8 +177,9 @@ public enum RetrievalExclusionReason
     EnvironmentMismatch,
 
     /// <summary>
-    /// The request set <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/> and the record's reflection
-    /// authorship is anything but <see cref="ReflectionAuthorship.Deterministic"/>, yet a source still returned it
+    /// The request set <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/> and the record's reflection counts as
+    /// model-authored (its authorship is anything but <see cref="ReflectionAuthorship.Deterministic"/>, or its producer
+    /// is the library's own model-backed reflector), yet a source still returned it
     /// (story 14.4). Sources normally leave such records out themselves, so they are never listed here.
     /// </summary>
     ModelAuthored,

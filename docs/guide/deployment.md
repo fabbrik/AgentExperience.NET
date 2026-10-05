@@ -84,7 +84,7 @@ Schema comes in two calls, matching that split, and neither store ever migrates 
 
 ```csharp
 // As the owner role, on every deploy. The stores themselves connect as the application role.
-await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003, 0005-0019 and 0021 (no 0014), always
+await ExperienceSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);        // 0001-0003, 0005-0019, 0021 and 0022 (no 0014), always
 await ExperienceVectorSchemaMigrator.MigrateAsync(ownerDataSource, cancellationToken);  // 0004 and 0020, only with the vector channel
 await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(                     // last, so it covers both
     ownerDataSource,
@@ -94,6 +94,17 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(             
 
 How the migrator behaves (journaling, locking, timeouts, permissions) and what each script does is in
 [PostgreSQL schema](postgres-schema.md).
+
+With crypto-shredding on, run the owner-run authorship backfill after upgrading past `0021`, and after any rolling
+deploy that ran instances on an earlier build: a sealed record stored without its authorship flag is left out of
+searches that exclude model-authored lessons until `BackfillSealedAuthorshipAsync` writes it. That job needs both the
+owner role and the key store (the KEK and access to the wrapped keys) in one process: a deliberate, one-off
+combination of custody, so run it from a short-lived operator process, not from the application. See
+[Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading).
+
+`0022`'s single `UPDATE` reads every live plaintext payload inside the migrator's transaction and under its command
+timeout (30 seconds by default). On a large plaintext table, run the migrator in a maintenance window, or over a data
+source whose command timeout is raised for the migration; a script that times out rolls back and changes nothing.
 
 ## Using the store directly
 

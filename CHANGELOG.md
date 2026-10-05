@@ -113,6 +113,46 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   default retrieval timeout. With no unwrap latency, batching adds a small overhead (5.1 ms against 4.3 ms, within
   the run's error). See [Key custody](docs/guide/crypto-shredding.md#key-custody-the-property-is-only-as-true-as-this).
 
+### Unknown authorship fails closed, and the library's own reflector is recognised (story 17.1)
+
+- **The problem it fixes.** Two clauses of the KL-18 boundary were removable by code. Under
+  `ModelAuthoredLessons = Exclude`, a PostgreSQL row sealed without its authorship flag (before migration `0021`, by
+  an instance on an earlier build during a rolling deploy, or by any writer that left the flag out) was still returned
+  by both channels and took a place in the candidate window before retrieval dropped it. And records the library's own
+  `ChatClientExperienceReflector` wrote before it declared authorship read as `Deterministic`.
+- **Behaviour change: fail closed in SQL.** Under exclusion, the text candidate source, the vector search and its
+  compatibility probe keep only rows whose `reflection_model_authored` is `false` (`IS FALSE`, was `IS NOT TRUE`).
+  A sealed row with an unknown flag is left out of an excluding search, so a deterministic record among them is not
+  injected under `Exclude` until its flag is written. Without the exclusion nothing changes.
+- **One authorship rule.** Core (finalization's content guard, retrieval's exclusion check), the MAF adapter
+  (injection labelling, fencing and exclusion) and both stores now decide authorship by one rule: model-authored when
+  `Authorship` is anything but `Deterministic`, **or** when `Producer` starts with
+  `AgentExperience.ChatClientExperienceReflector/` (ordinal), now public as
+  `ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix` in Abstractions. No other producer is read.
+  The reflector shipped in `0.1.0-preview.5`, the release that also made it declare `Model`, so no published release
+  wrote one of its records as `Deterministic`; the rule covers unreleased builds between stories 14.2 and 14.3.
+- **Action for a custom `IExperienceCandidateSource` or `IExperienceEmbeddingIndex`:** `ExcludeModelAuthored` now also
+  covers a reflection whose producer starts with `ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix`,
+  whatever authorship it declares, so an implementation must apply that prefix check too. The store conformance suite
+  checks it.
+- **Migration `0022_library_reflector_authorship`** (`PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName`)
+  replaces `payload_reflection_model_authored` with the same rule and recomputes the flag on every live plaintext row
+  that differs; a reflection whose producer is missing or not a string, which the reader refuses, is `true` (fail
+  closed). It adds no table, column, index or function signature, takes row locks only on the rows it rewrites, and is
+  idempotent. Its `UPDATE` reads every live plaintext payload inside the migrator's transaction and command timeout:
+  on a large plaintext table, migrate in a maintenance window or with a raised command timeout. See [0022](docs/guide/postgres-schema.md#0022-library-reflector-authorship).
+- **Owner-run backfill.** `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` (new, with an optional
+  `startAfter` cursor, returning the new `ExperienceAuthorshipBackfillResult` with `SetCount`, `SkippedCount`,
+  `MoreRemain` and `ResumeAfter`) opens each live sealed row whose flag is unknown with its record key and writes the
+  flag, in bounded, authorized batches that resume past the last examined ID. It fetches a batch's keys in one
+  key-store call before locking any row. It must run over the owner's data source with the record keys (the
+  application role holds no `UPDATE` on the flag), skips and counts a row whose key was destroyed or whose payload
+  cannot be opened, and never changes a flag already written; a call that throws may already have set some flags, and
+  rerunning it is safe. It is the new `record.authorship.backfill` telemetry operation. **Action with crypto-shredding
+  on:** run it after upgrading, passing each `ResumeAfter` on until `MoreRemain` is `false` for every project; see
+  [Backfilling authorship flags](docs/guide/crypto-shredding.md#backfilling-authorship-flags-after-upgrading).
+- **KL-18** drops both clauses; see [Limits history](docs/limits-history.md#narrowed-after-010-preview6).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

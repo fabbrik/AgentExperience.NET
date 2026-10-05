@@ -71,6 +71,64 @@ public sealed class CryptoShreddingVectorsTests(VectorsFixture fixture)
         Assert.Equal(2, search.Candidates.Count);
     }
 
+    [Fact]
+    public async Task An_excluding_vector_search_leaves_out_a_sealed_record_stored_without_its_authorship_flag_until_the_backfill_writes_it()
+    {
+        // Story 17.1: unknown authorship fails closed on the vector channel too, in the search and in its compatibility
+        // probe, and the owner's backfill restores the deterministic record.
+        var encryption = new ExperienceEncryption(new EnvelopeExperienceKeyStore(LocalExperienceKeyEncryptionKey.Generate("kek-1"), new InMemoryExperienceWrappedKeyRepository()));
+        var scope = new Scope("tenant-" + Guid.NewGuid().ToString("N"), "app-1", "project-1");
+        var auth = new AuthorizationContext(scope.TenantId, "host-principal", ["experience:write"], Stamp);
+        var store = new PostgresExperienceRecordStore(fixture.DataSource, encryption: encryption);
+        var index = new PostgresExperienceEmbeddingIndex(fixture.DataSource, encryption: encryption);
+        var generator = new TopicEmbeddingGenerator();
+        var indexing = new ExperienceIndexingService(index, generator);
+
+        var flagged = Record(scope, "refund-ticket");
+        var unflagged = Record(scope, "refund-dispute");
+        foreach (var record in new[] { flagged, unflagged })
+        {
+            Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(auth, record, CancellationToken.None)).Outcome);
+        }
+
+        Assert.Equal(2, (await indexing.ReindexAsync(auth, new ReindexExperienceRequest(scope))).Indexed);
+
+        // As a row sealed before 0021, or by an instance on an earlier build: the flag is unknown.
+        await using (var unset = fixture.OwnerDataSource.CreateCommand(
+            $"UPDATE agent_experience.experience_records SET reflection_model_authored = NULL WHERE experience_id = '{unflagged.ExperienceId}'"))
+        {
+            Assert.Equal(1, await unset.ExecuteNonQueryAsync());
+        }
+
+        var query = new ExperienceVectorQuery(scope, generator.ModelId, TopicEmbeddingGenerator.VectorFor("refund"), [ExperienceStatus.Validated], 0);
+        var excluding = await index.SearchAsync(auth, query with { ExcludeModelAuthored = true }, CancellationToken.None);
+        var including = await index.SearchAsync(auth, query, CancellationToken.None);
+
+        Assert.Equal([flagged.ExperienceId], excluding.Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Equal(new[] { flagged.ExperienceId, unflagged.ExperienceId }.Order(), including.Candidates.Select(candidate => candidate.Record.ExperienceId).Order());
+
+        // The probe sees what the search saw: with only the unknown record's embedding at hand, no mismatch is reported.
+        await using (var unsetBoth = fixture.OwnerDataSource.CreateCommand(
+            $"UPDATE agent_experience.experience_records SET reflection_model_authored = NULL WHERE experience_id = '{flagged.ExperienceId}'"))
+        {
+            Assert.Equal(1, await unsetBoth.ExecuteNonQueryAsync());
+        }
+
+        var wider = new float[] { 1f, 0f, 0f, 0f, 0f };
+        var probed = await index.SearchAsync(auth, query with { Vector = wider, ExcludeModelAuthored = true }, CancellationToken.None);
+        Assert.Equal(ExperienceVectorSearchOutcome.Found, probed.Outcome);
+        Assert.Empty(probed.Candidates);
+        Assert.Equal(ExperienceVectorSearchOutcome.DimensionMismatch, (await index.SearchAsync(auth, query with { Vector = wider }, CancellationToken.None)).Outcome);
+
+        var backfill = await new PostgresExperienceRecordStore(fixture.OwnerDataSource, encryption: encryption)
+            .BackfillSealedAuthorshipAsync(auth, scope, 10, ScopeMatch.Exact, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, backfill.Outcome);
+        Assert.Equal(2, backfill.SetCount);
+
+        var restored = await index.SearchAsync(auth, query with { ExcludeModelAuthored = true }, CancellationToken.None);
+        Assert.Equal(new[] { flagged.ExperienceId, unflagged.ExperienceId }.Order(), restored.Candidates.Select(candidate => candidate.Record.ExperienceId).Order());
+    }
+
     private static ExperienceIndexScan Scan(Scope scope) =>
         new(scope, "topic-embed-v1", [ExperienceStatus.Validated], 0);
 

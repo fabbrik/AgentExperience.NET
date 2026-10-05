@@ -56,7 +56,7 @@ plaintext mode both still hold the text after the erasure.
 
 | Column | Sealed under | Stored in the clear instead |
 | --- | --- | --- |
-| `experience_records.payload` **and** `task_id` — task summary, attempts and tool calls, outcome and evidence detail, reflection and lesson, environment, provenance | the record's key, together as one value | `payload = {"sealed": "aexp-sealed:v1:…"}`, `payload_version = 2`, `task_id = '(sealed)'`, the derived `search_vector_sealed`, and `0021`'s `reflection_model_authored`, whether a model wrote the reflection (one bit, reset to `false` by erasure; a row sealed without it — before `0021`, or by an instance on the previous build — has `NULL`) |
+| `experience_records.payload` **and** `task_id` — task summary, attempts and tool calls, outcome and evidence detail, reflection and lesson, environment, provenance | the record's key, together as one value | `payload = {"sealed": "aexp-sealed:v1:…"}`, `payload_version = 2`, `task_id = '(sealed)'`, the derived `search_vector_sealed`, and `0021`'s `reflection_model_authored`, whether a model wrote the reflection (one bit, reset to `false` by erasure; a row sealed without it — before `0021`, or by an instance on the previous build — has `NULL`, which an excluding search treats as model-authored until [the backfill](#backfilling-authorship-flags-after-upgrading) writes it) |
 | `lifecycle_events.reason`, `lifecycle_events.confidence_detail` | the record's key | — |
 | `confidence_evidence.detail` | the record's key | — |
 | `experience_grants.reason`, `experience_grants.revocation_reason`, `experience_grant_events.reason` | the key of the record the grant is over | — |
@@ -219,3 +219,56 @@ So encrypted mode keeps them, and the residual above is exactly them:
    `agent_experience.experience_records`, and age out the pre-upgrade backups on your normal schedule. Ledger rows
    and grant reasons written before step 3 stay plaintext until their record is erased; the library does not open
    an `UPDATE` path on its append-only audit trail to re-encrypt them.
+
+## Backfilling authorship flags after upgrading
+
+A sealed record carries `0021`'s `reflection_model_authored` flag in the clear, so a search that excludes
+model-authored lessons (`ModelAuthoredLessons = Exclude`) can leave them out in SQL. A sealed row stored **without**
+it — sealed before `0021`, which cannot open it, or sealed during a rolling deploy by an instance on an earlier build —
+has `NULL`. Since story 17.1 an excluding search fails closed on `NULL` and leaves such a row out, as if a model wrote
+it: a deterministic record among them is not injected under `Exclude` until its flag is written. Searches without the
+exclusion are unchanged.
+
+After upgrading past `0021` (and again after a rolling deploy that ran instances on an earlier build), run the
+owner-run backfill for every project root that holds unflagged sealed rows (the query in
+[`0021: reflection authorship`](postgres-schema.md#0021-reflection-authorship) lists them), passing each batch's
+`ResumeAfter` to the next call until `MoreRemain` is `false`:
+
+```csharp
+// The store connects as the owner role and holds the record keys: see "Custody" below.
+var ownerStore = new PostgresExperienceRecordStore(ownerDataSource, encryption: encryption);
+Guid? cursor = null;
+ExperienceAuthorshipBackfillResult batch;
+do
+{
+    batch = await ownerStore.BackfillSealedAuthorshipAsync(auth, projectScope, batchSize: 200, ScopeMatch.Subtree, cursor, ct);
+    cursor = batch.ResumeAfter;
+}
+while (batch.MoreRemain);
+```
+
+Each batch reads one page of unflagged sealed rows after the cursor, fetches every key it needs in one key-store call
+(`GetKeysAsync`) before it locks anything, and then, row by row, one statement locks the row, re-checks that it is
+still live, sealed and unflagged, and sets its flag by the rule every store shares — `true` when the reflection's
+authorship is anything but `Deterministic` or its producer is the library's own `ChatClientExperienceReflector`,
+`false` otherwise or with no reflection. Nothing else about the row changes, and a flag already written is never
+changed. A row whose key was destroyed (a delete that did not commit), or whose payload cannot be opened or decoded,
+is skipped and counted in `SkippedCount`; it never stops the batch, the cursor moves past it, and it stays unknown —
+and so excluded — until it is erased or repaired. `auth` must permit the root scope, as for a sweep. A store without
+an `ExperienceEncryption` answers `Invalid`.
+
+**Failure and reruns.** A call that throws may already have set some flags; its counts are lost with the exception.
+The job is idempotent: rerun it from the last cursor you have, or from the start, and it finds only what is left.
+
+**Custody.** The backfill is the one job that needs both the owner role (the application role holds no `UPDATE` on the
+flag, and over it the call fails with a permission error and sets nothing) **and** the key store — the KEK and access
+to the wrapped keys — in the same process. That combination is deliberate and one-off: run it from a short-lived
+operator process after the upgrade, not from the application, and do not leave a process holding both.
+
+It is the `record.authorship.backfill` telemetry operation, which carries only how many flags it set and how wide it
+reached.
+
+**Migration `0022` first.** The same upgrade applies `0022`, which recomputes the flag of plaintext rows in one
+`UPDATE` that reads every live plaintext payload inside the migrator's transaction and under its command timeout (30
+seconds by default). On a large plaintext table, migrate in a maintenance window or over a data source whose command
+timeout is raised for the migration; a script that times out rolls back and changes nothing.

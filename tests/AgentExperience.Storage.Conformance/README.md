@@ -77,7 +77,8 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - It ranks before it limits, returns the strongest match first with a strictly higher relevance than a clearly
   weaker one, and gives each candidate a relevance in [0, 1].
 - With `ExcludeModelAuthored`, it leaves out every record whose reflection authorship is anything but
-  `Deterministic`, before the limit: with model-authored records ranked above deterministic ones and `Limit = N`, it
+  `Deterministic`, or whose producer starts with `AgentExperience.ChatClientExperienceReflector/` (the library's own
+  model-backed reflector; a third-party producer is never read), before the limit: with model-authored records ranked above deterministic ones and `Limit = N`, it
   returns the top N deterministic records and no model-authored one. A record with no reflection is kept. Without it
   (the default), the search is unchanged and model-authored records are returned like any other.
 - A record that matches none of the query's terms is not returned. Text that matches nothing is `Found` with no

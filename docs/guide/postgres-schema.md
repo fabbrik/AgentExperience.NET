@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019`, `0021` and `0022` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -568,22 +568,29 @@ model-authored records out in SQL, **before** its `LIMIT`. See
   store writes it from the record's reflection when it seals a record, and `0016`'s sealing function leaves the
   plaintext row's flag as it was. Any tombstone gets `false`, so the erasure needs no change, and the `NOT VALID` check
   `experience_records_authorship_only_when_live` keeps every other value off a tombstone.
-- **The filter** is `reflection_model_authored IS NOT TRUE`, in the text channel's search and the vectors package's
-  search and compatibility probes. It leaves out `true` only. Under the out-of-band HNSW index the vector channel
+- **The filter** is `reflection_model_authored IS FALSE` (it was `IS NOT TRUE` until story 17.1), in the text
+  channel's search and the vectors package's search and compatibility probes. It keeps `false` only, so an unknown
+  (`NULL`) flag fails closed and is left out like `true`. Under the out-of-band HNSW index the vector channel
   applies it, like its other filters, to the neighbours the index walk produced, so it can return fewer than its limit
   (see [Indexing](indexing.md#the-hnsw-index-is-created-out-of-band)).
-- **The residual: a sealed row stored without its flag.** That is a row sealed before `0021` (the migration cannot open
-  it), a row an instance still running the previous build seals during a rolling deploy — until every instance runs
-  this version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. An excluding search
-  still returns it, so it takes a place in the source's candidate window (`RetrievalPolicy.CandidateLimit`); the
-  retrieval service opens it, excludes it as `RetrievalExclusionReason.ModelAuthored` when a model wrote it, and the
-  request's own `Limit` still fills. To clear them, find them, read each through the store, and revoke, supersede or
-  erase the model-authored ones:
+- **A sealed row stored without its flag.** That is a row sealed before `0021` (the migration cannot open it), a row
+  an instance still running the previous build seals during a rolling deploy — until every instance runs this
+  version, newly sealed rows may be unflagged — and any row a writer inserts without the flag. Since story 17.1 an
+  excluding search leaves it out, as if a model wrote it, so it takes no place in the candidate window; a deterministic
+  record among them is not found by an excluding search until its flag is written. The owner-run
+  `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` opens each with its record key and writes its flag; see
+  [Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading). To count what is
+  left, and to list the project roots the backfill has to run over:
 
   ```sql
-  SELECT experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id
+  SELECT count(*)
   FROM agent_experience.experience_records
   WHERE deleted_at IS NULL AND payload_version = 2 AND reflection_model_authored IS NULL;
+
+  SELECT DISTINCT tenant_id, application_id, project_id
+  FROM agent_experience.experience_records
+  WHERE deleted_at IS NULL AND payload_version = 2 AND reflection_model_authored IS NULL
+  ORDER BY tenant_id, application_id, project_id;
   ```
 
 - No index: the flag is a filter on rows the search, scope and HNSW indexes already select. No table, so the
@@ -611,6 +618,37 @@ model-authored records out in SQL, **before** its `LIMIT`. See
   run the migrator, which re-applies the idempotent script, finds nothing to backfill and journals it. Until the
   batches finish, rows not yet backfilled read `false`: a model-authored plaintext row is not left out by SQL (the
   retrieval service still excludes it), and an unflagged sealed row is not yet found by the query above.
+
+### 0022: library reflector authorship
+
+`0022_library_reflector_authorship.sql` (story 17.1) makes the SQL rule agree with the one rule the library's C# code
+applies everywhere it decides authorship: a reflection is model-authored when its authorship is anything but
+`Deterministic`, **or** when its producer starts with `AgentExperience.ChatClientExperienceReflector/` (compared
+ordinally) — the library's own model-backed reflector, whose records written before it declared authorship say
+`Deterministic`. No other producer is read: a third-party reflector's authorship is what it declares.
+
+- **`payload_reflection_model_authored`** is replaced (`CREATE OR REPLACE`, owner and ACL kept) with `0021`'s rule plus
+  two arms: a plaintext payload whose reflection is an object with a string `producer` starting with that prefix is
+  `true`, and so is one whose `producer` is missing, JSON `null` or not a string, which the reader refuses (fail
+  closed). A sealed payload is still `NULL`. `0021`'s trigger calls the function by name, so every plaintext write from
+  now on is classified by the new rule.
+- **The recompute** updates the live plaintext rows whose stored flag differs from the new rule — in practice the
+  library reflector's records written by a build between stories 14.2 and 14.3, which read `false` until now (no
+  published release wrote any, so on most databases it rewrites nothing). Sealed rows and tombstones are not touched,
+  and running the script again changes nothing. It takes row locks on the rows it rewrites only, but it reads every
+  live plaintext payload to find them, inside the migrator's one transaction and under its command timeout (30
+  seconds by default). On a large plaintext table, run the migrator in a maintenance window, or over a data source
+  whose command timeout is raised for the migration; a script that times out rolls back and changes nothing.
+- **Sealed rows** cannot be read here. A sealed row whose flag is unknown is left out of excluding searches until the
+  owner's backfill writes it (see `0021` above). A sealed row whose flag was already written keeps it: the store
+  writes a sealed record's flag from the record by the same rule, and a record sealed by
+  `SealPlaintextRecordsAsync` carries its plaintext flag, which this script has already recomputed. Precisely: a
+  library-reflector record that declares `Deterministic` and was sealed from plaintext *between* `0021` and `0022`
+  carries `0021`'s `false`, and neither this script nor the backfill revisits it; the retrieval service and the
+  injection provider still exclude it once opened. No published release can hold one: the reflector shipped in
+  `0.1.0-preview.5`, the release that also made it declare `Model`, so only a database written by an unreleased build
+  between stories 14.2 and 14.3 could.
+- No table, column, index or function signature is added, so the application role's manifest is unchanged.
 
 ## Script comments that were written before the work they point at shipped
 
@@ -650,6 +688,7 @@ what each one now means. None of them changes what a script does; they are comme
 - **Search order** is descending `ts_rank_cd` relevance, then `ExperienceId` in PostgreSQL `uuid` byte order. `Limit`
   must be from 1 to 200 (default 50), and `EligibleStatuses` must be non-empty — an empty set is `Invalid` rather
   than widened to "every status", so a caller can never accidentally ask for records it considers ineligible. With
-  `ExcludeModelAuthored`, `0021`'s flag filters before the limit, like the status list and the confidence floor.
+  `ExcludeModelAuthored`, `0021`'s flag filters before the limit, like the status list and the confidence floor, and
+  keeps only rows whose flag is `false`.
 - PostgreSQL cannot store the NUL character (U+0000) in `text` or `jsonb`, so a record or scope containing it is
   `Invalid` and never reaches the database.

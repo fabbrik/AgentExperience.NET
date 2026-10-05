@@ -301,6 +301,25 @@ public abstract class CandidateSourceConformanceTests
     }
 
     [Fact]
+    public async Task An_excluding_search_leaves_out_a_record_of_the_library_s_own_model_reflector_whatever_authorship_it_declares()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+
+        // Story 17.1: the library's ChatClientExperienceReflector, before it declared authorship, wrote Deterministic.
+        // Its producer prefix makes such a record model-authored in every store. A third-party producer is never read.
+        var legacy = await SeedAsync(tenant, scope, producer: "AgentExperience.ChatClientExperienceReflector/1.0.0 (some-model)");
+        var thirdParty = await SeedAsync(tenant, scope, producer: "Contoso.ModelReflector/1.0 (some-model)");
+
+        var excluding = await SearchAsync(tenant, scope, "refund", excludeModelAuthored: true);
+        var including = await SearchAsync(tenant, scope, "refund");
+
+        Assert.Equal(ExperienceStoreOutcome.Found, excluding.Outcome);
+        Assert.Equal([thirdParty], Ids(excluding));
+        Assert.Equal(new[] { legacy, thirdParty }.Order(), Ids(including).Order());
+    }
+
+    [Fact]
     public async Task A_search_with_a_cancelled_token_throws_an_unwrapped_OperationCanceledException()
     {
         var tenant = NewTenant();
@@ -365,10 +384,14 @@ public abstract class CandidateSourceConformanceTests
         string lesson = "Retry the refund once the lock clears",
         ExperienceStatus status = ExperienceStatus.Validated,
         double confidence = 0.75,
-        ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic)
+        ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic,
+        string? producer = null)
     {
         var record = Record(scope, status, taskId: taskId, summary: summary, lesson: lesson, confidence: confidence);
-        record = record with { Reflection = record.Reflection! with { Authorship = authorship } };
+        record = record with
+        {
+            Reflection = record.Reflection! with { Authorship = authorship, Producer = producer ?? record.Reflection!.Producer },
+        };
         var created = await RecordStore.CreateAsync(Authorize(tenant), record, CancellationToken.None);
         Assert.True(
             created.Outcome == ExperienceStoreOutcome.Created,

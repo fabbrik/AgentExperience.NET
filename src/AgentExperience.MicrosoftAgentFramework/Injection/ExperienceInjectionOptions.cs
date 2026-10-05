@@ -376,7 +376,8 @@ public sealed class ExperienceInjectionOptions
 
     /// <summary>
     /// Whether records whose free text a model wrote (<see cref="Reflection.Authorship"/> is anything but
-    /// <see cref="ReflectionAuthorship.Deterministic"/>) may be injected. <see cref="ModelAuthoredLessonPolicy.Include"/>
+    /// <see cref="ReflectionAuthorship.Deterministic"/>, or <see cref="Reflection.Producer"/> names the library's own
+    /// <see cref="Reflections.ChatClientExperienceReflector"/>) may be injected. <see cref="ModelAuthoredLessonPolicy.Include"/>
     /// (the default) injects them with their model-written fields between
     /// <see cref="HistoricalReferenceWriter.ModelAuthoredLine"/> and <see cref="HistoricalReferenceWriter.ModelAuthoredEndLine"/>;
     /// <see cref="ModelAuthoredLessonPolicy.Exclude"/> omits them as <see cref="InjectionOmissionReason.ModelAuthored"/>.
@@ -384,9 +385,10 @@ public sealed class ExperienceInjectionOptions
     /// <remarks>
     /// <para>
     /// This, and the label, are the controls to rely on for model-authored lessons; finalization's content guard is a
-    /// best-effort filter. Authorship is what the reflector declared: a record a model-backed reflector wrote without
-    /// declaring it, such as one from the story 14.2 <c>ChatClientExperienceReflector</c> before authorship existed,
-    /// reads as deterministic.
+    /// best-effort filter. Authorship is what the reflector declared, except that a record the library's own
+    /// <see cref="Reflections.ChatClientExperienceReflector"/> wrote counts as model-authored by its producer, including
+    /// one written before that reflector declared authorship (story 17.1). A third-party model-backed reflector that does
+    /// not declare it reads as deterministic.
     /// </para>
     /// <para>
     /// With <see cref="ModelAuthoredLessonPolicy.Exclude"/>, the provider sets
@@ -395,13 +397,13 @@ public sealed class ExperienceInjectionOptions
     /// (<see cref="RetrieveExperienceRequest.Limit"/>, or the policy's candidate limit) is filled with deterministic
     /// records. The retrieval service then excludes any model-authored record a source still returned, as
     /// <see cref="RetrievalExclusionReason.ModelAuthored"/> in the result's <see cref="ExperienceInjectionResult.Excluded"/>:
-    /// a source that does not honour the request, or a PostgreSQL row sealed without its authorship flag (before the
-    /// <c>0021</c> migration, or by an instance on the previous build during a rolling deploy), which takes a place in
-    /// that source's candidate window but never a result slot. The provider still checks every candidate before the
+    /// a source that does not honour the request, or a stored authorship flag that disagrees with the opened record,
+    /// which takes a place in that source's candidate window but never a result slot. (A PostgreSQL row sealed without
+    /// its authorship flag is left out by the source itself, story 17.1.) The provider still checks every candidate before the
     /// <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, and the re-read record again before the capability gate
     /// and <see cref="DecideInjection"/>, and omits a model-authored one as <see cref="InjectionOmissionReason.ModelAuthored"/>:
     /// an omitted record is never re-read (unless it changed between the two checks), shown to the host's decision,
-    /// rendered, charged to the session budget, or recorded as a run exposure, and it withdraws nothing. Authorship is read from the stored reflection, never inferred from its <see cref="Reflection.Producer"/>. A value
+    /// rendered, charged to the session budget, or recorded as a run exposure, and it withdraws nothing. Authorship is read from the stored reflection by the same rule the stores apply; its <see cref="Reflection.Producer"/> counts only when it names the library's own reflector. A value
     /// that is not a defined <see cref="ModelAuthoredLessonPolicy"/> is refused when the provider is constructed.
     /// </para>
     /// </remarks>

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Retrieval;
+using AgentExperience.MicrosoftAgentFramework.Reflections;
 
 namespace AgentExperience.MicrosoftAgentFramework.Injection;
 
@@ -290,7 +291,8 @@ public static class HistoricalReferenceWriter
     /// <summary>
     /// The line that opens the model-written part of a model-authored record's entry (any
     /// <see cref="Reflection.Authorship"/> other than <see cref="ReflectionAuthorship.Deterministic"/>, so an
-    /// undefined or future value is labelled too): the lesson, the reuse guidance, the preconditions and the warnings
+    /// undefined or future value is labelled too, or a <see cref="Reflection.Producer"/> naming the library's own
+    /// <see cref="ChatClientExperienceReflector"/>): the lesson, the reuse guidance, the preconditions and the warnings
     /// follow it, and <see cref="ModelAuthoredEndLine"/> closes them. Such an entry carries its <c>Approach:</c>
     /// line, which is derived from the record's attempts and not model-written, before this one. Fixed text.
     /// </summary>
@@ -690,12 +692,12 @@ public static class HistoricalReferenceWriter
     }
 
     /// <summary>
-    /// Whether <paramref name="reflection"/>'s free text is model-authored: it exists and its authorship is anything
-    /// but <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts as model-authored.
-    /// Never inferred from <see cref="Reflection.Producer"/>.
+    /// Whether <paramref name="reflection"/>'s free text is model-authored, by the one shared rule
+    /// (<see cref="ReflectionAuthorshipRule"/>): it exists and its authorship is anything but
+    /// <see cref="ReflectionAuthorship.Deterministic"/> (so a tampered or future value counts), or its
+    /// <see cref="Reflection.Producer"/> names the library's own <see cref="ChatClientExperienceReflector"/>.
     /// </summary>
-    internal static bool IsModelAuthored(Reflection? reflection) =>
-        reflection is not null && reflection.Authorship != ReflectionAuthorship.Deterministic;
+    internal static bool IsModelAuthored(Reflection? reflection) => ReflectionAuthorshipRule.IsModelAuthored(reflection);
 
     /// <summary>Writes a labeled bullet list, or the label plus <see cref="NoValue"/> when it is empty.</summary>
     private static void Bullets(StringBuilder text, string label, IReadOnlyList<string>? values)

@@ -48,11 +48,14 @@ public sealed record Reflection(
     /// <summary>
     /// Who wrote this reflection's free text: <see cref="ReflectionAuthorship.Deterministic"/> (the default,
     /// and what every reflection written before this property existed reads back as) or
-    /// <see cref="ReflectionAuthorship.Model"/>. It is recorded exactly as the reflector returned it and never
-    /// inferred from <see cref="Producer"/>. It is <b>self-declared</b>: a reflector that has a model write any of
-    /// the free text must set <see cref="ReflectionAuthorship.Model"/> itself, or its lessons read as deterministic
-    /// and escape both the content guard and the injection label. A model-authored reflection (any value but
-    /// <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts) is held to
+    /// <see cref="ReflectionAuthorship.Model"/>. It is recorded exactly as the reflector returned it. It is
+    /// <b>self-declared</b>: a reflector that has a model write any of the free text must set
+    /// <see cref="ReflectionAuthorship.Model"/> itself, or its lessons read as deterministic and escape both the content
+    /// guard and the injection label. The one exception is the library's own model-backed reflector: a reflection whose
+    /// <see cref="Producer"/> starts with <c>AgentExperience.ChatClientExperienceReflector/</c> (ordinal) counts as
+    /// model-authored whatever this property says, so its records written before it declared authorship are covered
+    /// too; no other producer is inferred from. A model-authored reflection (any value but
+    /// <see cref="ReflectionAuthorship.Deterministic"/>, so a tampered or future value counts, or that producer) is held to
     /// finalization's content guard and labelled as such when injected. Neither this property nor the free-text
     /// fields are covered by the provenance signature: a party that can write the store can change them. Omitted from System.Text.Json output when it is
     /// <see cref="ReflectionAuthorship.Deterministic"/>, so a deterministic reflection serializes exactly as it
@@ -60,6 +63,22 @@ public sealed record Reflection(
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public ReflectionAuthorship Authorship { get; init; }
+}
+
+/// <summary>
+/// The conventions every component that decides a <see cref="Reflection"/>'s authorship applies, including a host's
+/// own <see cref="IExperienceCandidateSource"/> or <see cref="IExperienceEmbeddingIndex"/> honouring
+/// <c>ExcludeModelAuthored</c> (story 17.1).
+/// </summary>
+public static class ReflectionAuthorshipConventions
+{
+    /// <summary>
+    /// The start of every <see cref="Reflection.Producer"/> the library's own model-backed reflector
+    /// (<c>ChatClientExperienceReflector</c> in the MAF adapter) writes, in every version. A reflection whose producer
+    /// starts with it, compared ordinally, is model-authored whatever its <see cref="Reflection.Authorship"/> says, so
+    /// its records written before it declared authorship count too. No other producer is ever read.
+    /// </summary>
+    public const string LibraryModelReflectorProducerPrefix = "AgentExperience.ChatClientExperienceReflector/";
 }
 
 /// <summary>Who wrote a <see cref="Reflection"/>'s free-text fields.</summary>

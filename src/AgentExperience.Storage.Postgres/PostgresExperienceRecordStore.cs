@@ -691,6 +691,34 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         $"SELECT {SelectColumns} FROM {Table} WHERE experience_id = @experience_id AND {ScopePredicate} " +
         $"AND {LivePredicate} AND payload_version = 1 FOR UPDATE";
 
+    /// <summary>
+    /// The authorship backfill's worklist (story 17.1): live sealed records stored without <c>0021</c>'s flag, past the
+    /// caller's cursor, in ID order, read whole so every key can be fetched in one batch before any row is locked.
+    /// </summary>
+    private const string UnflaggedSealedPageSql =
+        $"SELECT {SelectColumns} FROM {Table} " +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND payload_version = 2 AND {ModelAuthoredColumn} IS NULL " +
+        "AND (@start_after::uuid IS NULL OR experience_id > @start_after) " +
+        "ORDER BY experience_id LIMIT @limit";
+
+    /// <summary><see cref="UnflaggedSealedPageSql"/> over a scope and everything beneath it.</summary>
+    private const string UnflaggedSealedSubtreePageSql =
+        $"SELECT {SelectColumns} FROM {Table} " +
+        $"WHERE {SubtreeScopePredicate} AND {LivePredicate} AND payload_version = 2 AND {ModelAuthoredColumn} IS NULL " +
+        "AND (@start_after::uuid IS NULL OR experience_id > @start_after) " +
+        "ORDER BY experience_id LIMIT @limit";
+
+    /// <summary>
+    /// The backfill's one write: the flag of a live sealed row that still has none, and nothing else. The statement
+    /// takes the row lock and re-checks the flag itself. The application role holds no <c>UPDATE</c> on the column, so
+    /// only the owner can run it; <c>0021</c>'s trigger keeps what a writer supplies on a sealed row, and <c>0010</c>'s
+    /// projection guard admits a change that moves neither the status, the confidence nor the revision.
+    /// </summary>
+    private const string SetSealedAuthorshipSql =
+        $"UPDATE {Table} SET {ModelAuthoredColumn} = @reflection_model_authored " +
+        $"WHERE experience_id = @experience_id AND {ScopePredicate} AND {LivePredicate} " +
+        $"AND payload_version = 2 AND {ModelAuthoredColumn} IS NULL";
+
     /// <summary><c>0016</c>'s one sealing transition.</summary>
     private const string SealRecordSql =
         "SELECT agent_experience.seal_experience_record(@experience_id, @tenant_id, @application_id, @project_id, " +
@@ -888,12 +916,12 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
                 AddSealedSearchParameters(parameters, record.TaskId, record.TaskSummary, record.Reflection?.Lesson);
 
                 // The database cannot read a sealed payload, so the store says what 0021's trigger would have derived
-                // from a plaintext one. Fail closed, as the injection provider decides it: a reflection whose
-                // authorship is anything but Deterministic is model-authored; no reflection is not. Never inferred
-                // from the producer.
+                // from a plaintext one, by the rule every authorship decision shares (ReflectionAuthorshipRule): a
+                // reflection whose authorship is anything but Deterministic, or whose producer names the library's own
+                // model-backed reflector, is model-authored; no reflection is not.
                 parameters.Add(new NpgsqlParameter<bool>(
                     "reflection_model_authored",
-                    record.Reflection is { } reflection && reflection.Authorship != ReflectionAuthorship.Deterministic));
+                    ReflectionAuthorshipRule.IsModelAuthored(record.Reflection)));
             }
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -2437,6 +2465,226 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>
+    /// The owner-run authorship backfill (story 17.1), from the start of the worklist. See
+    /// <see cref="BackfillSealedAuthorshipAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The scope to backfill, or the root of the subtree to backfill. Never treated as authority.</param>
+    /// <param name="batchSize">The most records this call may examine, from <see cref="MinSweepBatchSize"/> to <see cref="MaxSweepBatchSize"/>.</param>
+    /// <param name="match">Whether to backfill <paramref name="scope"/> alone or everything beneath it too.</param>
+    /// <param name="cancellationToken">Cancels the operation between records.</param>
+    /// <returns>The batch's result; pass its <see cref="ExperienceAuthorshipBackfillResult.ResumeAfter"/> to the next call.</returns>
+    public Task<ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        int batchSize,
+        ScopeMatch match,
+        CancellationToken cancellationToken) =>
+        BackfillSealedAuthorshipAsync(authorization, scope, batchSize, match, startAfter: null, cancellationToken);
+
+    /// <summary>
+    /// The owner-run authorship backfill (story 17.1): examines up to <paramref name="batchSize"/> live sealed records in
+    /// <paramref name="scope"/> -- or, with <see cref="ScopeMatch.Subtree"/>, in that scope and every scope beneath it --
+    /// whose <c>0021</c> authorship flag is unknown (<c>NULL</c>), in ID order after <paramref name="startAfter"/>; opens
+    /// each payload with the record's key, decides its authorship by the rule every store shares, and writes the flag.
+    /// Bounded, resumable, and authorized.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why.</b> A sealed row stored without its flag -- sealed before <c>0021</c>, whose payload the migration could
+    /// not open, sealed during a rolling deploy by an instance on an earlier build, or written by any writer that left
+    /// the flag out -- is left out of every search that excludes model-authored records, because unknown authorship
+    /// counts as model-authored. This job restores the flag, so a deterministic record is found again. Run it after
+    /// upgrading: start with no cursor and pass each result's <see cref="ExperienceAuthorshipBackfillResult.ResumeAfter"/>
+    /// to the next call until <see cref="ExperienceAuthorshipBackfillResult.MoreRemain"/> is <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// <b>What it does.</b> One page of the worklist is read whole, and every key it needs is fetched in one key-store
+    /// call (<see cref="IExperienceKeyStore.GetKeysAsync"/>) before any row is locked. Then, record by record, one
+    /// statement locks the row, re-checks that it is still live, sealed and unflagged, and sets the flag to whether its
+    /// reflection counts as model-authored (its authorship is anything but <see cref="ReflectionAuthorship.Deterministic"/>,
+    /// or its producer starts with <see cref="ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix"/>); a
+    /// record with no reflection gets <see langword="false"/>. Nothing else about the row changes: not its revision,
+    /// payload, status or timestamps. A flag already written is never changed.
+    /// </para>
+    /// <para>
+    /// <b>Skipped rows.</b> A record whose key was destroyed (an erasure that did not commit), or whose payload cannot
+    /// be opened or decoded, is left alone and counted in <see cref="ExperienceAuthorshipBackfillResult.SkippedCount"/>;
+    /// it never stops the batch, and the cursor moves past it. It stays unknown, and so excluded, until it is erased or
+    /// repaired. A key the key store never held is a configuration failure and throws, as every read does.
+    /// </para>
+    /// <para>
+    /// <b>Failure.</b> A call that throws may already have set some flags; the count is lost with the exception, but the
+    /// job is idempotent, so rerunning it (from the same cursor, or from the start) is safe and finds only what is left.
+    /// </para>
+    /// <para>
+    /// <b>Owner-run.</b> The application role holds no <c>UPDATE</c> on the flag, so this store must be constructed
+    /// over the owner's data source, with the <see cref="ExperienceEncryption"/> the records were sealed with; over the
+    /// application role the write fails with a permission error, wrapped in an <see cref="ExperienceStoreException"/>,
+    /// and nothing is set. <paramref name="authorization"/> must permit <paramref name="scope"/>, which covers its
+    /// subtree exactly as it does for <see cref="SealPlaintextRecordsAsync"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The scope to backfill, or the root of the subtree to backfill. Never treated as authority.</param>
+    /// <param name="batchSize">The most records this call may examine, from <see cref="MinSweepBatchSize"/> to <see cref="MaxSweepBatchSize"/>.</param>
+    /// <param name="match">Whether to backfill <paramref name="scope"/> alone or everything beneath it too.</param>
+    /// <param name="startAfter">
+    /// The previous call's <see cref="ExperienceAuthorshipBackfillResult.ResumeAfter"/>, or <see langword="null"/> to
+    /// start from the beginning of the worklist.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the operation between records.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Committed"/> when the batch ran (possibly setting nothing),
+    /// <see cref="ExperienceStoreOutcome.Invalid"/> -- including when this store has no
+    /// <see cref="ExperienceEncryption"/> -- or <see cref="ExperienceStoreOutcome.Denied"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="authorization"/> or <paramref name="scope"/> is <see langword="null"/>.</exception>
+    public async Task<ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        int batchSize,
+        ScopeMatch match,
+        Guid? startAfter,
+        CancellationToken cancellationToken)
+    {
+        // Counted like the sealing job: a count and how wide it reached -- never which records, and never a flag.
+        using var operation = ErasureDiagnostics.Start(ErasureDiagnostics.AuthorshipBackfill);
+        ErasureDiagnostics.TagScopeMatch(operation, match);
+
+        ExperienceAuthorshipBackfillResult result;
+        try
+        {
+            result = await BackfillSealedAuthorshipCoreAsync(authorization, scope, batchSize, match, startAfter, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ErasureDiagnostics.Faulted(operation, ex, cancellationToken);
+            throw;
+        }
+
+        ErasureDiagnostics.Tag(operation, ErasureDiagnostics.BackfilledCountAttribute, result.SetCount);
+        ErasureDiagnostics.Succeeded(operation, result.Outcome);
+        return result;
+    }
+
+    private async Task<ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipCoreAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        int batchSize,
+        ScopeMatch match,
+        Guid? startAfter,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateAuthorshipBackfill(scope, batchSize, match, _encryption is not null);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, 0, 0, false, startAfter, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, 0, 0, false, startAfter, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            List<SnapshotRow> rows;
+            await using (var page = await ExperienceSessionContext.BeginAsync(connection, authorization, cancellationToken).ConfigureAwait(false))
+            {
+                await using (var command = new NpgsqlCommand(
+                    match == ScopeMatch.Subtree ? UnflaggedSealedSubtreePageSql : UnflaggedSealedPageSql, connection, page))
+                {
+                    AddScopeParameters(command.Parameters, scope);
+                    command.Parameters.Add(new NpgsqlParameter("start_after", NpgsqlDbType.Uuid) { Value = (object?)startAfter ?? DBNull.Value });
+                    command.Parameters.Add(new NpgsqlParameter<int>("limit", batchSize + 1));
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    rows = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
+                }
+
+                await page.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var examined = rows.Take(batchSize).ToList();
+            var candidates = new List<(Guid ExperienceId, Scope Scope, string StoredPayload, SnapshotRow Row)>(examined.Count);
+            foreach (var row in examined)
+            {
+                var candidate = (ExperienceId: row.GetGuid(0), Scope: ReadRecordScope(row), StoredPayload: row.GetString(17), Row: row);
+
+                // Defence in depth over the page, exactly as the sealing job does it.
+                if (!IsAtOrBeneath(candidate.Scope, scope, match) || !authorization.Permits(candidate.Scope))
+                {
+                    throw new ExperienceStoreException(
+                        "An authorship backfill candidate lay outside the requested scope or authorization; the job stopped without writing it.");
+                }
+
+                candidates.Add(candidate);
+            }
+
+            // Every key the page needs, in one key-store call, before any row is locked.
+            using var keys = await _encryption!
+                .ForReadManyAsync(candidates.Select(c => new ExperienceKeyReference(c.ExperienceId, c.Scope)), cancellationToken)
+                .ConfigureAwait(false);
+
+            var setCount = 0;
+            var skippedCount = 0;
+            foreach (var (experienceId, candidateScope, storedPayload, row) in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                bool modelAuthored;
+                if (keys[new ExperienceKeyReference(experienceId, candidateScope)] is not { } key)
+                {
+                    // Its key was destroyed: the record is erased (a delete that did not commit). Left alone.
+                    skippedCount++;
+                    continue;
+                }
+
+                try
+                {
+                    // Opened with the record's own key, and decoded whole, so a row this adapter cannot read is never labelled.
+                    modelAuthored = ReflectionAuthorshipRule.IsModelAuthored(DecodeSealedRecord(row, key, storedPayload).Reflection);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A payload that cannot be opened or decoded is left unknown, and so excluded; it never stops the batch.
+                    skippedCount++;
+                    continue;
+                }
+
+                await using var transaction = await ExperienceSessionContext
+                    .BeginAsync(connection, authorization, cancellationToken, System.Data.IsolationLevel.ReadCommitted).ConfigureAwait(false);
+                int written;
+                await using (var update = new NpgsqlCommand(SetSealedAuthorshipSql, connection, transaction))
+                {
+                    update.Parameters.Add(new NpgsqlParameter<Guid>("experience_id", experienceId));
+                    AddScopeParameters(update.Parameters, candidateScope);
+                    update.Parameters.Add(new NpgsqlParameter<bool>("reflection_model_authored", modelAuthored));
+                    written = await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                setCount += written;
+            }
+
+            var resumeAfter = examined.Count > 0 ? candidates[^1].ExperienceId : startAfter;
+            return new(ExperienceStoreOutcome.Committed, setCount, skippedCount, rows.Count > batchSize, resumeAfter, NoErrors);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "authorship backfill", cancellationToken);
+        }
     }
 
     /// <summary>

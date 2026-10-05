@@ -49,6 +49,7 @@
     <EmbeddedResource Include="Migrations\0018_evidence_admission.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0018_evidence_admission.sql" />
     <EmbeddedResource Include="Migrations\0019_row_level_security.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0019_row_level_security.sql" />
     <EmbeddedResource Include="Migrations\0021_reflection_authorship.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0021_reflection_authorship.sql" />
+    <EmbeddedResource Include="Migrations\0022_library_reflector_authorship.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0022_library_reflector_authorship.sql" />
   </ItemGroup>
 
   <ItemGroup>
@@ -67,6 +68,9 @@
     <!-- Story 11.2: the validation rules for the core storage ports, shared with AgentExperience.Storage.InMemory so
          both stores refuse exactly the same requests. The rules only this adapter has are in ExperienceRecordValidator.cs. -->
     <Compile Include="..\Shared\ExperienceRecordValidator.Shared.cs" Link="Shared\ExperienceRecordValidator.Shared.cs" />
+    <!-- Story 17.1: the one rule that decides whether a reflection counts as model-authored, shared by Core, the MAF
+         adapter and both stores so every authorship decision agrees. -->
+    <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />
   </ItemGroup>
 
   <ItemGroup>

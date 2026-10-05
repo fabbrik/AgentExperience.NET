@@ -61,7 +61,7 @@ public sealed class ModelAuthoredExclusionPostgresTests(SamplePostgresFixture fi
     }
 
     [Fact]
-    public async Task A_model_authored_record_sealed_without_its_flag_is_excluded_by_retrieval_and_the_limit_still_fills()
+    public async Task A_model_authored_record_sealed_without_its_flag_is_left_out_by_its_source_and_the_limit_still_fills()
     {
         var connectionString = await fixture.CreateDatabaseAsync("authorship_residual");
         await using var dataSource = NpgsqlDataSource.Create(connectionString);
@@ -90,9 +90,9 @@ public sealed class ModelAuthoredExclusionPostgresTests(SamplePostgresFixture fi
         var (result, block) = await InjectAsync(
             new PostgresExperienceCandidateSource(dataSource, encryption: encryption), store, scope, ModelAuthoredLessonPolicy.Exclude);
 
-        // The source returned it -- SQL cannot tell -- but Core opened it, saw a model wrote it, and excluded it before
-        // the request's limit of three, so all three deterministic records are injected.
-        Assert.Equal(new ExcludedExperience(unflagged, RetrievalExclusionReason.ModelAuthored), Assert.Single(result.Excluded));
+        // Story 17.1: SQL cannot tell who wrote it, so the source fails closed and leaves it out before its limit; it
+        // takes no place in the window, and all three deterministic records are injected.
+        Assert.Empty(result.Excluded);
         Assert.Empty(result.Omitted);
         Assert.Equal(deterministic.Order(), result.InjectedExperienceIds.Order());
         Assert.DoesNotContain("Authored:", block, StringComparison.Ordinal);
@@ -107,16 +107,19 @@ public sealed class ModelAuthoredExclusionPostgresTests(SamplePostgresFixture fi
         var store = new Sample.EndToEnd.Doubles.InMemoryRecordStore();
         var model = await SeedAsync(store, scope, ReflectionAuthorship.Model, strong: true);
         var undefined = await SeedAsync(store, scope, (ReflectionAuthorship)5, strong: true);
+        var legacy = await SeedAsync(
+            store, scope, ReflectionAuthorship.Deterministic, strong: true,
+            producer: ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix + "1.0.0 (some-model)");
         var deterministic = await SeedAsync(store, scope, ReflectionAuthorship.Deterministic, strong: false);
         var source = new Sample.EndToEnd.Doubles.InMemoryCandidateSource(store);
         var authorization = new AuthorizationContext(scope.TenantId, "host-principal", ["experience:read"], Now);
         var query = new ExperienceCandidateQuery(scope, TaskText, [ExperienceStatus.Validated], 0d, Limit: 1);
 
         var excluding = await source.SearchAsync(authorization, query with { ExcludeModelAuthored = true }, CancellationToken.None);
-        var including = await source.SearchAsync(authorization, query with { Limit = 3 }, CancellationToken.None);
+        var including = await source.SearchAsync(authorization, query with { Limit = 4 }, CancellationToken.None);
 
         Assert.Equal([deterministic], excluding.Candidates.Select(c => c.Record.ExperienceId));
-        Assert.Equal(new[] { model, undefined, deterministic }.Order(), including.Candidates.Select(c => c.Record.ExperienceId).Order());
+        Assert.Equal(new[] { model, undefined, legacy, deterministic }.Order(), including.Candidates.Select(c => c.Record.ExperienceId).Order());
     }
 
     private static async Task<(ExperienceInjectionResult Result, string? Block)> InjectAsync(
@@ -150,7 +153,7 @@ public sealed class ModelAuthoredExclusionPostgresTests(SamplePostgresFixture fi
         return (reported!, block);
     }
 
-    private static async Task<Guid> SeedAsync(IExperienceRecordStore store, Scope scope, ReflectionAuthorship authorship, bool strong)
+    private static async Task<Guid> SeedAsync(IExperienceRecordStore store, Scope scope, ReflectionAuthorship authorship, bool strong, string producer = "tests")
     {
         var id = Guid.NewGuid();
         var runId = Guid.NewGuid();
@@ -166,7 +169,7 @@ public sealed class ModelAuthoredExclusionPostgresTests(SamplePostgresFixture fi
             CompletionScore: 1d,
             Reflection: new Reflection(
                 Guid.NewGuid(), runId, "Release the lock before retrying.", [], [], [], [], null, [],
-                TaskVerificationStatus.Verified, 1d, "rules-v1", "tests", Now) { Authorship = authorship },
+                TaskVerificationStatus.Verified, 1d, "rules-v1", producer, Now) { Authorship = authorship },
             Environment: new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
             Provenance: new Provenance("tests", null, Now, null),
             Status: ExperienceStatus.Validated,

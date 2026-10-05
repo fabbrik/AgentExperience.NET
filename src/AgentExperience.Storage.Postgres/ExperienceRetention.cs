@@ -49,6 +49,34 @@ public sealed record ExperienceSealingResult(
     IReadOnlyList<StoreValidationError> Errors);
 
 /// <summary>
+/// The result of one call to <see cref="PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/>, the owner-run
+/// job that writes the authorship flag of sealed records stored without it (story 17.1).
+/// </summary>
+/// <param name="Outcome">
+/// <see cref="ExperienceStoreOutcome.Committed"/> when the batch ran -- including when it found nothing to set -- or
+/// <see cref="ExperienceStoreOutcome.Denied"/> or <see cref="ExperienceStoreOutcome.Invalid"/> before any storage was
+/// touched.
+/// </param>
+/// <param name="SetCount">How many records this call wrote a flag for.</param>
+/// <param name="SkippedCount">
+/// How many records this call examined and left alone: its key was destroyed (an erasure that did not commit), or its
+/// payload could not be opened or decoded. They stay unknown, and so excluded, and the cursor moves past them.
+/// </param>
+/// <param name="MoreRemain">Whether sealed live records without a flag exist past <paramref name="ResumeAfter"/>.</param>
+/// <param name="ResumeAfter">
+/// The last record ID this call examined -- the cursor to pass as the next call's <c>startAfter</c> -- or the cursor
+/// it was given when it examined nothing.
+/// </param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceAuthorshipBackfillResult(
+    ExperienceStoreOutcome Outcome,
+    int SetCount,
+    int SkippedCount,
+    bool MoreRemain,
+    Guid? ResumeAfter,
+    IReadOnlyList<StoreValidationError> Errors);
+
+/// <summary>
 /// The result of one call to <see cref="PostgresExperienceRecordStore.SweepExpiredAsync(AuthorizationContext, Scope, TimeSpan, int, ScopeMatch, CancellationToken)"/>.
 /// </summary>
 /// <param name="Outcome">

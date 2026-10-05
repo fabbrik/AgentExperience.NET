@@ -58,7 +58,7 @@ Every registration uses `TryAdd`, so your own implementation of a port wins. The
 access-log registrations also have an overload taking an explicit `NpgsqlDataSource` (useful to give the access log
 its own pool). The stores never dispose the data source; the host owns it.
 
-`MigrateAsync` applies `0001`–`0003`, `0005`–`0019` and `0021` (there is no `0014`; `0004` and `0020` belong to the vectors package).
+`MigrateAsync` applies `0001`–`0003`, `0005`–`0019`, `0021` and `0022` (there is no `0014`; `0004` and `0020` belong to the vectors package).
 It is journaled, runs one transaction per script, and serializes concurrent hosts with an advisory lock. The owner
 needs one superuser grant, once: `GRANT SET ON PARAMETER agent_experience.purge_authorized,
 agent_experience.access_purge_authorized TO <owner>`.
@@ -80,8 +80,9 @@ agent_experience.access_purge_authorized TO <owner>`.
   default retention and no timer: `SweepExpiredAsync` runs when you call it, one scope exactly unless you pass
   `ScopeMatch.Subtree`. In the default plaintext mode, backups, replicas, WAL and the dead row version still hold the
   erased text (the KL-2 boundary); crypto-shredding makes erasure reach every copy except the derived search data.
-- **Erasure is the only part that emits telemetry**, as the `delete`, `retention.sweep`, `grant.purge`,
-  `grant.access.purge` and `record.seal` operations on the `AgentExperience.Storage.Postgres` source and meter.
+- **Erasure, the crypto-shredding upgrade and the authorship backfill are the only parts that emit telemetry**, as the
+  `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal` and `record.authorship.backfill`
+  operations on the `AgentExperience.Storage.Postgres` source and meter.
 
 ## Guides
 

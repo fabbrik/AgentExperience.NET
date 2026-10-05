@@ -1040,8 +1040,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
             // Model-authored lessons the host excluded (story 14.3). Select already dropped every candidate that
             // was model-authored when ranked; this re-checks the re-read record, so one that changed since cannot
-            // slip through. Read from the record's own reflection, never inferred from its producer text, and
-            // fail closed: any authorship that is not Deterministic counts. No detail.
+            // slip through. Read from the record's own reflection by the shared rule, failing closed: any authorship
+            // that is not Deterministic counts, as does the library's own model-backed reflector. No detail.
             if (_excludeModelAuthored && HistoricalReferenceWriter.IsModelAuthored(current.Reflection))
             {
                 omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.ModelAuthored));

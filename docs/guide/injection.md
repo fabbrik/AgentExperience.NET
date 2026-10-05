@@ -378,7 +378,9 @@ rely on**, and the approval boundary remains the control for any tool call a les
   its field order: its entry is what it was before story 14.3, **except** that a line of its own text starting with
   `Authored:` or `End authored:` is now neutralized like any other field label.
 - **It fails closed.** Any authorship value that is not `Deterministic`, an undefined or future one read back from a
-  store included, is labelled and excluded as model-authored.
+  store included, is labelled and excluded as model-authored. So is any reflection whose `Producer` starts with
+  `AgentExperience.ChatClientExperienceReflector/`, the library's own model-backed reflector, whatever authorship it
+  declares (story 17.1): its records written before it declared authorship are covered too. No other producer is read.
 - **It can be kept out.** `ModelAuthoredLessons = ModelAuthoredLessonPolicy.Exclude` keeps every model-authored record
   out of the block. Since story 14.4 the provider sets `RetrieveExperienceRequest.ExcludeModelAuthored` on the
   resolved request (it never clears a host's own `true`), and retrieval passes it to every candidate source (the text
@@ -398,17 +400,16 @@ rely on**, and the approval boundary remains the control for any tool call a les
   candidates **before** the `Limits.MaxRecords` cut, and again on the re-read record before the capability gate and
   `DecideInjection`. An excluded record is never shown to the host's decision, rendered, charged to the session
   budget, tracked as delivered, or recorded as a run exposure, and withdraws nothing. It reads the record's own
-  reflection, never its `Producer`. An undefined policy value is refused when the provider is constructed.
-- **What `Exclude` cannot reach.** A PostgreSQL row sealed without its authorship flag has no authorship SQL can
-  read, so its source still returns it and it takes a place in that source's candidate window
-  (`RetrievalPolicy.CandidateLimit`); retrieval then excludes it as above. Such rows are those sealed before migration
-  `0021`, those an instance still running the previous build seals during a rolling deploy — until every instance runs
-  this version, newly sealed rows may be unflagged — and any a writer inserts without the flag. Find them with the
-  query in [0021: reflection authorship](postgres-schema.md#0021-reflection-authorship) and revoke, supersede or erase
-  the model-authored ones. Authorship is what the reflector declared and is not covered by provenance signing (KL-18):
-  a record a model wrote without declaring it, such as one the story 14.2 `ChatClientExperienceReflector` wrote before
-  authorship existed, reads as deterministic and is neither labelled nor excluded; the finalization guide shows how to
-  find those records.
+  reflection by the same rule as the stores (its `Producer` counts only when it is the library's own reflector). An undefined policy value is refused when the provider is constructed.
+- **Unknown authorship fails closed.** A PostgreSQL row sealed without its authorship flag has no authorship SQL can
+  read — rows sealed before migration `0021`, rows an instance still running an earlier build seals during a rolling
+  deploy, and any a writer inserts without the flag. Since story 17.1 its source leaves it out of an excluding search,
+  as if a model wrote it, so it takes no place in the candidate window; a deterministic record among them is not
+  injected under `Exclude` until the owner-run `BackfillSealedAuthorshipAsync` writes its flag (see
+  [Backfilling authorship flags](crypto-shredding.md#backfilling-authorship-flags-after-upgrading)).
+- **What `Exclude` cannot reach.** Authorship is what the reflector declared and is not covered by provenance signing
+  (KL-18): a record a third-party model-backed reflector wrote without declaring it reads as deterministic and is
+  neither labelled nor excluded; see [Limits of model-authored lessons](finalization.md#limits-of-model-authored-lessons).
 
 A host that wants to treat model-authored records some other way can read `decision.Current.Reflection?.Authorship`
 in `DecideInjection`. The label is still not a control on the model, and no part of this is a control on tool calls:

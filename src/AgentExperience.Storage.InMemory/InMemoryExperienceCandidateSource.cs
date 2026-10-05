@@ -111,11 +111,12 @@ public sealed class InMemoryExperienceCandidateSource : IExperienceCandidateSour
     }
 
     /// <summary>
-    /// Whether the record's reflection was written by a model: it exists and its authorship is anything but
-    /// <see cref="ReflectionAuthorship.Deterministic"/>, so an undefined value counts. Never inferred from the producer.
+    /// Whether the record's reflection was written by a model, by the rule every authorship decision shares
+    /// (<see cref="ReflectionAuthorshipRule"/>): it exists and its authorship is anything but
+    /// <see cref="ReflectionAuthorship.Deterministic"/> (so an undefined value counts), or its producer names the
+    /// library's own model-backed reflector.
     /// </summary>
-    private static bool IsModelAuthored(ExperienceRecord record) =>
-        record.Reflection is { } reflection && reflection.Authorship != ReflectionAuthorship.Deterministic;
+    private static bool IsModelAuthored(ExperienceRecord record) => ReflectionAuthorshipRule.IsModelAuthored(record.Reflection);
 
     private static double Relevance(RecordSearchText text, IReadOnlyList<string> terms)
     {

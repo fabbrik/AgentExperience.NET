@@ -1,5 +1,6 @@
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Injection;
+using AgentExperience.MicrosoftAgentFramework.Reflections;
 using AgentExperience.Storage.InMemory;
 using Microsoft.Agents.AI;
 
@@ -208,19 +209,54 @@ public class ModelAuthoredInjectionTests
     }
 
     [Fact]
-    public async Task Authorship_is_never_inferred_from_the_producer()
+    public async Task A_legacy_record_of_the_library_s_own_model_reflector_is_excluded_whatever_authorship_it_declares()
+    {
+        // Story 17.1: written by ChatClientExperienceReflector before it declared authorship.
+        var harness = new Harness { Policy = ModelAuthoredLessonPolicy.Exclude };
+        harness.World.Publish(LegacyReflectorRecord(InjectionRecords.Id(1), "AgentExperience.ChatClientExperienceReflector/1.0.0 (some-model)"), relevance: 1d);
+        harness.World.Publish(Record(InjectionRecords.Id(2), ReflectionAuthorship.Deterministic), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([InjectionRecords.Id(2)], harness.Last.InjectedExperienceIds);
+        Assert.DoesNotContain(InjectionRecords.Id(1), harness.Last.InjectedExperienceIds);
+    }
+
+    [Fact]
+    public async Task A_legacy_record_of_the_library_s_own_model_reflector_is_labelled_and_fenced_when_included()
+    {
+        var harness = new Harness();
+        harness.World.Publish(LegacyReflectorRecord(InjectionRecords.Id(1), "AgentExperience.ChatClientExperienceReflector/0.9.0 (older-model)"));
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
+        var text = harness.InjectedText()!;
+        Assert.Contains(HistoricalReferenceWriter.ModelAuthoredLine, text, StringComparison.Ordinal);
+        Assert.Contains(HistoricalReferenceWriter.ModelAuthoredEndLine, text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("tests")]
+    [InlineData("Contoso.ModelReflector/1.0 (gpt)")]
+    [InlineData("agentexperience.chatclientexperiencereflector/1.0.0 (some-model)")]
+    [InlineData("AgentExperience.ChatClientExperienceReflector")]
+    public async Task A_third_party_producer_is_never_inferred_from(string producer)
     {
         var harness = new Harness { Policy = ModelAuthoredLessonPolicy.Exclude };
-        var record = Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic);
-        harness.World.Publish(record with
-        {
-            Reflection = record.Reflection! with { Producer = "AgentExperience.ChatClientExperienceReflector/1.0.0 (some-model)" },
-        });
+        harness.World.Publish(LegacyReflectorRecord(InjectionRecords.Id(1), producer));
 
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
 
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
         Assert.DoesNotContain("Authored:", harness.InjectedText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_model_reflector_s_producer_starts_with_the_prefix_the_authorship_rule_recognises()
+    {
+        Assert.StartsWith(ReflectionAuthorshipRule.LibraryModelReflectorProducerPrefix, ChatClientExperienceReflector.ProducerPrefix, StringComparison.Ordinal);
+        Assert.Equal("AgentExperience.ChatClientExperienceReflector/", ReflectionAuthorshipRule.LibraryModelReflectorProducerPrefix);
     }
 
     [Fact]
@@ -376,6 +412,12 @@ public class ModelAuthoredInjectionTests
         {
             world.Publish(Record(InjectionRecords.Id(i), ReflectionAuthorship.Deterministic), relevance: 0.5d - (i * 0.01));
         }
+    }
+
+    private static ExperienceRecord LegacyReflectorRecord(Guid id, string producer)
+    {
+        var record = Record(id, ReflectionAuthorship.Deterministic);
+        return record with { Reflection = record.Reflection! with { Producer = producer } };
     }
 
     private static ExperienceRecord Record(Guid id, ReflectionAuthorship authorship, string lesson = "Check the lock table before retrying the refund.")

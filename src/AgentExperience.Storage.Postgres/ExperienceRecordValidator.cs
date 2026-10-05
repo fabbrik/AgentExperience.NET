@@ -96,6 +96,31 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates an authorship backfill (story 17.1): the scope, the scope match, the batch bound, and that the store
+    /// has the key store it needs to open a sealed record.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateAuthorshipBackfill(Scope scope, int batchSize, ScopeMatch match, bool encryptionConfigured)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScopeMatch(match, errors);
+
+        if (!encryptionConfigured)
+        {
+            errors.Add(new("Encryption", "this store was constructed without an ExperienceEncryption, so there is no key store to open a sealed record with."));
+        }
+
+        if (batchSize is < PostgresExperienceRecordStore.MinSweepBatchSize or > PostgresExperienceRecordStore.MaxSweepBatchSize)
+        {
+            errors.Add(new(
+                "BatchSize",
+                $"must be between {PostgresExperienceRecordStore.MinSweepBatchSize} and {PostgresExperienceRecordStore.MaxSweepBatchSize}."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates an access-log purge: the owner scope, the scope match, the cutoff, and the batch bound.
     /// Whether the cutoff is old enough is the database's decision, on its own clock; here it only has
     /// to be set.
