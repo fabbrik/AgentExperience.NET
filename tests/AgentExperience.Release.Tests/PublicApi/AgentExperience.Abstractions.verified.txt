@@ -759,6 +759,10 @@
         public string Rationale { get; init; }
         public System.Guid? VerificationRoundId { get; init; }
     }
+    public interface IAgentExperienceBuilder<out TServices>
+    {
+        TServices Services { get; }
+    }
     public interface IExperienceCandidateSource
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceCandidateSearchResult> SearchAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceCandidateQuery query, System.Threading.CancellationToken cancellationToken);

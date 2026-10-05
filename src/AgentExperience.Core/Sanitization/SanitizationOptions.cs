@@ -63,7 +63,7 @@ public sealed record SanitizationPolicy(
 }
 
 /// <summary>
-/// Maps each payload <c>Kind</c> (e.g. "TaskContext", "ToolArguments", "ToolResult", "Evidence")
+/// Maps each payload <c>Kind</c> (e.g. <see cref="SanitizationKinds.ToolArguments"/>, <see cref="SanitizationKinds.ToolResult"/>)
 /// to its <see cref="SanitizationPolicy"/>, per <see cref="AgentExperience.Abstractions.RawPayload.Kind"/>'s
 /// own doc comment: "a sanitizer can apply payload-specific policy". A <c>Kind</c> with no entry
 /// here is not a gap to fall back on some shared/global policy for -- <see cref="DefaultSanitizer"/>

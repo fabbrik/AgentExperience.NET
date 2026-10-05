@@ -1,5 +1,31 @@
 ﻿namespace AgentExperience.MicrosoftAgentFramework
 {
+    public static class AgentExperienceAgentBuilderExtensions
+    {
+        public static Microsoft.Agents.AI.AIAgentBuilder UseAgentExperience(this Microsoft.Agents.AI.AIAgentBuilder builder, System.IServiceProvider services) { }
+    }
+    public sealed class AgentExperienceIdentityContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext>
+    {
+        public AgentExperienceIdentityContext(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages, Microsoft.Agents.AI.AgentSession? Session, Microsoft.Agents.AI.AIAgent Agent) { }
+        public Microsoft.Agents.AI.AIAgent Agent { get; init; }
+        public System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages { get; init; }
+        public Microsoft.Agents.AI.AgentSession? Session { get; init; }
+    }
+    public sealed class AgentExperienceOptions
+    {
+        public const string DefaultTaskId = "default";
+        public AgentExperienceOptions() { }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureOptions>? Capture { get; set; }
+        public AgentExperience.Core.Capture.CaptureLimits CaptureLimits { get; set; }
+        public System.TimeSpan IdentityTimeout { get; set; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions>? Injection { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceIdentity?>>? ResolveIdentity { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, string>? ResolveTaskId { get; set; }
+        public AgentExperience.Core.Sanitization.SanitizationOptions Sanitization { get; set; }
+        public string TaskId { get; set; }
+        public System.TimeProvider? TimeProvider { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>? Verify { get; set; }
+    }
     public static class ExperienceCaptureAgentBuilderExtensions
     {
         public const string RunIdStateKey = "AgentExperience.RunId";
@@ -26,25 +52,31 @@
     public sealed class ExperienceCaptureOptions
     {
         public ExperienceCaptureOptions() { }
-        public bool CaptureToolCalls { get; init; }
-        public AgentExperience.Abstractions.EnvironmentFingerprint Environment { get; init; }
-        public AgentExperience.Core.Finalization.ExperienceFinalizationService? FinalizationService { get; init; }
-        public System.TimeSpan FinalizationTimeout { get; init; }
-        public int MaxAttemptsPerOpenRun { get; init; }
-        public System.TimeSpan MaxOpenRunDuration { get; init; }
-        public System.Func<System.Guid> NewId { get; init; }
-        public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>? OnCaptureFailure { get; init; }
-        public System.Action<AgentExperience.Core.Finalization.FinalizeExperienceResult>? OnRunFinalized { get; init; }
-        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, AgentExperience.Core.Finalization.FinalizeExperienceRequest?>? ResolveFinalization { get; init; }
-        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Finalization.FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; init; }
-        public required System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext, AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor> ResolveRun { get; init; }
-        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; init; }
-        public System.TimeProvider TimeProvider { get; init; }
+        public bool CaptureToolCalls { get; set; }
+        public AgentExperience.Abstractions.EnvironmentFingerprint Environment { get; set; }
+        public AgentExperience.Core.Finalization.ExperienceFinalizationService? FinalizationService { get; set; }
+        public System.TimeSpan FinalizationTimeout { get; set; }
+        public int MaxAttemptsPerOpenRun { get; set; }
+        public System.TimeSpan MaxOpenRunDuration { get; set; }
+        public System.Func<System.Guid> NewId { get; set; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>? OnCaptureFailure { get; set; }
+        public System.Action<AgentExperience.Core.Finalization.FinalizeExperienceResult>? OnRunFinalized { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, AgentExperience.Core.Finalization.FinalizeExperienceRequest?>? ResolveFinalization { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Finalization.FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; set; }
+        public required System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext, AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor> ResolveRun { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; set; }
+        public System.TimeProvider TimeProvider { get; set; }
     }
     public sealed class ExperienceFinalizationContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext>
     {
         public ExperienceFinalizationContext(AgentExperience.Abstractions.ExperienceRun Run) { }
         public AgentExperience.Abstractions.ExperienceRun Run { get; init; }
+    }
+    public sealed class ExperienceIdentity : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceIdentity>
+    {
+        public ExperienceIdentity(AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Abstractions.Scope Scope) { }
+        public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
     }
     public sealed class ExperienceRunCompletionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext>
     {
@@ -84,6 +116,22 @@
         public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength = 512) { }
         public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength, int followUpThreshold) { }
     }
+    public sealed class ExperienceVerification : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceVerification>
+    {
+        public ExperienceVerification(System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> RequiredChecks, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> Evidence, string ArtifactRevision) { }
+        public string ArtifactRevision { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Evidence> Evidence { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Verification.RequiredCheck> RequiredChecks { get; init; }
+    }
+    public sealed class ExperienceVerificationContext
+    {
+        public AgentExperience.MicrosoftAgentFramework.ExperienceIdentity Identity { get; }
+        public System.Guid RoundId { get; }
+        public AgentExperience.Abstractions.ExperienceRun Run { get; }
+        public AgentExperience.Abstractions.Evidence CreateEvidence(string checkId, string kind, AgentExperience.Abstractions.CheckResult result, string producer, string artifactRevision, string? detail = null) { }
+        public static AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext Create(AgentExperience.Abstractions.ExperienceRun run, System.Guid roundId, AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, System.TimeProvider? timeProvider = null, System.Func<System.Guid>? newId = null) { }
+    }
+    public interface IAgentExperienceBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
 }
 namespace AgentExperience.MicrosoftAgentFramework.Injection
 {
@@ -142,20 +190,20 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     {
         public const int MaxSessionStateKeyLength = 128;
         public ExperienceInjectionOptions() { }
-        public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; init; }
-        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; init; }
-        public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
-        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>? ResolveRequest { get; init; }
-        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>>? ResolveRequestAsync { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; init; }
-        public string SessionStateKey { get; init; }
-        public System.TimeProvider TimeProvider { get; init; }
+        public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; set; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>? ResolveRequest { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>>? ResolveRequestAsync { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits? SessionLimits { get; set; }
+        public string SessionStateKey { get; set; }
+        public System.TimeProvider TimeProvider { get; set; }
     }
     public sealed class ExperienceInjectionResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>
     {
@@ -391,5 +439,13 @@ Fields: lesson (required, plain text, at most 1,000 characters); successfulAppro
         OutputTooLarge = 5,
         PromptTooLarge = 6,
         ChatOptionsCallbackFailed = 7,
+    }
+}
+namespace Microsoft.Extensions.DependencyInjection
+{
+    public static class AgentExperienceServiceCollectionExtensions
+    {
+        public static AgentExperience.MicrosoftAgentFramework.IAgentExperienceBuilder AddAgentExperience(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<AgentExperience.MicrosoftAgentFramework.AgentExperienceOptions> configure) { }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceContextProvider GetAgentExperienceContextProvider(this System.IServiceProvider services) { }
     }
 }

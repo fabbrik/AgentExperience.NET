@@ -17,7 +17,13 @@ Package: `AgentExperience.MicrosoftAgentFramework`. Read the KL-12 boundary in
 
 ## Wiring it
 
-You add the provider yourself, through `ChatClientAgentOptions.AIContextProviders` — there is no builder extension,
+Under the [one-call setup](deployment.md#the-one-call-setup) the container builds the provider, with a request
+resolver that uses the resolved identity and `DerivedTaskText`; add `provider.GetAgentExperienceContextProvider()` to
+`ChatClientAgentOptions.AIContextProviders`, and adjust any option below through the `options.Injection` hook. MAF's
+agent builder can add only a message-level context provider, which does not see the session and history this provider
+works with, so the provider goes on the agent's options rather than on the builder.
+
+Wired by hand, you add the provider yourself, through `ChatClientAgentOptions.AIContextProviders` — there is no builder extension,
 because `UseExperienceCapture` never constructs those options, and injection has no DI registration of its own,
 because the resolver and the risk decision are per host. Capture and injection are independent: use either, or both.
 

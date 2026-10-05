@@ -31,7 +31,14 @@ public sealed record ExperienceRunContext(
         Messages = original.Messages;
         Session = original.Session;
         Agent = original.Agent;
+        Identity = original.Identity;
     }
+
+    /// <summary>
+    /// The identity the one-call setup resolved for this invocation, before <see cref="ExperienceCaptureOptions.ResolveRun"/>
+    /// is called; <see langword="null"/> under the explicit wiring. Internal: only the one-call setup's own resolver reads it.
+    /// </summary>
+    internal ExperienceIdentity? Identity { get; set; }
 
     /// <summary>
     /// The task text <see cref="ExperienceTaskText.Derive(IEnumerable{ChatMessage}, int)"/> derives from <see cref="Messages"/> (at most
@@ -186,7 +193,14 @@ public sealed record ExperienceRunCompletionContext(
 /// The completed run's sanitized snapshot, read back from the capture service after the invocation's
 /// attempt and completion were recorded. Its <see cref="ExperienceRun.ExecutionStatus"/> is set.
 /// </param>
-public sealed record ExperienceFinalizationContext(ExperienceRun Run);
+public sealed record ExperienceFinalizationContext(ExperienceRun Run)
+{
+    /// <summary>
+    /// The identity the one-call setup resolved for the invocation that ended the run, or <see langword="null"/> under
+    /// the explicit wiring. Internal: the one-call setup's finalization takes its authorization from here.
+    /// </summary>
+    internal ExperienceIdentity? Identity { get; init; }
+}
 
 /// <summary>Where in the capture pipeline an <see cref="ExperienceCaptureFailure"/> happened.</summary>
 public enum ExperienceCaptureFailureStage
@@ -239,6 +253,11 @@ public sealed record ExperienceCaptureFailure(
 /// <summary>
 /// Host configuration for <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions)"/>.
 /// </summary>
+/// <remarks>
+/// The properties are settable so a configuration hook (<c>AgentExperienceOptions.Capture</c>) can adjust them. Capture
+/// takes a copy when <c>UseExperienceCapture</c> is called, so changing the options afterwards has no effect on an agent
+/// already built.
+/// </remarks>
 public sealed class ExperienceCaptureOptions
 {
     /// <summary>
@@ -246,7 +265,7 @@ public sealed class ExperienceCaptureOptions
     /// per invocation, before the inner agent executes. If it throws, the invocation runs uncaptured
     /// and the failure is reported through <see cref="OnCaptureFailure"/>.
     /// </summary>
-    public required Func<ExperienceRunContext, ExperienceRunDescriptor> ResolveRun { get; init; }
+    public required Func<ExperienceRunContext, ExperienceRunDescriptor> ResolveRun { get; set; }
 
     /// <summary>
     /// Decides whether this invocation's run is finished. Called once per captured invocation, after
@@ -276,7 +295,7 @@ public sealed class ExperienceCaptureOptions
     /// that cannot retain payload.
     /// </para>
     /// </remarks>
-    public Func<ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; init; } = static _ => true;
+    public Func<ExperienceRunCompletionContext, bool> ShouldCompleteRun { get; set; } = static _ => true;
 
     /// <summary>
     /// The upper bound on how long a run may stay open across invocations before the adapter
@@ -303,7 +322,7 @@ public sealed class ExperienceCaptureOptions
     /// attempt is then refused when it returns. Set it above the longest invocation you expect.
     /// </para>
     /// </remarks>
-    public TimeSpan MaxOpenRunDuration { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan MaxOpenRunDuration { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// The most attempts a run may accumulate before the adapter completes it itself and reports
@@ -317,13 +336,13 @@ public sealed class ExperienceCaptureOptions
     /// hitting the service's limit means the attempt was not recorded, and an unrecordable attempt
     /// also completes the run rather than leaving it open to collect more of them.
     /// </remarks>
-    public int MaxAttemptsPerOpenRun { get; init; } = 8;
+    public int MaxAttemptsPerOpenRun { get; set; } = 8;
 
     /// <summary>
     /// The environment fingerprint recorded on every run. Defaults to the current machine name plus
     /// <see cref="RuntimeInformation"/>'s framework, OS, and process-architecture descriptions.
     /// </summary>
-    public EnvironmentFingerprint Environment { get; init; } = CreateDefaultEnvironment();
+    public EnvironmentFingerprint Environment { get; set; } = CreateDefaultEnvironment();
 
     /// <summary>
     /// Whether tool calls are recorded (default <see langword="true"/>). Tool capture registers MAF
@@ -331,7 +350,7 @@ public sealed class ExperienceCaptureOptions
     /// <see cref="FunctionInvokingChatClient"/> (a <see cref="ChatClientAgent"/>). Set this to
     /// <see langword="false"/> to capture run lifecycle only for any other <see cref="AIAgent"/>.
     /// </summary>
-    public bool CaptureToolCalls { get; init; } = true;
+    public bool CaptureToolCalls { get; set; } = true;
 
     /// <summary>
     /// The upper bound on the whole post-invocation step per run: append the attempt, complete the
@@ -346,7 +365,7 @@ public sealed class ExperienceCaptureOptions
     /// confirmed -- a <c>Candidate</c>, which is never reusable. Finalizing that run again completes
     /// the same commit.
     /// </remarks>
-    public TimeSpan FinalizationTimeout { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan FinalizationTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Called for capture failures (resolver exception, non-success capture outcome, capture
@@ -364,7 +383,7 @@ public sealed class ExperienceCaptureOptions
     /// <see cref="ExperienceCaptureAgentBuilderExtensions.UseExperienceCapture(Microsoft.Agents.AI.AIAgentBuilder, AgentExperience.Core.Capture.IExperienceCaptureService, ExperienceCaptureOptions, out IDisposable)"/>
     /// hands back to stop those late calls before tearing down whatever the callback writes to.
     /// </remarks>
-    public Action<ExperienceCaptureFailure>? OnCaptureFailure { get; init; }
+    public Action<ExperienceCaptureFailure>? OnCaptureFailure { get; set; }
 
     /// <summary>
     /// Optional. The Core service that turns each completed, captured run into a durable Experience
@@ -380,7 +399,7 @@ public sealed class ExperienceCaptureOptions
     /// when both of those succeeded. It never uses the caller's cancellation token and never changes
     /// what the caller of the agent observes.
     /// </remarks>
-    public ExperienceFinalizationService? FinalizationService { get; init; }
+    public ExperienceFinalizationService? FinalizationService { get; set; }
 
     /// <summary>
     /// The synchronous form of <see cref="ResolveFinalizationAsync"/>. When <see cref="FinalizationService"/> is
@@ -391,7 +410,7 @@ public sealed class ExperienceCaptureOptions
     /// <see cref="OnCaptureFailure"/>. Prefer <see cref="ResolveFinalizationAsync"/> whenever producing the
     /// evidence needs I/O.
     /// </summary>
-    public Func<ExperienceFinalizationContext, FinalizeExperienceRequest?>? ResolveFinalization { get; init; }
+    public Func<ExperienceFinalizationContext, FinalizeExperienceRequest?>? ResolveFinalization { get; set; }
 
     /// <summary>
     /// The preferred finalization resolver: builds the finalize request for one completed run, asynchronously --
@@ -408,7 +427,7 @@ public sealed class ExperienceCaptureOptions
     /// cancellation is not reported again; a request it returns after the timeout, or after the capture lifetime was
     /// disposed, finalizes nothing.
     /// </remarks>
-    public Func<ExperienceFinalizationContext, CancellationToken, ValueTask<FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; init; }
+    public Func<ExperienceFinalizationContext, CancellationToken, ValueTask<FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; set; }
 
     /// <summary>
     /// Optional. Receives every finalization result, durable or not -- including an expected
@@ -423,13 +442,23 @@ public sealed class ExperienceCaptureOptions
     /// <see cref="MaxOpenRunDuration"/> bound is finalized from a <see cref="TimeProvider"/> timer
     /// callback on a thread-pool thread, with no invocation in flight.
     /// </remarks>
-    public Action<FinalizeExperienceResult>? OnRunFinalized { get; init; }
+    public Action<FinalizeExperienceResult>? OnRunFinalized { get; set; }
 
     /// <summary>The clock used for run, attempt, and tool-call timestamps, durations, and the finalization timeout.</summary>
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>Creates run, attempt, tool-call, and completion-event identifiers. Defaults to <see cref="Guid.NewGuid"/>. Must be thread-safe.</summary>
-    public Func<Guid> NewId { get; init; } = Guid.NewGuid;
+    public Func<Guid> NewId { get; set; } = Guid.NewGuid;
+
+    /// <summary>
+    /// The one-call setup's identity step: awaited before <see cref="ResolveRun"/>, which then reads the identity from
+    /// <see cref="ExperienceRunContext.Identity"/>. A <see langword="null"/> identity runs the invocation uncaptured,
+    /// and is not a failure. Internal, so the explicit wiring is unchanged.
+    /// </summary>
+    internal Func<ExperienceRunContext, CancellationToken, ValueTask<ExperienceIdentity?>>? ResolveIdentityAsync { get; set; }
+
+    /// <summary>A shallow copy, taken once validation starts, so a later change to these options changes nothing.</summary>
+    internal ExperienceCaptureOptions Snapshot() => (ExperienceCaptureOptions)MemberwiseClone();
 
     private static EnvironmentFingerprint CreateDefaultEnvironment() => new(
         HostName: System.Environment.MachineName,

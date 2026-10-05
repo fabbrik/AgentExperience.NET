@@ -289,14 +289,14 @@ public static class ReuseBaselineExperiment
 
     private static readonly SanitizationOptions Sanitization = new(new Dictionary<string, SanitizationPolicy>(StringComparer.Ordinal)
     {
-        ["ToolArguments"] = new SanitizationPolicy(
+        [SanitizationKinds.ToolArguments] = new SanitizationPolicy(
             AllowedFieldNames: new HashSet<string>(StringComparer.Ordinal) { "incident", "strategy" },
             SecretFieldNames: new HashSet<string>(StringComparer.Ordinal),
             MaxDepth: 2,
             MaxFieldCount: 10,
             MaxValueLength: 4_000,
             MaxFieldNameLength: 100),
-        ["ToolResult"] = new SanitizationPolicy(
+        [SanitizationKinds.ToolResult] = new SanitizationPolicy(
             AllowedFieldNames: new HashSet<string>(StringComparer.Ordinal) { "value" },
             SecretFieldNames: new HashSet<string>(StringComparer.Ordinal),
             MaxDepth: 2,

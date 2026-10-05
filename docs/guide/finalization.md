@@ -579,7 +579,15 @@ Key management:
 
 ## Finalizing from the MAF adapter
 
-Capture alone keeps the run in memory. To turn each invocation into a durable Experience Record, give the adapter
+Under the [one-call setup](deployment.md#the-one-call-setup), set `options.Verify`: it is given the completed run and
+the identifier of the round the library opened for it, and returns only your verdict, the required checks, the
+evidence and the artifact revision, or `null` to store nothing. The library fills in the rest of the request below: a
+new `ClosedVerificationRound` under that revision, the revision as the current one, `StorageDecision.Permit`, the
+finalization time and the resolved identity's authorization. `context.CreateEvidence(...)` builds evidence already
+bound to the round. Without `Verify`, runs are captured but never finalized, so nothing is stored: a lesson needs
+verification to become reusable experience. A throwing `Verify` is reported like a throwing resolver, below.
+
+Wired by hand, capture alone keeps the run in memory. To turn each invocation into a durable Experience Record, give the adapter
 Core's finalization service and a resolver that supplies what only the host knows — the required checks, the
 verification evidence and the round it was closed in, the authorization context, and the storage decision:
 

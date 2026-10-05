@@ -8,8 +8,8 @@ namespace AgentExperience.Core.Capture;
 /// <see cref="AppendAttemptRequest"/>. The <em>content</em> fields pass through the composed
 /// <see cref="ISanitizer"/> before they are ever stored as part of a
 /// <see cref="AgentExperience.Abstractions.ToolCallRecord"/>: <see cref="Arguments"/> as
-/// <c>RawPayload</c> <c>Kind</c> <c>"ToolArguments"</c>, <see cref="Result"/>/<see cref="Error"/>
-/// each as <c>Kind</c> <c>"ToolResult"</c>.
+/// <c>RawPayload</c> <c>Kind</c> <see cref="AgentExperience.Core.Sanitization.SanitizationKinds.ToolArguments"/>, <see cref="Result"/>/<see cref="Error"/>
+/// each as <c>Kind</c> <see cref="AgentExperience.Core.Sanitization.SanitizationKinds.ToolResult"/>.
 /// </summary>
 /// <remarks>
 /// <b><see cref="ToolName"/> is the exception, and it is the one field a host's sanitizer never

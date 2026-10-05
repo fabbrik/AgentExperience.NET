@@ -110,6 +110,9 @@ public static class ExperienceCaptureAgentBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(captureService);
         ArgumentNullException.ThrowIfNull(options);
+
+        // A copy: the options are settable, and what is validated here must be what every invocation runs under.
+        options = options.Snapshot();
         ArgumentNullException.ThrowIfNull(options.ResolveRun, nameof(options.ResolveRun));
         ArgumentNullException.ThrowIfNull(options.Environment, nameof(options.Environment));
         ArgumentNullException.ThrowIfNull(options.TimeProvider, nameof(options.TimeProvider));
@@ -193,11 +196,12 @@ internal sealed class ExperienceCaptureMiddleware(IExperienceCaptureService capt
     {
         // Materialized once so a host resolver enumerating a one-shot sequence cannot starve the inner agent.
         messages = Materialize(messages);
-        var scope = CaptureScope.TryBegin(captureService, options, _openRuns, messages, session, innerAgent);
+        var (scope, identity) = await BeginAsync(messages, session, innerAgent, cancellationToken).ConfigureAwait(false);
 
         // Set inside this async method, so the value flows into the inner agent and is not visible
         // to the caller once this method returns.
         CaptureScope.Current = scope;
+        IdentityResolution.Current = identity;
 
         AgentResponse response;
         try
@@ -272,7 +276,7 @@ internal sealed class ExperienceCaptureMiddleware(IExperienceCaptureService capt
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         messages = Materialize(messages);
-        var scope = CaptureScope.TryBegin(captureService, options, _openRuns, messages, session, innerAgent);
+        var (scope, identity) = await BeginAsync(messages, session, innerAgent, cancellationToken).ConfigureAwait(false);
         IAsyncEnumerator<AgentResponseUpdate>? enumerator = null;
         var text = scope is null ? null : new StringBuilder();
 
@@ -289,6 +293,7 @@ internal sealed class ExperienceCaptureMiddleware(IExperienceCaptureService capt
                 // An async iterator's AsyncLocal changes do not survive between MoveNextAsync calls,
                 // so the scope is restored before every inner step (where MAF runs the tools).
                 CaptureScope.Current = scope;
+                IdentityResolution.Current = identity;
                 try
                 {
                     enumerator ??= innerAgent.RunStreamingAsync(messages, session, runOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
@@ -322,6 +327,7 @@ internal sealed class ExperienceCaptureMiddleware(IExperienceCaptureService capt
                 if (enumerator is not null)
                 {
                     CaptureScope.Current = scope;
+                    IdentityResolution.Current = identity;
                     await enumerator.DisposeAsync().ConfigureAwait(false);
                 }
             }
@@ -334,6 +340,56 @@ internal sealed class ExperienceCaptureMiddleware(IExperienceCaptureService capt
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Opens the invocation's capture scope, after the one-call setup's identity step when it is configured, and
+    /// returns it with the identity step's outcome (for injection to reuse, so the step runs once per invocation).
+    /// The scope is <see langword="null"/> -- the invocation runs uncaptured -- when the identity is
+    /// <see langword="null"/> (silently: the host declined) or the step throws or times out (reported at
+    /// <see cref="ExperienceCaptureFailureStage.ResolveRun"/>). Only the caller's own cancellation propagates.
+    /// </summary>
+    private async ValueTask<(CaptureScope? Scope, IdentityResolution? Identity)> BeginAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session,
+        AIAgent innerAgent,
+        CancellationToken cancellationToken)
+    {
+        var context = new ExperienceRunContext(messages, session, innerAgent);
+        IdentityResolution? resolution = null;
+        if (options.ResolveIdentityAsync is { } resolveIdentity)
+        {
+            ExperienceIdentity? identity;
+            try
+            {
+                identity = await resolveIdentity(context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                CaptureScope.Report(options, new ExperienceCaptureFailure(
+                    ExperienceCaptureFailureStage.ResolveRun,
+                    null,
+                    ex is TimeoutException
+                        ? $"{ex.Message} The invocation runs uncaptured and without memory."
+                        : $"ResolveIdentity threw {ex.GetType().FullName}; the invocation runs uncaptured.",
+                    ex));
+                return (null, new IdentityResolution(innerAgent, null, ex));
+            }
+
+            resolution = new IdentityResolution(innerAgent, identity, null);
+            if (identity is null)
+            {
+                return (null, resolution);
+            }
+
+            context.Identity = identity;
+        }
+
+        return (CaptureScope.TryBegin(captureService, options, _openRuns, context), resolution);
     }
 
     /// <summary>

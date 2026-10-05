@@ -239,6 +239,19 @@ namespace AgentExperience.Core.DependencyInjection
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceRetrieval(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, AgentExperience.Core.Retrieval.RetrievalPolicy? policy = null, AgentExperience.Core.Retrieval.RankingWeights? weights = null) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceReuseFeedback(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
     }
+    public static class AgentExperienceDefaults
+    {
+        public const int MaxDepth = 4;
+        public const int MaxFieldCount = 50;
+        public const int MaxFieldNameLength = 100;
+        public const int MaxValueLength = 1000000;
+        public static AgentExperience.Core.Capture.CaptureLimits CaptureLimits { get; }
+        public static AgentExperience.Core.Sanitization.SanitizationOptions Sanitization { get; }
+        public static System.Collections.Generic.IReadOnlySet<string> SecretFieldNames { get; }
+        public static AgentExperience.Core.Sanitization.SanitizationPolicy ToolArgumentsPolicy { get; }
+        public static AgentExperience.Core.Sanitization.SanitizationPolicy ToolResultPolicy { get; }
+        public static AgentExperience.Core.Sanitization.SanitizationOptions SanitizationAllowing(params string[] argumentNames) { }
+    }
 }
 namespace AgentExperience.Core.Diagnostics
 {
@@ -894,6 +907,12 @@ namespace AgentExperience.Core.Sanitization
         FieldNameLengthExceeded = 4,
         UnsafeFieldName = 5,
         RedactorFailed = 6,
+    }
+    public static class SanitizationKinds
+    {
+        public const string ToolArguments = "ToolArguments";
+        public const string ToolResult = "ToolResult";
+        public const string ValueField = "value";
     }
     public sealed class SanitizationOptions : System.IEquatable<AgentExperience.Core.Sanitization.SanitizationOptions>
     {

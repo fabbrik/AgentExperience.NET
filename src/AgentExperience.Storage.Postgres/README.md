@@ -54,6 +54,11 @@ services.AddAgentExperienceCore(sanitizationOptions, captureLimits);
 services.AddAgentExperienceRetrieval();
 ```
 
+Under the one-call setup (`AgentExperience.MicrosoftAgentFramework`), `services.AddAgentExperience(...).UsePostgres(applicationConnectionString)`
+registers the data source (owned and disposed by the container), the record store and the candidate source, and
+`AddAgentExperience` supplies Core and retrieval; `.UsePostgres(dataSource)` takes a data source you own. The schema is
+still migrated explicitly, as above.
+
 Every registration uses `TryAdd`, so your own implementation of a port wins. The store, search, grant, feedback and
 access-log registrations also have an overload taking an explicit `NpgsqlDataSource` (useful to give the access log
 its own pool). The stores never dispose the data source; the host owns it.

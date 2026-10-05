@@ -44,6 +44,10 @@ public sealed class PublicApiTests
             // Names test projects, not API: renaming a test project must not fail the public-API gate.
             "System.Runtime.CompilerServices.InternalsVisibleToAttribute",
         ],
+
+        // The generator leaves Microsoft.* and System.* types out by default. The one-call setup's registration types
+        // live in the container's own namespace, as is customary, and are public API like any other.
+        AllowNamespacePrefixes = ["Microsoft.Extensions.DependencyInjection"],
     };
 
     [Fact]
