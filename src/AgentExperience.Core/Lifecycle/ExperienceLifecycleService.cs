@@ -168,7 +168,7 @@ public sealed class ExperienceLifecycleService
     /// <param name="captureService">Optional. The capture service whose runs count as known.</param>
     /// <param name="deindexingTimeout">Optional. How long the de-indexing hook may take. Must be strictly positive. Defaults to <see cref="DefaultDeindexingTimeout"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="store"/> or <paramref name="independence"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="independence"/> is invalid: an undefined mode, a key shorter than <see cref="ExperienceIndependenceOptions.MinimumAssessmentTokenKeyBytes"/>, a lifetime out of range, or no clock.</exception>
+    /// <exception cref="ArgumentException"><paramref name="independence"/> is invalid: an undefined mode or host-trusted evidence effect, a key shorter than <see cref="ExperienceIndependenceOptions.MinimumAssessmentTokenKeyBytes"/>, a lifetime out of range, or no clock.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="deindexingTimeout"/> is not strictly positive.</exception>
     public ExperienceLifecycleService(
         IExperienceRecordStore store,
@@ -498,6 +498,16 @@ public sealed class ExperienceLifecycleService
     /// prove is that the record mattered to the run: each run that was given the lesson is one key. The update
     /// carries <see cref="ConfidenceUpdate.Admission"/>, which mode admitted it.
     /// </para>
+    /// <para>
+    /// <b>Host-trusted evidence can be kept out of the record.</b> Under the opt-out with
+    /// <see cref="ExperienceIndependenceOptions.HostTrustedEvidence"/> set to
+    /// <see cref="HostTrustedEvidenceEffect.RecordedOnly"/>, evidence admitted as
+    /// <see cref="ConfidenceEvidenceAdmission.HostTrusted"/> is committed on a lifecycle event whose new counters,
+    /// new score and status equal the prior ones: it is <see cref="ConfidenceUpdateOutcome.Applied"/> with
+    /// <see cref="ApplyConfidenceEvidenceResult.Counted"/> <see langword="false"/>, a contradiction does not contest
+    /// the record, and the confidence engine is not asked to score it. One for an independence key already counted
+    /// or already recorded this way is a duplicate, as under the default.
+    /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do. Also the source of the reviewer identity for human evidence.</param>
     /// <param name="request">The evidence to apply.</param>
@@ -627,7 +637,12 @@ public sealed class ExperienceLifecycleService
                     string.Join(", ", ReuseConfidenceHeuristic.AcceptsEvidence)));
         }
 
-        if (ValidateStoredCounters(record) is { Count: > 0 } counterErrors)
+        // Under the opt-out with HostTrustedEvidenceEffect.RecordedOnly, every piece of evidence is admitted as
+        // HostTrusted and recorded without moving the record: nothing is incremented, so a saturated counter is no
+        // reason to refuse it.
+        var recordsOnly = !_independence.Verifies && _independence.HostTrustedEvidence == HostTrustedEvidenceEffect.RecordedOnly;
+
+        if (!recordsOnly && ValidateStoredCounters(record) is { Count: > 0 } counterErrors)
         {
             // Apply throws on these, and an unreadable record is a typed refusal everywhere else in this
             // library; a store that hands back a negative or saturated counter must not become the one
@@ -672,34 +687,60 @@ public sealed class ExperienceLifecycleService
                 Refusal: refusal);
         }
 
-        var update = ReuseConfidenceHeuristic.Apply(
-            record,
-            request.EvidenceId,
-            request.Kind,
-            request.Source,
-            request.RunId,
-            request.VerificationRoundId,
-            request.Source == ConfidenceEvidenceSource.Human ? authorization.PrincipalId : null,
-            request.Detail);
+        // Under HostTrustedEvidenceEffect.RecordedOnly, evidence the opt-out admitted is recorded and moves
+        // nothing: its event carries the counters, score and status it found, and neither the heuristic's increment
+        // nor the engine is asked about it. Verified evidence always counts.
+        var recordedOnly = recordsOnly && independence.Admission == ConfidenceEvidenceAdmission.HostTrusted;
+        var reviewer = request.Source == ConfidenceEvidenceSource.Human ? authorization.PrincipalId : null;
 
-        // The heuristic's Apply settles the counters (and refuses an overflow); the score is the engine's,
-        // computed from the record as read and the counters after this evidence, and refused -- never
-        // clamped -- when it is not a score. Either failure throws before the store is asked anything.
+        ConfidenceUpdate update;
+        if (recordedOnly)
+        {
+            update = new ConfidenceUpdate(
+                EvidenceId: request.EvidenceId,
+                Kind: request.Kind,
+                Source: request.Source,
+                RunId: request.RunId,
+                VerificationRoundId: request.VerificationRoundId,
+                ReviewerIdentity: reviewer,
+                RuleVersion: _confidence.Recorded,
+                PriorReuseConfidence: record.ReuseConfidence,
+                NewReuseConfidence: record.ReuseConfidence,
+                PriorSupportingValidations: record.SupportingValidations,
+                NewSupportingValidations: record.SupportingValidations,
+                PriorContradictions: record.Contradictions,
+                NewContradictions: record.Contradictions,
+                Detail: request.Detail);
+        }
+        else
+        {
+            update = ReuseConfidenceHeuristic.Apply(
+                record, request.EvidenceId, request.Kind, request.Source, request.RunId, request.VerificationRoundId, reviewer, request.Detail);
+
+            // The heuristic's Apply settles the counters (and refuses an overflow); the score is the engine's,
+            // computed from the record as read and the counters after this evidence, and refused -- never
+            // clamped -- when it is not a score. Either failure throws before the store is asked anything.
+            update = update with
+            {
+                NewReuseConfidence = _confidence.Score(record, update.NewSupportingValidations, update.NewContradictions),
+                RuleVersion = _confidence.Recorded,
+            };
+        }
+
         update = update with
         {
-            NewReuseConfidence = _confidence.Score(record, update.NewSupportingValidations, update.NewContradictions),
-            RuleVersion = _confidence.Recorded,
-
             // Carried to the store, which spends it: one assessment lands at most one piece of evidence
             // per record, atomically with the evidence itself.
             AssessmentId = independence.AssessmentId,
 
             // Which mode admitted it, persisted with it: evidence the opt-out admitted stays findable, and a
-            // confidence read can leave it out.
+            // confidence read can leave it out (or, recorded only, add it back).
             Admission = independence.Admission,
         };
 
-        var currentStatus = ReuseConfidenceHeuristic.StatusAfter(record.Status, request.Kind);
+        var currentStatus = recordedOnly
+            ? record.Status
+            : ReuseConfidenceHeuristic.StatusAfter(record.Status, request.Kind);
 
         var lifecycleEvent = new LifecycleEvent(
             EventId: request.EventId,
@@ -750,12 +791,13 @@ public sealed class ExperienceLifecycleService
                 authorization, request.Scope, request.ExperienceId, record.Status, settledStatus, cancellationToken)
             .ConfigureAwait(false);
 
+        var stored = result.AppliedConfidence ?? update.AsRecordedOnly();
         return new(
             ConfidenceUpdateOutcome.Applied,
             lifecycleEvent,
             // What the transaction stored, which is the submitted payload unless the independence key
             // was taken; a store that reports nothing is taken at its word that nothing moved.
-            result.AppliedConfidence ?? update.AsRecordedOnly(),
+            stored,
             result.Revision,
             // The store reports the record's status when it knows it -- which is every case where it did
             // not move the record: a duplicate that left it alone, and a replay reporting the moment the
@@ -764,7 +806,12 @@ public sealed class ExperienceLifecycleService
             settledStatus,
             result.Errors,
             Reason: null,
-            deindexing);
+            deindexing)
+        {
+            // A store reports no status exactly when an event moved the record (this call's, or the one an event-ID
+            // replay reports); an uncounted update on such an event is evidence recorded only, not a duplicate.
+            RecordedOnEvent = !stored.Counted && result.CurrentStatus is null,
+        };
     }
 
     /// <summary>
@@ -1073,8 +1120,10 @@ public sealed class ExperienceLifecycleService
     /// stored with. This read pages that history up to the record's revision as it read it, counts counted
     /// updates by admission, and recomputes the score with the service's <see cref="IExperienceConfidenceEngine"/> from
     /// the stored counters less the ones <paramref name="filter"/> excludes. With
-    /// <see cref="ConfidenceEvidenceFilter.All"/>, or when nothing is excluded, it reports the stored score
-    /// unchanged.
+    /// <see cref="ConfidenceEvidenceFilter.All"/> it also adds host-trusted evidence that was recorded without moving
+    /// the record (<see cref="HostTrustedEvidenceEffect.RecordedOnly"/>), once per independence key that no counted
+    /// update holds, so the answer is what the default <see cref="HostTrustedEvidenceEffect.Counted"/> would have
+    /// stored for the same evidence. When nothing is excluded or added, it reports the stored score unchanged.
     /// </para>
     /// <para>
     /// It writes nothing, and it reads like the confidence path does: a scope check, never a delivery, and a
@@ -1127,6 +1176,14 @@ public sealed class ExperienceLifecycleService
         int trustedSupporting = 0, trustedContradicting = 0;
         int unrecordedSupporting = 0, unrecordedContradicting = 0;
 
+        // Host-trusted evidence recorded without moving the record (HostTrustedEvidenceEffect.RecordedOnly), the
+        // first kind seen per independence key, and the keys counted evidence claimed: the "everything" view adds each
+        // recorded-only key no counted update claimed, which is what the default would have counted. One whose key
+        // cannot be derived is counted on its own, never dropped.
+        var recordedOnlyKeys = new Dictionary<string, ConfidenceEvidenceKind>(StringComparer.Ordinal);
+        var countedKeys = new HashSet<string>(StringComparer.Ordinal);
+        int unkeyedSupporting = 0, unkeyedContradicting = 0;
+
         long? after = null;
         while (true)
         {
@@ -1147,9 +1204,36 @@ public sealed class ExperienceLifecycleService
             {
                 // Only what the record read reflects: an update committed after it would move counters
                 // this report did not read.
-                if (stored.AppliedRevision > record.Revision || stored.Event.Confidence is not { Counted: true } update)
+                if (stored.AppliedRevision > record.Revision || stored.Event.Confidence is not { } update)
                 {
                     continue;
+                }
+
+                if (!update.Counted)
+                {
+                    // An event whose evidence moved nothing: only host-trusted evidence recorded only is stored so.
+                    if (update.Admission == ConfidenceEvidenceAdmission.HostTrusted)
+                    {
+                        if (StoredIndependenceKey(update) is { } recordedKey)
+                        {
+                            recordedOnlyKeys.TryAdd(recordedKey, update.Kind);
+                        }
+                        else if (update.Kind == ConfidenceEvidenceKind.Supporting)
+                        {
+                            unkeyedSupporting++;
+                        }
+                        else
+                        {
+                            unkeyedContradicting++;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (StoredIndependenceKey(update) is { } countedKey)
+                {
+                    countedKeys.Add(countedKey);
                 }
 
                 var supporting = update.NewSupportingValidations - update.PriorSupportingValidations;
@@ -1182,6 +1266,26 @@ public sealed class ExperienceLifecycleService
             }
 
             after = next;
+        }
+
+        // Deduplicated exactly as the store would have deduplicated it had it counted: once per key, and not at all
+        // for a key counted evidence holds.
+        int recordedOnlySupporting = unkeyedSupporting, recordedOnlyContradicting = unkeyedContradicting;
+        foreach (var (key, kind) in recordedOnlyKeys)
+        {
+            if (countedKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (kind == ConfidenceEvidenceKind.Supporting)
+            {
+                recordedOnlySupporting++;
+            }
+            else
+            {
+                recordedOnlyContradicting++;
+            }
         }
 
         // The counters the record started with, which no history event explains: finalization's own validation
@@ -1225,11 +1329,15 @@ public sealed class ExperienceLifecycleService
             _ => 0,
         };
 
+        // Only the everything view adds the host-trusted evidence that was recorded without being counted.
+        var addedSupporting = filter == ConfidenceEvidenceFilter.All ? recordedOnlySupporting : 0;
+        var addedContradicting = filter == ConfidenceEvidenceFilter.All ? recordedOnlyContradicting : 0;
+
         // Clamped rather than trusted: a store whose history and counters disagree must not produce a
         // negative count, and the report says what it excluded either way.
-        var supportingCounted = Math.Max(0, record.SupportingValidations - excludedSupporting);
-        var contradictionsCounted = Math.Max(0, record.Contradictions - excludedContradicting);
-        var excludedAny = excludedSupporting != 0 || excludedContradicting != 0;
+        var supportingCounted = SaturatingAdd(Math.Max(0, record.SupportingValidations - excludedSupporting), addedSupporting);
+        var contradictionsCounted = SaturatingAdd(Math.Max(0, record.Contradictions - excludedContradicting), addedContradicting);
+        var adjusted = excludedSupporting != 0 || excludedContradicting != 0 || addedSupporting != 0 || addedContradicting != 0;
 
         return new(
             ExperienceStoreOutcome.Found,
@@ -1238,7 +1346,7 @@ public sealed class ExperienceLifecycleService
                 record.Revision,
                 record.Status,
                 filter,
-                ReuseConfidence: excludedAny ? _confidence.Score(record, supportingCounted, contradictionsCounted) : record.ReuseConfidence,
+                ReuseConfidence: adjusted ? _confidence.Score(record, supportingCounted, contradictionsCounted) : record.ReuseConfidence,
                 SupportingValidations: supportingCounted,
                 Contradictions: contradictionsCounted,
                 StoredReuseConfidence: record.ReuseConfidence,
@@ -1250,8 +1358,31 @@ public sealed class ExperienceLifecycleService
             {
                 Origin = record.Origin,
                 Initial = new(initialSupporting, initialContradicting),
+                HostTrustedRecordedOnly = new(recordedOnlySupporting, recordedOnlyContradicting),
             },
             NoErrors);
+
+        static int SaturatingAdd(int value, int added) => (int)Math.Min(int.MaxValue, (long)value + added);
+    }
+
+    /// <summary>
+    /// The independence key a stored update was deduplicated on, as the stores derive it; <see langword="null"/> for one
+    /// that does not carry the identifiers its source requires (which no store accepts, so only a broken store could hand
+    /// it back). Never throws: a read reports whatever history holds.
+    /// </summary>
+    private static string? StoredIndependenceKey(ConfidenceUpdate update)
+    {
+        try
+        {
+            return ReuseConfidenceHeuristic.IndependenceKeyFor(update).Value;
+        }
+        catch (ArgumentException)
+        {
+            // The key rule refuses a reviewer identity with surrounding whitespace, which a store keys verbatim.
+            return update.Source == ConfidenceEvidenceSource.Human && !string.IsNullOrEmpty(update.ReviewerIdentity)
+                ? string.Create(CultureInfo.InvariantCulture, $"human:{update.ReviewerIdentity}:{update.RunId:D}")
+                : null;
+        }
     }
 
     /// <summary>

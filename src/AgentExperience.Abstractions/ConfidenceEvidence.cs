@@ -117,7 +117,11 @@ public sealed record ConfidenceUpdate(
 
     /// <summary>
     /// The same submission with nothing moved: what a store writes when the independence key was
-    /// already taken. Declining to apply an increment is not deriving a score -- every number in the
+    /// already taken, and what Core submits, on a lifecycle event of its own, for host-trusted evidence it records
+    /// without counting (<c>HostTrustedEvidenceEffect.RecordedOnly</c>). A store accepts such an event only when its
+    /// <see cref="Admission"/> is <see cref="ConfidenceEvidenceAdmission.HostTrusted"/> and it moves neither the score
+    /// nor the status, leaves the record's counters, score and <c>UpdatedAt</c> alone, and treats a later one for a key
+    /// already counted or recorded this way as a duplicate. Declining to apply an increment is not deriving a score -- every number in the
     /// result is one Core already read from the record.
     /// </summary>
     /// <returns>A copy whose new values equal its prior values.</returns>

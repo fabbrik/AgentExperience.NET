@@ -203,6 +203,42 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   caught only for version 2 records. See [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
   [Signing provenance](docs/guide/confidence.md#signing-provenance).
 
+### Host-trusted evidence can be kept out of the ranked score (story 17.3)
+
+- **The problem it fixes.** Under the verification opt-out (`IndependenceVerification.TrustHostSuppliedIdentifiers`),
+  evidence stored as `HostTrusted` still moved the record's counters, its stored `ReuseConfidence` (which retrieval
+  ranks and filters on) and, for a contradiction, its status. Only `ReadConfidenceAsync` could leave it out (KL-11).
+- **New option.** `ExperienceIndependenceOptions.HostTrustedEvidence` of the new enum `HostTrustedEvidenceEffect`
+  (`Counted = 0`, the default and the earlier behaviour; `RecordedOnly = 1`). An undefined value is refused when a
+  service is constructed. It only matters under the opt-out; verified evidence always counts.
+- **`RecordedOnly`.** Host-trusted evidence is committed on a lifecycle event and an evidence row exactly as before
+  (same IDs, idempotency, assessment spending, access audit, `Admission = HostTrusted`), but the event's new counters,
+  new score and status equal the prior ones, and the record's `UpdatedAt` is not refreshed: only its revision moves.
+  `ApplyEvidenceAsync` reports `Applied` with `Counted: false`, a contradiction does not contest the record, and the
+  confidence engine is not asked to score it. A later recorded-only submission for a key already held by counted
+  evidence or by an earlier recorded-only event is a duplicate (a ledger row, no event). The revision still advances
+  and the event is appended to history exactly as a counted one is, so reused-session re-delivery, `StaleRevision`
+  contention and history growth are as under `Counted`.
+- **Reading it.** `ReadConfidenceAsync` with `ConfidenceEvidenceFilter.All` now adds recorded-only host-trusted
+  evidence to the stored counters (once per independence key no counted update holds) and scores that, which gives
+  the counts and score `Counted` would have stored (not the `Contested` status or de-indexing it would have applied);
+  `ExcludeHostTrusted` and `VerifiedOnly` report without it. `ConfidenceReport` gains
+  `HostTrustedRecordedOnly`. With no such evidence, `All` still reports the stored score unchanged.
+- **Stores.** Both shipped stores, through the shared validator, accept a confidence event whose evidence moves no
+  counter only when its admission is `HostTrusted` and its score and status do not move; any other such event is
+  `Invalid` (it was refused before too: as an infrastructure failure in PostgreSQL). **Migration
+  `0023_recorded_only_evidence`** (`PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName`) replaces `0007`'s
+  `confidence_evidence_event_only_when_counted` CHECK with one that also admits such a row, and adds the matching
+  CHECK on `lifecycle_events` (both `NOT VALID`), plus a partial index for the duplicate check; no new table, column
+  or grant. **Migrate before setting `RecordedOnly`:** against a database without `0023` every host-trusted
+  submission fails as an infrastructure error. **Action for an out-of-tree
+  store:** accept such an event, leave counters, score and `UpdatedAt` alone, and treat a later recorded-only
+  submission for a key already counted or recorded as a duplicate.
+- **No backfill.** Evidence counted before `RecordedOnly` was set stays counted; read it out with `ExcludeHostTrusted`.
+- **KL-11** drops the clause that the opt-out's evidence is excluded only on read; see
+  [Limits history](docs/limits-history.md#narrowed-after-010-preview6) and
+  [Keeping host-trusted evidence out of the ranked score](docs/guide/confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score).
+
 ## 0.1.0-preview.6
 
 Excluding model-authored lessons now happens inside retrieval (story 14.4), so

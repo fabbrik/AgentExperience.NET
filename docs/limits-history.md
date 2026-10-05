@@ -219,6 +219,21 @@ instead.
   fenced rather than re-signed (re-signing would vouch for content nobody checked), the cutover set's unsigned records
   stay editable, signing off leaves content unprotected, and a key holder can sign anything. See
   [Signing provenance](guide/confidence.md#signing-provenance).
+- **KL-11** (confidence independence) is **narrowed** by story 17.3. Its clause that the opt-out's evidence is
+  excluded only on read, while the stored score retrieval ranks on still counts it, was removable by code, and is
+  gone. A host that opts out with `IndependenceVerification.TrustHostSuppliedIdentifiers` can now set
+  `ExperienceIndependenceOptions.HostTrustedEvidence = HostTrustedEvidenceEffect.RecordedOnly`: evidence the opt-out
+  admits is committed on its lifecycle event and ledger row as before (same IDs, idempotency, assessment spending,
+  `Admission = HostTrusted`), but its new counters, score and status equal the prior ones and the record's
+  `UpdatedAt` is not refreshed, so it moves neither ranking, the confidence floor, `MaxAge` nor eligibility, and a
+  contradiction no longer contests the record. The event still advances the record's revision and history, as a
+  counted one does. `ReadConfidenceAsync` with `All` adds it back, once per independence key, with the counts and
+  score the default would have stored (not its status or de-indexing). Both stores accept such an event only for
+  host-trusted evidence that moves nothing (PostgreSQL through migration `0023`, which must be applied before the
+  setting is used: without it every host-trusted submission fails as an infrastructure error). What the row still says: the default stays `Counted`, so a host
+  that does not set it keeps the earlier behaviour, and evidence counted before the setting changed stays counted
+  (nothing is backfilled). See
+  [Keeping host-trusted evidence out of the ranked score](guide/confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score).
 
 ## How the project got here
 

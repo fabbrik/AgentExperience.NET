@@ -58,7 +58,7 @@ Every registration uses `TryAdd`, so your own implementation of a port wins. The
 access-log registrations also have an overload taking an explicit `NpgsqlDataSource` (useful to give the access log
 its own pool). The stores never dispose the data source; the host owns it.
 
-`MigrateAsync` applies `0001`–`0003`, `0005`–`0019`, `0021` and `0022` (there is no `0014`; `0004` and `0020` belong to the vectors package).
+`MigrateAsync` applies `0001`–`0003`, `0005`–`0019` and `0021`–`0023` (there is no `0014`; `0004` and `0020` belong to the vectors package).
 It is journaled, runs one transaction per script, and serializes concurrent hosts with an advisory lock. The owner
 needs one superuser grant, once: `GRANT SET ON PARAMETER agent_experience.purge_authorized,
 agent_experience.access_purge_authorized TO <owner>`.

@@ -646,6 +646,173 @@ public abstract class RecordStoreConformanceTests
         await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 0, events: 0);
     }
 
+    // ---------------------------------------------------------------- host-trusted evidence recorded only (story 17.3)
+
+    [Fact]
+    public async Task Host_trusted_evidence_recorded_only_commits_an_event_that_moves_nothing_but_the_revision()
+    {
+        var tenant = NewTenant();
+        var record = await CreateAsync(tenant, Record(Scope(tenant), ExperienceStatus.Validated, confidence: 0.5));
+        var before = (await Store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
+
+        var supporting = RecordedOnly(before, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting);
+        var lifecycleEvent = Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 0) with { Confidence = supporting };
+        var result = await Store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, lifecycleEvent, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, result.Outcome);
+        Assert.Equal(1, result.Revision);
+        Assert.False(result.AppliedConfidence!.Counted);
+        Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, result.AppliedConfidence.Admission);
+
+        // The counters, the score, the status and UpdatedAt stay where they were: only the revision moves.
+        var stored = (await Store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
+        Assert.Equal(Json(before with { Revision = 1 }), Json(stored));
+
+        var history = await Store.GetHistoryAsync(
+            Authorize(tenant), new ExperienceRecordHistoryQuery(record.Scope, record.ExperienceId, ExperienceRecordHistoryQuery.MaxLimit), CancellationToken.None);
+        var only = Assert.Single(history.Events);
+        Assert.Equal(supporting.EvidenceId, only.Event.Confidence!.EvidenceId);
+        Assert.False(only.Event.Confidence.Counted);
+        Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, only.Event.Confidence.Admission);
+
+        // A replay is idempotent, exactly as a counted one is.
+        var replay = await Store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, lifecycleEvent, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, replay.Outcome);
+        Assert.Equal(1, replay.Revision);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 1, events: 1);
+
+        // A recorded-only contradiction contests nothing.
+        var contradicting = RecordedOnly(before, Guid.NewGuid(), ConfidenceEvidenceKind.Contradicting);
+        var contested = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant),
+            record.Scope,
+            Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = contradicting },
+            CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, contested.Outcome);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 2, events: 2);
+        stored = (await Store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
+        Assert.Equal(Json(before with { Revision = 2 }), Json(stored));
+    }
+
+    [Fact]
+    public async Task A_recorded_only_key_already_recorded_or_counted_is_a_duplicate_and_counted_evidence_for_it_still_counts()
+    {
+        var tenant = NewTenant();
+        var record = await CreateAsync(tenant, Record(Scope(tenant), ExperienceStatus.Validated));
+        var run = Guid.NewGuid();
+
+        var first = RecordedOnly(record, run, ConfidenceEvidenceKind.Supporting);
+        Assert.Equal(1, (await Store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 0) with { Confidence = first }, CancellationToken.None)).Revision);
+
+        // The same observation again, under a new evidence ID: a ledger row and nothing else.
+        var again = RecordedOnly(record, run, ConfidenceEvidenceKind.Supporting);
+        var duplicate = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = again }, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, duplicate.Outcome);
+        Assert.Equal(1, duplicate.Revision);
+        Assert.Equal(ExperienceStatus.Validated, duplicate.CurrentStatus);
+        Assert.False(duplicate.AppliedConfidence!.Counted);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 1, events: 1);
+
+        // A recorded-only row claims no independence key: counted evidence for the same observation counts.
+        var counted = SupportingConfidence() with { RunId = run, Admission = ConfidenceEvidenceAdmission.Verified };
+        var moved = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = counted }, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, moved.Outcome);
+        Assert.True(moved.AppliedConfidence!.Counted);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 2, events: 2);
+        var afterCounted = (await Store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None)).Record!;
+        Assert.Equal(1, afterCounted.SupportingValidations);
+
+        // And a recorded-only submission for a key counted evidence holds is a duplicate too.
+        var late = RecordedOnly(afterCounted, run, ConfidenceEvidenceKind.Supporting);
+        var lateDuplicate = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 2) with { Confidence = late }, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, lateDuplicate.Outcome);
+        Assert.Equal(2, lateDuplicate.Revision);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 2, events: 2);
+    }
+
+    [Fact]
+    public async Task A_replay_of_counted_evidence_resubmitted_as_recorded_only_reports_the_original()
+    {
+        var tenant = NewTenant();
+        var record = await CreateAsync(tenant, Record(Scope(tenant), ExperienceStatus.Validated));
+
+        // Counted, contesting the record; then the same event and evidence IDs resubmitted after the host switched to
+        // RecordedOnly, so carrying unmoved numbers and status.
+        var counted = SupportingConfidence() with
+        {
+            Kind = ConfidenceEvidenceKind.Contradicting,
+            NewReuseConfidence = 1d / 3d,
+            NewSupportingValidations = 0,
+            NewContradictions = 1,
+            Admission = ConfidenceEvidenceAdmission.HostTrusted,
+        };
+        var original = Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Contested, 0) with { Confidence = counted };
+        Assert.Equal(1, (await Store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, original, CancellationToken.None)).Revision);
+
+        var resubmitted = original with
+        {
+            CurrentStatus = ExperienceStatus.Validated,
+            Confidence = RecordedOnly(record, counted.RunId, ConfidenceEvidenceKind.Contradicting) with { EvidenceId = counted.EvidenceId },
+        };
+        var replay = await Store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, resubmitted, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, replay.Outcome);
+        Assert.Equal(1, replay.Revision);
+        Assert.True(replay.AppliedConfidence!.Counted);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Contested, revision: 1, events: 1);
+    }
+
+    [Fact]
+    public async Task Recorded_only_human_evidence_spends_its_assessment_and_another_evidence_id_cannot_reuse_it()
+    {
+        var tenant = NewTenant();
+        var record = await CreateAsync(tenant, Record(Scope(tenant), ExperienceStatus.Validated));
+        var assessment = Guid.NewGuid();
+
+        var first = RecordedOnly(record, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting) with { AssessmentId = assessment };
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await Store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 0) with { Confidence = first }, CancellationToken.None)).Outcome);
+
+        var reused = RecordedOnly(record, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting) with { AssessmentId = assessment };
+        var refused = await Store.CommitLifecycleEventAsync(
+            Authorize(tenant), record.Scope, Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 1) with { Confidence = reused }, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Conflict, refused.Outcome);
+        Assert.Contains(refused.Errors, error => error.Path == ConfidenceUpdate.AssessmentIdPath);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 1, events: 1);
+    }
+
+    [Theory]
+    [InlineData("verified")]
+    [InlineData("unrecorded")]
+    [InlineData("score")]
+    [InlineData("status")]
+    public async Task An_evidence_event_that_moves_no_counter_is_Invalid_unless_host_trusted_and_moving_nothing_else(string malformation)
+    {
+        var tenant = NewTenant();
+        var record = await CreateAsync(tenant, Record(Scope(tenant), ExperienceStatus.Validated));
+        var update = RecordedOnly(record, Guid.NewGuid(), ConfidenceEvidenceKind.Contradicting);
+        var lifecycleEvent = Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, 0);
+        lifecycleEvent = malformation switch
+        {
+            "verified" => lifecycleEvent with { Confidence = update with { Admission = ConfidenceEvidenceAdmission.Verified } },
+            "unrecorded" => lifecycleEvent with { Confidence = update with { Admission = null } },
+            "score" => lifecycleEvent with { Confidence = update with { NewReuseConfidence = 0.25 } },
+            "status" => lifecycleEvent with { CurrentStatus = ExperienceStatus.Contested, Confidence = update },
+            _ => lifecycleEvent,
+        };
+
+        var result = await Store.CommitLifecycleEventAsync(Authorize(tenant), record.Scope, lifecycleEvent, CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.NotEmpty(result.Errors);
+        await AssertStoredAsync(tenant, record, ExperienceStatus.Validated, revision: 0, events: 0);
+    }
+
     // ---------------------------------------------------------------- supersession guard on commit
 
     public static TheoryData<string> RefusedReplacements => ["other-scope", "missing", "candidate", "revoked", "cycle"];
@@ -1112,6 +1279,24 @@ public abstract class RecordStoreConformanceTests
     private async Task WarmUpAsync(string tenant, ExperienceRecord record) =>
         await Task.WhenAll(Enumerable.Range(0, Racers).Select(_ =>
             Task.Run(() => Store.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None))));
+
+    /// <summary>
+    /// Host-trusted human evidence about <paramref name="runId"/> as Core submits it under
+    /// <c>HostTrustedEvidenceEffect.RecordedOnly</c>: every new value equal to the record's current one.
+    /// </summary>
+    private static ConfidenceUpdate RecordedOnly(ExperienceRecord record, Guid runId, ConfidenceEvidenceKind kind) =>
+        SupportingConfidence() with
+        {
+            Kind = kind,
+            RunId = runId,
+            PriorReuseConfidence = record.ReuseConfidence,
+            NewReuseConfidence = record.ReuseConfidence,
+            PriorSupportingValidations = record.SupportingValidations,
+            NewSupportingValidations = record.SupportingValidations,
+            PriorContradictions = record.Contradictions,
+            NewContradictions = record.Contradictions,
+            Admission = ConfidenceEvidenceAdmission.HostTrusted,
+        };
 
     private async Task<ExperienceRecord> CreateAsync(string tenant, ExperienceRecord record)
     {

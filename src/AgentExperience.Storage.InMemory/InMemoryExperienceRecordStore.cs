@@ -51,6 +51,12 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     private readonly Dictionary<Guid, List<StoredEvent>> _history = [];
     private readonly Dictionary<Guid, StoredEvidence> _evidence = [];
     private readonly HashSet<(Guid ExperienceId, string Key)> _countedIndependenceKeys = [];
+
+    /// <summary>
+    /// The keys host-trusted evidence recorded without counting (story 17.3) rode in on an event under: a later
+    /// recorded-only submission for one of them is a duplicate, exactly as a counted key's would be.
+    /// </summary>
+    private readonly HashSet<(Guid ExperienceId, string Key)> _recordedOnlyIndependenceKeys = [];
     private readonly HashSet<(Guid ExperienceId, Guid AssessmentId)> _spentAssessments = [];
 
     /// <summary>
@@ -415,7 +421,12 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
                         "this assessment has already landed evidence for this record under another evidence ID.")]);
             }
 
-            if (submitted.Counted && _countedIndependenceKeys.Contains((recordId, IndependenceKey(submitted))))
+            // A counted submission is a duplicate when its key was counted. A recorded-only one (host-trusted
+            // evidence that moves nothing) is one when its key was counted or already recorded that way, so one
+            // observation rides at most one event.
+            var key = (recordId, IndependenceKey(submitted));
+            if (_countedIndependenceKeys.Contains(key)
+                || (!submitted.Counted && _recordedOnlyIndependenceKeys.Contains(key)))
             {
                 return RecordDuplicate(scope, lifecycleEvent, submitted);
             }
@@ -458,7 +469,15 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
 
         var now = StoredSnapshots.Timestamp(_timeProvider.GetUtcNow());
         var appliedRevision = lifecycleEvent.ExpectedRevision + 1;
-        var moved = record with { Status = lifecycleEvent.CurrentStatus, Revision = appliedRevision, UpdatedAt = now };
+        // Host-trusted evidence recorded only moves the revision and nothing else: refreshing UpdatedAt would let it
+        // keep the record recent for ranking and un-expired for MaxAge, which is exactly what it must not steer.
+        var recordedOnly = lifecycleEvent.Confidence is { Counted: false };
+        var moved = record with
+        {
+            Status = lifecycleEvent.CurrentStatus,
+            Revision = appliedRevision,
+            UpdatedAt = recordedOnly ? record.UpdatedAt : now,
+        };
 
         // Only a counted update writes the three confidence values, and every one is a number the event carried.
         if (lifecycleEvent.Confidence is { Counted: true } counted)
@@ -521,6 +540,10 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         if (update.Counted)
         {
             _countedIndependenceKeys.Add((recordId, IndependenceKey(update)));
+        }
+        else if (eventId is not null)
+        {
+            _recordedOnlyIndependenceKeys.Add((recordId, IndependenceKey(update)));
         }
 
         if (update.AssessmentId is { } assessment)
@@ -588,9 +611,15 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         var resubmitted = lifecycleEvent with
         {
             Confidence = lifecycleEvent.Confidence is { } confidence
-                ? confidence with { Admission = stored.Event.Confidence?.Admission }
+                ? ExperienceRecordValidator.AsReplayOf(confidence, stored.Event.Confidence)
                 : null,
         };
+        if (ExperienceRecordValidator.IsSameEvidence(lifecycleEvent.Confidence, stored.Event.Confidence))
+        {
+            // The status follows from whether the evidence was counted, which a host's HostTrustedEvidence setting
+            // decides; a genuine replay after that setting changed is still the same event.
+            resubmitted = resubmitted with { CurrentStatus = stored.Event.CurrentStatus };
+        }
 
         return stored.Event == resubmitted
             ? new(ExperienceStoreOutcome.Committed, stored.AppliedRevision, null, NoErrors, stored.Event.Confidence)

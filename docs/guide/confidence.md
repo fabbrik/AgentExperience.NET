@@ -215,7 +215,9 @@ fresh key per call. That is part of the KL-11 boundary. With provenance signing 
 accepts, as host-trusted, a run whose record carries no signature or one under a key that is not in the ring. The one
 thing it refuses is a record marked `Finalized` whose signature is present, under a key in the ring, and does not
 verify: a record the library signed that someone then changed. Evidence about that run is refused as `HostWrittenRun`,
-and attributed feedback about it is degraded before the ledger.
+and attributed feedback about it is degraded before the ledger. By default the opt-out's evidence counts in the
+score retrieval ranks on; `HostTrustedEvidence = RecordedOnly` records it without moving the record (see
+[Keeping host-trusted evidence out of the ranked score](#keeping-host-trusted-evidence-out-of-the-ranked-score)).
 
 ## Signing provenance
 
@@ -368,10 +370,52 @@ var read = await lifecycle.ReadConfidenceAsync(authorization, scope, experienceI
 ```
 
 It pages the record's history (a counted update is always an event), counts what each admission moved, and recomputes
-the score from the stored counters less the excluded ones; it writes nothing. The stored score — the one retrieval
-ranks on and injection shows — still counts everything; the exclusion is a read, not a rewrite. It is only as good as
-the store's history: an `IExperienceRecordStore` that does not persist `ConfidenceUpdate.Admission` reads everything
-back as unrecorded, which `ExcludeHostTrusted` keeps.
+the score from the stored counters less the excluded ones; it writes nothing. Under the default, the stored score —
+the one retrieval ranks on and injection shows — still counts everything; the exclusion is a read, not a rewrite. It
+is only as good as the store's history: an `IExperienceRecordStore` that does not persist `ConfidenceUpdate.Admission`
+reads everything back as unrecorded, which `ExcludeHostTrusted` keeps.
+
+### Keeping host-trusted evidence out of the ranked score
+
+A host that wants the opt-out's convenience without letting unverified evidence steer what agents are given sets
+`HostTrustedEvidence`:
+
+```csharp
+var independence = new ExperienceIndependenceOptions
+{
+    Verification = IndependenceVerification.TrustHostSuppliedIdentifiers,
+    HostTrustedEvidence = HostTrustedEvidenceEffect.RecordedOnly, // default: Counted
+};
+```
+
+- **`Counted`** (the default, and the earlier behaviour): host-trusted evidence moves the record's counters, its
+  stored score (which retrieval ranks and filters on) and, for a contradiction, its status to `Contested`.
+- **`RecordedOnly`**: host-trusted evidence is committed exactly as before — a lifecycle event and a ledger row, with
+  the same event and evidence IDs, idempotency, assessment spending and `Admission = HostTrusted` — but the event's
+  new counters, new score and status equal its prior ones. The record's counters, score, status and `UpdatedAt` stay
+  where they were (only its revision moves, as every event's does), so ranking, `MinimumConfidence`, `MaxAge` and
+  eligibility are unchanged. The result is `Applied` with `Counted: false`, and the confidence engine is not asked to
+  score it. A second submission for an independence key that counted evidence or an earlier recorded-only event
+  already holds is a duplicate (a ledger row, no event), as under the default; a recorded-only row claims no key, so
+  verified evidence about the same observation still counts.
+- **The revision still moves.** A recorded-only event advances the record's revision and appends to its history
+  exactly as a counted one does. So a reused session that tracks revisions is given the record again, concurrent
+  writers contend on the revision (`StaleRevision`) and the history grows, all as under `Counted`.
+- **Verified evidence always counts**, under either setting, and with verification on the setting has no effect.
+- **Reading it back.** `ReadConfidenceAsync` with `ExcludeHostTrusted` (or `VerifiedOnly`) reports the stored score.
+  With `All` it adds the recorded-only evidence to the stored counters, once per independence key no counted update
+  holds, and scores that with the confidence engine — which is the counts and score `Counted` would have stored for
+  the same evidence. It reproduces those numbers only: not the `Contested` status or the de-indexing a counted
+  contradiction would have applied. `report.HostTrustedRecordedOnly` says how much it added.
+- **No backfill.** Switching to `RecordedOnly` does not uncount evidence already counted: what was counted under
+  `Counted` stays in the counters, and `ExcludeHostTrusted` is the way to read a score without it.
+- **Stores.** A store accepts an event whose evidence moves no counter only when its admission is `HostTrusted` and
+  its score and status do not move either; anything else is `Invalid`. PostgreSQL needs migration `0023` (see
+  [0023: recorded-only evidence](postgres-schema.md#0023-recorded-only-evidence)): **migrate before setting
+  `RecordedOnly`**, because against a database without it every host-trusted submission fails with an
+  infrastructure error (`ExperienceStoreException`). An out-of-tree store must accept
+  such an event, leave its counters, score and `UpdatedAt` alone, and treat a later recorded-only submission for a key
+  already counted or recorded as a duplicate.
 
 ## Outcomes
 
@@ -380,6 +424,7 @@ back as unrecorded, which `ExcludeHostTrusted` keeps.
 | First for its independence key | `Applied`, `Counted: true` — counters and score move |
 | Same run and round (or reviewer and run) under a **new** evidence ID | `Applied`, `Counted: false` — a ledger row is written and *nothing else* moves: no counters, no status, no revision, no `UpdatedAt`, and no lifecycle event |
 | …and the record moved between the read and the commit | `StaleRevision`, `StatusMismatch` or `NotFound`, with nothing stored at all — a duplicate is still committed against the record it describes |
+| Host-trusted evidence under `HostTrustedEvidence = RecordedOnly`, first for its key | `Applied`, `Counted: false` — a ledger row and a lifecycle event; the revision moves, and the counters, score, status and `UpdatedAt` do not |
 | Same evidence ID, identical content | `Applied` — the original outcome, reported again; nothing is written twice |
 | Same evidence ID, different content | `Conflict` — nothing written |
 | Two submissions computed from one revision | Exactly one `Applied`; the other `StaleRevision` with the revision to retry against |
@@ -415,9 +460,9 @@ against the history rather than reading that as "it never landed".
 prior and new counters, the evidence ID, the rule version, and the `Actor` — the principal the commit ran under,
 recorded by the store from the host's authorization and never from anything the caller put in the event. Read it
 through `GetHistoryAsync` like any other transition; `stored.Event.Confidence` is `null` for the events that carried
-none. An *uncounted* submission has no event, by construction — the ledger row is its audit trail. Listing that
-ledger is not a port operation; its retention is covered by a record's erasure, which removes every evidence row that
-named it.
+none. An *uncounted* duplicate has no event, by construction — the ledger row is its audit trail; recorded-only
+host-trusted evidence is the one uncounted submission that rides an event. Listing that ledger is not a port
+operation; its retention is covered by a record's erasure, which removes every evidence row that named it.
 
 ## How the PostgreSQL store enforces it
 

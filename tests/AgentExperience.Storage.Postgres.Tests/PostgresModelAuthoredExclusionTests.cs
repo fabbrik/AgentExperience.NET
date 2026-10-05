@@ -511,7 +511,9 @@ public sealed class PostgresModelAuthoredExclusionTests(PostgresFixture fixture)
         Assert.False(await FlagAsync(legacy, dataSource));
 
         var applied = await ExperienceSchemaMigrator.MigrateAsync(dataSource, CancellationToken.None);
-        Assert.Equal(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName, applied.AppliedScripts[^1]);
+        var appliedNames = applied.AppliedScripts.ToList();
+        Assert.True(appliedNames.IndexOf(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName) >= 0);
+        Assert.True(appliedNames.IndexOf(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName) < appliedNames.IndexOf(PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName));
 
         Assert.True(await FlagAsync(legacy, dataSource));
         Assert.False(await FlagAsync(thirdParty, dataSource));
@@ -529,7 +531,7 @@ public sealed class PostgresModelAuthoredExclusionTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public void The_script_adds_the_column_grants_nothing_builds_no_index_and_is_applied_last()
+    public void The_script_adds_the_column_grants_nothing_builds_no_index_and_is_applied_after_0019()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -541,11 +543,13 @@ public sealed class PostgresModelAuthoredExclusionTests(PostgresFixture fixture)
         Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
         Assert.Contains("BEFORE INSERT OR UPDATE ON agent_experience.experience_records", statements, StringComparison.Ordinal);
         Assert.Equal("reflection_model_authored IS FALSE", PostgresExperienceCandidateSource.ModelAuthoredPredicate);
-        Assert.Equal(PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        var names = PostgresExperienceRecordSchema.ScriptNames.ToList();
+        Assert.True(names.IndexOf(PostgresExperienceRecordSchema.RowLevelSecurityScriptName) < names.IndexOf(PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName));
+        Assert.True(names.IndexOf(PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName) < names.IndexOf(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName));
     }
 
     [Fact]
-    public void Script_0022_adds_nothing_grants_nothing_and_is_applied_last()
+    public void Script_0022_adds_nothing_grants_nothing_and_is_applied_after_0021()
     {
         var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
@@ -558,7 +562,9 @@ public sealed class PostgresModelAuthoredExclusionTests(PostgresFixture fixture)
         Assert.DoesNotContain("CREATE TABLE", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("ADD COLUMN", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("TRIGGER", statements, StringComparison.Ordinal);
-        Assert.Equal(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        var names = PostgresExperienceRecordSchema.ScriptNames.ToList();
+        Assert.True(names.IndexOf(PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName) < names.IndexOf(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName));
+        Assert.True(names.IndexOf(PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName) < names.IndexOf(PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName));
     }
 
     private static async Task<Guid> SeedAsync(

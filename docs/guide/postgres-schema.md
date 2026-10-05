@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019`, `0021` and `0022` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0023` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -649,6 +649,29 @@ ordinally) — the library's own model-backed reflector, whose records written b
   `0.1.0-preview.5`, the release that also made it declare `Model`, so only a database written by an unreleased build
   between stories 14.2 and 14.3 could.
 - No table, column, index or function signature is added, so the application role's manifest is unchanged.
+
+### 0023: recorded-only evidence
+
+`0023_recorded_only_evidence.sql` (story 17.3) lets host-trusted evidence ride a lifecycle event without moving the
+record, for a host that opts out of verification and sets `ExperienceIndependenceOptions.HostTrustedEvidence =
+RecordedOnly` (see [Keeping host-trusted evidence out of the ranked score](confidence.md#keeping-host-trusted-evidence-out-of-the-ranked-score)):
+
+- **`confidence_evidence_event_only_when_counted`** (from `0007`) is replaced by
+  `confidence_evidence_event_when_counted_or_recorded_only`: a ledger row carries an event exactly when it is counted,
+  **or** when it is a recorded-only row — not counted, admission `'HostTrusted'`, and a new score equal to its prior
+  one. Every other uncounted row is a duplicate with no event, as before. `counted` is still exactly "a counter moved",
+  and the partial unique index on counted rows is unchanged, so a recorded-only row claims no independence key.
+- **`lifecycle_events_confidence_moves_or_recorded_only`**: an event carrying evidence moves a counter, or it is
+  host-trusted with the same score and the same status.
+- Both compare the admission with `IS NOT DISTINCT FROM 'HostTrusted'`, so a row with no admission is refused rather
+  than passed by a `NULL` comparison.
+- **`ix_confidence_evidence_key_with_event`**, a partial index on `(experience_id, independence_key) WHERE event_id
+  IS NOT NULL`, serves the store's check that a recorded-only submission's key is not already held by counted evidence
+  or an earlier recorded-only event. The header carries a `CREATE INDEX CONCURRENTLY` runbook for a large ledger.
+- Both CHECKs are added `NOT VALID` before the old constraint is dropped, in one transaction; every existing row
+  already satisfies them, and the header has the `VALIDATE` statements. No table, column, function or trigger is
+  added, so the application role's manifest is unchanged. Nothing is backfilled: evidence counted before stays
+  counted. Apply it before setting `RecordedOnly`: without it every host-trusted submission fails.
 
 ## Script comments that were written before the work they point at shipped
 

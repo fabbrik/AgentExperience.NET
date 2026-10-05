@@ -321,6 +321,22 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string LibraryReflectorAuthorshipScriptName = "0022_library_reflector_authorship.sql";
 
+    /// <summary>
+    /// The script that lets host-trusted evidence be recorded on a lifecycle event without moving the record (story
+    /// 17.3, <c>ExperienceIndependenceOptions.HostTrustedEvidence = RecordedOnly</c>): it replaces <c>0007</c>'s
+    /// <c>confidence_evidence_event_only_when_counted</c> with a CHECK that also admits an uncounted row carrying an
+    /// event when its admission is <c>HostTrusted</c> and its score did not move, and adds the matching CHECK on
+    /// <c>lifecycle_events</c> (no counter moved means host-trusted, same score, same status), and a partial index on
+    /// <c>confidence_evidence (experience_id, independence_key) WHERE event_id IS NOT NULL</c> for the store's
+    /// recorded-only duplicate check.
+    /// </summary>
+    /// <remarks>
+    /// It adds no table, column, function or trigger, so the application role's manifest is unchanged. Both CHECKs are
+    /// <c>NOT VALID</c>; every existing row already satisfies them. Its header carries a <c>CREATE INDEX CONCURRENTLY</c>
+    /// runbook for a large ledger.
+    /// </remarks>
+    public const string RecordedOnlyEvidenceScriptName = "0023_recorded_only_evidence.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -328,7 +344,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c>, <c>0021</c> and <c>0022</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0023</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -351,6 +367,7 @@ public static class PostgresExperienceRecordSchema
         RowLevelSecurityScriptName,
         ReflectionAuthorshipScriptName,
         LibraryReflectorAuthorshipScriptName,
+        RecordedOnlyEvidenceScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

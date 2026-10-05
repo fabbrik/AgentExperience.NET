@@ -30,6 +30,8 @@ internal sealed class IndependenceVerifier
         _captureService = captureService;
         Mode = options.Verification;
         _codec = AssessmentTokenCodec.Create(options);
+        options.ValidateHostTrustedEvidence();
+        HostTrustedEvidence = options.HostTrustedEvidence;
         _signer = ProvenanceSigner.Create(provenanceSigning);
         if (_signer is not null)
         {
@@ -56,6 +58,9 @@ internal sealed class IndependenceVerifier
     internal IndependenceVerification Mode { get; }
 
     internal bool Verifies => Mode == IndependenceVerification.Verified;
+
+    /// <summary>What host-trusted evidence does to its record; consulted only for evidence the opt-out admitted.</summary>
+    internal HostTrustedEvidenceEffect HostTrustedEvidence { get; }
 
     /// <summary>
     /// What the library knows about <paramref name="runId"/> in exactly <paramref name="scope"/>: whether

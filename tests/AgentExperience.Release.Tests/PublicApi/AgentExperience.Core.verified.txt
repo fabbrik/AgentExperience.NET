@@ -146,6 +146,7 @@ namespace AgentExperience.Core.Confidence
         public ExperienceIndependenceOptions() { }
         public byte[]? AssessmentTokenKey { get; init; }
         public System.TimeSpan AssessmentTokenLifetime { get; init; }
+        public AgentExperience.Core.Confidence.HostTrustedEvidenceEffect HostTrustedEvidence { get; init; }
         public System.TimeProvider TimeProvider { get; init; }
         public AgentExperience.Core.Confidence.IndependenceVerification Verification { get; init; }
     }
@@ -171,6 +172,11 @@ namespace AgentExperience.Core.Confidence
         public ExperienceUnsignedRecordInventory(System.Collections.Generic.IReadOnlySet<System.Guid> RecordIds, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Scope> IncompleteScopes) { }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.Scope> IncompleteScopes { get; init; }
         public System.Collections.Generic.IReadOnlySet<System.Guid> RecordIds { get; init; }
+    }
+    public enum HostTrustedEvidenceEffect
+    {
+        Counted = 0,
+        RecordedOnly = 1,
     }
     public interface IExperienceConfidenceEngine
     {
@@ -569,6 +575,7 @@ namespace AgentExperience.Core.Lifecycle
         public System.Guid ExperienceId { get; init; }
         public AgentExperience.Core.Lifecycle.ConfidenceEvidenceFilter Filter { get; init; }
         public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts HostTrusted { get; init; }
+        public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts HostTrustedRecordedOnly { get; init; }
         public AgentExperience.Core.Lifecycle.ConfidenceAdmissionCounts Initial { get; init; }
         public AgentExperience.Abstractions.ExperienceRecordOrigin Origin { get; init; }
         public double ReuseConfidence { get; init; }
