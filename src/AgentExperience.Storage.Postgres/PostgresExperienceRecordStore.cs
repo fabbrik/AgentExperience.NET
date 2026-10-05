@@ -314,6 +314,20 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
     private const string EvidenceIndependenceIndex = "ux_confidence_evidence_independence";
 
     /// <summary>
+    /// Whether another row in the ledger already holds this row's independence key for the same record as counted
+    /// evidence or as recorded-only evidence that rode an event (story 17.3) -- every counted row has an event, so both
+    /// are "has an event", which <c>0023</c>'s partial index serves. Asked only for a recorded-only submission, right
+    /// after its own row went in under the savepoint: the partial unique index cannot answer it, because neither row
+    /// is counted. Two such submissions racing from one revision cannot both commit, because
+    /// both events claim the same applied revision.
+    /// </summary>
+    private const string RecordedOnlyKeyTakenSql =
+        $"SELECT EXISTS (SELECT 1 FROM {EvidenceTable} mine JOIN {EvidenceTable} other " +
+        "ON other.experience_id = mine.experience_id AND other.independence_key = mine.independence_key " +
+        "AND other.evidence_id <> mine.evidence_id " +
+        "WHERE mine.evidence_id = @evidence_id AND other.event_id IS NOT NULL)";
+
+    /// <summary>
     /// The savepoint the first evidence insert runs under, so a taken independence key costs only that
     /// statement rather than the whole transaction. Without it the unique violation would abort the
     /// commit that is supposed to record the duplicate.
@@ -391,6 +405,14 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         $"AND status = COALESCE(@prior_status, @current_status) AND {ScopePredicate} AND {LivePredicate}";
 
     private const string UpdateProjectionSql = UpdateProjectionSetSql + UpdateProjectionWhereSql;
+
+    /// <summary>
+    /// The projection update for host-trusted evidence recorded only (story 17.3): the status (which the validator
+    /// has already pinned to the prior one) and the revision, and deliberately not <c>updated_at</c>, which
+    /// retrieval's recency and <c>MaxAge</c> read -- evidence that must not steer the record must not keep it recent.
+    /// </summary>
+    private const string UpdateProjectionRecordedOnlySql =
+        $"UPDATE {Table} SET status = @current_status, revision = @applied_revision" + UpdateProjectionWhereSql;
 
     private const string UpdateProjectionWithConfidenceSql =
         UpdateProjectionSetSql + UpdateProjectionConfidenceSetSql + UpdateProjectionWhereSql;
@@ -1488,19 +1510,25 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
             // statement that leaves them alone, so "the counters did not move" is a fact about the SQL
             // that ran, not a value that happened to be equal.
             var counted = storedConfidence is { Counted: true };
+            var recordedOnly = storedConfidence is { Counted: false };
 
             int updated;
             try
             {
                 await using var update = new NpgsqlCommand(
-                    counted ? UpdateProjectionWithConfidenceSql : UpdateProjectionSql, connection, transaction);
+                    counted ? UpdateProjectionWithConfidenceSql : recordedOnly ? UpdateProjectionRecordedOnlySql : UpdateProjectionSql,
+                    connection,
+                    transaction);
                 var parameters = update.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", lifecycleEvent.ExperienceRecordId));
                 parameters.Add(new NpgsqlParameter<string>("current_status", lifecycleEvent.CurrentStatus.ToString()));
                 parameters.Add(NullableText("prior_status", lifecycleEvent.PriorStatus?.ToString()));
                 parameters.Add(new NpgsqlParameter<long>("expected_revision", lifecycleEvent.ExpectedRevision));
                 parameters.Add(new NpgsqlParameter<long>("applied_revision", appliedRevision));
-                parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
+                if (!recordedOnly)
+                {
+                    parameters.Add(new NpgsqlParameter<DateTimeOffset>("recorded_at", recordedAt));
+                }
                 if (counted)
                 {
                     parameters.Add(new NpgsqlParameter<double>("new_reuse_confidence", storedConfidence!.NewReuseConfidence));
@@ -2863,9 +2891,15 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         {
             OccurredAt = occurredAt,
             Confidence = lifecycleEvent.Confidence is { } submittedConfidence
-                ? submittedConfidence with { Admission = stored.Event.Confidence?.Admission }
+                ? ExperienceRecordValidator.AsReplayOf(submittedConfidence, stored.Event.Confidence)
                 : null,
         };
+        if (ExperienceRecordValidator.IsSameEvidence(lifecycleEvent.Confidence, stored.Event.Confidence))
+        {
+            // The status follows from whether the evidence was counted, which a host's HostTrustedEvidence setting
+            // decides; a genuine replay after that setting changed is still the same event.
+            resubmitted = resubmitted with { CurrentStatus = stored.Event.CurrentStatus };
+        }
         return stored.Event == resubmitted && storedScope == scope
             ? new(ExperienceStoreOutcome.Committed, appliedRevision, null, NoErrors, stored.Event.Confidence)
             : new(ExperienceStoreOutcome.Conflict, 0, null, NoErrors);
@@ -2942,6 +2976,25 @@ public sealed class PostgresExperienceRecordStore : IExperienceRecordStore
         catch (PostgresException ex) when (IsViolationOf(ex, EvidenceAssessmentIndex, cancellationToken))
         {
             return (null, (await ReplayOrSpentAsync().ConfigureAwait(false), Commit: false));
+        }
+
+        if (!submitted.Counted)
+        {
+            // Host-trusted evidence recorded only (story 17.3): its row is not counted, so the partial unique index
+            // never refuses it. A key counted evidence or an earlier recorded-only event already holds makes it a
+            // duplicate instead -- a ledger row and nothing else -- exactly as a counted submission would be.
+            bool keyTaken;
+            await using (var probe = new NpgsqlCommand(RecordedOnlyKeyTakenSql, connection, transaction))
+            {
+                probe.Parameters.Add(new NpgsqlParameter<Guid>("evidence_id", submitted.EvidenceId));
+                keyTaken = await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+            }
+
+            if (keyTaken)
+            {
+                await ExecuteAsync($"ROLLBACK TO SAVEPOINT {EvidenceSavepoint}", CancellationToken.None).ConfigureAwait(false);
+                return (null, await RecordDuplicateAsync().ConfigureAwait(false));
+            }
         }
 
         await ExecuteAsync($"RELEASE SAVEPOINT {EvidenceSavepoint}", cancellationToken).ConfigureAwait(false);

@@ -389,6 +389,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.RowLevelSecurityScriptName,
                 PostgresExperienceRecordSchema.ReflectionAuthorshipScriptName,
                 PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName,
+                PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);

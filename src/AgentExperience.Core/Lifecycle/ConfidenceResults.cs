@@ -189,7 +189,11 @@ public enum ConfidenceUpdateOutcome
 /// </summary>
 public enum ConfidenceEvidenceFilter
 {
-    /// <summary>Everything the record's counters hold: the stored score, unchanged.</summary>
+    /// <summary>
+    /// Everything: the record's counters, plus host-trusted evidence recorded without moving them
+    /// (<see cref="HostTrustedEvidenceEffect.RecordedOnly"/>), once per independence key no counted update holds.
+    /// The stored score, unchanged, when there is no such evidence.
+    /// </summary>
     All,
 
     /// <summary>
@@ -223,9 +227,9 @@ public sealed record ConfidenceAdmissionCounts(int Supporting, int Contradicting
 /// <param name="Revision">The revision the report reflects.</param>
 /// <param name="Status">The record's status at that revision.</param>
 /// <param name="Filter">Which evidence was counted.</param>
-/// <param name="ReuseConfidence">The score over the counted evidence: the stored score when nothing was excluded, otherwise the lifecycle service's <see cref="IExperienceConfidenceEngine"/> (by default <see cref="ReuseConfidenceHeuristic.Score"/>) over <paramref name="SupportingValidations"/> and <paramref name="Contradictions"/>.</param>
-/// <param name="SupportingValidations">The supporting count with the excluded evidence taken out.</param>
-/// <param name="Contradictions">The contradiction count with the excluded evidence taken out.</param>
+/// <param name="ReuseConfidence">The score over the counted evidence: the stored score when nothing was excluded or added, otherwise the lifecycle service's <see cref="IExperienceConfidenceEngine"/> (by default <see cref="ReuseConfidenceHeuristic.Score"/>) over <paramref name="SupportingValidations"/> and <paramref name="Contradictions"/>.</param>
+/// <param name="SupportingValidations">The supporting count with the excluded evidence taken out (and, under <see cref="ConfidenceEvidenceFilter.All"/>, <see cref="HostTrustedRecordedOnly"/> added).</param>
+/// <param name="Contradictions">The contradiction count with the excluded evidence taken out (and, under <see cref="ConfidenceEvidenceFilter.All"/>, <see cref="HostTrustedRecordedOnly"/> added).</param>
 /// <param name="StoredReuseConfidence">The record's stored score.</param>
 /// <param name="StoredSupportingValidations">The record's stored supporting count, which includes its initial validation.</param>
 /// <param name="StoredContradictions">The record's stored contradiction count.</param>
@@ -252,6 +256,15 @@ public sealed record ConfidenceReport(
 
     /// <summary>The counters the record started with, which no history event explains.</summary>
     public ConfidenceAdmissionCounts Initial { get; init; } = new(0, 0);
+
+    /// <summary>
+    /// Host-trusted evidence recorded without moving the record's counters
+    /// (<see cref="HostTrustedEvidenceEffect.RecordedOnly"/>), once per independence key no counted update holds.
+    /// <see cref="ConfidenceEvidenceFilter.All"/> adds it to <see cref="SupportingValidations"/> and
+    /// <see cref="Contradictions"/>; the other filters leave it out, as they leave out counted host-trusted evidence.
+    /// It is not part of <see cref="HostTrusted"/>, which is what host-trusted evidence moved.
+    /// </summary>
+    public ConfidenceAdmissionCounts HostTrustedRecordedOnly { get; init; } = new(0, 0);
 }
 
 /// <summary>
@@ -283,7 +296,8 @@ public sealed record ConfidenceReadResult(
 /// <param name="Update">
 /// The confidence movement as the transaction stored it, on <see cref="ConfidenceUpdateOutcome.Applied"/>;
 /// otherwise <see langword="null"/>. Its prior and new values equal each other exactly when the
-/// submission's independence key was already taken.
+/// submission's independence key was already taken, or when it was host-trusted evidence recorded only
+/// (<see cref="HostTrustedEvidenceEffect.RecordedOnly"/>).
 /// </param>
 /// <param name="Revision">The record's revision after the commit, or its current revision on <see cref="ConfidenceUpdateOutcome.StaleRevision"/> and <see cref="ConfidenceUpdateOutcome.StatusMismatch"/>; otherwise 0.</param>
 /// <param name="Status">The record's status: after the update on <see cref="ConfidenceUpdateOutcome.Applied"/>, the status that refused the evidence on <see cref="ConfidenceUpdateOutcome.Ineligible"/>, the stored status on <see cref="ConfidenceUpdateOutcome.StatusMismatch"/>; otherwise <see langword="null"/>.</param>
@@ -310,10 +324,17 @@ public sealed record ApplyConfidenceEvidenceResult(
 {
     /// <summary>
     /// Whether this submission moved a counter. <see langword="false"/> for an accepted submission whose
-    /// independence key was already taken -- which is still <see cref="ConfidenceUpdateOutcome.Applied"/>,
+    /// independence key was already taken, and for host-trusted evidence recorded only
+    /// (<see cref="HostTrustedEvidenceEffect.RecordedOnly"/>) -- which are still <see cref="ConfidenceUpdateOutcome.Applied"/>,
     /// because the submission is recorded, just not counted.
     /// </summary>
     public bool Counted => Update?.Counted ?? false;
+
+    /// <summary>
+    /// Whether an uncounted, applied update was stored on a lifecycle event (host-trusted evidence recorded only)
+    /// rather than as a duplicate with no event, as the store reported it.
+    /// </summary>
+    internal bool RecordedOnEvent { get; init; }
 
     /// <summary>The record's reuse confidence after this call, on <see cref="ConfidenceUpdateOutcome.Applied"/>; otherwise <see langword="null"/>.</summary>
     public double? ReuseConfidence => Update?.NewReuseConfidence;

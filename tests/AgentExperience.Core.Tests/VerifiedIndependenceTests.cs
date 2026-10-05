@@ -868,6 +868,293 @@ public class VerifiedIndependenceTests
     }
 
     [Fact]
+    public async Task Host_trusted_evidence_counts_by_default_and_an_undefined_effect_is_refused()
+    {
+        Assert.Equal(HostTrustedEvidenceEffect.Counted, new ExperienceIndependenceOptions().HostTrustedEvidence);
+        Assert.Throws<ArgumentException>(() => new ExperienceLifecycleService(
+            new IndependenceStore(),
+            null,
+            new ExperienceIndependenceOptions
+            {
+                Verification = IndependenceVerification.TrustHostSuppliedIdentifiers,
+                HostTrustedEvidence = (HostTrustedEvidenceEffect)9,
+            }));
+
+        // Under the default, opted-out evidence moves the counters, the score and the status as it always did.
+        var world = new World();
+        var counting = Trusting(world, HostTrustedEvidenceEffect.Counted);
+        var supported = await counting.ApplyEvidenceAsync(Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None);
+        Assert.True(supported.Counted);
+        var contradicted = await counting.ApplyEvidenceAsync(
+            Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()) with { Kind = ConfidenceEvidenceKind.Contradicting }, CancellationToken.None);
+        Assert.True(contradicted.Counted);
+        Assert.Equal(ExperienceStatus.Contested, world.Store.Find(world.Target.ExperienceId)!.Status);
+        Assert.Equal(ReuseConfidenceHeuristic.Score(2, 1), world.Store.Find(world.Target.ExperienceId)!.ReuseConfidence);
+    }
+
+    [Fact]
+    public async Task Recorded_only_host_trusted_evidence_is_stored_on_an_event_and_moves_neither_counters_score_nor_status()
+    {
+        var world = new World();
+        var engine = new CountingEngine();
+        var recording = new ExperienceLifecycleService(
+            world.Store,
+            indexingService: null,
+            new ExperienceIndependenceOptions
+            {
+                Verification = IndependenceVerification.TrustHostSuppliedIdentifiers,
+                HostTrustedEvidence = HostTrustedEvidenceEffect.RecordedOnly,
+            },
+            captureService: null,
+            deindexingTimeout: null,
+            confidenceEngine: engine);
+        var before = world.Store.Find(world.Target.ExperienceId)!;
+
+        var request = world.Machine(Guid.NewGuid(), Guid.NewGuid());
+        var supported = await recording.ApplyEvidenceAsync(Reviewer, request, CancellationToken.None);
+
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, supported.Outcome);
+        Assert.False(supported.Counted);
+        Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, supported.Update!.Admission);
+        Assert.Equal(before.Revision + 1, supported.Revision);
+        Assert.Equal(ExperienceStatus.Validated, supported.Status);
+        var recorded = supported.Event!.Confidence!;
+        Assert.Equal(request.EvidenceId, recorded.EvidenceId);
+        Assert.False(recorded.Counted);
+        Assert.Equal(before.ReuseConfidence, recorded.NewReuseConfidence);
+        Assert.Equal(ExperienceStatus.Validated, supported.Event.CurrentStatus);
+
+        // A contradiction contests nothing, and nothing is de-indexed.
+        var contradicted = await recording.ApplyEvidenceAsync(
+            Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()) with { Kind = ConfidenceEvidenceKind.Contradicting }, CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, contradicted.Outcome);
+        Assert.False(contradicted.Counted);
+        Assert.Equal(ExperienceStatus.Validated, contradicted.Status);
+        Assert.Null(contradicted.Deindexing);
+
+        var after = world.Store.Find(world.Target.ExperienceId)!;
+        Assert.Equal(before with { Revision = before.Revision + 2 }, after);
+        Assert.Equal(2, world.Store.Commits.Count);
+
+        // The confidence engine was never asked to score an update that moves nothing.
+        Assert.Equal(0, engine.Calls);
+
+        // A replay is the original outcome, and writes nothing.
+        var replay = await recording.ApplyEvidenceAsync(Reviewer, request, CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replay.Outcome);
+        Assert.False(replay.Counted);
+        Assert.Equal(before.Revision + 1, replay.Revision);
+        Assert.Equal(after, world.Store.Find(world.Target.ExperienceId));
+        Assert.Equal(2, world.Store.Commits.Count);
+
+        // The same observation under a new evidence ID is a duplicate: a ledger row, no event.
+        var duplicate = await recording.ApplyEvidenceAsync(
+            Reviewer, world.Machine(request.RunId, request.VerificationRoundId!.Value), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, duplicate.Outcome);
+        Assert.False(duplicate.Counted);
+        Assert.Equal(after, world.Store.Find(world.Target.ExperienceId));
+        Assert.Equal(2, world.Store.Commits.Count);
+    }
+
+    [Fact]
+    public async Task Verified_evidence_counts_under_recorded_only_and_a_confidence_read_adds_back_what_the_default_would_have_counted()
+    {
+        // The same evidence, in two worlds: one counting host-trusted evidence, one recording it only.
+        var counted = new World();
+        var recordedOnly = new World(hostTrustedEvidence: HostTrustedEvidenceEffect.RecordedOnly);
+        var runs = Enumerable.Range(0, 3).Select(_ => (Run: Guid.NewGuid(), Round: Guid.NewGuid())).ToArray();
+
+        foreach (var (world, effect) in new[] { (counted, HostTrustedEvidenceEffect.Counted), (recordedOnly, HostTrustedEvidenceEffect.RecordedOnly) })
+        {
+            // Verified evidence, with verification on, counts whatever the effect.
+            var verified = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+            Assert.True(verified.Counted);
+            Assert.Equal(ConfidenceEvidenceAdmission.Verified, verified.Update!.Admission);
+
+            var trusting = Trusting(world, effect);
+            foreach (var (run, round) in runs)
+            {
+                await trusting.ApplyEvidenceAsync(Reviewer, world.Machine(run, round), CancellationToken.None);
+            }
+
+            // One observation twice, and a contradiction.
+            await trusting.ApplyEvidenceAsync(Reviewer, world.Machine(runs[0].Run, runs[0].Round), CancellationToken.None);
+            await trusting.ApplyEvidenceAsync(
+                Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()) with { Kind = ConfidenceEvidenceKind.Contradicting }, CancellationToken.None);
+        }
+
+        var countedRecord = counted.Store.Find(counted.Target.ExperienceId)!;
+        var recordedRecord = recordedOnly.Store.Find(recordedOnly.Target.ExperienceId)!;
+        Assert.Equal((5, 1, ExperienceStatus.Contested), (countedRecord.SupportingValidations, countedRecord.Contradictions, countedRecord.Status));
+
+        // Recorded only, the stored record holds the verified evidence alone, and stays in reuse.
+        Assert.Equal((2, 0, ExperienceStatus.Validated), (recordedRecord.SupportingValidations, recordedRecord.Contradictions, recordedRecord.Status));
+        Assert.Equal(ReuseConfidenceHeuristic.Score(2, 0), recordedRecord.ReuseConfidence);
+
+        // Excluding host-trusted evidence: the stored score.
+        var excluding = (await recordedOnly.Lifecycle.ReadConfidenceAsync(
+            Reviewer, TestScope, recordedOnly.Target.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None)).Report!;
+        Assert.Equal(recordedRecord.ReuseConfidence, excluding.ReuseConfidence);
+        Assert.Equal(2, excluding.SupportingValidations);
+        Assert.Equal(new ConfidenceAdmissionCounts(0, 0), excluding.HostTrusted);
+        Assert.Equal(new ConfidenceAdmissionCounts(3, 1), excluding.HostTrustedRecordedOnly);
+
+        // Including it: what the default stored for the same evidence, the duplicate counted once.
+        var including = (await recordedOnly.Lifecycle.ReadConfidenceAsync(
+            Reviewer, TestScope, recordedOnly.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None)).Report!;
+        Assert.Equal(countedRecord.ReuseConfidence, including.ReuseConfidence);
+        Assert.Equal(countedRecord.SupportingValidations, including.SupportingValidations);
+        Assert.Equal(countedRecord.Contradictions, including.Contradictions);
+        Assert.Equal(recordedRecord.ReuseConfidence, including.StoredReuseConfidence);
+
+        // And the counting world's "all" view is its stored score, as before.
+        var countedAll = (await counted.Lifecycle.ReadConfidenceAsync(
+            Reviewer, TestScope, counted.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None)).Report!;
+        Assert.Equal(including.ReuseConfidence, countedAll.ReuseConfidence);
+        Assert.Equal(new ConfidenceAdmissionCounts(0, 0), countedAll.HostTrustedRecordedOnly);
+
+        // Verified only leaves recorded-only evidence out too.
+        var strict = (await recordedOnly.Lifecycle.ReadConfidenceAsync(
+            Reviewer, TestScope, recordedOnly.Target.ExperienceId, ConfidenceEvidenceFilter.VerifiedOnly, CancellationToken.None)).Report!;
+        Assert.Equal(2, strict.SupportingValidations);
+        Assert.Equal(0, strict.Contradictions);
+    }
+
+    [Fact]
+    public async Task A_recorded_only_key_that_verified_evidence_later_counts_is_added_back_once()
+    {
+        var world = new World(hostTrustedEvidence: HostTrustedEvidenceEffect.RecordedOnly);
+        var recording = Trusting(world, HostTrustedEvidenceEffect.RecordedOnly);
+
+        // The opt-out records the observation first; verification later counts the same one.
+        var recorded = await recording.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+        Assert.False(recorded.Counted);
+        var verified = await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(world.ReuseRun, world.ReuseRound), CancellationToken.None);
+        Assert.True(verified.Counted);
+
+        var including = (await world.Lifecycle.ReadConfidenceAsync(
+            Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None)).Report!;
+        Assert.Equal(2, including.SupportingValidations);
+        Assert.Equal(new ConfidenceAdmissionCounts(0, 0), including.HostTrustedRecordedOnly);
+        Assert.Equal(world.Store.Find(world.Target.ExperienceId)!.ReuseConfidence, including.ReuseConfidence);
+    }
+
+    [Fact]
+    public async Task Switching_from_counted_to_recorded_only_keeps_earlier_evidence_counted_and_reads_the_mix_correctly()
+    {
+        var world = new World();
+        var counting = Trusting(world, HostTrustedEvidenceEffect.Counted);
+        var recording = Trusting(world, HostTrustedEvidenceEffect.RecordedOnly);
+        var held = (Run: Guid.NewGuid(), Round: Guid.NewGuid());
+
+        // Two host-trusted pieces counted before the switch.
+        Assert.True((await counting.ApplyEvidenceAsync(Reviewer, world.Machine(held.Run, held.Round), CancellationToken.None)).Counted);
+        Assert.True((await counting.ApplyEvidenceAsync(Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()), CancellationToken.None)).Counted);
+        var switched = world.Store.Find(world.Target.ExperienceId)!;
+        Assert.Equal(3, switched.SupportingValidations);
+
+        // After it: a held key is a duplicate (no event), a new one is recorded only, and nothing earlier is uncounted.
+        var commits = world.Store.Commits.Count;
+        var duplicate = await recording.ApplyEvidenceAsync(Reviewer, world.Machine(held.Run, held.Round), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, duplicate.Outcome);
+        Assert.False(duplicate.Counted);
+        Assert.Equal(commits, world.Store.Commits.Count);
+        var recorded = await recording.ApplyEvidenceAsync(
+            Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid()) with { Kind = ConfidenceEvidenceKind.Contradicting }, CancellationToken.None);
+        Assert.False(recorded.Counted);
+        Assert.Equal(commits + 1, world.Store.Commits.Count);
+
+        var stored = world.Store.Find(world.Target.ExperienceId)!;
+        Assert.Equal((3, 0, ExperienceStatus.Validated), (stored.SupportingValidations, stored.Contradictions, stored.Status));
+
+        var all = (await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None)).Report!;
+        Assert.Equal((3, 1), (all.SupportingValidations, all.Contradictions));
+        Assert.Equal(ReuseConfidenceHeuristic.Score(3, 1), all.ReuseConfidence);
+        Assert.Equal(new ConfidenceAdmissionCounts(2, 0), all.HostTrusted);
+        Assert.Equal(new ConfidenceAdmissionCounts(0, 1), all.HostTrustedRecordedOnly);
+
+        var excluding = (await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, world.Target.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None)).Report!;
+        Assert.Equal((1, 0), (excluding.SupportingValidations, excluding.Contradictions));
+        Assert.Equal(ReuseConfidenceHeuristic.Score(1, 0), excluding.ReuseConfidence);
+    }
+
+    [Fact]
+    public async Task A_replay_after_switching_the_effect_reports_the_original_and_a_saturated_record_still_records_evidence()
+    {
+        var world = new World();
+        var request = world.Machine(Guid.NewGuid(), Guid.NewGuid());
+        var original = await Trusting(world, HostTrustedEvidenceEffect.Counted).ApplyEvidenceAsync(Reviewer, request, CancellationToken.None);
+        Assert.True(original.Counted);
+
+        // The acknowledgement was lost and the host switched to RecordedOnly before retrying: still the original.
+        var replay = await Trusting(world, HostTrustedEvidenceEffect.RecordedOnly).ApplyEvidenceAsync(Reviewer, request, CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replay.Outcome);
+        Assert.True(replay.Counted);
+        Assert.Equal(original.Revision, replay.Revision);
+
+        // A record whose counter is saturated cannot count more, but recording moves nothing, so it is not refused.
+        var saturated = Finalized(Guid.NewGuid(), TestScope, Guid.NewGuid()) with
+        {
+            Status = ExperienceStatus.Validated,
+            SupportingValidations = int.MaxValue,
+            ReuseConfidence = 0.99,
+        };
+        world.Store.Seed(saturated);
+        var counted = await Trusting(world, HostTrustedEvidenceEffect.Counted).ApplyEvidenceAsync(
+            Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid(), saturated.ExperienceId), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Invalid, counted.Outcome);
+        var recorded = await Trusting(world, HostTrustedEvidenceEffect.RecordedOnly).ApplyEvidenceAsync(
+            Reviewer, world.Machine(Guid.NewGuid(), Guid.NewGuid(), saturated.ExperienceId), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, recorded.Outcome);
+        Assert.False(recorded.Counted);
+        Assert.Equal(int.MaxValue, world.Store.Find(saturated.ExperienceId)!.SupportingValidations);
+    }
+
+    [Fact]
+    public async Task A_confidence_read_never_throws_on_a_stored_key_the_key_rule_refuses_and_counts_an_unkeyed_recorded_only_update()
+    {
+        var world = new World();
+        var record = world.Store.Find(world.Target.ExperienceId)!;
+
+        // As a store could hand them back: a human update whose reviewer carries surrounding whitespace, counted, and
+        // recorded-only ones for the same reviewer and run (a duplicate), for another, and one with no round at all.
+        var reviewer = " reviewer-1 ";
+        var run = Guid.NewGuid();
+        ConfidenceUpdate Human(Guid runId, string who, bool counted) => (counted
+            ? ReuseConfidenceHeuristic.Apply(world.Store.Find(record.ExperienceId)!, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine, runId, Guid.NewGuid(), null, null)
+                with { Source = ConfidenceEvidenceSource.Human, VerificationRoundId = null, ReviewerIdentity = who }
+            : RecordedOnlyUpdate(world.Store.Find(record.ExperienceId)!, runId) with { Source = ConfidenceEvidenceSource.Human, VerificationRoundId = null, ReviewerIdentity = who })
+            with { Admission = ConfidenceEvidenceAdmission.HostTrusted };
+
+        foreach (var update in new[]
+        {
+            Human(run, reviewer, counted: true),
+            Human(run, reviewer, counted: false),
+            Human(Guid.NewGuid(), reviewer, counted: false),
+            RecordedOnlyUpdate(world.Store.Find(record.ExperienceId)!, Guid.NewGuid()) with { VerificationRoundId = null },
+        })
+        {
+            var current = world.Store.Find(record.ExperienceId)!;
+            Assert.Equal(ExperienceStoreOutcome.Committed, (await world.Store.CommitLifecycleEventAsync(
+                Reviewer,
+                TestScope,
+                new LifecycleEvent(Guid.NewGuid(), record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, "seeded", "tests", Now, current.Revision, null, update),
+                CancellationToken.None)).Outcome);
+        }
+
+        foreach (var filter in Enum.GetValues<ConfidenceEvidenceFilter>())
+        {
+            var read = await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, record.ExperienceId, filter, CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
+        }
+
+        // The duplicate of the counted key is left out; the other keyed one and the unkeyed one are both added.
+        var all = (await world.Lifecycle.ReadConfidenceAsync(Reviewer, TestScope, record.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None)).Report!;
+        Assert.Equal(new ConfidenceAdmissionCounts(2, 0), all.HostTrustedRecordedOnly);
+        Assert.Equal(world.Store.Find(record.ExperienceId)!.SupportingValidations + 2, all.SupportingValidations);
+    }
+
+    [Fact]
     public async Task Verified_only_also_leaves_out_evidence_stored_before_admission_was_recorded()
     {
         var world = new World();
@@ -1207,6 +1494,42 @@ public class VerifiedIndependenceTests
 
     // ---- Helpers -------------------------------------------------------------------------------------
 
+    /// <summary>Host-trusted machine evidence recorded only, as Core submits it: every new value equal to the record's.</summary>
+    private static ConfidenceUpdate RecordedOnlyUpdate(ExperienceRecord record, Guid runId) =>
+        ReuseConfidenceHeuristic.Apply(record with { SupportingValidations = 0 }, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine, runId, Guid.NewGuid(), null, null)
+            with
+        {
+            PriorReuseConfidence = record.ReuseConfidence,
+            NewReuseConfidence = record.ReuseConfidence,
+            PriorSupportingValidations = record.SupportingValidations,
+            NewSupportingValidations = record.SupportingValidations,
+            PriorContradictions = record.Contradictions,
+            NewContradictions = record.Contradictions,
+            Admission = ConfidenceEvidenceAdmission.HostTrusted,
+        };
+
+    /// <summary>A service over <paramref name="world"/>'s store that trusts the host's identifiers, with <paramref name="effect"/>.</summary>
+    private static ExperienceLifecycleService Trusting(World world, HostTrustedEvidenceEffect effect) => new(
+        world.Store,
+        indexingService: null,
+        new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers, HostTrustedEvidence = effect });
+
+    /// <summary>The default rule, counting how often it is asked to score.</summary>
+    private sealed class CountingEngine : IExperienceConfidenceEngine
+    {
+        public int Calls { get; private set; }
+
+        public string RuleId => "tests.counting";
+
+        public string RuleVersion => "1";
+
+        public double Score(ExperienceConfidenceInput input)
+        {
+            Calls++;
+            return ReuseConfidenceHeuristic.Score(input.SupportingValidations, input.Contradictions);
+        }
+    }
+
     private static void AssertRefused(ApplyConfidenceEvidenceResult result, IndependenceRefusal refusal)
     {
         Assert.Equal(ConfidenceUpdateOutcome.Unverified, result.Outcome);
@@ -1268,9 +1591,14 @@ public class VerifiedIndependenceTests
     /// </summary>
     private sealed class World
     {
-        public World(TimeProvider? clock = null, bool seedTarget = true)
+        public World(TimeProvider? clock = null, bool seedTarget = true, HostTrustedEvidenceEffect hostTrustedEvidence = HostTrustedEvidenceEffect.Counted)
         {
-            var options = new ExperienceIndependenceOptions { AssessmentTokenKey = Key, TimeProvider = clock ?? new MutableClock(Now) };
+            var options = new ExperienceIndependenceOptions
+            {
+                AssessmentTokenKey = Key,
+                TimeProvider = clock ?? new MutableClock(Now),
+                HostTrustedEvidence = hostTrustedEvidence,
+            };
             Capture = new InMemoryExperienceCaptureService(new DefaultSanitizer(Permissive), new CaptureLimits(8, 8, 1_000, 1_000));
             Lifecycle = new ExperienceLifecycleService(Store, indexingService: null, options, Capture);
             Issuer = new AssessmentTokenIssuer(options);
@@ -1440,6 +1768,7 @@ public class VerifiedIndependenceTests
         private readonly Dictionary<Guid, ExperienceRecord> _records = [];
         private readonly Dictionary<Guid, (Guid ExperienceId, ConfidenceUpdate Update, long Revision, ExperienceStatus Status)> _evidence = [];
         private readonly HashSet<(Guid, string)> _counted = [];
+        private readonly HashSet<(Guid, string)> _recordedOnly = [];
         private readonly HashSet<(Guid, Guid)> _spent = [];
 
         public HashSet<Guid> SharedByGrant { get; } = [];
@@ -1559,11 +1888,27 @@ public class VerifiedIndependenceTests
                 _spent.Add((id, spent));
             }
 
-            if (!_counted.Add((id, ReuseConfidenceHeuristic.IndependenceKeyFor(update).Value)))
+            // Keyed verbatim, as the shipped stores key it.
+            var key = (id, update.Source == ConfidenceEvidenceSource.Machine
+                ? $"machine:{update.RunId:D}:{update.VerificationRoundId:D}"
+                : $"human:{update.ReviewerIdentity}:{update.RunId:D}");
+            if (_counted.Contains(key) || (!update.Counted && _recordedOnly.Contains(key)) || (update.Counted && !_counted.Add(key)))
             {
                 var recordedOnly = update.AsRecordedOnly();
                 _evidence[update.EvidenceId] = (id, recordedOnly, record.Revision, record.Status);
                 return Done(new(ExperienceStoreOutcome.Committed, record.Revision, record.Status, [], recordedOnly));
+            }
+
+            if (!update.Counted)
+            {
+                // Host-trusted evidence recorded only: an event, and nothing but the revision moves.
+                _recordedOnly.Add(key);
+                var next = record.Revision + 1;
+                _records[id] = record with { Revision = next };
+                _evidence[update.EvidenceId] = (id, update, next, record.Status);
+                Commits.Add(lifecycleEvent);
+                _history.Add(new StoredLifecycleEvent(lifecycleEvent, Now, next));
+                return Done(new(ExperienceStoreOutcome.Committed, next, null, [], update));
             }
 
             var revision = record.Revision + 1;

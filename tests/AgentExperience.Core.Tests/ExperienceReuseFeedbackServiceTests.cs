@@ -128,6 +128,61 @@ public class ExperienceReuseFeedbackServiceTests
     }
 
     [Fact]
+    public async Task A_duplicate_under_recorded_only_is_reported_as_a_duplicate_not_as_recorded_only()
+    {
+        var experienceId = Guid.NewGuid();
+        var records = new FeedbackRecordStore(Validated(experienceId)) { CountEvidence = false };
+        var service = new ExperienceReuseFeedbackService(
+            new FakeReuseFeedbackLedger(),
+            new ExperienceLifecycleService(records, indexingService: null, new ExperienceIndependenceOptions
+            {
+                Verification = IndependenceVerification.TrustHostSuppliedIdentifiers,
+                HostTrustedEvidence = HostTrustedEvidenceEffect.RecordedOnly,
+            }));
+        var feedback = Feedback([experienceId]) with
+        {
+            HumanAssessment = Assessment(ExperienceReuseBenefit.Harmed, [experienceId], "the lesson sent the run down a dead end"),
+        };
+
+        var exposure = Assert.Single((await service.RecordAsync(Authorization, feedback, CancellationToken.None)).Exposures);
+
+        Assert.False(exposure.Counted);
+        Assert.Contains("already produced evidence", exposure.Reason!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Attributed_harm_under_recorded_only_host_trusted_evidence_is_recorded_and_contests_nothing()
+    {
+        var experienceId = Guid.NewGuid();
+        var records = new FeedbackRecordStore(Validated(experienceId));
+        var service = new ExperienceReuseFeedbackService(
+            new FakeReuseFeedbackLedger(),
+            new ExperienceLifecycleService(records, indexingService: null, new ExperienceIndependenceOptions
+            {
+                Verification = IndependenceVerification.TrustHostSuppliedIdentifiers,
+                HostTrustedEvidence = HostTrustedEvidenceEffect.RecordedOnly,
+            }));
+        var feedback = Feedback([experienceId]) with
+        {
+            HumanAssessment = Assessment(ExperienceReuseBenefit.Harmed, [experienceId], "the lesson sent the run down a dead end"),
+        };
+
+        var result = await service.RecordAsync(Authorization, feedback, CancellationToken.None);
+
+        var exposure = Assert.Single(result.Exposures);
+        Assert.Equal(ExperienceExposureDisposition.EvidenceApplied, exposure.Disposition);
+        Assert.False(exposure.Counted);
+        Assert.Equal(ExperienceStatus.Validated, exposure.Status);
+        Assert.Contains("RecordedOnly", exposure.Reason!, StringComparison.Ordinal);
+
+        // The event carries the evidence and moves nothing.
+        var committed = Assert.Single(records.Commits).Event;
+        Assert.Equal(ExperienceStatus.Validated, committed.CurrentStatus);
+        Assert.False(committed.Confidence!.Counted);
+        Assert.Equal(ConfidenceEvidenceAdmission.HostTrusted, committed.Confidence.Admission);
+    }
+
+    [Fact]
     public async Task Attributed_harm_contradicts_and_contests_each_record_without_deleting_anything()
     {
         var experienceId = Guid.NewGuid();

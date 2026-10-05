@@ -273,6 +273,7 @@ internal static partial class ExperienceRecordValidator
         }
 
         ValidateConfidenceUpdate(lifecycleEvent.Confidence, errors);
+        ValidateRecordedOnlyEvidence(lifecycleEvent, errors);
 
         if (lifecycleEvent.ExpectedRevision < 0)
         {
@@ -287,6 +288,67 @@ internal static partial class ExperienceRecordValidator
         }
 
         return errors;
+    }
+
+    /// <summary>
+    /// Whether two confidence payloads are the same piece of evidence: the same evidence ID.
+    /// </summary>
+    public static bool IsSameEvidence(ConfidenceUpdate? submitted, ConfidenceUpdate? stored) =>
+        submitted is not null && stored is not null && submitted.EvidenceId == stored.EvidenceId;
+
+    /// <summary>
+    /// <paramref name="submitted"/> as an event-ID replay compares it with <paramref name="stored"/>: the admission is
+    /// the stored one, and for the same evidence so are the counters and the score, which follow from whether it was
+    /// counted -- the host's <c>HostTrustedEvidenceEffect</c> -- rather than from what was observed.
+    /// </summary>
+    public static ConfidenceUpdate AsReplayOf(ConfidenceUpdate submitted, ConfidenceUpdate? stored)
+    {
+        if (stored is null || submitted.EvidenceId != stored.EvidenceId)
+        {
+            return submitted with { Admission = stored?.Admission };
+        }
+
+        return submitted with
+        {
+            Admission = stored.Admission,
+            PriorReuseConfidence = stored.PriorReuseConfidence,
+            NewReuseConfidence = stored.NewReuseConfidence,
+            PriorSupportingValidations = stored.PriorSupportingValidations,
+            NewSupportingValidations = stored.NewSupportingValidations,
+            PriorContradictions = stored.PriorContradictions,
+            NewContradictions = stored.NewContradictions,
+        };
+    }
+
+    /// <summary>
+    /// An event may carry evidence that moves no counter only when it is host-trusted evidence recorded without
+    /// counting (<c>HostTrustedEvidenceEffect.RecordedOnly</c>, story 17.3), and then it must move nothing else either:
+    /// not the score, and not the status. Any other evidence event that moves no counter is refused, as it always was
+    /// (the PostgreSQL ledger states the same rule as a CHECK, from <c>0023</c>).
+    /// </summary>
+    private static void ValidateRecordedOnlyEvidence(LifecycleEvent lifecycleEvent, List<StoreValidationError> errors)
+    {
+        if (lifecycleEvent.Confidence is not { Counted: false } update)
+        {
+            return;
+        }
+
+        if (update.Admission != ConfidenceEvidenceAdmission.HostTrusted)
+        {
+            errors.Add(new(
+                "Confidence.Admission",
+                $"an event whose evidence moves no counter is accepted only for {ConfidenceEvidenceAdmission.HostTrusted} evidence recorded without being counted."));
+        }
+
+        if (!update.NewReuseConfidence.Equals(update.PriorReuseConfidence))
+        {
+            errors.Add(new("Confidence.NewReuseConfidence", "must equal the prior score when the evidence moves no counter."));
+        }
+
+        if (lifecycleEvent.PriorStatus is { } prior && prior != lifecycleEvent.CurrentStatus)
+        {
+            errors.Add(new("CurrentStatus", "must equal the prior status when the evidence moves no counter."));
+        }
     }
 
     /// <summary>

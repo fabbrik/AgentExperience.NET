@@ -28,6 +28,32 @@ public enum IndependenceVerification
 }
 
 /// <summary>
+/// What evidence the <see cref="IndependenceVerification.TrustHostSuppliedIdentifiers"/> opt-out admitted
+/// (stored as <c>ConfidenceEvidenceAdmission.HostTrusted</c>) does to the record it is about. Only meaningful
+/// under the opt-out: verified evidence always counts.
+/// </summary>
+public enum HostTrustedEvidenceEffect
+{
+    /// <summary>
+    /// The default, and the previous behaviour. Host-trusted evidence counts like verified evidence: it moves
+    /// the record's counters, its stored reuse confidence (which retrieval ranks and filters on) and, for a
+    /// contradiction, its status (to <c>Contested</c>).
+    /// </summary>
+    Counted = 0,
+
+    /// <summary>
+    /// Host-trusted evidence is recorded and does not move the record. Its lifecycle event and its evidence
+    /// row are stored as under <see cref="Counted"/> (same IDs, idempotency, assessment spending and
+    /// <c>HostTrusted</c> admission), but the event's new counters, new score and status equal the prior ones,
+    /// and the record's <c>UpdatedAt</c> is not refreshed, so ranking, the confidence floor, <c>MaxAge</c> and
+    /// eligibility are exactly what they were. The confidence engine is not asked to score it.
+    /// <c>ExperienceLifecycleService.ReadConfidenceAsync</c> with <c>ConfidenceEvidenceFilter.All</c> adds it back,
+    /// deduplicated by independence key. Evidence counted before this was set stays counted.
+    /// </summary>
+    RecordedOnly = 1,
+}
+
+/// <summary>
 /// How confidence independence is verified: the mode, the host-held secret that assessment tokens are
 /// minted and verified under, how long a token stays valid, and the clock that decides it.
 /// </summary>
@@ -58,6 +84,25 @@ public sealed class ExperienceIndependenceOptions
 
     /// <summary>Whether independence is verified (the default) or the host's identifiers are trusted.</summary>
     public IndependenceVerification Verification { get; init; } = IndependenceVerification.Verified;
+
+    /// <summary>
+    /// What host-trusted evidence does to its record: <see cref="HostTrustedEvidenceEffect.Counted"/> (the default)
+    /// moves its counters, score and status like verified evidence; <see cref="HostTrustedEvidenceEffect.RecordedOnly"/>
+    /// records it and moves nothing, so evidence nothing verified cannot steer what retrieval ranks or gives agents.
+    /// Has no effect unless <see cref="Verification"/> is <see cref="IndependenceVerification.TrustHostSuppliedIdentifiers"/>.
+    /// An undefined value is refused when a service is constructed.
+    /// </summary>
+    public HostTrustedEvidenceEffect HostTrustedEvidence { get; init; } = HostTrustedEvidenceEffect.Counted;
+
+    /// <summary>Refuses an undefined <see cref="HostTrustedEvidence"/>; called wherever a service is built over these options.</summary>
+    /// <exception cref="ArgumentException"><see cref="HostTrustedEvidence"/> is not a defined effect.</exception>
+    internal void ValidateHostTrustedEvidence()
+    {
+        if (!Enum.IsDefined(HostTrustedEvidence))
+        {
+            throw new ArgumentException("ExperienceIndependenceOptions.HostTrustedEvidence must be a defined effect.", "independence");
+        }
+    }
 
     /// <summary>
     /// The secret assessment tokens are signed and verified under (HMAC-SHA256). At least

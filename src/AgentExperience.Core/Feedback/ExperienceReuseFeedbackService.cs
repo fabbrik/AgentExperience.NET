@@ -455,7 +455,11 @@ public sealed class ExperienceReuseFeedbackService
                 applied.ReuseConfidence,
                 applied.Status,
                 Retryable: false,
-                Reason: applied.Counted ? null : "The same run already produced evidence for this record; recorded, not counted."),
+                Reason: applied.Counted
+                    ? null
+                    : applied.RecordedOnEvent
+                        ? "Host-trusted evidence is recorded without being counted (HostTrustedEvidenceEffect.RecordedOnly)."
+                        : "The same run already produced evidence for this record; recorded, not counted."),
 
             ConfidenceUpdateOutcome.Ineligible => new(
                 exposure.ExperienceId,

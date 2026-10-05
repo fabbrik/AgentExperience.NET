@@ -398,6 +398,102 @@ public sealed class PostgresVerifiedIndependenceTests
     }
 
     [Fact]
+    public async Task Recorded_only_host_trusted_evidence_rides_an_event_and_moves_nothing_and_the_database_admits_no_other_uncounted_event()
+    {
+        var tenant = NewTenant();
+        var (auth, scope) = (Authorize(tenant), Scope(tenant));
+        var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
+        var reuse = await FinalizeAsync(auth, scope, Guid.NewGuid(), exposedTo: [lesson.ExperienceId]);
+        var recording = new ExperienceLifecycleService(_store, indexingService: null, new ExperienceIndependenceOptions
+        {
+            Verification = IndependenceVerification.TrustHostSuppliedIdentifiers,
+            HostTrustedEvidence = HostTrustedEvidenceEffect.RecordedOnly,
+        });
+        var before = (await _store.GetAsync(auth, scope, lesson.ExperienceId, CancellationToken.None)).Record!;
+
+        var supporting = Machine(scope, lesson.ExperienceId, Guid.NewGuid(), Guid.NewGuid());
+        var supported = await recording.ApplyEvidenceAsync(auth, supporting, CancellationToken.None);
+        var contradicted = await recording.ApplyEvidenceAsync(
+            auth, Machine(scope, lesson.ExperienceId, Guid.NewGuid(), Guid.NewGuid()) with { Kind = ConfidenceEvidenceKind.Contradicting }, CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, supported.Outcome);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, contradicted.Outcome);
+        Assert.False(supported.Counted);
+        Assert.False(contradicted.Counted);
+        Assert.Equal(ExperienceStatus.Validated, contradicted.Status);
+
+        // The record moved its revision and nothing else: not its counters, its score, its status or updated_at.
+        var after = (await _store.GetAsync(auth, scope, lesson.ExperienceId, CancellationToken.None)).Record!;
+        Assert.Equal(before.Revision + 2, after.Revision);
+        Assert.Equal(
+            (before.Status, before.ReuseConfidence, before.SupportingValidations, before.Contradictions, before.UpdatedAt),
+            (after.Status, after.ReuseConfidence, after.SupportingValidations, after.Contradictions, after.UpdatedAt));
+        Assert.Equal("HostTrusted", await ReadAdmissionAsync("confidence_evidence", "admission", "evidence_id", supported.Update!.EvidenceId));
+        Assert.Equal("HostTrusted", await ReadAdmissionAsync("lifecycle_events", "confidence_admission", "confidence_evidence_id", supported.Update.EvidenceId));
+
+        // A replay is idempotent; the same observation again is a duplicate with no event.
+        var replay = await recording.ApplyEvidenceAsync(auth, supporting, CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, replay.Outcome);
+        Assert.Equal(supported.Revision, replay.Revision);
+        var duplicate = await recording.ApplyEvidenceAsync(
+            auth, Machine(scope, lesson.ExperienceId, supporting.RunId, supporting.VerificationRoundId!.Value), CancellationToken.None);
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, duplicate.Outcome);
+        Assert.Equal(after.Revision, (await _store.GetAsync(auth, scope, lesson.ExperienceId, CancellationToken.None)).Record!.Revision);
+
+        // Verified evidence still counts.
+        var verified = await Apply(auth, Machine(scope, lesson.ExperienceId, reuse.RunId, reuse.RoundId!.Value));
+        Assert.True(verified.Counted);
+
+        var excluding = await _lifecycle.ReadConfidenceAsync(auth, scope, lesson.ExperienceId, ConfidenceEvidenceFilter.ExcludeHostTrusted, CancellationToken.None);
+        Assert.Equal(excluding.Report!.StoredReuseConfidence, excluding.Report.ReuseConfidence);
+        Assert.Equal(new ConfidenceAdmissionCounts(1, 1), excluding.Report.HostTrustedRecordedOnly);
+        var including = await _lifecycle.ReadConfidenceAsync(auth, scope, lesson.ExperienceId, ConfidenceEvidenceFilter.All, CancellationToken.None);
+        Assert.Equal(excluding.Report.StoredSupportingValidations + 1, including.Report!.SupportingValidations);
+        Assert.Equal(1, including.Report.Contradictions);
+        Assert.Equal(ReuseConfidenceHeuristic.Score(including.Report.SupportingValidations, 1), including.Report.ReuseConfidence);
+
+        // As the owner, so no privilege is what refuses it: an uncounted ledger row carrying an event is refused unless
+        // it is host-trusted with an unmoved score.
+        foreach (var (admission, newScore) in new (string?, string)[] { ("Verified", "prior_reuse_confidence"), ("HostTrusted", "0.25"), (null, "prior_reuse_confidence") })
+        {
+            await using var copy = _fixture.OwnerDataSource.CreateCommand(
+                "INSERT INTO agent_experience.confidence_evidence (evidence_id, experience_id, event_id, kind, source, run_id, " +
+                "verification_round_id, reviewer_identity, counted, actor, rule_version, detail, recorded_at, applied_revision, " +
+                "applied_status, prior_reuse_confidence, new_reuse_confidence, prior_supporting_validations, " +
+                "new_supporting_validations, prior_contradictions, new_contradictions, assessment_id, admission) " +
+                "SELECT gen_random_uuid(), experience_id, gen_random_uuid(), kind, source, gen_random_uuid(), gen_random_uuid(), " +
+                $"reviewer_identity, false, actor, rule_version, detail, recorded_at, applied_revision, applied_status, prior_reuse_confidence, {newScore}, " +
+                "prior_supporting_validations, prior_supporting_validations, prior_contradictions, prior_contradictions, NULL, @admission " +
+                "FROM agent_experience.confidence_evidence WHERE evidence_id = @id");
+            copy.Parameters.Add(new NpgsqlParameter("admission", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)admission ?? DBNull.Value });
+            copy.Parameters.Add(new NpgsqlParameter<Guid>("id", supported.Update.EvidenceId));
+            var ex = await Assert.ThrowsAsync<PostgresException>(() => copy.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
+            Assert.Equal("confidence_evidence_event_when_counted_or_recorded_only", ex.ConstraintName);
+        }
+
+        // And on the event ledger: an event whose evidence moved no counter, labelled verified, with no admission,
+        // host-trusted but moving the score, or host-trusted but moving the status.
+        foreach (var overrides in new[]
+        {
+            "'confidence_admission', 'Verified'",
+            "'confidence_admission', NULL",
+            "'new_reuse_confidence', 0.25",
+            "'current_status', 'Contested'",
+        })
+        {
+            await using var copyEvent = _fixture.OwnerDataSource.CreateCommand(
+                "INSERT INTO agent_experience.lifecycle_events SELECT (jsonb_populate_record(e, jsonb_build_object(" +
+                "'event_id', gen_random_uuid(), 'confidence_evidence_id', gen_random_uuid(), 'expected_revision', e.expected_revision + 1000, " +
+                $"'applied_revision', e.applied_revision + 1000, {overrides}" +
+                "))).* FROM agent_experience.lifecycle_events e WHERE e.confidence_evidence_id = @id");
+            copyEvent.Parameters.Add(new NpgsqlParameter<Guid>("id", supported.Update.EvidenceId));
+            var ex = await Assert.ThrowsAsync<PostgresException>(() => copyEvent.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
+            Assert.Equal("lifecycle_events_confidence_moves_or_recorded_only", ex.ConstraintName);
+        }
+    }
+
+    [Fact]
     public async Task The_database_refuses_an_unknown_admission_and_the_application_role_cannot_relabel_one()
     {
         var tenant = NewTenant();
