@@ -6,6 +6,16 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.8
+
+A maintenance preview. It fixes how a reflection timeout is reported, and makes the codebase easier to keep correct.
+Packing checks binary compatibility with the last published preview, the PostgreSQL record store is split into
+smaller files, race tests wait for signals instead of sleeping, and one version per package is enforced across the
+repository. There are no new migrations, no public API changes and no breaking changes. Upgrading from
+`0.1.0-preview.7` means updating the package versions.
+
 ### A reflection timeout is always reported as one
 
 - `ChatClientExperienceReflector` enforces its timeout twice (the call's token and a wait), and both fire at the
