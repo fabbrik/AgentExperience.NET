@@ -30,6 +30,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       sdk: ${{ steps.sdk.outputs.sdk }}
+    # Testcontainers pulls its Docker Hub images through Google's public mirror; see the note in ci.yml.
+    env:
+      TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: mirror.gcr.io
     steps:
       # Full history, so the ancestry check below can see main.
       - name: Checkout
