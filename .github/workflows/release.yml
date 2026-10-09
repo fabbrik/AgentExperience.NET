@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -185,7 +185,7 @@ jobs:
   # nuget.org already has, and an existing GitHub release is left as it is.
   publish:
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: nuget-release
     permissions:
