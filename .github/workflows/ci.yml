@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -105,7 +105,7 @@ jobs:
   # deterministic symbols. The packages are uploaded as a workflow artifact for inspection. NOT published.
   pack:
     needs: build-and-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -160,7 +160,7 @@ jobs:
   # that major, so a leg cannot quietly run the default. The list must equal PostgresTestImage.SupportedMajors; a
   # release test checks it.
   postgres:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -285,7 +285,7 @@ jobs:
   # block, so an unrelated PR is not held hostage to a release that shipped that morning (the AD-F reasoning
   # behind the MAF probe). Triage for a red run: raise the floor past the broken release, or fix the library.
   floating-dependencies:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - name: Checkout
@@ -326,7 +326,7 @@ jobs:
   # request reports PASSED or FAILED in the job summary without blocking, so an unrelated PR is not held hostage to
   # a MAF release that shipped that morning. Triage for a red latest leg: fix the adapter, or raise the floor.
   maf-compatibility:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
