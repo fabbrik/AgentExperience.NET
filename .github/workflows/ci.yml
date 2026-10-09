@@ -17,6 +17,12 @@ on:
 permissions:
   contents: read
 
+# Testcontainers pulls every Docker Hub image (pgvector/pgvector, postgres, testcontainers/ryuk) through Google's
+# public Docker Hub mirror. Hosted runners share IPs, so pulling anonymously from Docker Hub hits its rate limit
+# ("toomanyrequests"), which fails every container-backed test at once. The images are the same as on Docker Hub.
+env:
+  TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: mirror.gcr.io
+
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
