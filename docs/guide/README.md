@@ -7,7 +7,7 @@ library? Read [Concepts in five minutes](concepts.md) first: the whole model in 
 AgentExperience.NET is a **preview**. Read [Known limits and documented boundaries](../known-limits.md) before you
 rely on any guarantee described here.
 
-These pages describe the `main` branch, which the published `0.1.0-preview.7` packages match; anything added to
+These pages describe the `main` branch, which the published `0.1.0-preview.8` packages match; anything added to
 `main` after that release is listed in the [changelog's Unreleased section](../../CHANGELOG.md#unreleased). Code snippets use
 placeholder variables (`authorization`, `scope`, `hostScope`, `sanitizationOptions`, `captureLimits`, `logger`, …)
 for values you build as in the [explicit wiring](deployment.md#explicit-wiring). The [quick start](../../README.md#quick-start)
