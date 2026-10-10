@@ -6,6 +6,24 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.9
+
+This preview makes text retrieval find lessons for requests written the way people write them. Until now a stored
+lesson was returned only when it contained every word of the request, so a paraphrased or longer request found nothing.
+A lesson is now a candidate when it shares at least three of the request's terms (`MinimumMatchedTerms`, capped at the
+request's term count), ranked by how much of the request it covers. On the new model-free retrieval benchmark, recall@8
+rises from 0.378 to 0.700 in memory and from 0.511 to 0.844 on PostgreSQL, with under one unexpected lesson per
+injection. The preview also adds a one-minute quick-start demo and the benchmark itself.
+
+Upgrading from `0.1.0-preview.8` applies migration `0025`, which replaces `search_experience_text`. Run the migrator
+before deploying the new build and, **with row-level security on, re-run the privileges call after migrating**: until
+then text search runs without the function and its GIN index, as it does when the function is not granted. This is a
+**behaviour change**, labelled below: requests now match on some of their terms, and on PostgreSQL every full match
+reports relevance 1. To keep the old all-terms matching, set `RetrievalPolicy.MinimumMatchedTerms` to
+`ExperienceCandidateQuery.AllTerms`. There are no breaking API changes; the additions are listed below.
+
 ### Text search matches on any term and ranks by coverage (story 20.2)
 
 - **Behaviour change: a record no longer needs every query term.** Both lexical candidate sources (in-memory and
