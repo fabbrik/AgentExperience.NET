@@ -2010,6 +2010,10 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 **When** a run is reflected
 **Then** the default reflector's lesson and the model-backed reflector's input include the allowlisted argument values of the failed and working attempts, bounded and sanitized as on the `Tried:` lines, so a lesson can say what worked and not only which tool. Nothing outside the allowlist reaches the reflector, and a test proves the reflector's input carries no other argument.
 
+**Given** an attempt whose tool calls include a failed call before the one that worked (the common case, where an agent does everything in one invocation)
+**When** the block is rendered
+**Then** each call on the `Tried:` line carries its own outcome (failed with its error class, or completed), so a model can tell the failed approach from the working one inside a single attempt. The quick-start sample's stand-in no longer has to assume that the last call worked.
+
 ### Story 20.4: A Transfer Experiment
 
 **Traces:** FR6 · **Depends on:** 20.2, 20.3
