@@ -6,7 +6,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### A retrieval benchmark without a model (story 20.1)
+
+- `tests/AgentExperience.RetrievalQuality` measures how often lexical retrieval finds the right lesson: a checked-in
+  corpus of 53 records and 48 labelled queries, run through each adapter's candidate source and reported as recall,
+  precision and zero-candidate share in a golden report per adapter. Today, overall recall@8 is 0.378 in memory and
+  0.511 on PostgreSQL, and every one of the 10 realistic requests (long, paraphrased, worded the way a developer types
+  them to an agent) finds no candidate at all on either adapter, because every query term must match. See
+  [Retrieval quality](docs/benchmarks.md#retrieval-quality-story-201). Test-only: no behaviour or public API change.
 
 ## 0.1.0-preview.8
 

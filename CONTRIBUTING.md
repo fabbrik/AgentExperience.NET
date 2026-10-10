@@ -30,7 +30,7 @@ dotnet test                                    # everything; the storage tests n
 ```
 
 **Docker.** The storage suites, the pgvector compatibility proof (`PostgresVectorProof`), the sample's PostgreSQL
-mode and the upgrade suite start PostgreSQL (with pgvector) containers through Testcontainers. They run against PostgreSQL 16 unless `AGENTEXPERIENCE_POSTGRES_MAJOR`
+mode, the retrieval benchmark's PostgreSQL golden and the upgrade suite start PostgreSQL (with pgvector) containers through Testcontainers. They run against PostgreSQL 16 unless `AGENTEXPERIENCE_POSTGRES_MAJOR`
 names another supported major (15, 16, 17 or 18), which is how CI runs them on each; any other value fails loudly.
 If Testcontainers' Ryuk container fails under your Docker setup, set `TESTCONTAINERS_RYUK_DISABLED=true`. The upgrade
 suite (`tests/AgentExperience.Upgrade.Tests`) also needs nuget.org the first time: it builds its seeders, which restore
@@ -38,7 +38,7 @@ the published previews' packages, into a temporary directory (see its [README](t
 `AGENTEXPERIENCE_TEST_ENCRYPTION=on`, the two storage test projects run again, unmodified, in crypto-shredding mode;
 CI runs them both ways.
 
-**Without Docker**, run the projects that need no container whole, filter the two that mix both, and skip the
+**Without Docker**, run the projects that need no container whole, filter the three that mix both, and skip the
 three built around a PostgreSQL container:
 
 ```bash
@@ -51,11 +51,13 @@ dotnet test tests/AgentExperience.Release.Tests
 dotnet test experiments/AgentExperience.LiveReuse.Tests
 dotnet test tests/AgentExperience.CompatibilityProof --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.Sample.EndToEnd.Tests --filter "FullyQualifiedName!~Postgres"
+dotnet test tests/AgentExperience.RetrievalQuality --filter "FullyQualifiedName!~Postgres"
 ```
 
 Skipped without Docker: `tests/AgentExperience.Storage.Postgres.Tests`, `tests/AgentExperience.Storage.Postgres.Vectors.Tests`,
-`tests/AgentExperience.Upgrade.Tests`. In the two filtered projects every container-backed class has `Postgres` in its
-name (`PostgresVectorProof`, `SamplePostgresModeTests`, `BatchReReadPostgresEquivalenceTests`, ...).
+`tests/AgentExperience.Upgrade.Tests`. In the three filtered projects every container-backed class has `Postgres` in its
+name (`PostgresVectorProof`, `SamplePostgresModeTests`, `BatchReReadPostgresEquivalenceTests`,
+`PostgresRetrievalQualityTests`, ...).
 `ContributingWithoutDockerTests` fails if a test project is in neither list, or if a command here would run a class
 that uses a container. `AgentExperience.Release.Tests` needs nuget.org on its first restore: it
 downloads the last published preview's packages as the package-validation baseline.
@@ -86,6 +88,7 @@ tests/
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
   AgentExperience.Sample.EndToEnd.Tests/    the sample's seven stages, its determinism, and what it does not claim
   AgentExperience.ReuseBaseline/            the controlled reuse experiment and its golden reports
+  AgentExperience.RetrievalQuality/         the retrieval benchmark: a labelled corpus, recall and precision per adapter, golden reports (docs/benchmarks.md)
   AgentExperience.Release.Tests/            release gates: the public API baseline, pin agreement, the security-suite map, workflow guards, documentation links
   AgentExperience.Upgrade.Tests/            upgrades databases the published previews created to today's schema, against a pgvector container, and reads everything back
   AgentExperience.Upgrade.Seeders/          one console program per published preview that ships a migration, pinning that preview's packages from nuget.org; built and run by the upgrade tests, not in the solution

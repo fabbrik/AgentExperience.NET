@@ -1,0 +1,57 @@
+{
+  "queries": [
+    { "id": "exact-01", "category": "exact", "text": "EF Core migration fails on startup", "expected": ["mig-01"] },
+    { "id": "exact-02", "category": "exact", "text": "flaky integration test timeout", "expected": ["ci-01"] },
+    { "id": "exact-03", "category": "exact", "text": "reduce Docker image size", "expected": ["dock-01"] },
+    { "id": "exact-04", "category": "exact", "text": "packages.lock.json out of date locked mode", "expected": ["pkg-04"] },
+    { "id": "exact-05", "category": "exact", "text": "JWT signature validation fails signing keys rotated", "expected": ["auth-02"] },
+    { "id": "exact-06", "category": "exact", "text": "docker compose container cannot connect to database", "expected": ["dock-04"] },
+    { "id": "exact-07", "category": "exact", "text": "NuGet private feed 401 Unauthorized", "expected": ["pkg-02"] },
+    { "id": "exact-08", "category": "exact", "text": "OAuth redirect URI mismatch", "expected": ["auth-05"] },
+
+    { "id": "paraphrase-01", "category": "paraphrase", "text": "roll back a broken schema change in prod", "expected": ["mig-04"] },
+    { "id": "paraphrase-02", "category": "paraphrase", "text": "tests break when run concurrently against the same db", "expected": ["ci-02"] },
+    { "id": "paraphrase-03", "category": "paraphrase", "text": "shrink the container image for our web api", "expected": ["dock-01"] },
+    { "id": "paraphrase-04", "category": "paraphrase", "text": "jwt expired, api now responds unauthorized", "expected": ["auth-01"] },
+    { "id": "paraphrase-05", "category": "paraphrase", "text": "container gets OOM-killed on kubernetes under heavy traffic", "expected": ["dock-06"] },
+    { "id": "paraphrase-06", "category": "paraphrase", "text": "unit test for date formatting is green on my machine but red on the build server", "expected": ["ci-03"] },
+    { "id": "paraphrase-07", "category": "paraphrase", "text": "stop secrets showing up in our log output", "expected": ["auth-04"] },
+    { "id": "paraphrase-08", "category": "paraphrase", "text": "two dependencies want different versions of the same library and the build complains about a downgrade", "expected": ["pkg-01", "pkg-06"] },
+
+    { "id": "realistic-01", "category": "realistic", "text": "Hey, can you take a look at the deploy? The API pod keeps crashing on startup and the logs say something about a column that doesn't exist in the database. I think someone forgot to run the migrations again.", "expected": ["mig-01"] },
+    { "id": "realistic-02", "category": "realistic", "text": "our CI has been red all morning, the integration tests randomly time out maybe one run in five, can you figure out what's going on and make them stable", "expected": ["ci-01"] },
+    { "id": "realistic-03", "category": "realistic", "text": "I need the docker image for the api to be way smaller, it's like 2GB right now and pushing it to the registry takes forever. Can you rework the Dockerfile?", "expected": ["dock-01"] },
+    { "id": "realistic-04", "category": "realistic", "text": "After the identity team rotated their keys this morning every request to our service fails token validation. Please fix the auth config so it doesn't break the next time they rotate.", "expected": ["auth-02"] },
+    { "id": "realistic-05", "category": "realistic", "text": "dotnet restore blows up in the pipeline with NU1605 detected package downgrade, can you sort out the package versions so the build goes green again", "expected": ["pkg-01"] },
+    { "id": "realistic-06", "category": "realistic", "text": "The frontend team says their calls to our API fail in the browser with a CORS error as soon as they send the bearer token. Can you update the server so their requests go through?", "expected": ["auth-03"] },
+    { "id": "realistic-07", "category": "realistic", "text": "Adding the index on the orders table in the new migration keeps timing out when we deploy to staging, it's a big table with like 40 million rows. What should I change?", "expected": ["mig-05"] },
+    { "id": "realistic-08", "category": "realistic", "text": "I merged main into my branch and now there's a conflict in the ModelSnapshot file because both of us added migrations. How do I fix this properly without breaking the migration history?", "expected": ["mig-03"] },
+    { "id": "realistic-09", "category": "realistic", "text": "Our security scanner flagged that the app container is running as root, please update the Dockerfile so it runs as a normal user", "expected": ["dock-05"] },
+    { "id": "realistic-10", "category": "realistic", "text": "Some of our end to end tests fail randomly and block every merge. I want to stop them blocking the team without just deleting them, what's the right way to handle this?", "expected": ["ci-05"] },
+
+    { "id": "morphology-01", "category": "morphology", "text": "migrations timing out on large tables", "expected": ["mig-05"] },
+    { "id": "morphology-02", "category": "morphology", "text": "rolling back failed migrations", "expected": ["mig-04"] },
+    { "id": "morphology-03", "category": "morphology", "text": "parallel test failures with shared databases", "expected": ["ci-02"] },
+    { "id": "morphology-04", "category": "morphology", "text": "containers exiting immediately after start", "expected": ["dock-02"] },
+    { "id": "morphology-05", "category": "morphology", "text": "expiring JWT tokens", "expected": ["auth-01"] },
+    { "id": "morphology-06", "category": "morphology", "text": "redacting API keys from logs", "expected": ["auth-04"] },
+    { "id": "morphology-07", "category": "morphology", "text": "pinned vulnerable dependencies", "expected": ["pkg-03"] },
+
+    { "id": "distractor-01", "category": "distractor-overlap", "text": "migration timeout large table", "expected": ["mig-05"] },
+    { "id": "distractor-02", "category": "distractor-overlap", "text": "roll back the production database migration", "expected": ["mig-04"] },
+    { "id": "distractor-03", "category": "distractor-overlap", "text": "reduce image size", "expected": ["dock-01"] },
+    { "id": "distractor-04", "category": "distractor-overlap", "text": "container memory killed under load", "expected": ["dock-06"] },
+    { "id": "distractor-05", "category": "distractor-overlap", "text": "NuGet package version conflict", "expected": ["pkg-01"] },
+    { "id": "distractor-06", "category": "distractor-overlap", "text": "restore fails lock file", "expected": ["pkg-04"] },
+    { "id": "distractor-07", "category": "distractor-overlap", "text": "flaky test nightly", "expected": ["ci-05"] },
+    { "id": "distractor-08", "category": "distractor-overlap", "text": "time zone UTC test", "expected": ["ci-03"] },
+    { "id": "distractor-09", "category": "distractor-overlap", "text": "order new office chairs for the team", "expected": [] },
+
+    { "id": "stopword-01", "category": "stopword-heavy", "text": "how do I do it again so that it does not fail like before", "expected": [] },
+    { "id": "stopword-02", "category": "stopword-heavy", "text": "why is it that the migration has not been applied", "expected": ["mig-01"] },
+    { "id": "stopword-03", "category": "stopword-heavy", "text": "it is the one with the token that has to be refreshed before it is too late", "expected": ["auth-01"] },
+    { "id": "stopword-04", "category": "stopword-heavy", "text": "can you do the same as last time for the docker thing", "expected": [] },
+    { "id": "stopword-05", "category": "stopword-heavy", "text": "how do I make it so the tests are not run at the same time", "expected": ["ci-02"] },
+    { "id": "stopword-06", "category": "stopword-heavy", "text": "is there anything we should know before we add a migration", "expected": ["mig-02"] }
+  ]
+}
