@@ -2008,7 +2008,7 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 
 **Given** a host that allowlists approach arguments (`ApproachArguments`)
 **When** a run is reflected
-**Then** the default reflector's lesson and the model-backed reflector's input include the allowlisted argument values of the failed and working attempts, bounded and sanitized as on the `Tried:` lines, so a lesson can say what worked and not only which tool. Nothing outside the allowlist reaches the reflector, and a test proves the reflector's input carries no other argument.
+**Then** allowlisted argument values do **not** go into reflector input or stored lesson text, and neither the reflectors nor `ReflectionPromptBuilder` change. *(Amended 2026-10-10, decided under critique liberty, replacing the original criterion that reflection would include them.)* A `LessonOnly` grant always shows the lesson but withholds `Tried:`/`Worked:`, and a grant reader's `ApproachArguments` can narrow the disclosed arguments but never widen them; text stored at reflection time under the owner's allowlist would bypass both rules. Argument values keep reaching readers only through the grant-aware `Tried:` line, which the next criterion makes unambiguous.
 
 **Given** an attempt whose tool calls include a failed call before the one that worked (the common case, where an agent does everything in one invocation)
 **When** the block is rendered

@@ -66,7 +66,7 @@ public sealed record HistoricalReferencePayload(
 /// weight applied to it), an evidence <em>summary</em> -- lesson, reuse guidance, preconditions,
 /// warnings, verification status, and how many evidence IDs back it -- and what its attempts tried:
 /// a <c>Tried:</c> line per attempt (the ordered tool <em>names</em>, with the values of only those tool
-/// arguments the host allowlisted, and whether it failed, with the error's class), and, for a verified
+/// arguments the host allowlisted, each call's own outcome, and whether the attempt failed, with the error's class), and, for a verified
 /// record, a <c>Worked:</c> line naming the final attempt (its calls are on its <c>Tried:</c> line). Nothing else.
 /// </para>
 /// <para>
@@ -93,6 +93,10 @@ public sealed record HistoricalReferencePayload(
 /// <c>Worked:</c> line naming the verified final attempt. The error's first line crosses only when the host opts into
 /// <see cref="AttemptFailureDetail.Excerpt"/>. A borrowed record still shows only what a grant consented to: its
 /// verified final attempt, as one <c>Tried:</c> line and the <c>Worked:</c> line, and nothing about a failure.
+/// Since <c>0.1.0-preview.10</c> each call on an own record's <c>Tried:</c> line also carries its own outcome --
+/// <see cref="CallReturned"/>, or the first token of its error's class only (<see cref="CallFailedClassPrefix"/>),
+/// never an excerpt -- so a reader can tell the call that failed from the one that returned inside one attempt. A
+/// borrowed line carries no such marker.
 /// </para>
 /// <para>
 /// <b>Why a name crosses by default: provenance, not shape.</b> A tool name is fixed when the tool
@@ -219,6 +223,31 @@ public static class HistoricalReferenceWriter
 
     /// <summary>How a <c>Tried:</c> line says an attempt ended with an error, before any class or excerpt.</summary>
     public const string AttemptFailed = "failed";
+
+    /// <summary>
+    /// What follows a tool call on a <c>Tried:</c> line, after a space, when the call recorded no error: the tool
+    /// returned rather than threw. It says nothing about whether the call achieved anything -- a tool that reports
+    /// failure in its result is marked this way too. A borrowed record's line carries no per-call marker.
+    /// </summary>
+    public const string CallReturned = "[returned]";
+
+    /// <summary>
+    /// What follows a tool call on a <c>Tried:</c> line, after a space, when the call recorded an error and
+    /// <see cref="AttemptFailureDetail.None"/> withholds its class.
+    /// </summary>
+    public const string CallFailed = "[failed]";
+
+    /// <summary>
+    /// What opens a failed tool call's marker on a <c>Tried:</c> line when its error class is shown: the marker is
+    /// <c>[failed: &lt;class&gt;]</c>, where the class is only the <em>first</em> token <see cref="ErrorClass"/> finds in the
+    /// call's error (at most <see cref="ErrorClass.MaxTokenLength"/> characters, never a comma), so a marker is bounded
+    /// and cannot hold the line's call separator. A call's marker never carries an excerpt, whatever the
+    /// <see cref="AttemptFailureDetail"/>.
+    /// </summary>
+    public const string CallFailedClassPrefix = "[failed: ";
+
+    /// <summary>What closes a failed tool call's marker that carries an error class.</summary>
+    public const string CallMarkerEnd = "]";
 
     /// <summary>
     /// What follows the attempt number on a <c>Worked:</c> line. The line names the attempt and nothing else: its
@@ -1145,17 +1174,22 @@ public static class HistoricalReferenceWriter
     /// <b>Tried.</b> Every attempt of a record that is not <see cref="ExperienceStatus.Quarantined"/> -- a record
     /// quarantined after its run, the suspected-sanitization-gap case, is exactly the one that must not describe what
     /// it did -- whatever its outcome, so a failed run still says what it tried. Each line is
-    /// <c>attempt N: tool_a, tool_b(key="value") → failed (TimeoutException)</c> or <c>... → completed</c>: the
-    /// attempt's <see cref="Attempt.SequenceNumber"/>, its calls, and whether it ended with an
-    /// <see cref="Attempt.Error"/>. A failure says no more than <paramref name="failureDetail"/> allows: by default
-    /// the error's class (<see cref="ErrorClass"/>), never its text. An attempt's result, its calls' results and
-    /// errors, and every argument the allowlist does not name are never read.
+    /// <c>attempt N: tool_a [failed: TimeoutException], tool_b(key="value") [returned] → completed</c> or
+    /// <c>... → failed (TimeoutException)</c>: the attempt's <see cref="Attempt.SequenceNumber"/>, its calls -- each
+    /// followed by its own outcome, <see cref="CallReturned"/> or a failed marker taken from its
+    /// <see cref="ToolCallRecord.Error"/> -- and whether the attempt ended with an <see cref="Attempt.Error"/>. An
+    /// attempt's failure says no more than <paramref name="failureDetail"/> allows: by default the error's class
+    /// (<see cref="ErrorClass"/>), never its text; a call's failure says at most its class, never an excerpt
+    /// (<see cref="CallFailed"/> under <see cref="AttemptFailureDetail.None"/>). An attempt's result, its calls'
+    /// results, the text of its calls' errors beyond their class, and every argument the allowlist does not name are
+    /// never read.
     /// </para>
     /// <para>
     /// <b>Borrowed.</b> A record read through a grant that shows its approach (<paramref name="borrowed"/>) gets
     /// exactly what its <c>Approach:</c> line used to show: its verified final attempt only, as one <c>Tried:</c> line
     /// and the <c>Worked:</c> line, and nothing for a record that did not verify. The owner consented to that, not to
-    /// its failed attempts or their error classes.
+    /// its failed attempts or their error classes -- so a borrowed line carries no per-call markers either, exactly
+    /// as it rendered before calls had their own outcomes.
     /// </para>
     /// <para>
     /// <b>Worked.</b> Only for a verified record, and only its final attempt when that ended without an error (see
@@ -1237,7 +1271,7 @@ public static class HistoricalReferenceWriter
         {
             var attempt = attempts[index];
             text.Append("  - attempt ").Append(attempt.SequenceNumber.ToString(CultureInfo.InvariantCulture)).Append(": ")
-                .Append(Calls(OrderedCalls(attempt, out var clamped), clamped, approachArguments, ref argumentsShown))
+                .Append(Calls(OrderedCalls(attempt, out var clamped), clamped, approachArguments, borrowed ? null : failureDetail, ref argumentsShown))
                 .Append(OutcomeSeparator)
                 .Append(attempt.Error is null ? AttemptCompleted : Failure(attempt.Error, failureDetail))
                 .Append('\n');
@@ -1253,8 +1287,17 @@ public static class HistoricalReferenceWriter
         return text.ToString();
     }
 
-    /// <summary>One line's tool calls, joined with <see cref="ToolSeparator"/>, each bounded as <see cref="AttemptLines"/> describes.</summary>
-    private static string Calls(List<ToolCallRecord> calls, bool clamped, ApproachArgumentAllowlist approachArguments, ref bool argumentsShown)
+    /// <summary>
+    /// One line's tool calls, joined with <see cref="ToolSeparator"/>, each bounded as <see cref="AttemptLines"/>
+    /// describes and, unless <paramref name="callOutcomes"/> is <see langword="null"/> (a borrowed record), followed by
+    /// its own outcome marker.
+    /// </summary>
+    private static string Calls(
+        List<ToolCallRecord> calls,
+        bool clamped,
+        ApproachArgumentAllowlist approachArguments,
+        AttemptFailureDetail? callOutcomes,
+        ref bool argumentsShown)
     {
         if (calls.Count == 0)
         {
@@ -1267,13 +1310,35 @@ public static class HistoricalReferenceWriter
         {
             var name = Name(call.ToolName);
             var shown = approachArguments.IsEmpty ? null : Arguments(call, approachArguments.KeysFor(call.ToolName), budget);
-            steps.Add(shown is null ? name : name + "(" + shown + ")");
+            var step = shown is null ? name : name + "(" + shown + ")";
+            steps.Add(callOutcomes is { } detail ? step + " " + CallOutcome(call.Error, detail) : step);
         }
 
         argumentsShown |= budget.Shown;
         return string.Join(ToolSeparator, steps)
             + (clamped ? AttemptToolsClamped : string.Empty)
             + (budget.Exhausted ? AttemptArgumentsClamped : string.Empty);
+    }
+
+    /// <summary>
+    /// The marker that follows one tool call on a <c>Tried:</c> line: <see cref="CallReturned"/> when the call
+    /// recorded no error, else the first token of its error class only -- never an excerpt, even under
+    /// <see cref="AttemptFailureDetail.Excerpt"/> -- or <see cref="CallFailed"/> under
+    /// <see cref="AttemptFailureDetail.None"/>. A token is ASCII letters, digits, spaces and minus signs of at most
+    /// <see cref="ErrorClass.MaxTokenLength"/> characters, so it can neither close the marker early nor carry
+    /// <see cref="ToolSeparator"/>, and the marker is bounded whatever the error.
+    /// </summary>
+    private static string CallOutcome(string? error, AttemptFailureDetail failureDetail) => error is null
+        ? CallReturned
+        : failureDetail == AttemptFailureDetail.None
+            ? CallFailed
+            : CallFailedClassPrefix + FirstToken(ErrorClass.Of(error)) + CallMarkerEnd;
+
+    /// <summary>The first token of an <see cref="ErrorClass"/> class, whose tokens are joined with <c>", "</c>.</summary>
+    private static string FirstToken(string errorClass)
+    {
+        var end = errorClass.IndexOf(',', StringComparison.Ordinal);
+        return end < 0 ? errorClass : errorClass[..end];
     }
 
     /// <summary>How a <c>Tried:</c> line says an attempt failed, under <paramref name="failureDetail"/>.</summary>
@@ -1877,13 +1942,34 @@ public static class HistoricalReferenceWriter
     /// <summary>
     /// <paramref name="value"/> unable to spell a line's separators: the outcome arrow <c>→</c> and the old step
     /// separator <c>-&gt;</c> each become <c>- &gt;</c>, and, with <paramref name="comma"/> (a tool name, which is not
-    /// quoted), a comma becomes a semicolon, so a name can fake neither another call nor an attempt's outcome. A
-    /// quoted value keeps its commas: only its closing quote can end it.
+    /// quoted), a comma becomes a semicolon and every square bracket the name itself holds -- <c>[</c> <c>]</c> and
+    /// the look-alikes <c>［</c> <c>］</c>, <c>⟦</c> <c>⟧</c>, <c>【</c> <c>】</c> -- becomes a parenthesis, so a name can fake
+    /// neither another call, nor an attempt's outcome, nor a call's outcome marker (<see cref="CallReturned"/>). The
+    /// only brackets a written name can then carry are the library's own: <see cref="NeutralizedMarker"/>, put in by
+    /// <see cref="Clean"/> after this runs, and <see cref="ClampedName"/> after a cut. A quoted value keeps its commas
+    /// and brackets: only its closing quote can end it.
     /// </summary>
     private static string Unseparated(string value, bool comma)
     {
         var text = value.Replace("->", "- >", StringComparison.Ordinal).Replace("\u2192", "- >", StringComparison.Ordinal);
-        return comma ? text.Replace(',', ';') : text;
+        if (!comma)
+        {
+            return text;
+        }
+
+        var name = new StringBuilder(text.Length);
+        foreach (var character in text)
+        {
+            name.Append(character switch
+            {
+                ',' => ';',
+                '[' or '\uFF3B' or '\u27E6' or '\u3010' => '(',
+                ']' or '\uFF3D' or '\u27E7' or '\u3011' => ')',
+                _ => character,
+            });
+        }
+
+        return name.ToString();
     }
 
     /// <summary>Every run of whitespace -- newlines included -- as one space, with the ends trimmed.</summary>

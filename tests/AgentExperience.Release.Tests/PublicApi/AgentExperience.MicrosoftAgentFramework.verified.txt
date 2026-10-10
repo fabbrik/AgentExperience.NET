@@ -286,6 +286,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string AttemptToolsClamped = ", (the rest of the sequence is not shown)";
         public const string BlockBegin = "=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===";
         public const string BlockEnd = "=== END HISTORICAL REFERENCE ===";
+        public const string CallFailed = "[failed]";
+        public const string CallFailedClassPrefix = "[failed: ";
+        public const string CallMarkerEnd = "]";
+        public const string CallReturned = "[returned]";
         public const string ClampedName = "[...]";
         public const string MatchedWithoutRanking = "no ranking data";
         public const int MaxApproachArgumentsLength = 512;

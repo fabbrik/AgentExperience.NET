@@ -442,7 +442,7 @@ public sealed class SampleRun
                 $"byte budget used: {injection.PayloadBytes.ToString(CultureInfo.InvariantCulture)} of {injectionLimits.MaxBytes.ToString(CultureInfo.InvariantCulture)}; record limit {injectionLimits.MaxRecords.ToString(CultureInfo.InvariantCulture)}",
                 $"omitted: {injection.Omitted.Count.ToString(CultureInfo.InvariantCulture)}; excluded before ranking: {injection.Excluded.Count.ToString(CultureInfo.InvariantCulture)}; truncated search: {injection.Truncated.ToString().ToLowerInvariant()}",
                 $"read out of the {Utf8Length(block!).ToString(CultureInfo.InvariantCulture)} bytes run B's model was handed: lesson {Present(blockShape.CarriesLesson)}, task {Named(blockShape.NamesTask)}, why it matched {Present(blockShape.SaysWhyMatched)}, confidence {Named(blockShape.NamesConfidence)}, approach {Named(blockShape.NamesApproach)}",
-                $"each attempt is its tool names in order, whether it failed with the error's class, and which one worked: raw captured result {Present(blockShape.RepeatsCapturedResult)}, raw captured error {Present(blockShape.RepeatsCapturedError)}, captured tool argument {Present(blockShape.RepeatsToolArguments)}",
+                $"each attempt is its tool names in order, each call marked [returned] or [failed: <class>], whether the attempt failed with the error's class, and which one worked: raw captured result {Present(blockShape.RepeatsCapturedResult)}, raw captured error {Present(blockShape.RepeatsCapturedError)}, captured tool argument {Present(blockShape.RepeatsToolArguments)}",
                 $"run B's own Experience Run is {runBId:D}, read from the session state key '{ExperienceCaptureAgentBuilderExtensions.RunIdStateKey}'",
             ]));
 
@@ -576,9 +576,13 @@ public sealed class SampleRun
             .OrderBy(attempt => attempt.SequenceNumber)
             .LastOrDefault() is { Error: null } winning
             && winning.ToolCalls.Count > 0
+            // Each call on the line carries its own outcome; every call of this sample's winning attempt completed.
+            && winning.ToolCalls.All(call => call.Error is null)
             && block.Contains(
                 "  - attempt " + winning.SequenceNumber.ToString(CultureInfo.InvariantCulture) + ": "
-                    + string.Join(HistoricalReferenceWriter.ToolSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName))
+                    + string.Join(
+                        HistoricalReferenceWriter.ToolSeparator,
+                        winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName + " " + HistoricalReferenceWriter.CallReturned))
                     + HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted + "\n"
                     + "Worked: attempt " + winning.SequenceNumber.ToString(CultureInfo.InvariantCulture) + HistoricalReferenceWriter.WorkedSuffix + "\n",
                 StringComparison.Ordinal),

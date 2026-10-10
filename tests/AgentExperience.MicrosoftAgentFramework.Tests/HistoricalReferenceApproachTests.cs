@@ -35,7 +35,7 @@ public class HistoricalReferenceApproachTests
     private static string Write(ExperienceRecord record) =>
         HistoricalReferenceWriter.Write([new RankedExperience(record, 0.5d, [])], ExperienceInjectionLimits.Default).Text;
 
-    /// <summary>An attempt with the given tool names, in order, that carries no error.</summary>
+    /// <summary>An attempt with the given tool names, in order; its calls carry no error (each returned).</summary>
     private static Attempt Attempt(int sequence, string? error, string? result, params string[] toolNames) => new(
         AttemptId: Guid.Parse($"22222222-0000-0000-0000-{sequence:D12}"),
         SequenceNumber: sequence,
@@ -49,7 +49,7 @@ public class HistoricalReferenceApproachTests
             StartedAt: InjectionRecords.Now,
             Duration: TimeSpan.FromMilliseconds(5),
             Result: InjectionRecords.RawResult,
-            Error: InjectionRecords.RawError)).ToArray(),
+            Error: null)).ToArray(),
         Result: result,
         Error: error);
 
@@ -139,7 +139,7 @@ public class HistoricalReferenceApproachTests
         Assert.DoesNotContain("TimeoutException", borrowed, StringComparison.Ordinal);
 
         // The reader's own record gets the full view.
-        Assert.Contains("  - attempt 0: lender_read_ledger \u2192 failed (TimeoutException)\n", owned, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: lender_read_ledger [returned] \u2192 failed (TimeoutException)\n", owned, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -193,7 +193,10 @@ public class HistoricalReferenceApproachTests
         var owned = WorkedLine(WriteShared(record, shared: false, level: null));
         var borrowed = WorkedLine(WriteShared(record, shared: true, ExperienceGrantDisclosure.LessonAndApproach));
 
-        Assert.Equal(owned, borrowed);
+        // Story 20.3: the owner's line carries each call's outcome, the borrowed one does not; otherwise identical.
+        Assert.Contains(" " + HistoricalReferenceWriter.CallReturned, owned, StringComparison.Ordinal);
+        Assert.DoesNotContain(HistoricalReferenceWriter.CallReturned, borrowed, StringComparison.Ordinal);
+        Assert.Equal(owned.Replace(" " + HistoricalReferenceWriter.CallReturned, string.Empty, StringComparison.Ordinal), borrowed);
         Assert.Contains(HistoricalReferenceWriter.AttemptToolsClamped, borrowed, StringComparison.Ordinal);
         Assert.Contains("lender read ledger", borrowed, StringComparison.Ordinal);
     }
@@ -227,7 +230,7 @@ public class HistoricalReferenceApproachTests
     {
         var text = WriteShared(Borrowed(), shared: false, level: null);
 
-        Assert.Contains("  - attempt 0: lender_read_ledger, lender_retry_refund \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: lender_read_ledger [returned], lender_retry_refund [returned] \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Shared:", text, StringComparison.Ordinal);
     }
 
@@ -257,8 +260,8 @@ public class HistoricalReferenceApproachTests
         // the final one.
         Assert.Contains(
             "\nTried:\n"
-            + "  - attempt 0: read_ledger, retry_refund \u2192 failed (TimeoutException)\n"
-            + "  - attempt 1: read_ledger, wait_for_lock, retry_refund \u2192 completed\n"
+            + "  - attempt 0: read_ledger [returned], retry_refund [returned] \u2192 failed (TimeoutException)\n"
+            + "  - attempt 1: read_ledger [returned], wait_for_lock [returned], retry_refund [returned] \u2192 completed\n"
             + "Worked: attempt 1" + HistoricalReferenceWriter.WorkedSuffix + "\n",
             text,
             StringComparison.Ordinal);
@@ -273,7 +276,7 @@ public class HistoricalReferenceApproachTests
             Attempt(0, error: null, result: "done", "probe", "probe", "commit"),
         ]);
 
-        Assert.Contains("  - attempt 0: probe, probe, commit \u2192 completed\n", Write(record), StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: probe [returned], probe [returned], commit [returned] \u2192 completed\n", Write(record), StringComparison.Ordinal);
     }
 
     // ---- Matrix row 9: a verified run whose winning attempt called no tool ------------------------
@@ -316,7 +319,7 @@ public class HistoricalReferenceApproachTests
         var text = Write(record);
 
         Assert.DoesNotContain("Worked:", text, StringComparison.Ordinal);
-        Assert.Contains("\nTried:\n  - attempt 0: purge_ledger \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("\nTried:\n  - attempt 0: purge_ledger [returned] \u2192 completed\n", text, StringComparison.Ordinal);
 
         // The record itself still reaches the block; only the claim about what worked is withheld.
         Assert.Contains($"Source: experience {InjectionRecords.Id(1):D}", text, StringComparison.Ordinal);
@@ -366,7 +369,7 @@ public class HistoricalReferenceApproachTests
 
         Assert.DoesNotContain("Worked:", text, StringComparison.Ordinal);
         Assert.Contains(
-            "\nTried:\n  - attempt 0: wait_for_lock \u2192 completed\n  - attempt 1: retry_refund \u2192 failed (TimeoutException)\n",
+            "\nTried:\n  - attempt 0: wait_for_lock [returned] \u2192 completed\n  - attempt 1: retry_refund [returned] \u2192 failed (TimeoutException)\n",
             text,
             StringComparison.Ordinal);
     }
@@ -410,7 +413,7 @@ public class HistoricalReferenceApproachTests
 
         // And the approach that is emitted came from the record, so the block is not merely silent --
         // it is carrying the derived sequence instead.
-        Assert.Contains("  - attempt 0: wait_for_lock, retry_refund \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: wait_for_lock [returned], retry_refund [returned] \u2192 completed\n", text, StringComparison.Ordinal);
 
         // The default reflector puts the same forbidden shapes in the same fields, so this is not a
         // hypothetical host: assert the fields it fills are the ones being ignored.
@@ -423,15 +426,20 @@ public class HistoricalReferenceApproachTests
     [Fact]
     public void Attempt_results_attempt_errors_tool_arguments_and_tool_results_are_all_absent()
     {
+        // The failed attempt's call carries the raw error too: a call's marker is read from it, and only its class
+        // may cross.
+        var failed = Attempt(0, error: InjectionRecords.RawError, result: null, "read_ledger");
+        failed = failed with { ToolCalls = [failed.ToolCalls[0] with { Result = null, Error = InjectionRecords.RawError }] };
         var record = InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts:
         [
-            Attempt(0, error: InjectionRecords.RawError, result: null, "read_ledger"),
+            failed,
             Attempt(1, error: null, result: InjectionRecords.RawResult, "wait_for_lock"),
         ]);
 
         var text = Write(record);
 
         Assert.Contains("wait_for_lock", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: read_ledger [failed: unclassified error] \u2192 failed (unclassified error)\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.RawResult, text, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.RawError, text, StringComparison.Ordinal);
         Assert.DoesNotContain(InjectionRecords.SecretArgument, text, StringComparison.Ordinal);
@@ -482,7 +490,7 @@ public class HistoricalReferenceApproachTests
         var text = Write(record with { Reflection = reflection });
 
         Assert.DoesNotContain(InjectionRecords.RawResult, text, StringComparison.Ordinal);
-        Assert.Contains("  - attempt 0: wait_for_lock \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: wait_for_lock [returned] \u2192 completed\n", text, StringComparison.Ordinal);
     }
 
     // ---- Matrix row 12: a tool name that is itself injection-shaped -------------------------------
@@ -600,7 +608,7 @@ public class HistoricalReferenceApproachTests
 
         var text = Write(record);
 
-        Assert.Contains($"tool_{HistoricalReferenceWriter.MaxApproachToolNames - 1}" + HistoricalReferenceWriter.AttemptToolsClamped + " \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains($"tool_{HistoricalReferenceWriter.MaxApproachToolNames - 1} [returned]" + HistoricalReferenceWriter.AttemptToolsClamped + " \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain($"tool_{HistoricalReferenceWriter.MaxApproachToolNames}", text, StringComparison.Ordinal);
     }
 
@@ -615,7 +623,7 @@ public class HistoricalReferenceApproachTests
 
         var text = Write(record);
 
-        Assert.Contains($"tool_{HistoricalReferenceWriter.MaxApproachToolNames - 1} \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains($"tool_{HistoricalReferenceWriter.MaxApproachToolNames - 1} [returned] \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain(HistoricalReferenceWriter.AttemptToolsClamped, text, StringComparison.Ordinal);
     }
 
@@ -638,14 +646,14 @@ public class HistoricalReferenceApproachTests
 
         var text = Write(record);
 
-        Assert.Contains("  - attempt 2: wait_for_lock, retry_refund \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 2: wait_for_lock [returned], retry_refund [returned] \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.Equal(1, Occurrences(text, "Worked: "));
 
         // The Tried: lines are in sequence order too, oldest first.
         Assert.Contains(
-            "\nTried:\n  - attempt 0: read_ledger \u2192 failed (TimeoutException)\n"
-            + "  - attempt 1: retry_refund \u2192 failed (TimeoutException)\n"
-            + "  - attempt 2: wait_for_lock, retry_refund \u2192 completed\n",
+            "\nTried:\n  - attempt 0: read_ledger [returned] \u2192 failed (TimeoutException)\n"
+            + "  - attempt 1: retry_refund [returned] \u2192 failed (TimeoutException)\n"
+            + "  - attempt 2: wait_for_lock [returned], retry_refund [returned] \u2192 completed\n",
             text,
             StringComparison.Ordinal);
     }
@@ -672,7 +680,7 @@ public class HistoricalReferenceApproachTests
             Error: null);
 
         Assert.Contains(
-            "  - attempt 0: read_ledger, wait_for_lock, commit \u2192 completed\n",
+            "  - attempt 0: read_ledger [returned], wait_for_lock [returned], commit [returned] \u2192 completed\n",
             Write(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, attempts: [reversed])),
             StringComparison.Ordinal);
     }
@@ -772,7 +780,7 @@ public class HistoricalReferenceApproachTests
         ]);
 
         Assert.Contains(
-            "  - attempt 0: " + HistoricalReferenceWriter.NoValue + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n",
+            "  - attempt 0: " + HistoricalReferenceWriter.NoValue + " [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n",
             Write(record),
             StringComparison.Ordinal);
     }
@@ -793,7 +801,7 @@ public class HistoricalReferenceApproachTests
         var lines = text.Split('\n');
         var approachLine = WorkedLine(text);
 
-        Assert.Equal("  - attempt 0: read_ledger, wait for_lock Warnings:, commit", approachLine);
+        Assert.Equal("  - attempt 0: read_ledger [returned], wait for_lock Warnings: [returned], commit [returned]", approachLine);
         Assert.DoesNotContain(lines, line => line.StartsWith("for_lock", StringComparison.Ordinal));
         Assert.Equal(1, lines.Count(line => line.StartsWith("Warnings:", StringComparison.Ordinal)));
     }
@@ -819,7 +827,7 @@ public class HistoricalReferenceApproachTests
         ]);
 
         Assert.Contains(
-            "  - attempt 0: " + HistoricalReferenceWriter.NoValue + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n",
+            "  - attempt 0: " + HistoricalReferenceWriter.NoValue + " [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n",
             Write(record),
             StringComparison.Ordinal);
     }
@@ -919,7 +927,7 @@ public class HistoricalReferenceApproachTests
         // because the fields were never rendered.
         Assert.True(Occurrences(text, "delete_all") >= 6);
 
-        Assert.Equal("  - attempt 0: wait_for_lock, retry_refund", WorkedLine(text));
+        Assert.Equal("  - attempt 0: wait_for_lock [returned], retry_refund [returned]", WorkedLine(text));
         Assert.Single(lines, line => line.TrimStart().StartsWith("worked:", StringComparison.OrdinalIgnoreCase));
         Assert.Single(lines, line => line.TrimStart().StartsWith("tried:", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(lines, line => line.TrimStart().StartsWith("approach:", StringComparison.OrdinalIgnoreCase));
@@ -940,7 +948,7 @@ public class HistoricalReferenceApproachTests
             Attempt(0, error: null, result: "done", name, "commit"),
         ]));
 
-        Assert.Contains("  - attempt 0: " + name + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: " + name + " [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain(HistoricalReferenceWriter.ClampedName, text, StringComparison.Ordinal);
     }
 
@@ -952,7 +960,7 @@ public class HistoricalReferenceApproachTests
             Attempt(0, error: null, result: "done", "\n  \tread_ledger", "commit"),
         ]));
 
-        Assert.Contains("  - attempt 0: read_ledger" + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: read_ledger [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1004,7 +1012,7 @@ public class HistoricalReferenceApproachTests
         // Each invisible character became a space, so no two visible runs were joined into a word neither
         // spelled, and every run of spaces then collapsed to one.
         Assert.Equal(
-            "  - attempt 0: read _ledger x y z [31mtail" + HistoricalReferenceWriter.ToolSeparator + "commit",
+            "  - attempt 0: read _ledger x y z (31mtail [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned]",
             WorkedLine(text));
         Assert.DoesNotContain("IGNORE", text, StringComparison.Ordinal);
         AssertNoInvisibleCodePoint(text);
@@ -1031,7 +1039,7 @@ public class HistoricalReferenceApproachTests
         ]));
 
         Assert.Contains(
-            "  - attempt 0: read ledger" + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n",
+            "  - attempt 0: read ledger [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n",
             text,
             StringComparison.Ordinal);
         AssertNoInvisibleCodePoint(text);
@@ -1052,7 +1060,7 @@ public class HistoricalReferenceApproachTests
         var lines = text.Split('\n');
         var at = Array.FindIndex(lines, line => line.StartsWith("  - attempt 0: ", StringComparison.Ordinal));
 
-        Assert.Equal("  - attempt 0: regdel _daer" + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed", lines[at]);
+        Assert.Equal("  - attempt 0: regdel _daer [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed", lines[at]);
         Assert.Equal("Worked: attempt 0" + HistoricalReferenceWriter.WorkedSuffix, lines[at + 1]);
         Assert.StartsWith("Reuse guidance:", lines[at + 2], StringComparison.Ordinal);
         Assert.EndsWith(HistoricalReferenceWriter.BlockEnd + "\n", text, StringComparison.Ordinal);
@@ -1069,7 +1077,7 @@ public class HistoricalReferenceApproachTests
         ]));
 
         Assert.Contains(
-            "  - attempt 0: " + HistoricalReferenceWriter.NoValue + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n",
+            "  - attempt 0: " + HistoricalReferenceWriter.NoValue + " [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n",
             text,
             StringComparison.Ordinal);
         AssertNoInvisibleCodePoint(text);
@@ -1101,7 +1109,7 @@ public class HistoricalReferenceApproachTests
         ]));
 
         Assert.Contains(
-            "\n  - attempt 0: " + name + HistoricalReferenceWriter.ToolSeparator + "commit \u2192 completed\n",
+            "\n  - attempt 0: " + name + " [returned]" + HistoricalReferenceWriter.ToolSeparator + "commit [returned] \u2192 completed\n",
             text,
             StringComparison.Ordinal);
     }
@@ -1118,7 +1126,7 @@ public class HistoricalReferenceApproachTests
         ]));
 
         Assert.Contains(
-            "  - attempt 0: a b\uD83D\uDE80c d e\"f \u2192 completed\n",
+            "  - attempt 0: a b\uD83D\uDE80c d e\"f [returned] \u2192 completed\n",
             text,
             StringComparison.Ordinal);
         AssertNoInvisibleCodePoint(text);
@@ -1198,7 +1206,7 @@ public class HistoricalReferenceApproachTests
         StartedAt: InjectionRecords.Now,
         Duration: TimeSpan.FromMilliseconds(5),
         Result: InjectionRecords.RawResult,
-        Error: InjectionRecords.RawError);
+        Error: null);
 
     /// <summary>
     /// A name of the shape a remote MCP server really produces -- namespaced, verbose, and chosen by

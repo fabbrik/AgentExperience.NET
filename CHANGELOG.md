@@ -6,7 +6,35 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Each call on a `Tried:` line says how it ended (story 20.3)
+
+- **Behaviour change: per-call outcome markers.** On a record in the reader's own scope, every call on a `Tried:` line
+  is now followed by its own outcome, taken from the call's captured error: `[returned]`, or `[failed: <class>]` (only
+  the first token of the error's class by the same rule as the attempt's, so a marker is bounded and holds no comma;
+  never an excerpt, even under `FailureDetail = Excerpt`; `[failed]` under `None`). `[returned]` means the tool
+  returned rather than threw, not that the call achieved anything. An agent that failed and then succeeded inside one attempt now reads
+  `run_refund_check(strategy="retry-immediately") [failed: InvalidOperationException], run_refund_check(strategy="wait-for-lock") [returned] → completed`
+  instead of having to guess which call worked. The attempt's own ` → completed`/` → failed (…)` suffix is unchanged.
+  A call counts as failed only when the tool throws; a tool that reports failure in its result is marked `[returned]`.
+  Blocks grow by the markers' bytes (the three-record fixture: 1,886 to 1,968 bytes compact, 4,368 to 4,450 verbose),
+  under the same budgets and clamps.
+- **Hosts that parse `Tried:` lines:** each call now ends with ` [marker]` before the next `, ` or the ` → ` outcome;
+  match it with `HistoricalReferenceWriter.CallReturned`, `CallFailed` and `CallFailedClassPrefix` (closed by
+  `CallMarkerEnd`) rather than literal text.
+- **Borrowed records keep their layout.** A record shown through a grant has no per-call markers: the grant consents
+  to the working attempt's calls, not to failure classes. It renders as before except for the bracket mapping below.
+- **A tool name cannot spell a marker.** Square brackets in a tool name, and the look-alikes `［` `］`, `⟦` `⟧` and
+  `【` `】`, now render as `(` and `)`, as `→` and `,` were already neutralized, on every record's line. A written name
+  can still carry the library's own bracketed marks: `[delimiter removed]` and the `[...]` clamp mark.
+- **Not signed.** Provenance signing's claims version 2 encodes only whether each attempt failed, so the error classes
+  and per-call markers are not covered by the signature; a claims version 3 that covers them is planned.
+- **New constants** on `HistoricalReferenceWriter`: `CallReturned`, `CallFailed`, `CallFailedClassPrefix` and
+  `CallMarkerEnd`.
+- **Quick start.** The demo's tool now throws on a non-zero exit, so its failed call is recorded as failed, and its
+  stand-in model picks the call marked `[returned]` rather than the last call on the line.
+- **Decided, not built:** allowlisted argument values still never go into reflector input or stored lesson text. Text
+  stored at reflection time under the owner's allowlist would bypass a `LessonOnly` grant and a reader's narrower
+  `ApproachArguments`; values reach readers only through the grant-aware `Tried:` line.
 
 ## 0.1.0-preview.9
 

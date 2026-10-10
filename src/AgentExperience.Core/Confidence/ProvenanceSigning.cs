@@ -24,7 +24,11 @@ namespace AgentExperience.Core.Confidence;
 /// evidence count, its environment (all fields and attributes), its attempts (each tool call's name and argument
 /// values, through their JSON form, numbers canonicalized by exact decimal value), and its reflection's free text,
 /// evidence count, <see cref="Reflection.Authorship"/> and <see cref="Reflection.Producer"/>. Lifecycle status,
-/// counters and timestamps change through the lifecycle and stay unsigned. A version 1 signature (<see cref="ExperienceProvenanceSignature.HmacSha256"/>),
+/// counters and timestamps change through the lifecycle and stay unsigned. <b>Not covered:</b> the digest encodes only
+/// whether each attempt failed, never an attempt's or a tool call's error, so the error classes a <c>Tried:</c> line
+/// shows and each call's <c>[returned]</c>/<c>[failed: …]</c> marker, which injection derives from each call's
+/// <see cref="ToolCallRecord.Error"/>, are not signed: a party that can write the store can change them without
+/// breaking the signature. A claims version 3 that covers them is planned. A version 1 signature (<see cref="ExperienceProvenanceSignature.HmacSha256"/>),
 /// made by <c>0.1.0-preview.6</c> and earlier, still verifies for the finalization claims it covers.
 /// </para>
 /// <para>
@@ -621,7 +625,10 @@ internal sealed class ProvenanceSigner
         }
 
         // The attempts, as the Tried: and Worked: lines derive from them: each attempt's sequence number and whether it
-        // failed, and each tool call's sequence number, name and arguments (keys sorted, values canonical).
+        // failed, and each tool call's sequence number, name and arguments (keys sorted, values canonical). Not encoded,
+        // and so not signed by claims version 2: any error text, so neither the error classes nor each call's
+        // [returned]/[failed: ...] marker, which injection reads from ToolCallRecord.Error. Claims version 3 is planned
+        // to cover them; changing this encoding would invalidate every version 2 signature.
         if (record.Attempts is { } attempts)
         {
             buffer.WriteByte(1);

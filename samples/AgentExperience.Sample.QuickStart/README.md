@@ -40,7 +40,8 @@ and then prints the Historical Reference block run 2's model was sent. Run it tw
 
 By default the model is [ScriptedModel.cs](ScriptedModel.cs), a script, not a model. It reads only what a real model
 is sent: it tries the strategies in their listed order, one per call, unless its input holds a Historical Reference
-whose `Worked:` attempt names a strategy, which it then tries first. So run 2's change comes from what the library
+whose `Worked:` attempt has a call marked `[returned]` with a strategy, which it then tries first. (The tool throws on
+a non-zero exit, so run 1's wrong strategy is recorded, and marked, as a failed call.) So run 2's change comes from what the library
 retrieved and injected, not from the script, but it shows the loop working, not that it helps a real model. For that,
 see [Does it help?](../../README.md#does-it-help).
 

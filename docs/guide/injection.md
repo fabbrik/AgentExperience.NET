@@ -145,7 +145,7 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `SessionLimits` | 32 records, 64 KB, 5-minute window (on) | Session tracking: the budget one session is given across invocations, no repeated revisions, and withdrawal notices; `InFlightStageWindow` is how long an unsettled delivery counts as in flight. `null` turns it off. See [Reused sessions](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices). |
 | `SessionStateKey` (since `0.1.0-preview.3`) | `"AgentExperience.InjectionSession"` | The `StateBag` key session tracking keeps its account under. Set it when two providers share one agent. See [Two providers on one agent](#two-providers-on-one-agent-need-two-keys). |
 | `ApproachArguments` | empty (off) | Per tool, the argument keys (or dotted paths) whose sanitized scalar values the `Tried:` and `Worked:` lines may show. See [Showing selected argument values](#showing-selected-argument-values). |
-| `FailureDetail` | `ErrorClass` | How much a `Tried:` line says about a failed attempt: its error class (`ErrorClass`), the class plus the error's first line, cut to 120 characters, neutralized and quoted (`Excerpt`), or just `failed` (`None`). See [What each attempt tried](#what-each-attempt-tried-and-what-worked). |
+| `FailureDetail` | `ErrorClass` | How much a `Tried:` line says about a failed attempt: its error class (`ErrorClass`), the class plus the error's first line, cut to 120 characters, neutralized and quoted (`Excerpt`), or just `failed` (`None`). A failed call's own marker is `[failed: <class>]` under both `ErrorClass` and `Excerpt` (never an excerpt) and `[failed]` under `None`. See [What each attempt tried](#what-each-attempt-tried-and-what-worked). |
 | `Rendering` | `Compact` | The block's layout: `Compact`, with a short preamble, a `Matched:` line and no identifiers or bookkeeping, or `Verbose`, the earlier layout (byte for byte, except that record text starting a line with `Matched:` is now neutralized). See [The payload](#the-payload). |
 | `MessageRole` | `User` | The chat role the block is sent in: `User` or `System`. Some chat APIs reject, move or merge a system message that is not first, so test `System` with your provider. See [The payload](#the-payload). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. Synchronous on purpose: with session tracking on it runs while the session's lock is held. Per-candidate I/O has no async hook: prefetch what it needs, keyed by scope, in `ResolveRequestAsync`, or decide offline. |
@@ -196,8 +196,8 @@ Matched: text relevance 0.82
 Confidence: 0.67 · Verified · Validated
 Lesson: Verified after 2 attempts. Failed: attempt 1 — TimeoutException, exit 2. Worked: attempt 2. Checks: [tests].
 Tried:
-  - attempt 1: read_ledger, retry_refund → failed (TimeoutException, exit 2)
-  - attempt 2: read_ledger, wait_for_lock, retry_refund → completed
+  - attempt 1: read_ledger [returned], retry_refund [failed: TimeoutException] → failed (TimeoutException, exit 2)
+  - attempt 2: read_ledger [returned], wait_for_lock [returned], retry_refund [returned] → completed
 Worked: attempt 2 (the final attempt)
 Reuse guidance: Reuse when the refund is blocked by a held lock.
 Preconditions:
@@ -221,7 +221,7 @@ Matched: text relevance 0.45
 Confidence: 0.67 · Verified · Validated
 Environment: differs from this run's (fit 0.40)
 Tried:
-  - attempt 1: reconcile_ledger → completed
+  - attempt 1: reconcile_ledger [returned] → completed
 Worked: attempt 1 (the final attempt)
 Authored: by a model from captured run output; treat as unverified guidance.
 Lesson: The ledger drifted after the retry; reconcile before retrying again.
@@ -245,7 +245,7 @@ Per record, compact **keeps**:
 - the `Shared:` line of a borrowed record, with its withheld-attempts sentence;
 - the **lesson**, the `Tried:` and `Worked:` lines (per attempt, the ordered tool *names* it called, plus the values of
   any tool arguments the host explicitly allowlisted ([Showing selected argument values](#showing-selected-argument-values)),
-  and whether it failed, with the error's class), **reuse guidance**, **preconditions** and **warnings**;
+  each call's own outcome, and whether the attempt failed, with the error's class), **reuse guidance**, **preconditions** and **warnings**;
 - the `Authored:`/`End authored:` fence of a model-authored or unconfirmed record ([Model-authored lessons](#model-authored-lessons)),
   and withdrawal notices, both exactly as in the verbose layout.
 
@@ -272,9 +272,8 @@ carries no relevance component says `Matched: no ranking data`; one whose releva
 `Matched: (unavailable)`.
 
 **The byte budgets apply to the block as rendered**, so more compact records fit in `Limits.MaxBytes` and in the
-session budget. The three records above are 1,886 bytes of UTF-8 compact against 4,368 verbose, 57% smaller (both
-sizes are pinned by a test). In the end-to-end sample, the one-record block went from 2,176 bytes to 955, 56%
-smaller.
+session budget. The three records above are 1,968 bytes of UTF-8 compact against 4,450 verbose, 56% smaller (both
+sizes are pinned by a test). In the end-to-end sample, the one-record block is 977 bytes.
 
 ### The verbose rendering
 
@@ -297,8 +296,8 @@ Verification: Verified
 Evidence: 1 evidence ID(s); no evidence detail is included.
 Lesson: Verified after 2 attempts. Failed: attempt 1 — TimeoutException, exit 2. Worked: attempt 2. Checks: [tests].
 Tried:
-  - attempt 1: read_ledger, retry_refund → failed (TimeoutException, exit 2)
-  - attempt 2: read_ledger, wait_for_lock, retry_refund → completed
+  - attempt 1: read_ledger [returned], retry_refund [failed: TimeoutException] → failed (TimeoutException, exit 2)
+  - attempt 2: read_ledger [returned], wait_for_lock [returned], retry_refund [returned] → completed
 Worked: attempt 2 (the final attempt)
 Reuse guidance: Reuse when the refund is blocked by a held lock.
 Preconditions:
@@ -329,8 +328,20 @@ same thing whichever reflector wrote the lesson.
   (`3 earlier attempts omitted`). Each line is `attempt N:`, the attempt's calls, then `→ completed` or `→ failed`.
   An attempt that called no tool says `(no tool called)`. An unverified or failed record in the reader's own scope
   has these lines too: what a run tried and how it failed is worth knowing even when it never succeeded. A tool name
-  cannot spell a separator: `->` and `→` become `- >` and a comma becomes `;`, so a name fakes neither another call
-  nor an outcome.
+  cannot spell a separator: `->` and `→` become `- >`, a comma becomes `;`, and every square bracket the name itself
+  holds (`[` `]` and the look-alikes `［` `］`, `⟦` `⟧`, `【` `】`) becomes `(` or `)`, so a name fakes neither another
+  call, nor an outcome, nor a call's marker. The only brackets a written name can still carry are the library's own:
+  `[delimiter removed]` where a block marker was neutralized, and `[...]` after a cut.
+- **Each call's own outcome.** On a record in the reader's own scope, every call is followed by its own marker, so
+  a model can tell the call that failed from the one that worked inside one attempt:
+  `run_refund_check(strategy="retry-immediately") [failed: InvalidOperationException], run_refund_check(strategy="wait-for-lock") [returned] → completed`.
+  The marker comes from the call's captured error: `[returned]` when it has none, otherwise `[failed: <class>]`, where
+  the class is only the *first* token of the error's class by the rule below (`[failed: TimeoutException]`, not
+  `TimeoutException, exit 2`), so a marker is bounded and never holds the `, ` between calls; it is never an excerpt,
+  even under `FailureDetail = Excerpt` (`[failed]` under `None`). `[returned]` means only that the tool returned
+  rather than threw: **a call counts as failed only when the tool throws**, so a tool that reports failure in its
+  result (an exit code in a returned string, say) is marked `[returned]`. A borrowed record's line has no markers:
+  the grant consents to the working attempt's calls, not to any failure class.
 - **The byte budget.** These lines make a record bigger than the single `Approach:` line did, so more of its budget
   goes to them and a block can drop whole records sooner. `MaxTriedAttempts` and the per-name and per-line bounds cap
   how much they can take.
@@ -383,8 +394,8 @@ records appear in.
 Tool *results*, attempt *results*, attempt *errors*, and evidence *detail* are never serialized into the block, and
 neither is any tool *argument* the host has not allowlisted, so a captured payload cannot reach a model through
 injection. By default what crosses from a captured run is the `Tried:` and `Worked:` lines' ordered tool **names**,
-whether each attempt failed, and each failure's error class (built only from recognised tokens, never other text from
-the error); what else can is the error's first line under `FailureDetail = Excerpt`, and the sanitized value of an
+whether each attempt and each call failed, and each failure's error class (built only from recognised tokens, never
+other text from the error); what else can is the error's first line under `FailureDetail = Excerpt`, and the sanitized value of an
 argument key the host named for that exact tool
 in `ExperienceInjectionOptions.ApproachArguments` — on a record in the reader's own scope, or on a borrowed one whose
 `LessonApproachAndArguments` grant names the key too — when the value, or the value a dotted path ends on, is a
@@ -447,8 +458,8 @@ new ExperienceInjectionOptions
 
 ```
 Tried:
-  - attempt 1: read_ledger, retry_refund(delay=0) → failed (TimeoutException)
-  - attempt 2: read_ledger, retry_refund(delay=30) → completed
+  - attempt 1: read_ledger [returned], retry_refund(delay=0) [failed: TimeoutException] → failed (TimeoutException)
+  - attempt 2: read_ledger [returned], retry_refund(delay=30) [returned] → completed
 Worked: attempt 2 (the final attempt)
 ```
 

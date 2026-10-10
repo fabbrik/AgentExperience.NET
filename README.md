@@ -49,8 +49,8 @@ Matched: text relevance 1.00
 Confidence: 0.67 · Verified · Validated
 Lesson: Verified after 2 attempts. Failed: attempt 0 — exit 2. Worked: attempt 1. Checks: [refund-check].
 Tried:
-  - attempt 0: run_refund_check → failed (exit 2)
-  - attempt 1: run_refund_check → completed
+  - attempt 0: run_refund_check [returned] → failed (exit 2)
+  - attempt 1: run_refund_check [returned] → completed
 Worked: attempt 1 (the final attempt)
 Reuse guidance: Reuse only where the listed preconditions match, and re-run required checks [refund-check] to confirm the outcome in the new context.
 Preconditions:
@@ -63,8 +63,8 @@ Preconditions:
 ```
 
 Raw tool results never appear. An argument value appears only for a key kept at capture (`SanitizationAllowing`) and
-listed in `ExperienceInjectionOptions.ApproachArguments`; error text appears only as an excerpt, with
-`FailureDetail = Excerpt`. The [Injection guide](docs/guide/injection.md#what-the-agent-sees) covers the verbose layout, limits and labels.
+listed in `ExperienceInjectionOptions.ApproachArguments`; error text appears only as an excerpt of a failed attempt's
+error, with `FailureDetail = Excerpt`, and never in a call's `[failed: <class>]` marker (`[failed]` under `None`). The [Injection guide](docs/guide/injection.md#what-the-agent-sees) covers the verbose layout, limits and labels.
 
 ## Does it help?
 

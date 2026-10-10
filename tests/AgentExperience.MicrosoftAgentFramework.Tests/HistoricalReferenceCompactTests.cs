@@ -34,7 +34,7 @@ public class HistoricalReferenceCompactTests
         IReadOnlyDictionary<string, IReadOnlyList<string>>? grantArguments = null) =>
         new(record, ranking.Sum(component => component.Contribution), ranking, shared, null, disclosure, grantArguments);
 
-    private static ToolCallRecord Call(int attempt, int sequence, string name, object? delay = null)
+    private static ToolCallRecord Call(int attempt, int sequence, string name, object? delay = null, string? error = null)
     {
         var arguments = new Dictionary<string, object?>(StringComparer.Ordinal) { ["apiKey"] = InjectionRecords.SecretArgument };
         if (delay is not null)
@@ -49,8 +49,8 @@ public class HistoricalReferenceCompactTests
             Arguments: arguments,
             StartedAt: InjectionRecords.Now,
             Duration: TimeSpan.FromMilliseconds(5),
-            Result: InjectionRecords.RawResult,
-            Error: InjectionRecords.RawError);
+            Result: error is null ? InjectionRecords.RawResult : null,
+            Error: error);
     }
 
     private static Attempt Attempt(int sequence, string? error, params ToolCallRecord[] calls) => new(
@@ -80,7 +80,7 @@ public class HistoricalReferenceCompactTests
             reuseGuidance: "Reuse when the refund is blocked by a held lock.",
             attempts:
             [
-                Attempt(1, "System.TimeoutException: lock held by deploy-7 (exit 2)", Call(1, 0, "read_ledger"), Call(1, 1, "retry_refund", delay: 0)),
+                Attempt(1, "System.TimeoutException: lock held by deploy-7 (exit 2)", Call(1, 0, "read_ledger"), Call(1, 1, "retry_refund", delay: 0, error: "System.TimeoutException: lock held by deploy-7 (exit 2)")),
                 Attempt(2, null, Call(2, 0, "read_ledger"), Call(2, 1, "wait_for_lock"), Call(2, 2, "retry_refund", delay: 30)),
             ]);
         return record with
@@ -163,8 +163,8 @@ public class HistoricalReferenceCompactTests
         "Confidence: 0.67 \u00b7 Verified \u00b7 Validated\n" +
         "Lesson: Verified after 2 attempts. Failed: attempt 1 \u2014 TimeoutException, exit 2. Worked: attempt 2. Checks: [tests].\n" +
         "Tried:\n" +
-        "  - attempt 1: read_ledger, retry_refund \u2192 failed (TimeoutException, exit 2)\n" +
-        "  - attempt 2: read_ledger, wait_for_lock, retry_refund \u2192 completed\n" +
+        "  - attempt 1: read_ledger [returned], retry_refund [failed: TimeoutException] \u2192 failed (TimeoutException, exit 2)\n" +
+        "  - attempt 2: read_ledger [returned], wait_for_lock [returned], retry_refund [returned] \u2192 completed\n" +
         "Worked: attempt 2 (the final attempt)\n" +
         "Reuse guidance: Reuse when the refund is blocked by a held lock.\n" +
         "Preconditions:\n" +
@@ -188,7 +188,7 @@ public class HistoricalReferenceCompactTests
         "Confidence: 0.67 \u00b7 Verified \u00b7 Validated\n" +
         "Environment: differs from this run's (fit 0.40)\n" +
         "Tried:\n" +
-        "  - attempt 1: reconcile_ledger \u2192 completed\n" +
+        "  - attempt 1: reconcile_ledger [returned] \u2192 completed\n" +
         "Worked: attempt 1 (the final attempt)\n" +
         "Authored: by a model from captured run output; treat as unverified guidance.\n" +
         "Lesson: The ledger drifted after the retry; reconcile before retrying again.\n" +
@@ -213,9 +213,9 @@ public class HistoricalReferenceCompactTests
         var compact = Encoding.UTF8.GetByteCount(Render(Fixture(), HistoricalReferenceRendering.Compact));
         var verbose = Encoding.UTF8.GetByteCount(Render(Fixture(), HistoricalReferenceRendering.Verbose));
 
-        // Both sizes are pinned, so the ratio quoted in the docs cannot drift: 1,886 against 4,368 bytes, 57% smaller.
-        Assert.Equal(1886, compact);
-        Assert.Equal(4368, verbose);
+        // Both sizes are pinned, so the ratio quoted in the docs cannot drift: 1,968 against 4,450 bytes, 56% smaller.
+        Assert.Equal(1968, compact);
+        Assert.Equal(4450, verbose);
         Assert.True(compact <= verbose * 0.6, $"Compact {compact} bytes, verbose {verbose} bytes.");
     }
 
@@ -326,10 +326,10 @@ public class HistoricalReferenceCompactTests
         var none = Render(records, HistoricalReferenceRendering.Compact, detail: AttemptFailureDetail.None);
 
         Assert.Contains(
-            "  - attempt 1: read_ledger, retry_refund \u2192 failed (TimeoutException, exit 2) \"System.TimeoutException: lock held by deploy-7 (exit 2)\"\n",
+            "  - attempt 1: read_ledger [returned], retry_refund [failed: TimeoutException] \u2192 failed (TimeoutException, exit 2) \"System.TimeoutException: lock held by deploy-7 (exit 2)\"\n",
             excerpt,
             StringComparison.Ordinal);
-        Assert.Contains("  - attempt 1: read_ledger, retry_refund \u2192 failed\n", none, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 1: read_ledger [returned], retry_refund [failed] \u2192 failed\n", none, StringComparison.Ordinal);
     }
 
     [Fact]

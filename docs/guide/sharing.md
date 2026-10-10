@@ -164,9 +164,12 @@ not flagged, so a source that returns a foreign record without declaring a grant
 
 ## Disclosure levels
 
-A record's block includes its `Tried:` and `Worked:` lines — the ordered tool names each attempt called, whether it
-failed and the error's class, and what worked. For a borrowed record a grant shows no more than the verified working
-attempt (the owner's failed attempts and their error classes never cross a grant), and those are the *lending* scope's tool names, which (`hr_salary_lookup`, `stripe_charge_prod`) are themselves
+A record's block includes its `Tried:` and `Worked:` lines — the ordered tool names each attempt called, each call's
+own outcome, whether the attempt failed and the error's class, and what worked. For a borrowed record a grant shows no
+more than the verified working attempt (the owner's failed attempts and their error classes never cross a grant, and
+its line carries no per-call `[returned]`/`[failed: …]` markers: it renders as it did before calls had them, except that
+square brackets and their look-alikes in a tool name are now written as parentheses, as on every line),
+and those are the *lending* scope's tool names, which (`hr_salary_lookup`, `stripe_charge_prod`) are themselves
 information about its systems. So every grant carries an immutable disclosure level,
 `ExperienceGrantRequest.Disclosure`:
 

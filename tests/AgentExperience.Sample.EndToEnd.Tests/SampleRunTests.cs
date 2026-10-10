@@ -239,13 +239,16 @@ public class SampleRunTests
         Assert.DoesNotContain("Applicability", block, StringComparison.Ordinal);
 
         // Story 4.6: the verified attempt's tool names, in order, and derived from the record's own
-        // attempts rather than from the reflection's prose.
+        // attempts rather than from the reflection's prose. Story 20.3: each followed by its own outcome.
         var winning = record.Attempts.OrderBy(attempt => attempt.SequenceNumber).Last();
         Assert.Null(winning.Error);
+        Assert.All(winning.ToolCalls, call => Assert.Null(call.Error));
         var number = winning.SequenceNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
         Assert.Contains(
             "  - attempt " + number + ": "
-                + string.Join(HistoricalReferenceWriter.ToolSeparator, winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName))
+                + string.Join(
+                    HistoricalReferenceWriter.ToolSeparator,
+                    winning.ToolCalls.OrderBy(call => call.SequenceNumber).Select(call => call.ToolName + " " + HistoricalReferenceWriter.CallReturned))
                 + HistoricalReferenceWriter.OutcomeSeparator + HistoricalReferenceWriter.AttemptCompleted + "\n"
                 + "Worked: attempt " + number + HistoricalReferenceWriter.WorkedSuffix + "\n",
             block,

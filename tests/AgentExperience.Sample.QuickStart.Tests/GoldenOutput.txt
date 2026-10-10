@@ -15,7 +15,7 @@ Matched: text relevance 0.70
 Confidence: 0.67 · Verified · Validated
 Lesson: Verified after 1 attempt. Worked: attempt 0. Checks: [refund-released].
 Tried:
-  - attempt 0: run_refund_check(strategy="retry-immediately"), run_refund_check(strategy="wait-for-lock") → completed
+  - attempt 0: run_refund_check(strategy="retry-immediately") [failed: InvalidOperationException], run_refund_check(strategy="wait-for-lock") [returned] → completed
 Worked: attempt 0 (the final attempt)
 Reuse guidance: Reuse only where the listed preconditions match, and re-run required checks [refund-released] to confirm the outcome in the new context.
 Preconditions:

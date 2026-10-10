@@ -790,7 +790,8 @@ public static class LiveReuseExperiment
         var final = readBack.Record.Attempts.MaxBy(attempt => attempt.SequenceNumber);
         // Every apply_migration call that carried a strategy, in order: a call whose arguments did not bind carries none,
         // and a model may make a redundant call after the migration went live, which the record keeps (the final attempt's
-        // Tried: line lists every call of that attempt and does not mark which one succeeded).
+        // Tried: line lists every call of that attempt; each is marked [returned], since this harness's tools report a
+        // rejected strategy in their result rather than throwing, so the line does not say which one released the migration).
         List<string> strategies = final is null
             ? []
             : [.. final.ToolCalls

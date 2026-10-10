@@ -347,6 +347,11 @@ for nothing.
     between fields changes the digest. A run whose content has no such encoding (a lone surrogate, or an argument
     value with no JSON form) ends `Failed` at the create stage, with nothing stored.
 
+  **Not covered:** the content digest encodes only *whether* each attempt failed, never an attempt's or a tool call's
+  error. So the error classes a `Tried:` line shows, and each call's `[returned]`/`[failed: …]` marker, which injection
+  derives from each call's `Error`, are not signed: a party that can write the store can change them without breaking
+  the signature. A claims version 3 that covers them is planned.
+
   The signature is stored with the record as `ExperienceRecord.ProvenanceSignature` (key ID, algorithm and value) in
   the same create. Status, counters and timestamps change through the lifecycle and are not signed. Both stores refuse
   a scope field that is not well-formed UTF-16. Signatures made by `0.1.0-preview.6` and earlier carry `HMAC-SHA256`

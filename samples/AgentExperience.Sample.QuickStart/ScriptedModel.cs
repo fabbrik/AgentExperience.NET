@@ -12,7 +12,7 @@ namespace AgentExperience.Sample.QuickStart;
 /// <remarks>
 /// It reads only what a real model is sent, the messages. It tries the tool's strategies in their listed order, one
 /// call per turn, until one exits 0, with one exception: when its input holds a Historical Reference whose
-/// <c>Worked:</c> attempt names a strategy, it tries that one first. So whatever changes in the second run comes from
+/// <c>Worked:</c> attempt has a call marked <c>[returned]</c> with a strategy, it tries the first such one first. So whatever changes in the second run comes from
 /// what the library retrieved and injected, not from this script.
 /// </remarks>
 public sealed partial class ScriptedModel : IChatClient
@@ -54,7 +54,12 @@ public sealed partial class ScriptedModel : IChatClient
         })]));
     }
 
-    /// <summary>The strategy on the last call of the attempt the block's <c>Worked:</c> line names: the call that worked.</summary>
+    /// <summary>
+    /// The strategy of the first call marked <c>[returned]</c> that carries one, on the <c>Tried:</c> line of the attempt
+    /// the block's <c>Worked:</c> line names: the call that did not fail, wherever it sits on the line and wherever
+    /// <c>strategy</c> sits among its arguments. <see langword="null"/> when there is no such line or no returned call on
+    /// it carries a strategy.
+    /// </summary>
     internal static string? Remembered(string? block)
     {
         if (block is null || WorkedLine().Match(block) is not { Success: true } worked)
@@ -63,8 +68,19 @@ public sealed partial class ScriptedModel : IChatClient
         }
 
         var tried = Regex.Match(block, "^  - attempt " + worked.Groups[1].Value + ": (.*)$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
-        var strategies = StrategyArgument().Matches(tried.Groups[1].Value);
-        return strategies.Count > 0 ? strategies[^1].Groups[1].Value : null;
+        foreach (Match call in ReturnedCall().Matches(tried.Groups[1].Value))
+        {
+            // Walk the arguments one by one, so a value can never be read as a key.
+            foreach (Match argument in Argument().Matches(call.Groups[1].Value))
+            {
+                if (argument.Groups["key"].Value == "strategy" && argument.Groups["quoted"].Success)
+                {
+                    return argument.Groups["quoted"].Value;
+                }
+            }
+        }
+
+        return null;
     }
 
     public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
@@ -84,6 +100,14 @@ public sealed partial class ScriptedModel : IChatClient
     [GeneratedRegex(@"^Worked: attempt (\d+)", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex WorkedLine();
 
-    [GeneratedRegex("strategy=\"([^\"]+)\"", RegexOptions.CultureInvariant)]
-    private static partial Regex StrategyArgument();
+    /// <summary>
+    /// One call's argument list followed by its own <c>[returned]</c> marker. A quoted value is matched whole (the
+    /// writer never lets one hold a double quote), so a parenthesis or a marker inside a value cannot end the list.
+    /// </summary>
+    [GeneratedRegex("\\(((?:\"[^\"]*\"|\\([^()\"]*\\)|[^\"()])*)\\) \\[returned\\]", RegexOptions.CultureInvariant)]
+    private static partial Regex ReturnedCall();
+
+    /// <summary>One <c>key=value</c> of a call's argument list, each starting where the previous one ended.</summary>
+    [GeneratedRegex("\\G(?:, )?(?<key>[^=,\"]+)=(?:\"(?<quoted>[^\"]*)\"(?:\\[\\.\\.\\.\\])?|\\([^)]*\\)|[^,\"]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex Argument();
 }

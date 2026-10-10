@@ -649,7 +649,9 @@ public sealed class ExperienceInjectionOptions
     /// an exit code, an HTTP status, a POSIX errno name or a timeout, built only from tokens the library recognises
     /// and never from other text in the error. <see cref="AttemptFailureDetail.Excerpt"/> adds the error's first
     /// line, cut to <see cref="HistoricalReferenceWriter.MaxErrorExcerptLength"/> characters, neutralized and quoted;
-    /// <see cref="AttemptFailureDetail.None"/> shows <c>failed</c> alone.
+    /// <see cref="AttemptFailureDetail.None"/> shows <c>failed</c> alone. A failed call's own marker is
+    /// <c>[failed: &lt;class&gt;]</c> (the class's first token, never an excerpt) under both other values, and
+    /// <c>[failed]</c> under <see cref="AttemptFailureDetail.None"/>.
     /// </summary>
     /// <remarks>
     /// <see cref="AttemptFailureDetail.Excerpt"/> lets captured error text reach a later model: error messages often

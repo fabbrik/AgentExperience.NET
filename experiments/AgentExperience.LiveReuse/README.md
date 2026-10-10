@@ -238,8 +238,10 @@ Each run writes `results/<provider>-<model>-<date>.md` and a `.json` beside it (
 - **Per-trial results** has every trial, none dropped, with the sequence of strategies it tried.
 - **Stored record names** and **Block named** show every strategy on the final attempt's `apply_migration` calls, joined
   with ` > ` when there is more than one. The final attempt's `Tried:` line (the attempt the `Worked:` line names) still lists every call of that
-  attempt, in order, and does not mark which one succeeded (tool results are never injected), so a redundant extra call a model
-  makes after the migration went live appears on the line after the working strategy. The harness records the full
+  attempt, in order. Each call carries its own outcome marker, but this harness's tools report a rejected strategy in
+  their result rather than throwing, so every call is marked `[returned]` and the line does not tell which one released
+  the migration (tool results are never injected): a redundant extra call a model makes after the migration went live
+  appears on the line after the working strategy. The harness records the full
   sequence on both sides and refuses to report if the block's differs from its store's; *Followed* is scored against
   the first strategy on the line.
 - **Tokens and cost** splits learning from evaluation and names the price source.

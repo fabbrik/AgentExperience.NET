@@ -7,8 +7,8 @@ Matched: text relevance 1.00
 Confidence: 0.67 · Verified · Validated
 Lesson: Verified after 2 attempts. Failed: attempt 0 — exit 2. Worked: attempt 1. Checks: [refund-check].
 Tried:
-  - attempt 0: run_refund_check → failed (exit 2)
-  - attempt 1: run_refund_check → completed
+  - attempt 0: run_refund_check [returned] → failed (exit 2)
+  - attempt 1: run_refund_check [returned] → completed
 Worked: attempt 1 (the final attempt)
 Reuse guidance: Reuse only where the listed preconditions match, and re-run required checks [refund-check] to confirm the outcome in the new context.
 Preconditions:
