@@ -37,11 +37,15 @@
     <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
     <!-- The 4.2 sample's in-memory port doubles, reused rather than copied, exactly as story 4.4 does. -->
     <ProjectReference Include="..\..\samples\AgentExperience.Sample.EndToEnd\AgentExperience.Sample.EndToEnd.csproj" />
+    <!-- Story 20.4: the transfer experiment retrieves through the library's own in-memory store and candidate source,
+         never the sample's matcher. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Embedded so the harness reads the exact bytes it was built with, and reports their git blob id. -->
     <EmbeddedResource Include="preregistration.json" LogicalName="AgentExperience.LiveReuse.preregistration.json" />
+    <EmbeddedResource Include="preregistration.transfer.json" LogicalName="AgentExperience.LiveReuse.preregistration.transfer.json" />
   </ItemGroup>
 
   <ItemGroup>

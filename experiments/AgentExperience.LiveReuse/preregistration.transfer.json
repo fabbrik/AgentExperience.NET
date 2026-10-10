@@ -1,0 +1,103 @@
+{
+  "preregistrationVersion": "1",
+  "registeredFor": "AgentExperience.NET story 20.4 -- a transfer experiment: a lesson learned on one service, found by the library's own retrieval in a shared store, used on a different service that shares only a trait",
+  "registeredAgainstCommit": "registered in the commit that adds this file (parent c3dcb37)",
+  "registeredOn": "2026-10-10",
+  "liveResultsExistedAtRegistration": false,
+  "resultsNote": "no live results existed at registration; the offline scripted results are part of the design",
+  "hypothesis": "A real model handed, as a Historical Reference built by the library's own retrieval over a shared store of other experience, the verified experience of an earlier run on a different service in the same cluster needs fewer failed attempts to get a migration live on an unseen service than the same model with memory disabled and than the same model shown the same block with the working strategy withheld; the same store without the same-cluster record gives it no such benefit.",
+  "taskSetVersion": "transfer-clusters@1",
+  "clusters": 6,
+  "evaluationInstances": 12,
+  "distractors": 24,
+  "traitAssignmentSha256": "78d4d01e140a685d83cccfab968e10e7b9d7850ab4bdb9651ea245778243b938",
+  "taskTextSha256": "e930949f2a08c49880ca388706bfdd54eb1b7533e7a6acc3e2c52edac6f0860a",
+  "conditions": {
+    "control": "memory-disabled",
+    "treatment": "memory-enabled",
+    "placebo": "memory-placebo",
+    "mismatchedControl": "mismatched-trait"
+  },
+  "design": {
+    "trait": "Six clusters: halyard, keel, mizzen, bowsprit, capstan, taffrail. Every database proxy in a cluster accepts exactly one rollout strategy, and each cluster maps to a different one: cluster i accepts strategy (5i+1) mod 6 of the tool's listing order (halyard online-copy, keel in-place, mizzen batched-backfill, bowsprit shadow-table, capstan blue-green, taffrail expand-contract). Locked, with every service's cluster and every distractor's family, by traitAssignmentSha256; every rendered learning, evaluation and distractor text and every describe_service output is locked by taskTextSha256. Nothing the agent reads names a strategy; every task text and describe_service output names the service's cluster.",
+    "services": "One learning service per cluster (6) and two unseen evaluation services per cluster (12). Instance i runs in cluster i mod 6. Learning and evaluation task texts use different templates and different migrations; no evaluation service is one any learning run touched.",
+    "store": "One shared scope and one shared InMemoryExperienceRecordStore (the library's, AgentExperience.Storage.InMemory). It holds 24 distractor records first, from two task families other than migrations, two per cluster in each, whose texts name the same clusters: cache flushes (a simulated flush_read_cache tool) and config rollouts ('Roll out config change `c` on `svc` (cluster `k`)', a simulated push_config tool with no strategy argument, worded like the migration tickets as real tickets would be). Each is finalized through the library from a fixed script that calls its tool once, so no model call is spent on them. Then each learning run that verifies (memory disabled, the model under test) is finalized through the library. A learning run that does not verify stores nothing. The store therefore holds up to 6 learning records and 24 distractors against the injection cap of 8 records, so retrieval has to rank the same-cluster lesson past the others; the offline scripted run records where it does.",
+    "retrieval": "Every trial is a fresh container over the shared store with the library's InMemoryExperienceCandidateSource and RetrievalPolicy.Default with { Timeout = 15 s }: model-free retrieval is fast, and the 500 ms default would cut slow CI runners. Injection is the shipped ExperienceContextProvider with its default limits (8 records, 16 KB) and its EligibilityCheckTimeout set to 15 s, as in preregistration.json. The retrieval query is the evaluation task text. Nothing from the sample's matcher is used.",
+    "evaluationPhase": "Each evaluation instance runs its task, against a database proxy that accepts its cluster's strategy, once under each of four conditions. memory-disabled injects nothing. memory-enabled injects from the full store with the ApproachArguments allowlist { apply_migration: [strategy] }. memory-placebo injects from the same store with no allowlist, so its block shows the same records with no strategy. mismatched-trait injects, with the allowlist, from a copy of the full store without the learning record of the evaluation service's own cluster, so whatever it retrieves is another cluster's lesson or a distractor. Nothing else differs: same instructions, task text, tools, model settings.",
+    "conditionOrder": "derived: for instance i, the four trials run in the order [memory-disabled, memory-enabled, mismatched-trait, memory-placebo] rotated left by (i mod 4).",
+    "attempt": "As in preregistration.json (story 9.1): one or more model calls, each a fresh request carrying the task text and the work log; an attempt ends at its first apply_migration call, at a reply that calls no tool, or at 6 tool calls.",
+    "integrity": "Checked as each run ends, so a broken design stops before the rest of the budget is spent, and again over all trials at the end. The harness refuses to report if a memory-disabled trial or a learning run saw a block, if a block names a record its store does not hold, if memory-enabled and the placebo were shown different records, if the placebo's block names any strategy, if the mismatched store or block holds the same-cluster learning record or its block's working line names the cluster's strategy first, or if a memory-enabled block's first learning record does not show the strategies that record stored.",
+    "attemptLimits": {
+      "learning": 8,
+      "evaluation": 6,
+      "toolCallsPerAttempt": 6
+    },
+    "mismatchedControlLimits": "The mismatched-trait control is weaker than it looks. Under the bijection, its block can name the strategies of the other clusters' lessons, so a capable model can find the answer by elimination; and a model that follows the block pays for another cluster's strategy. A control that passes the gate can only move the conclusion to TransferBenefitNotAttributableToContent, which is a conservative error: it withholds a claim and never makes one. The harm comparison is reported for that reason."
+  },
+  "model": {
+    "temperature": 0,
+    "seed": 20260926,
+    "note": "As in preregistration.json, including amendment 1 there: the seed is sent only to providers that accept it."
+  },
+  "confirmatoryRunRule": "The first complete run per provider and model, as recorded in experiments/AgentExperience.LiveReuse/results/transfer-ledger.tsv, is the confirmatory result. Every run -- complete, stopped at a cap, refused or aborted -- is appended to that ledger before its first model call; every later run of the same provider and model is a replication, reported and never replacing the first.",
+  "budgetDefaults": {
+    "maxModelCalls": 500,
+    "maxTotalTokens": 4000000,
+    "note": "Overridable per run by AGENTEXPERIENCE_LIVE_MAX_CALLS and AGENTEXPERIENCE_LIVE_MAX_TOKENS. A run that reaches either cap stops before the next model call, writes its report, and evaluates no verdict."
+  },
+  "metrics": {
+    "failed_attempts": "PRIMARY. Per evaluation trial: the attempts that ended with the migration not live, until it went live or the limit (6) was reached; a trial that never got it live scores 6.",
+    "verified_success": "Per evaluation trial: whether the verification aggregator, reading exit-code evidence from the simulated database's state, verified the run. success_rate is its mean.",
+    "unauthorized_tool_requests": "Per evaluation trial: calls to force_apply_migration, every one refused.",
+    "same_cluster_injected": "Mechanism, never gated: whether the memory-enabled block held the learning record of the evaluation service's own cluster.",
+    "same_cluster_rank": "Mechanism, never gated: that record's 1-based position in the memory-enabled block.",
+    "followed_block": "Mechanism, never gated: whether a trial's first apply_migration strategy was the first strategy on the block's first working line.",
+    "followed_transferred_lesson": "Mechanism, never gated: whether a trial's first apply_migration strategy was the strategy the same-cluster learning record stored; undefined when that cluster stored none.",
+    "harm_mismatched_vs_disabled": "Reported, never gated: over the included instances, how many mismatched-trait trials failed more attempts than their memory-disabled pair, how many fewer, how many tied, and both means."
+  },
+  "primaryMetric": "failed_attempts",
+  "statisticalTest": {
+    "name": "exact one-sided sign test",
+    "pairing": "by instance: each included instance contributes one (treatment, control) pair of failed_attempts",
+    "ties": "dropped",
+    "alternative": "treatment failed_attempts < control failed_attempts",
+    "alpha": 0.05,
+    "justification": "As in preregistration.json. Each cluster's strategy recurs for two evaluation services and one learning record serves both, so pairs within a cluster are not independent and the p-value is a lower bound on the honest one."
+  },
+  "gate": {
+    "expression": "mean(failed_attempts | treatment) < mean(failed_attempts | control) AND sign_test_p(failed_attempts: treatment < control) <= 0.05 AND success_rate(treatment) >= success_rate(control) AND sum(unauthorized_tool_requests | treatment) <= sum(unauthorized_tool_requests | control)",
+    "appliedTo": [
+      "memory-enabled against memory-disabled (the reference comparison)",
+      "memory-enabled against memory-placebo (the content comparison)",
+      "mismatched-trait against memory-disabled (the control, expected NoDemonstratedBenefit)"
+    ],
+    "passVerdict": "BenefitDemonstrated",
+    "failVerdict": "NoDemonstratedBenefit",
+    "evaluatedOnce": true
+  },
+  "overallConclusion": {
+    "TransferBenefitAttributableToContent": "reference BenefitDemonstrated AND content BenefitDemonstrated AND mismatched-trait control NoDemonstratedBenefit",
+    "TransferBenefitNotAttributableToContent": "reference BenefitDemonstrated AND (content NoDemonstratedBenefit OR mismatched-trait control BenefitDemonstrated)",
+    "TransferNoDemonstratedBenefit": "reference NoDemonstratedBenefit",
+    "TransferInconclusive": "more than maxExcludedInstances instances excluded",
+    "TransferNotEvaluated": "the run stopped at a budget cap"
+  },
+  "exclusions": {
+    "rule": "An evaluation instance whose cluster's learning run did not verify (so its cluster has no record in the store) is excluded before evaluation and runs no evaluation trial, so it spends no budget. Any instance any of whose four trials errored (a provider or transport failure, recorded by exception type and HTTP status only) is excluded from every comparison; its trials are reported.",
+    "maxExcludedInstances": 4
+  },
+  "notGated": [
+    "tool_calls",
+    "model_calls",
+    "input_tokens",
+    "output_tokens",
+    "latency_ms",
+    "cost_usd",
+    "same_cluster_injected",
+    "same_cluster_rank",
+    "followed_block",
+    "followed_transferred_lesson",
+    "harm_mismatched_vs_disabled"
+  ],
+  "amendments": []
+}

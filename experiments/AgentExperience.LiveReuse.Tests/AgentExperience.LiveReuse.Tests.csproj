@@ -24,4 +24,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Story 20.4: the transfer experiment's offline scripted report, golden-filed. Embedded so the test compares against
+         the exact bytes it was built with; regenerated only with AGENTEXPERIENCE_TRANSFER_GOLDEN_UPDATE=1. -->
+    <EmbeddedResource Include="TransferGoldenReport.md" LogicalName="AgentExperience.LiveReuse.Tests.TransferGoldenReport.md" />
+  </ItemGroup>
+
 </Project>

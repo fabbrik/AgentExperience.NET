@@ -6,6 +6,21 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Experiments: a transfer experiment, pre-registered (story 20.4)
+
+- **`experiments/AgentExperience.LiveReuse` gains a second experiment, `--experiment transfer`**: a lesson learned on
+  one service has to be found by the library's own retrieval (`InMemoryExperienceRecordStore`,
+  `InMemoryExperienceCandidateSource`, `RetrievalPolicy.Default with { Timeout = 15 s }`, the shipped
+  `ExperienceContextProvider`) in one shared store that also holds other clusters' lessons and 24 distractors (cache
+  flushes and config rollouts), and has to help on an unseen service that shares only its cluster. Four conditions
+  (memory disabled, enabled, placebo, and a mismatched-trait control without the same-cluster lesson), the first
+  experiment's gate, `Transfer…` verdicts, its own pre-registration (`preregistration.transfer.json`, with trait and
+  task-text digests), ledger (`results/transfer-ledger.tsv`) and report prefix (`transfer-`). No live run has been made.
+- **Offline result, golden-tested:** with the texts as written, the config-rollout tickets, worded like the migration
+  tickets, fill all 8 slots of every memory-enabled block, so the same-cluster lesson is never injected and the scripted
+  run concludes `TransferNoDemonstratedBenefit` (2.50 mean failed attempts in every condition). Reported, not tuned.
+- The first experiment's behaviour, pre-registration, ledger and reports are unchanged. No library change.
+
 ### Provenance signing covers what the `Tried:` line shows (story 20.6)
 
 - **Claims version 3, signed by default.** With provenance signing configured, finalization now signs claims version 3

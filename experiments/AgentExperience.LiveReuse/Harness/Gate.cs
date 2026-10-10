@@ -28,6 +28,20 @@ public enum OverallConclusion
     NotEvaluated,
 }
 
+/// <summary>
+/// What the transfer experiment concluded, from its three comparisons, by the rule <c>preregistration.transfer.json</c>
+/// registers under <c>overallConclusion</c>. The same structure as <see cref="OverallConclusion"/>, with the mismatched-trait
+/// control in the negative control's place.
+/// </summary>
+public enum TransferConclusion
+{
+    TransferBenefitAttributableToContent,
+    TransferBenefitNotAttributableToContent,
+    TransferNoDemonstratedBenefit,
+    TransferInconclusive,
+    TransferNotEvaluated,
+}
+
 /// <summary>One instance's pair of evaluation trials in one comparison.</summary>
 public sealed record PairedObservation(
     int Instance,
@@ -121,8 +135,21 @@ public static class LiveGate
         LivePreregistration design,
         bool runComplete)
     {
-        ArgumentNullException.ThrowIfNull(pairs);
         ArgumentNullException.ThrowIfNull(design);
+        return Evaluate(treatment, control, pairs, excludedInstances, design.Alpha, design.MaxExcludedInstances, runComplete);
+    }
+
+    /// <summary>The same gate, with alpha and the exclusion limit given directly (the transfer experiment's own file supplies them).</summary>
+    public static ComparisonResult Evaluate(
+        string treatment,
+        string control,
+        IReadOnlyList<PairedObservation> pairs,
+        int excludedInstances,
+        double alpha,
+        int maxExcludedInstances,
+        bool runComplete)
+    {
+        ArgumentNullException.ThrowIfNull(pairs);
 
         double? Mean(Func<PairedObservation, double> select) => pairs.Count == 0 ? null : pairs.Average(select);
 
@@ -139,7 +166,7 @@ public static class LiveGate
                 treatmentUnauthorized, controlUnauthorized, null, [], ComparisonVerdict.NotEvaluated);
         }
 
-        if (excludedInstances > design.MaxExcludedInstances || pairs.Count == 0)
+        if (excludedInstances > maxExcludedInstances || pairs.Count == 0)
         {
             return new ComparisonResult(treatment, control, pairs.Count, excludedInstances, treatmentMean, controlMean, treatmentSuccess, controlSuccess,
                 treatmentUnauthorized, controlUnauthorized, null, [], ComparisonVerdict.Inconclusive);
@@ -154,8 +181,8 @@ public static class LiveGate
                 treatmentMean < controlMean,
                 $"{Format(treatmentMean)} against {Format(controlMean)}"),
             new(
-                $"sign_test_p(failed_attempts: {treatment} < {control}) <= {design.Alpha.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
-                sign.PValue <= design.Alpha,
+                $"sign_test_p(failed_attempts: {treatment} < {control}) <= {alpha.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+                sign.PValue <= alpha,
                 $"p = {sign.PValue.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)} ({sign.Wins} fewer, {sign.Losses} more, {sign.Ties} tied, of {pairs.Count} pairs)"),
             new(
                 $"success_rate({treatment}) >= success_rate({control})",
@@ -201,6 +228,22 @@ public static class LiveGate
             ? OverallConclusion.ReuseBenefitAttributableToContent
             : OverallConclusion.BenefitNotAttributableToContent;
     }
+
+    /// <summary>
+    /// The transfer experiment's rule, registered in <c>preregistration.transfer.json</c>: memory-enabled against
+    /// memory-disabled (the reference), memory-enabled against the placebo (content), and the mismatched-trait control
+    /// against memory-disabled (expected NoDemonstratedBenefit). A transfer benefit is credited to what the records say
+    /// only if the reference and content comparisons pass and the mismatched-trait control does not.
+    /// </summary>
+    public static TransferConclusion ConcludeTransfer(ComparisonVerdict reference, ComparisonVerdict content, ComparisonVerdict mismatchedControl) =>
+        Conclude(reference, content, mismatchedControl) switch
+        {
+            OverallConclusion.ReuseBenefitAttributableToContent => TransferConclusion.TransferBenefitAttributableToContent,
+            OverallConclusion.BenefitNotAttributableToContent => TransferConclusion.TransferBenefitNotAttributableToContent,
+            OverallConclusion.NoDemonstratedBenefit => TransferConclusion.TransferNoDemonstratedBenefit,
+            OverallConclusion.Inconclusive => TransferConclusion.TransferInconclusive,
+            _ => TransferConclusion.TransferNotEvaluated,
+        };
 
     internal static string Format(double? value) =>
         value is { } number ? number.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) : "undefined";

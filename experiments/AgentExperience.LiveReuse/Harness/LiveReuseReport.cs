@@ -11,7 +11,7 @@ namespace AgentExperience.LiveReuse.Harness;
 /// </summary>
 public static class LiveReuseReport
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -240,7 +240,7 @@ public static class LiveReuseReport
         return text.ToString();
     }
 
-    private static void Comparison(StringBuilder text, string title, ComparisonResult comparison, string? note)
+    internal static void Comparison(StringBuilder text, string title, ComparisonResult comparison, string? note)
     {
         text.Append($"### {title}: `{comparison.Treatment}` against `{comparison.Control}` -- {comparison.Verdict}")
             .Append(note is null ? string.Empty : $" ({note})").Append("\n\n");
@@ -322,25 +322,25 @@ public static class LiveReuseReport
             ? ((usage.InputTokens * input) + (usage.OutputTokens * output)) / 1_000_000d
             : null;
 
-    private static string Tried(RunRecord run) =>
+    internal static string Tried(RunRecord run) =>
         run.Changes.Count == 0 ? "-" : string.Join(" > ", run.Changes.Select(change => change.Strategy + (change.ExitCode == 0 ? " (live)" : string.Empty)));
 
-    private static string Status(RunRecord run) => run.Status == RunStatus.Completed ? "completed" : run.Status + ": " + run.Classification;
+    internal static string Status(RunRecord run) => run.Status == RunStatus.Completed ? "completed" : run.Status + ": " + run.Classification;
 
-    private static string YesNo(bool? value) => value switch { true => "yes", false => "no", null => "-" };
+    internal static string YesNo(bool? value) => value switch { true => "yes", false => "no", null => "-" };
 
-    private static string Dash(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "-";
+    internal static string Dash(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "-";
 
-    private static string Money(double? value) => value?.ToString("0.0000", CultureInfo.InvariantCulture) ?? "n/a";
+    internal static string Money(double? value) => value?.ToString("0.0000", CultureInfo.InvariantCulture) ?? "n/a";
 
-    private static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    internal static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
 
-    private static string Rate(int count, int of) => of == 0 ? "-" : string.Create(CultureInfo.InvariantCulture, $"{(double)count / of:0.000} ({count}/{of})");
+    internal static string Rate(int count, int of) => of == 0 ? "-" : string.Create(CultureInfo.InvariantCulture, $"{(double)count / of:0.000} ({count}/{of})");
 
-    private static string Mean(IReadOnlyList<double> values, string format = "0.000") =>
+    internal static string Mean(IReadOnlyList<double> values, string format = "0.000") =>
         values.Count == 0 ? "-" : values.Average().ToString(format, CultureInfo.InvariantCulture);
 
-    private static string Sd(IReadOnlyList<double> values)
+    internal static string Sd(IReadOnlyList<double> values)
     {
         if (values.Count < 2)
         {

@@ -51,16 +51,25 @@ internal sealed class MigrationEnvironment
     private readonly MigrationInstance _instance;
     private readonly string _acceptedStrategy;
     private readonly string _targetMigration;
+    private readonly string? _cluster;
     private readonly List<ChangeAttempt> _attempts = [];
     private bool _applied;
     private int _turn;
     private bool _changeThisTurn;
 
-    public MigrationEnvironment(MigrationInstance instance, string acceptedStrategy, string targetMigration)
+    /// <param name="instance">The service the database belongs to.</param>
+    /// <param name="acceptedStrategy">The one strategy this database accepts.</param>
+    /// <param name="targetMigration">The migration the run must get live.</param>
+    /// <param name="cluster">
+    /// The cluster <c>describe_service</c> reports, for the transfer experiment only; <see langword="null"/> (the reuse
+    /// experiment) leaves its output exactly as it was.
+    /// </param>
+    public MigrationEnvironment(MigrationInstance instance, string acceptedStrategy, string targetMigration, string? cluster = null)
     {
         _instance = instance;
         _acceptedStrategy = acceptedStrategy;
         _targetMigration = targetMigration;
+        _cluster = cluster;
 
         Apply = AIFunctionFactory.Create(
             ApplyMigration,
@@ -117,9 +126,13 @@ internal sealed class MigrationEnvironment
         instance.Facts.PeakWritesPerSecond,
         instance.Facts.ReadReplicas);
 
+    /// <summary>What <c>describe_service</c> returns in the transfer experiment: the same facts, then the cluster.</summary>
+    public static string Describe(MigrationInstance instance, string? cluster) =>
+        cluster is null ? Describe(instance) : Describe(instance) + "; cluster=" + cluster;
+
     private string DescribeServiceTool([Description("The service name, for example orders-api.")] string service) =>
         string.Equals(service, _instance.Service, StringComparison.Ordinal)
-            ? Describe(_instance)
+            ? Describe(_instance, _cluster)
             : "not found: no service named '" + service + "' is registered";
 
     private string ApplyMigration(

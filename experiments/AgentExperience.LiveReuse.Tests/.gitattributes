@@ -1,0 +1,2 @@
+# The golden report is compared byte for byte; a checkout that rewrote its line endings would fail it.
+TransferGoldenReport.md -text
