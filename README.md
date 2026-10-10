@@ -12,6 +12,28 @@ run on a similar task, it finds the lessons that apply and gives them to the age
 material. It plugs into [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) and stores
 everything in PostgreSQL (or in memory, for development).
 
+## Try it in a minute
+
+With only the .NET 10 SDK, no key and no network:
+
+```bash
+git clone https://github.com/fabbrik/AgentExperience.NET.git && cd AgentExperience.NET
+dotnet run --project samples/AgentExperience.Sample.QuickStart
+```
+
+It runs the [quick start](#quick-start)'s wiring twice on the same ticket, against a tool with one hidden working
+strategy. Run 1's outcome is verified by the tool's own state and stored as a lesson; run 2's model is handed it:
+
+```text
+Model: a scripted stand-in, not a real model (set OPENAI_API_KEY to use one)
+Run 1 (no memory yet): tried retry-immediately ✗ → wait-for-lock ✓  (1 failed attempt)
+Run 2 (lesson injected): tried wait-for-lock ✓  (0 failed attempts)
+```
+
+The stand-in is a script that tries first whatever strategy an injected block names, so this shows the loop working,
+not that it helps a real model ([Does it help?](#does-it-help) is about that). Set `OPENAI_API_KEY` to run it against
+one; see [the sample's README](samples/AgentExperience.Sample.QuickStart/README.md).
+
 ## What an agent sees
 
 This is the block the [end-to-end sample](samples/AgentExperience.Sample.EndToEnd/README.md) hands its second run,
@@ -43,6 +65,23 @@ Preconditions:
 Raw tool results never appear. An argument value appears only for a key kept at capture (`SanitizationAllowing`) and
 listed in `ExperienceInjectionOptions.ApproachArguments`; error text appears only as an excerpt, with
 `FailureDetail = Excerpt`. The [Injection guide](docs/guide/injection.md#what-the-agent-sees) covers the verbose layout, limits and labels.
+
+## Does it help?
+
+On one synthetic task, for the two models tried, yes. An opt-in live experiment
+([`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md)) gives a real model a tool
+with one hidden working strategy, on 12 task instances, and compares memory against no memory, a placebo block with the
+strategy withheld, and stale experience. Mean failed attempts per task:
+
+| Model | No memory | Memory | Placebo | Stale |
+| --- | ---: | ---: | ---: | ---: |
+| Gemini `gemini-3.1-flash-lite` ([report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md); pre-registered, confirmatory) | 2.17 | **0.00** | 2.42 | 2.75 |
+| Claude `claude-haiku-4-5` ([report](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md); exploratory replication) | 2.75 | **0.83** | 2.42 | 2.67 |
+
+Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
+the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
+general. A harder experiment, where the lesson has to transfer, is planned. The samples and the reuse baseline use
+scripted models: they show the loop works, not that it helps.
 
 ## Quick start
 
@@ -96,7 +135,8 @@ the previous one when it is a short follow-up), cleaned and cut to 512 UTF-16 co
 alone stores but injects nothing. Nothing throws into the agent: a slow store or `ResolveIdentity` means no memory for
 that run, reported through `options.Capture` and `options.Injection` callbacks. No tool argument value is kept until
 you allowlist it (`AgentExperienceDefaults.SanitizationAllowing("ticketId")`), and secret-named fields are redacted.
-The [one-call setup](docs/guide/deployment.md#the-one-call-setup) lists every option and default.
+The [one-call setup](docs/guide/deployment.md#the-one-call-setup) lists every option and default, and the
+[quick-start sample](samples/AgentExperience.Sample.QuickStart/README.md) runs this wiring.
 
 **With PostgreSQL**, add the `AgentExperience.Storage.Postgres` package. You also supply two connection strings:
 `ownerConnectionString`, for the role that applies the schema on every deploy, and `appConnectionString`, for the
@@ -160,15 +200,6 @@ preview), and the tenant-isolation and sanitization rules. Supported: .NET 10, P
 `Microsoft.Agents.AI` 1.22.0 and later 1.x ([Compatibility evidence](docs/compatibility-evidence.md)). What no code
 change can remove is stated exactly in [Known limits and documented boundaries](docs/known-limits.md); what earlier
 previews fixed is in [Limits history](docs/limits-history.md).
-
-## Evidence of benefit
-
-The sample and the reuse baseline use scripted models: they show the loop works, not that it helps a real model. An
-opt-in live experiment ([`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md))
-found a benefit from the injected content on one synthetic task, against two models, one run each: see the
-[Gemini](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md) and
-[Claude](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md) reports and their
-limitations before relying on it.
 
 ## Documentation
 

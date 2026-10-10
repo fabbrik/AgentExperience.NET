@@ -48,6 +48,7 @@ dotnet test tests/AgentExperience.MicrosoftAgentFramework.Tests
 dotnet test tests/AgentExperience.Storage.InMemory.Tests
 dotnet test tests/AgentExperience.ReuseBaseline
 dotnet test tests/AgentExperience.Release.Tests
+dotnet test tests/AgentExperience.Sample.QuickStart.Tests
 dotnet test experiments/AgentExperience.LiveReuse.Tests
 dotnet test tests/AgentExperience.CompatibilityProof --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.Sample.EndToEnd.Tests --filter "FullyQualifiedName!~Postgres"
@@ -87,6 +88,7 @@ tests/
   AgentExperience.Storage.InMemory.Tests/   the in-memory run of the conformance suite, the production guard, search and concurrency; no Docker
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
   AgentExperience.Sample.EndToEnd.Tests/    the sample's seven stages, its determinism, and what it does not claim
+  AgentExperience.Sample.QuickStart.Tests/  the quick-start demo in stand-in mode: run 2 fails less because of the injected lesson, and its golden output
   AgentExperience.ReuseBaseline/            the controlled reuse experiment and its golden reports
   AgentExperience.RetrievalQuality/         the retrieval benchmark: a labelled corpus, recall and precision per adapter, golden reports (docs/benchmarks.md)
   AgentExperience.Release.Tests/            release gates: the public API baseline, pin agreement, the security-suite map, workflow guards, documentation links
@@ -94,6 +96,7 @@ tests/
   AgentExperience.Upgrade.Seeders/          one console program per published preview that ships a migration, pinning that preview's packages from nuget.org; built and run by the upgrade tests, not in the solution
 samples/
   AgentExperience.Sample.EndToEnd/          one runnable command: capture, verify, reflect, persist, retrieve, inject, record reuse
+  AgentExperience.Sample.QuickStart/        the README quick start's wiring, run twice on one ticket: the one-minute demo
 experiments/
   AgentExperience.LiveReuse/                opt-in, pre-registered reuse experiment against a real model; never run by CI
   AgentExperience.LiveReuse.Tests/          that experiment's harness, proven offline against scripted models
