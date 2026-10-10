@@ -56,7 +56,13 @@ public sealed record TransferPreregistration(
         return Parse(buffer.ToArray());
     }
 
-    /// <summary>How many amendments were made after results already existed.</summary>
+    /// <summary>
+    /// The git blob of the file as first registered, when it has since been amended (<c>originalRegistrationGitBlobId</c>);
+    /// <see langword="null"/> while it is as registered.
+    /// </summary>
+    public string? OriginalGitBlobId { get; init; }
+
+    /// <summary>How many amendments were made after live results already existed.</summary>
     public int AmendmentsAfterResults => Amendments.Count(amendment => amendment.ResultsExisted);
 
     /// <summary>Parses <paramref name="bytes"/>. Every field is required; nothing is defaulted.</summary>
@@ -148,7 +154,10 @@ public sealed record TransferPreregistration(
                 conclusion.EnumerateObject().ToDictionary(property => property.Name, property => String(conclusion, property.Name), StringComparer.Ordinal),
                 amendments,
                 LivePreregistration.ComputeGitBlobId(bytes),
-                bytes.Length);
+                bytes.Length)
+            {
+                OriginalGitBlobId = root.TryGetProperty("originalRegistrationGitBlobId", out _) ? String(root, "originalRegistrationGitBlobId") : null,
+            };
         }
     }
 

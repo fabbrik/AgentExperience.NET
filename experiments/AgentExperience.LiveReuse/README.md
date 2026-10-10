@@ -256,6 +256,7 @@ numbers are properties of the script and prove only the harness.
 **Status: in progress, no live results yet.** Pre-registered in
 [`preregistration.transfer.json`](preregistration.transfer.json) (story 20.4), registered in the commit that adds the
 file (parent `c3dcb37`). No live results existed at registration; the offline scripted results are part of the design.
+One amendment (2026-10-10, story 20.7, before any live run) gates injected records on the run's own tools; see below.
 Nothing below is a model result.
 
 The experiment above shows a model acting on a lesson from **its own service**, retrieved out of a store that holds
@@ -284,7 +285,11 @@ ledger, reports and tests are unchanged).
 - *Retrieval and injection.* Every trial is a fresh container over the shared store with the library's
   `InMemoryExperienceCandidateSource` and `RetrievalPolicy.Default with { Timeout = 15 s }` (model-free retrieval is
   fast; the 500 ms default would cut slow CI runners), and the shipped `ExperienceContextProvider` with its default
-  limits (8 records, 16 KB) and a 15 s eligibility-check timeout. The query is the evaluation task text.
+  limits (8 records, 16 KB) and a 15 s eligibility-check timeout. The query is the evaluation task text. Since
+  amendment 1, the provider is configured with `ReceivingAgent = new ReceivingAgentCapabilities { UseRunTools = true }`,
+  as a real MAF host would be: a record whose verified working approach calls a tool the evaluation agent was not
+  given this run (`push_config`, `flush_read_cache`) is omitted as `ToolUnavailable` before the 8-record limit is
+  taken, and lower-ranked records fill its slot.
 - *Conditions*, per instance, in the rotated order: `memory-disabled`; `memory-enabled` (the full store, allowlist
   `{apply_migration: [strategy]}`); `memory-placebo` (the same store, no allowlist); and `mismatched-trait` (a copy of
   the store **without** the learning record of the instance's own cluster, allowlist on), so whatever it retrieves is
@@ -321,26 +326,43 @@ dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --exper
 A live transfer run appends to its own ledger, `results/transfer-ledger.tsv`, before its first model call, and writes
 `results/transfer-<provider>-<model>-<date>.md` and `.json`. Its confirmatory rule is its own: the **first complete
 run per provider and model** in that ledger. The pre-registered budget defaults are 500 model calls and 4,000,000
-tokens (the blocks are longer: eight records each); `AGENTEXPERIENCE_LIVE_MAX_CALLS` and
+tokens (the blocks are longer: up to eight records each); `AGENTEXPERIENCE_LIVE_MAX_CALLS` and
 `AGENTEXPERIENCE_LIVE_MAX_TOKENS` override them. Without a provider configured it prints `SKIPPED: ...` and exits 0.
 
 **What the offline run shows.** The scripted operator tries the first strategy on the block's first working line,
 then the listing order. Its report is golden-tested
 ([`TransferGoldenReport.md`](../AgentExperience.LiveReuse.Tests/TransferGoldenReport.md)). With the task texts as
-written, once, before they were first run:
+written, once, before they were first run, and the run-tools gate of amendment 1:
 
-- **The same-cluster lesson is never injected.** In all 12 memory-enabled blocks, all 8 slots go to config-rollout
-  distractors: their tickets share the migration tickets' wording (`roll out`, `cluster`, `live in production`), and
-  the in-memory candidate source's word matching ranks them above every migration lesson. A config rollout of the
-  instance's own cluster ranks first in 8 of 12 blocks; in the other 4 (the `mizzen` and `bowsprit` instances), the
-  first is `accountsapi`'s or `paymentsui`'s, whose descriptions share a word with the query (`migration`, `column`).
-- So nothing transfers: mean failed attempts are 2.50 in every condition, every pair ties, the harm comparison shows 0
-  worse and 0 better of 12, and the conclusion is `TransferNoDemonstratedBenefit`.
-- This is a result about retrieval, not a defect of the harness, and it is reported, not fixed: the texts are not
-  edited to change a rank. A live run would measure a model against the same blocks.
+- **No distractor takes a slot.** Every distractor's working approach calls `push_config` or `flush_read_cache`, which
+  the evaluation agent does not have, so every block holds the learning records only: 6 in memory-enabled and the
+  placebo, 5 in mismatched-trait.
+- **The same-cluster lesson is injected in all 12 memory-enabled blocks, and ranked first in 11.** In the twelfth
+  (`mailqueue`, cluster `mizzen`) it ranks third, behind `stockpile`'s and `ledgerpost`'s lessons, and the script
+  follows the wrong one: 5 failed attempts, as with memory disabled.
+- Mean failed attempts: 0.42 memory-enabled, 2.50 memory-disabled, 2.50 placebo, 3.00 mismatched-trait. The reference
+  and content comparisons pass the gate (9 fewer, 3 tied of 12, p = 0.0020), the mismatched-trait control does not, and
+  the harm comparison shows the control 6 worse and 0 better of 12: a script that follows another cluster's lesson pays
+  for it. The conclusion is `TransferBenefitAttributableToContent`.
+- This is a property of the scripted operator, which follows the block by construction. It shows the gate now lets
+  the right lesson reach the block (by removing the distractors, not by ranking it higher); only a live run can say
+  whether a model uses it.
+
+**Amendment 1 (2026-10-10, before any live run).** As first registered (PR #118), the offline run was a negative about
+retrieval: in all 12 memory-enabled blocks all 8 slots went to config-rollout distractors, whose tickets share the
+migration tickets' wording (`roll out`, `cluster`, `live in production`) and which the in-memory candidate source's word
+matching ranks above every migration lesson. The same-cluster lesson was never injected, mean failed attempts were 2.50
+in every condition, and the conclusion was `TransferNoDemonstratedBenefit`. Those records could not have helped: their
+working approach used tools the evaluation agent lacks. The task texts were not edited; instead the library gained a
+tool gate that runs before the record limit and reads the run's tools (story 20.7), and the harness turns it on, as a
+real host would. The amendment, with the before and after results, is in the pre-registration's `amendments` list.
 
 **What it does not show.** Anything about a real model: the script follows the block by construction, so the offline
-numbers measure where the library's retrieval ranks the same-cluster lesson, and prove the harness. The trait is named
+numbers measure where the library's retrieval and gate put the same-cluster lesson, and prove the harness. Nor, since
+amendment 1, much about ranking: the run-tools gate removes all 24 distractors before ranking matters, so they no
+longer test whether retrieval ranks the lesson above look-alike tickets (as first registered, it did not). The one
+ranking contest left is among the 6 learning records, and there `mailqueue`'s lesson still ranks third. The gain from
+0 of 12 to 12 of 12 is the gate's, not retrieval's. The trait is named
 in the text (`cluster ...`), so a live result would show that a model finds and trusts a lesson keyed by a named trait,
 not that it discovers an unnamed one. Retrieval here is the in-memory store's word matching; PostgreSQL full-text or
 vector search would rank differently. The two instances of a cluster share one learning record, so their pairs are not

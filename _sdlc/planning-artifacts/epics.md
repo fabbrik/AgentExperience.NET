@@ -2047,3 +2047,13 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 **Given** records signed under versions 1 and 2, and nodes on an earlier build during a rolling deploy
 **When** they are verified
 **Then** version 1 and version 2 signatures keep verifying exactly as before (version 2 still confirms content, and the docs say its error text is unsigned). `SignClaimsVersion` accepts 1, 2 or 3, so a rollout can sign version 2 until every node verifies version 3. The upgrade suite proves that version 1 and version 2 signed records in an upgraded database still verify as before. (No seeded preview signs, so these records are written by the current store; the encoding of the payload's `Error` fields has not changed since they were introduced.)
+
+### Story 20.7: Only Inject Lessons the Agent Can Act On
+
+**Traces:** FR5 · **Depends on:** 20.4 · **Added:** 2026-10-10, after 20.4's offline run showed boilerplate-sharing distractors whose tools the agent lacks filling every injection slot
+
+**Acceptance Criteria:**
+
+**Given** a receiving-agent capability gate
+**When** ranked records are selected for the block
+**Then** the gate runs before the record limit, so a record whose working approach uses a tool the agent lacks never takes a slot and lower-ranked eligible records backfill from a bounded wider window. With `UseRunTools`, the available tools are this run's own MAF tools, intersected with any declared set. With no gate configured, output is byte-identical. The transfer experiment enables it through a recorded pre-registration amendment, made before any live result.

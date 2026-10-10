@@ -375,8 +375,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     {
         public ReceivingAgentCapabilities() { }
         public System.Collections.Generic.IReadOnlySet<string>? AvailableTools { get; init; }
+        public int GatedRetrievalWindowMultiplier { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ToolRiskClass? MaxRiskClass { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, AgentExperience.MicrosoftAgentFramework.Injection.ToolRiskClass> ToolRiskClasses { get; init; }
+        public bool UseRunTools { get; init; }
     }
     public enum ToolRiskClass
     {

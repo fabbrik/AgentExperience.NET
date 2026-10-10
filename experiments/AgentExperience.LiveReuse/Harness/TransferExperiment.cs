@@ -294,7 +294,8 @@ public static partial class TransferExperiment
                         Inject: condition != design.ControlLabel,
                         Finalize: false,
                         ShowStrategy: condition != design.PlaceboLabel,
-                        instance.Cluster);
+                        instance.Cluster,
+                        UseRunTools: true);
 
                     var outcome = await LiveReuseExperiment.RunCoreAsync(
                         settings, metered, ++sequence, "evaluation", taskSet.ToMigrationInstance(instance), condition, hidden,
