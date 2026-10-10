@@ -28,14 +28,17 @@ public interface IExperienceCandidateSource
 {
     /// <summary>
     /// Finds records within exactly <see cref="ExperienceCandidateQuery.Scope"/> whose indexed task
-    /// text matches <see cref="ExperienceCandidateQuery.TaskText"/>, whose
+    /// text matches <see cref="ExperienceCandidateQuery.TaskText"/> -- contains at least
+    /// <see cref="ExperienceCandidateQuery.MinimumMatchedTerms"/> of its terms, capped at their number -- whose
     /// <see cref="ExperienceRecord.Status"/> is one of
     /// <see cref="ExperienceCandidateQuery.EligibleStatuses"/>, and whose
     /// <see cref="ExperienceRecord.ReuseConfidence"/> is at least
     /// <see cref="ExperienceCandidateQuery.MinimumConfidence"/>, leaving out model-authored records when
     /// <see cref="ExperienceCandidateQuery.ExcludeModelAuthored"/> is set. At most
     /// <see cref="ExperienceCandidateQuery.Limit"/> records are returned, the strongest text matches
-    /// first.
+    /// first: of two records whose matched terms lie in the same fields, the one covering more of the query's terms
+    /// comes first. A source may weight fields (the in-memory source counts a task-summary term above a lesson term), so
+    /// across fields fewer terms can outrank more.
     /// </summary>
     /// <param name="authorization">What the host has established the caller may do.</param>
     /// <param name="query">The scoped search. Never treated as authority.</param>
@@ -111,6 +114,39 @@ public sealed record ExperienceCandidateQuery(
     /// </para>
     /// </remarks>
     public bool ExcludeModelAuthored { get; init; }
+
+    /// <summary>The <see cref="MinimumMatchedTerms"/> used when none is specified.</summary>
+    public const int DefaultMinimumMatchedTerms = 3;
+
+    /// <summary>
+    /// A <see cref="MinimumMatchedTerms"/> that asks for every query term: the cap lowers it to the query's term count,
+    /// so a record must contain all of them, which is how both shipped sources matched up to 0.1.0-preview.8.
+    /// </summary>
+    public const int AllTerms = int.MaxValue;
+
+    /// <summary>
+    /// How many distinct query terms a record must contain to be a candidate, capped at the number of terms the query
+    /// has, so a one-word query still matches with any minimum. At least 1; defaults to
+    /// <see cref="DefaultMinimumMatchedTerms"/>. <see cref="AllTerms"/> (or any value at least the query's term count)
+    /// asks for every term.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A query's terms are the source's, not a count of the words typed: the in-memory source counts distinct whole
+    /// words, less stopwords and one-character words; the PostgreSQL source counts distinct stems, less stopwords, with
+    /// a hyphenated compound counted once. A query with no terms left matches nothing, whatever this is.
+    /// </para>
+    /// <para>
+    /// A record that contains only some terms ranks below one that contains more in the same fields: both shipped
+    /// sources report a coverage-based <see cref="ExperienceCandidate.Relevance"/>. The source keeps the order it gave
+    /// records containing every term when every term was required (on PostgreSQL, for a plain-word request), but the
+    /// PostgreSQL source now reports every such record at relevance 1, so Core's ranking no longer sees text strength
+    /// between full matches and orders them by its other components. The minimum keeps one-word coincidences out of a long request's candidates. It is
+    /// a filter like <see cref="MinimumConfidence"/>, applied before <see cref="Limit"/>. A value below 1 is
+    /// <see cref="ExperienceStoreOutcome.Invalid"/>.
+    /// </para>
+    /// </remarks>
+    public int MinimumMatchedTerms { get; init; } = DefaultMinimumMatchedTerms;
 }
 
 /// <summary>

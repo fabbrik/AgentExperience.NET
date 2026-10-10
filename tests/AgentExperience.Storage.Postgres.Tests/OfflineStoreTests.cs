@@ -391,6 +391,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.LibraryReflectorAuthorshipScriptName,
                 PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName,
                 PostgresExperienceRecordSchema.TextSearchFunctionScriptName,
+                PostgresExperienceRecordSchema.TextSearchAnyTermScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1276,8 +1277,17 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     [Fact]
     public void Text_search_function_script_is_the_canonical_hardened_definition()
     {
-        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName);
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName);
         var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        // 0024's signature is dropped first (its argument list differs, so CREATE OR REPLACE would leave it beside the
+        // new one), and nothing else is dropped.
+        Assert.StartsWith(
+            "DROP FUNCTION IF EXISTS agent_experience.search_experience_text(\n" +
+            "    text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean);\n",
+            statements.TrimStart('\n', '\r'),
+            StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(statements, "DROP "));
 
         // The function verbatim -- the definition the privileges call verifies -- and nothing else is created or granted.
         Assert.Equal(1, CountOccurrences(statements, TextSearchFunction.Ddl));
@@ -1290,7 +1300,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.DoesNotContain("CREATE TABLE", statements, StringComparison.Ordinal);
         Assert.Contains(
             "REVOKE ALL ON FUNCTION agent_experience.search_experience_text(\n" +
-            "    text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean) FROM PUBLIC;",
+            "    text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean, integer) FROM PUBLIC;",
             statements,
             StringComparison.Ordinal);
 
@@ -1324,8 +1334,28 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Equal(2, CountOccurrences(TextSearchFunction.Body, TextSearchFunction.Parameterize(PostgresExperienceCandidateSource.SearchFilters) + ";"));
         Assert.Contains(PostgresExperienceCandidateSource.ModelAuthoredPredicate, PostgresExperienceCandidateSource.ExcludingSearchFilters, StringComparison.Ordinal);
 
+        // The match is any-term with the minimum, built from lexemes, never websearch_to_tsquery's parser.
+        Assert.DoesNotContain("websearch_to_tsquery", TextSearchFunction.Body, StringComparison.Ordinal);
+        Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
+
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    /// <summary>
+    /// Story 20.2: 0024 was journaled by released previews, so it stays byte for byte as shipped (line endings aside);
+    /// 0025 replaces what it created.
+    /// </summary>
+    [Fact]
+    public void The_all_terms_text_search_script_is_frozen()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName)
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(script)));
+
+        Assert.Equal("a5933dcaf2057aea7fe3f6add1c0355fb32d6fc53591c46a14632f0c1c15c856", hash);
+        Assert.Contains("websearch_to_tsquery", script, StringComparison.Ordinal);
     }
 
     [Fact]

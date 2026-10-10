@@ -545,6 +545,27 @@ public class ExperienceRetrievalServiceTests
     }
 
     [Fact]
+    public async Task The_minimum_of_matched_terms_must_be_at_least_one_defaults_to_three_and_is_pushed_into_the_search()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MinimumMatchedTerms = 0 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MinimumMatchedTerms = -1 });
+        Assert.Equal(3, ExperienceCandidateQuery.DefaultMinimumMatchedTerms);
+        Assert.Equal(ExperienceCandidateQuery.DefaultMinimumMatchedTerms, RetrievalPolicy.Default.MinimumMatchedTerms);
+        Assert.Equal(ExperienceCandidateQuery.DefaultMinimumMatchedTerms, new ExperienceCandidateQuery(RequestScope, TaskText, [ExperienceStatus.Validated], 0d).MinimumMatchedTerms);
+
+        foreach (var minimum in new[] { 1, ExperienceCandidateQuery.AllTerms })
+        {
+            var source = new FakeCandidateSource(Found());
+            var service = new ExperienceRetrievalService(
+                source, RetrievalPolicy.Default with { MinimumMatchedTerms = minimum }, RankingWeights.Default, new FixedTimeProvider(Now));
+
+            await service.RetrieveAsync(Request());
+
+            Assert.Equal(minimum, Assert.Single(source.Queries).MinimumMatchedTerms);
+        }
+    }
+
+    [Fact]
     public void The_abandoned_search_cap_must_be_strictly_positive_and_defaults_to_16()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MaxAbandonedSearches = 0 });

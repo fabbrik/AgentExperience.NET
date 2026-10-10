@@ -113,7 +113,9 @@
     }
     public sealed class ExperienceCandidateQuery : System.IEquatable<AgentExperience.Abstractions.ExperienceCandidateQuery>
     {
+        public const int AllTerms = 2147483647;
         public const int DefaultLimit = 50;
+        public const int DefaultMinimumMatchedTerms = 3;
         public const int MaxLimit = 200;
         public const int MaxTaskTextLength = 4096;
         public const int MinLimit = 1;
@@ -123,6 +125,7 @@
         public bool ExcludeModelAuthored { get; init; }
         public int Limit { get; init; }
         public double MinimumConfidence { get; init; }
+        public int MinimumMatchedTerms { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }
         public string TaskText { get; init; }
     }

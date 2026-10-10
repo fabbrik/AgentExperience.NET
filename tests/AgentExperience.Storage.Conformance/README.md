@@ -74,20 +74,25 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 **Candidate source**
 
 - It filters by exact scope, by the requested statuses, and by minimum confidence (the minimum itself is included).
-- It ranks before it limits, returns the strongest match first with a strictly higher relevance than a clearly
-  weaker one, and gives each candidate a relevance in [0, 1].
+- It ranks before it limits and gives each candidate a relevance in [0, 1]. Of two records whose matched terms lie in
+  the same fields, the one covering more of the query's terms comes first with a strictly higher relevance; a source
+  may weight fields, so across fields fewer terms may outrank more (the in-memory source counts a task-summary term
+  above a lesson term). Of two records covering every term, the one with every term repeated in its task ID, summary
+  and lesson comes before one that says each term once in a long summary, with a relevance not lower.
 - With `ExcludeModelAuthored`, it leaves out every record whose reflection authorship is anything but
   `Deterministic`, or whose producer starts with `AgentExperience.ChatClientExperienceReflector/` (the library's own
   model-backed reflector; a third-party producer is never read), before the limit: with model-authored records ranked above deterministic ones and `Limit = N`, it
   returns the top N deterministic records and no model-authored one. A record with no reflection is kept. Without it
   (the default), the search is unchanged and model-authored records are returned like any other.
-- A record that matches none of the query's terms is not returned. Text that matches nothing is `Found` with no
-  candidates. Each candidate is the record exactly as stored.
-- Blank or over-long text, an empty or undefined status list, a minimum confidence outside [0, 1] and a limit
-  outside its bounds are `Invalid`.
+- A record that matches none of the query's terms is not returned, nor one that contains fewer than
+  `MinimumMatchedTerms` of them, a minimum capped at the query's term count (so a one-term query matches on its term
+  whatever the minimum, and `AllTerms` requires every term). Text that matches nothing is `Found` with no candidates.
+  Each candidate is the record exactly as stored.
+- Blank or over-long text, an empty or undefined status list, a minimum confidence outside [0, 1], a limit
+  outside its bounds and a `MinimumMatchedTerms` below 1 are `Invalid`.
 - The suite assumes only that the task summary is searched: every record it seeds carries its matching words
-  there. Exact relevance values are **not** part of the contract, and neither is whether a record that matches
-  only some of the terms is returned.
+  there. Exact relevance values are **not** part of the contract, nor whether two records covering the same terms
+  report equal relevances.
 
 **Reuse-feedback store**
 
@@ -108,7 +113,7 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 These are real behaviours of the PostgreSQL adapter, but other stores do not have to share them. They stay
 covered by that adapter's own tests:
 
-- **Full-text relevance values**: the numbers `ts_rank_cd` produces, stemming, stopwords and query syntax.
+- **Full-text relevance values**: the coverage values, the `ts_rank_cd` tie-break, stemming and stopwords.
 - **Grants and the grant access log**: sharing across scopes, disclosure levels and access rows. The suite uses
   no grants, so every read it makes is an own-scope read.
 - **Erasure and tombstones** written by `DeleteAsync`, which is not a port member.

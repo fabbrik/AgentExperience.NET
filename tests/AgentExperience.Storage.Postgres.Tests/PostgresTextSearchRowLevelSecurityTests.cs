@@ -102,6 +102,100 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
         }
     }
 
+    /// <summary>
+    /// Story 20.2: partial matches, the minimum and its cap, stopwords and operator characters give the same candidates,
+    /// order and relevance through the function as through the store's own statement, at every minimum.
+    /// </summary>
+    [Fact]
+    public async Task Any_term_matching_answers_exactly_the_same_with_row_level_security_on_as_off()
+    {
+        await using var world = await WorldAsync("tsrls_anyterm", enable: false);
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var startup = await world.SeedAsync(scope, "ef-migration-startup", ReflectionAuthorship.Deterministic, "EF Core migration fails on startup in production");
+        await world.SeedAsync(scope, "migration-lock", ReflectionAuthorship.Deterministic, "A migration waits on a lock held by another deploy");
+        await world.SeedAsync(scope, "flaky-timeout", ReflectionAuthorship.Deterministic, "Flaky integration test times out on the build agent");
+        var docker = await world.SeedAsync(scope, "docker-size", ReflectionAuthorship.Deterministic, "Reduce the Docker image size with a multi-stage build");
+        await world.SeedAsync(scope, "cert", ReflectionAuthorship.Deterministic, "Rotate the signing certificate before it expires");
+
+        string[] texts =
+        [
+            "after deploying, the app crashes at startup because the EF Core migration did not run and the build agent logs show a lock",
+            "migration",
+            "how do I do this",
+            "\"quoted\" -migration or startup",
+            "it's o'neil's C:\\build\\agent \\ ' '' \\' docker",
+        ];
+        int[] minimums = [1, 2, 3, ExperienceCandidateQuery.AllTerms];
+
+        var requests = (from text in texts from minimum in minimums select Query(scope) with { TaskText = text, MinimumMatchedTerms = minimum }).ToList();
+        var off = new List<string>();
+        foreach (var query in requests)
+        {
+            off.Add(await world.AnswerAsync(Authorize(tenant), query));
+        }
+
+        // The fixture is not vacuous: the long request finds several records at minimum 1, fewer at 3, none with every
+        // term; stopwords alone find nothing.
+        Assert.True(off[0].Split('\n').Length >= 4, off[0]);
+        Assert.True(off[2].Split('\n').Length < off[0].Split('\n').Length, off[2]);
+        Assert.Equal(string.Empty, off[3]);
+        Assert.All(Enumerable.Range(8, 4), i => Assert.Equal(string.Empty, off[i]));
+
+        // Operator characters and quotes/backslashes are words: at minimum 1 each request finds its record.
+        Assert.Contains(startup.ToString(), off[12], StringComparison.Ordinal);
+        Assert.Contains(docker.ToString(), off[16], StringComparison.Ordinal);
+
+        await world.ApplyAsync(enable: true);
+        Assert.True(await world.RoutesThroughFunctionAsync(tenant));
+        for (var i = 0; i < requests.Count; i++)
+        {
+            Assert.Equal(off[i], await world.AnswerAsync(Authorize(tenant), requests[i]));
+        }
+    }
+
+    /// <summary>
+    /// Story 20.2: a database at <c>0024</c> with row-level security on and the old function granted. Migrating applies
+    /// <c>0025</c>, which drops the old function and its grant: searches fall back to the store's statement under the
+    /// policies until the privileges call is re-run, which then passes the body check and routes through the new one.
+    /// </summary>
+    [Fact]
+    public async Task A_database_at_0024_migrated_to_0025_searches_through_the_new_function_once_the_privileges_call_is_re_run()
+    {
+        await using var world = await WorldAsync("tsrls_upgrade");
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var full = await world.SeedAsync(scope, "refund-lock", ReflectionAuthorship.Deterministic);
+        var partial = await world.SeedAsync(scope, "invoice", ReflectionAuthorship.Deterministic, "Invoice export stuck on a lock");
+        var partialQuery = Query(scope) with { TaskText = "refund ticket stuck invoice", MinimumMatchedTerms = 2 };
+
+        // Back to 0024 as a deployment still on it has it: 0025 unjournaled, the new function gone, 0024's function
+        // created by its own frozen script and granted to the application role, row-level security on.
+        await ExecuteAsync(world.Owner, $"DROP FUNCTION {TextSearchFunction.Signature}");
+        await ExecuteAsync(world.Owner, PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName));
+        await ExecuteAsync(world.Owner, $"GRANT EXECUTE ON FUNCTION {OldSignature} TO \"{world.AppRole}\"");
+        await ExecuteAsync(world.Owner, $"DELETE FROM agent_experience.schema_versions WHERE scriptname LIKE '%{PostgresExperienceRecordSchema.TextSearchAnyTermScriptName}'");
+        Assert.True(await RowSecurityOnAsync(world.Owner));
+        Assert.False(await world.RoutesThroughFunctionAsync(tenant));
+
+        // Migrated: 0025 alone is applied, 0024's function and its grant are gone, and the new one is not yet granted.
+        var applied = await ExperienceSchemaMigrator.MigrateAsync(world.Owner, CancellationToken.None);
+        Assert.Equal([PostgresExperienceRecordSchema.TextSearchAnyTermScriptName], applied.AppliedScripts);
+        Assert.Equal(DBNull.Value, await ScalarAsync<object>(world.Owner, "SELECT to_regprocedure(@signature)::text", ("signature", OldSignature)));
+        Assert.False(await ScalarAsync<bool>(world.Owner, $"SELECT has_function_privilege('{world.AppRole}', to_regprocedure(@signature), 'EXECUTE')", ("signature", TextSearchFunction.Signature)));
+
+        // Text search still works before the privileges call: the store's own statement, under the policies.
+        Assert.False(await world.RoutesThroughFunctionAsync(tenant));
+        var before = await world.AnswerAsync(Authorize(tenant), partialQuery);
+        Assert.Contains(full.ToString(), before, StringComparison.Ordinal);
+        Assert.Contains(partial.ToString(), before, StringComparison.Ordinal);
+
+        // The privileges call accepts 0025's function byte for byte, grants it, and the same answer comes through it.
+        await world.ApplyAsync(enable: true);
+        Assert.True(await world.RoutesThroughFunctionAsync(tenant));
+        Assert.Equal(before, await world.AnswerAsync(Authorize(tenant), partialQuery));
+    }
+
     // ---------------------------------------------------------------- the function's own bounds
 
     [Fact]
@@ -441,6 +535,10 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
 
     private static ExperienceCandidateQuery Query(Scope scope) => new(scope, Text, Eligible, 0d);
 
+    /// <summary><c>0024</c>'s signature, before <c>0025</c> added the minimum.</summary>
+    private const string OldSignature =
+        "agent_experience.search_experience_text(text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean)";
+
     /// <summary>A clock the test moves by hand.</summary>
     private sealed class ManualClock(DateTimeOffset start) : TimeProvider
     {
@@ -484,6 +582,7 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
         parameters.Add(new NpgsqlParameter<int>("limit", ExperienceCandidateQuery.MaxLimit));
         parameters.Add(new NpgsqlParameter<bool>("exclude_model_authored", exclude));
         parameters.Add(new NpgsqlParameter<bool>("with_grants", withGrants));
+        parameters.Add(new NpgsqlParameter<int>("minimum_matched_terms", ExperienceCandidateQuery.DefaultMinimumMatchedTerms));
     }
 
     private async Task<RlsWorld> WorldAsync(string purpose, bool enable = true)
@@ -510,14 +609,14 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
                 CancellationToken.None);
 
         /// <summary>A validated record with a reflection, created through the store as the application role.</summary>
-        public async Task<Guid> SeedAsync(Scope scope, string taskId, ReflectionAuthorship authorship)
+        public async Task<Guid> SeedAsync(Scope scope, string taskId, ReflectionAuthorship authorship, string summary = "A refund ticket stuck on a lock")
         {
             var runId = Guid.NewGuid();
             var record = Minimal(scope, status: ExperienceStatus.Validated) with
             {
                 SourceRunId = runId,
                 TaskId = taskId,
-                TaskSummary = "A refund ticket stuck on a lock",
+                TaskSummary = summary,
                 ReuseConfidence = taskId.Length % 2 == 0 ? 0.75 : 0.9,
                 Reflection = new Reflection(
                     Guid.NewGuid(), runId, "Check the lock table before retrying.", [], [], [], [], null, [],

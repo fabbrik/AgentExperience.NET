@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0024` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0025` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -696,6 +696,30 @@ policies do not bind:
 - No table, column or index changes and no table lock. The header records the security review; see
   [Enabling row-level security](deployment.md#enabling-row-level-security).
 
+`0025` replaces this function; `0024` itself is never edited.
+
+### 0025: text search on any term
+
+`0025_text_search_any_term.sql` makes the text search under row-level security match on any term and rank by coverage,
+as the store's own statement now does (see [How the text channel matches](retrieval.md#how-the-text-channel-matches)):
+
+- The query's terms are the distinct lexemes of `ts_debug('english', task_text)`, less a hyphenated compound's parts
+  (`hword_part`, `hword_asciipart`, `hword_numpart`), so a compound is one term. A row is found through an OR of
+  them, each a quoted `tsquery` literal, so the GIN indexes still answer it and nothing in the request is an operator;
+  it is kept when its vector contains at least `p_minimum_matched_terms` of them, capped at their number. Relevance is
+  the share it contains (`real`, in (0, 1]); the order is relevance, then `ts_rank_cd` (against the AND of the lexemes
+  for a full match, so for a plain-word request full matches keep their old order, and against their OR for a
+  partial one), then
+  `experience_id`. A request with no lexemes builds no `tsquery` and matches nothing.
+- The function gains `p_minimum_matched_terms integer`, so the script **drops `0024`'s signature** (`IF EXISTS`) and
+  creates the new one, built from the same SQL constants as the store's statement; everything else about it is as in
+  `0024`: `SECURITY DEFINER`, PL/pgSQL, `STABLE`, `search_path` pinned to `pg_catalog, pg_temp`, `EXECUTE` revoked from
+  `PUBLIC`, verified byte for byte by the privileges call.
+- Dropping the old function drops the application role's `EXECUTE` on it. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating** when row-level security is on; until then searches run the
+  store's own statement under the policies (correct, without the GIN index).
+- No table, column or index changes and no table lock. The header restates the security review for the replacement.
+
 ## Script comments that were written before the work they point at shipped
 
 Because a journaled script is never edited, a few script *comments* still describe later work as future work, and
@@ -731,7 +755,9 @@ what each one now means. None of them changes what a script does; they are comme
 - **Query order** is newest `CreatedAt` first, then `ExperienceId` in PostgreSQL `uuid` byte order, which differs
   from .NET `Guid` comparison. `Limit` must be from 1 to 500 (default 50). `Statuses` is either null (all statuses)
   or a non-empty list.
-- **Search order** is descending `ts_rank_cd` relevance, then `ExperienceId` in PostgreSQL `uuid` byte order. `Limit`
+- **Search order** is descending relevance (the share of the query's terms a record contains), then `ts_rank_cd`, then
+  `ExperienceId` in PostgreSQL `uuid` byte order. A record must contain at least `MinimumMatchedTerms` of the query's
+  terms (default 3, capped at their number; at least 1). `Limit`
   must be from 1 to 200 (default 50), and `EligibleStatuses` must be non-empty — an empty set is `Invalid` rather
   than widened to "every status", so a caller can never accidentally ask for records it considers ineligible. With
   `ExcludeModelAuthored`, `0021`'s flag filters before the limit, like the status list and the confidence floor, and

@@ -168,29 +168,122 @@ public sealed class PostgresExperienceCandidateSourceTests
         Assert.All(result.Candidates, candidate => Assert.InRange(candidate.Relevance, 0d, 1d));
         Assert.All(result.Candidates, candidate => Assert.True(candidate.Relevance > 0d, "a matched record must report a positive relevance."));
 
-        // Strongest match first, and the reported order is the relevance order.
+        // Both contain every query lexeme, so both cover the query fully; ts_rank_cd, which rewards the lexemes
+        // occurring close together, breaks the tie in favour of the record whose summary says "refund policy".
         Assert.Equal([strong, weak], result.Candidates.Select(candidate => candidate.Record.ExperienceId));
-        Assert.True(result.Candidates[0].Relevance > result.Candidates[1].Relevance);
+        Assert.All(result.Candidates, candidate => Assert.Equal(1d, candidate.Relevance));
     }
 
     [Fact]
-    public async Task Relevance_stays_strictly_below_one_however_heavily_the_text_repeats_the_query()
+    public async Task Relevance_is_the_share_of_the_query_s_lexemes_a_record_contains_however_often_it_repeats_them()
     {
-        // ts_rank_cd is unbounded above; only the normalization flag keeps it inside [0, 1). Without it a
-        // document this saturated ranks far above 1, and the clamp in C# would hide that by reporting
-        // exactly 1 -- so this asserts a value strictly below 1, which only the flag can produce.
+        // Coverage, not density: a record repeating the query's words hundreds of times covers it no more than one
+        // that says each once, and one with two of the three lexemes covers two thirds of it.
         var tenant = NewTenant();
         var scope = Scope(tenant);
         var repeated = string.Join(' ', Enumerable.Repeat("refund policy ticket", 200));
-        await SeedAsync(scope, taskId: "refund-policy-ticket", summary: repeated, lesson: repeated);
+        var saturated = await SeedAsync(scope, taskId: "refund-policy-ticket", summary: repeated, lesson: repeated);
+        var twoOfThree = await SeedAsync(scope, taskId: "triage", summary: "Refund tickets pile up", lesson: "Escalate");
 
-        var result = await SearchAsync(tenant, scope, "refund policy ticket");
+        var result = await SearchAsync(tenant, scope, "refund policy ticket", minimumMatchedTerms: 2);
 
-        var candidate = Assert.Single(result.Candidates);
-        Assert.True(candidate.Relevance > 0d, "a saturated match must report a positive relevance.");
-        Assert.True(
-            candidate.Relevance < 1d,
-            $"relevance must stay strictly below 1; ts_rank_cd's normalization is what bounds it, got {candidate.Relevance}.");
+        Assert.Equal([saturated, twoOfThree], result.Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Equal(1d, result.Candidates[0].Relevance);
+        Assert.Equal((double)(2f / 3f), result.Candidates[1].Relevance);
+    }
+
+    [Fact]
+    public async Task A_partial_match_at_the_minimum_is_a_candidate_ranked_below_a_full_one_and_one_below_it_is_not()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        const string Request =
+            "after the deploy the refund worker hangs because the invoice export holds the ledger lock and nothing retries it";
+        var full = await SeedAsync(
+            scope, taskId: "t1", summary: "deploy refund worker hangs invoice export holds ledger lock nothing retries", lesson: "x");
+        var three = await SeedAsync(scope, taskId: "t2", summary: "refund ledger lock", lesson: "x");
+        var one = await SeedAsync(scope, taskId: "t3", summary: "ledger reconciliation", lesson: "x");
+        await SeedAsync(scope, taskId: "t4", summary: "certificate rotation", lesson: "x");
+
+        var result = await SearchAsync(tenant, scope, Request, minimumMatchedTerms: 2);
+        Assert.Equal([full, three], result.Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Equal(1d, result.Candidates[0].Relevance);
+
+        // Eleven lexemes once stopwords go; refund, ledger and lock are three of them, as a real.
+        Assert.Equal((double)(3f / 11f), result.Candidates[1].Relevance);
+
+        // At minimum 1 one shared lexeme is enough, and it ranks last.
+        Assert.Equal(
+            [full, three, one],
+            (await SearchAsync(tenant, scope, Request, minimumMatchedTerms: 1)).Candidates.Select(candidate => candidate.Record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task A_hyphenated_compound_is_one_term_so_sharing_only_it_does_not_meet_a_minimum_of_two()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var id = await SeedAsync(scope, taskId: "image", summary: "Use a multi-stage build", lesson: "Copy only the output");
+
+        // "multi-stage" also yields the lexemes "multi" and "stage"; counted as three it would pass a minimum of 2 alone.
+        const string Request = "why does the multi-stage pipeline keep timing out on the agent";
+        Assert.Empty((await SearchAsync(tenant, scope, Request, minimumMatchedTerms: 2)).Candidates);
+        Assert.Equal([id], (await SearchAsync(tenant, scope, Request, minimumMatchedTerms: 1)).Candidates.Select(candidate => candidate.Record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task Full_matches_are_ordered_by_ts_rank_cd_against_the_AND_of_the_terms_as_before()
+    {
+        // Against the AND, b (the two terms close together, twice) outranks a; against the OR, a (five refunds) would
+        // outrank b. Full matches keep the order every-terms matching gave them, at every minimum.
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var a = await SeedAsync(scope, taskId: "t1", summary: "refund refund refund refund refund policy", lesson: "x");
+        var b = await SeedAsync(scope, taskId: "t2", summary: "refund policy x x x x x x x x x refund policy", lesson: "x");
+
+        Assert.Equal(
+            [b, a],
+            (await SearchAsync(tenant, scope, "refund policy", minimumMatchedTerms: ExperienceCandidateQuery.AllTerms)).Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Equal([b, a], (await SearchAsync(tenant, scope, "refund policy")).Candidates.Select(candidate => candidate.Record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task With_every_term_required_only_full_matches_come_back_in_the_order_they_always_had()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var strong = await SeedAsync(scope, taskId: "refund-policy", summary: "Refund policy questions", lesson: "Apply the refund policy");
+        var weak = await SeedAsync(scope, taskId: "review", summary: "Weekly review", lesson: "A refund may follow a policy change");
+        await SeedAsync(scope, taskId: "refund", summary: "Refund", lesson: "Refund");
+
+        var all = await SearchAsync(tenant, scope, "refunds policies", minimumMatchedTerms: ExperienceCandidateQuery.AllTerms);
+
+        Assert.Equal([strong, weak], all.Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Equal(
+            [strong, weak],
+            (await SearchAsync(tenant, scope, "refunds policies", minimumMatchedTerms: 2)).Candidates.Select(candidate => candidate.Record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task The_minimum_is_capped_at_the_query_s_lexeme_count_so_a_short_query_still_matches()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var id = await SeedAsync(scope, taskId: "refund-ticket", summary: "Resolve a refund", lesson: "Retry the refund");
+
+        Assert.Equal([id], (await SearchAsync(tenant, scope, "refunds", minimumMatchedTerms: 2)).Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Equal([id], (await SearchAsync(tenant, scope, "the refund", minimumMatchedTerms: ExperienceCandidateQuery.AllTerms)).Candidates.Select(candidate => candidate.Record.ExperienceId));
+        Assert.Empty((await SearchAsync(tenant, scope, "refund invoice", minimumMatchedTerms: ExperienceCandidateQuery.AllTerms)).Candidates);
+    }
+
+    [Fact]
+    public async Task A_minimum_below_one_is_invalid_before_any_connection_opens()
+    {
+        var tenant = NewTenant();
+        var result = await SearchAsync(tenant, Scope(tenant), "refund", minimumMatchedTerms: 0);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Contains(result.Errors, error => error.Path == "MinimumMatchedTerms");
     }
 
     [Fact]
@@ -230,15 +323,24 @@ public sealed class PostgresExperienceCandidateSourceTests
         var scope = Scope(tenant);
         var id = await SeedAsync(scope, taskId: "refund-ticket", summary: "Resolve a refund", lesson: "Retry the refund");
 
-        // websearch_to_tsquery accepts arbitrary user text: quotes, operators, and punctuation are
-        // parsed as a search, never as a syntax error the caller has to sanitize around.
-        foreach (var text in new[] { "\"refund", "refund or", "refund -", "refund & ticket |", "((refund))" })
+        // The query's lexemes come from to_tsvector, and each goes into the tsquery as a quoted literal: quotes,
+        // operators, backslashes and punctuation are text, never a syntax error the caller has to sanitize around.
+        foreach (var text in new[]
+        {
+            "\"refund", "refund or", "refund -", "refund & ticket |", "((refund))", "refund:* <-> !ticket",
+            "o'neil's refund", "C:\\refund\\ticket \\' '' \\\\", "\"\" -- || ' or & ! ( ) :*",
+        })
         {
             var result = await SearchAsync(tenant, scope, text);
             Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
         }
 
         Assert.Equal([id], (await SearchAsync(tenant, scope, "\"refund\"")).Candidates.Select(candidate => candidate.Record.ExperienceId));
+
+        // "-ticket" negates nothing: it is the word "ticket", which the record has, so it counts towards the minimum.
+        Assert.Equal(
+            [id],
+            (await SearchAsync(tenant, scope, "\"refund\" -ticket or invoice", minimumMatchedTerms: 2)).Candidates.Select(candidate => candidate.Record.ExperienceId));
     }
 
     [Fact]
@@ -343,7 +445,8 @@ public sealed class PostgresExperienceCandidateSourceTests
         Scope scope,
         string taskText,
         double minimumConfidence = 0d,
-        int limit = ExperienceCandidateQuery.DefaultLimit) =>
+        int limit = ExperienceCandidateQuery.DefaultLimit,
+        int minimumMatchedTerms = ExperienceCandidateQuery.DefaultMinimumMatchedTerms) =>
         _source.SearchAsync(
             Authorize(tenant),
             new ExperienceCandidateQuery(
@@ -351,7 +454,10 @@ public sealed class PostgresExperienceCandidateSourceTests
                 taskText,
                 [ExperienceStatus.Validated, ExperienceStatus.Reinforced],
                 minimumConfidence,
-                limit),
+                limit)
+            {
+                MinimumMatchedTerms = minimumMatchedTerms,
+            },
             CancellationToken.None);
 
     /// <summary>Creates one searchable record and returns its ID.</summary>

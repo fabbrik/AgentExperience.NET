@@ -157,6 +157,19 @@ public sealed record RetrievalPolicy(
         init => field = EnsurePositive(value, nameof(MaxAbandonedSearches));
     } = DefaultMaxAbandonedSearches;
 
+    /// <summary>
+    /// How many distinct query terms a record must contain to be a text candidate, capped at the query's term count (see
+    /// <see cref="ExperienceCandidateQuery.MinimumMatchedTerms"/>). Defaults to
+    /// <see cref="ExperienceCandidateQuery.DefaultMinimumMatchedTerms"/>; must be at least 1.
+    /// <see cref="ExperienceCandidateQuery.AllTerms"/> requires every term, as text search did up to 0.1.0-preview.8. It
+    /// governs the text channel only: the vector channel matches on meaning, not words.
+    /// </summary>
+    public int MinimumMatchedTerms
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(MinimumMatchedTerms));
+    } = ExperienceCandidateQuery.DefaultMinimumMatchedTerms;
+
     private static TimeSpan EnsurePositive(TimeSpan value, string paramName) =>
         value > TimeSpan.Zero
             ? value

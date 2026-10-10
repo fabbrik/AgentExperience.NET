@@ -879,6 +879,7 @@ namespace AgentExperience.Core.Retrieval
         public int MaxAbandonedSearches { get; init; }
         public System.TimeSpan? MaxAge { get; init; }
         public double MinimumConfidence { get; init; }
+        public int MinimumMatchedTerms { get; init; }
         public System.TimeSpan RecencyHalfLife { get; init; }
         public System.TimeSpan Timeout { get; init; }
         public static AgentExperience.Core.Retrieval.RetrievalPolicy Default { get; }

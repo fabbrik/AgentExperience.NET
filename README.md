@@ -128,7 +128,9 @@ var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. 
 ```
 
 The first run finds nothing to inject. After it, `Verify` runs your check: a pass stores the lesson as `Validated`, a
-fail as `Quarantined` (never reused). The next run on a similar task gets the lesson if its task text matches and the
+fail as `Quarantined` (never reused). The next run on a similar task gets the lesson if its task text shares at least three
+terms with the stored task ID, task summary and lesson (fewer when it has fewer; stopwords and one-letter words do not
+count, and PostgreSQL matches word stems) and the
 lesson clears the confidence floor (0.5; a new lesson starts at 2/3). The task text is the user's latest message (joined to
 the previous one when it is a short follow-up), cleaned and cut to 512 UTF-16 code units, and is stored as the run's description, so redact sensitive prompts first
 (see [The task text](docs/guide/injection.md#the-task-text)). Injection needs both lines at the end: `UseAgentExperience`

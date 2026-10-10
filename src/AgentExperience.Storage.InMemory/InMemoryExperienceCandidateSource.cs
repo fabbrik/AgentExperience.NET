@@ -13,16 +13,20 @@ namespace AgentExperience.Storage.InMemory;
 /// <b>How it matches.</b> Text is normalized to Unicode form KC and case-folded, then split into words: runs of
 /// letters and digits, with a combining mark continuing the word it follows. A query's terms are its distinct words,
 /// less a built-in list of common English stopwords (the Snowball list PostgreSQL's <c>english</c> configuration
-/// drops: "a", "and", "the", "to", "with", ...) and less any term shorter than two characters. A record matches only
-/// when <em>every</em> remaining term is a word of its <see cref="ExperienceRecord.TaskId"/>,
-/// <see cref="ExperienceRecord.TaskSummary"/> or reflection lesson, as PostgreSQL's <c>websearch_to_tsquery</c> ANDs
-/// its terms; a query with no terms left matches nothing. Each record's words are taken once, when it is created, from
-/// at most the first 100,000 characters of that text, the bound PostgreSQL's search column applies.
+/// drops: "a", "and", "the", "to", "with", ...) and less any term shorter than two characters. A record matches when
+/// at least <see cref="ExperienceCandidateQuery.MinimumMatchedTerms"/> of those terms, capped at their number, are words
+/// of its <see cref="ExperienceRecord.TaskId"/>, <see cref="ExperienceRecord.TaskSummary"/> or reflection lesson, as the
+/// PostgreSQL candidate source counts the query's lexemes; a query with no terms left matches nothing. A minimum at least
+/// the query's term count (<see cref="ExperienceCandidateQuery.AllTerms"/>) asks for every term, the rule up to
+/// 0.1.0-preview.8. Each record's words are taken once, when it is created, from at most the first 100,000 characters
+/// of that text, the bound PostgreSQL's search column applies.
 /// </para>
 /// <para>
-/// <b>Relevance.</b> The fraction of the query's terms the record contains, weighted towards the task summary: each
-/// term counts three when it is in the summary, one when it is in the task ID and one when it is in the lesson, out
-/// of five. It lies in (0, 1] for every match, and is 1 when every term is in all three fields.
+/// <b>Relevance.</b> How much of the query the record covers, weighted towards the task summary: each term counts
+/// three when it is in the summary, one when it is in the task ID and one when it is in the lesson, out of five per
+/// query term. It lies in (0, 1] for every match, and is 1 when every term is in all three fields; a record that lacks
+/// a term scores nothing for it, so it ranks below one with the same fields that has it. A record containing every term
+/// scores exactly what it scored when every term was required.
 /// </para>
 /// <para>
 /// <b>Order and filters.</b> Only records in exactly the query's scope, in one of its eligible statuses, at or above
@@ -32,9 +36,9 @@ namespace AgentExperience.Storage.InMemory;
 /// </para>
 /// <para>
 /// <b>Not PostgreSQL-compatible.</b> This is not full-text search: there is no stemming ("invoices" does not match
-/// "invoice") and no query syntax, and its relevance values are not comparable with the PostgreSQL candidate source's
-/// <c>ts_rank_cd</c> values. Ranking built on them (Core's retrieval score) therefore differs between the two stores
-/// for the same records, even where both return the same candidates.
+/// "invoice") and no query syntax, and its relevance values are not comparable with the PostgreSQL candidate source's,
+/// which counts each lexeme once whatever field it is in. Ranking built on them (Core's retrieval score) therefore
+/// differs between the two stores for the same records, even where both return the same candidates.
 /// </para>
 /// <para>
 /// There are no grants here: a search returns only the requester's own records, and
@@ -93,6 +97,8 @@ public sealed class InMemoryExperienceCandidateSource : IExperienceCandidateSour
             return Task.FromResult(new ExperienceCandidateSearchResult(ExperienceStoreOutcome.Found, [], []));
         }
 
+        // The cap: a query with fewer terms than the minimum needs every term it has, so a short query still matches.
+        var required = Math.Min(query.MinimumMatchedTerms, terms.Count);
         var statuses = query.EligibleStatuses.ToHashSet();
         var candidates = _store
             .Select(
@@ -100,7 +106,7 @@ public sealed class InMemoryExperienceCandidateSource : IExperienceCandidateSour
                 record => statuses.Contains(record.Status)
                     && record.ReuseConfidence >= query.MinimumConfidence
                     && !(query.ExcludeModelAuthored && IsModelAuthored(record)))
-            .Where(indexed => terms.All(indexed.Text.Contains))
+            .Where(indexed => terms.Count(indexed.Text.Contains) >= required)
             .Select(indexed => new ExperienceCandidate(indexed.Record, Relevance(indexed.Text, terms)))
             .OrderByDescending(candidate => candidate.Relevance)
             .ThenBy(candidate => candidate.Record.ExperienceId)

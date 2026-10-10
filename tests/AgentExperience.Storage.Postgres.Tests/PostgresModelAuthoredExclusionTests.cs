@@ -579,9 +579,10 @@ public sealed class PostgresModelAuthoredExclusionTests(PostgresFixture fixture)
         var record = Minimal(scope, id: id, status: ExperienceStatus.Validated) with
         {
             SourceRunId = runId,
-            // Every term in the task ID too makes a record a stronger text match than one with them in its summary only.
+            // A strong record contains every query term; the others lack "ticket", so they cover three of the four and
+            // rank below it on text relevance (coverage), while still meeting the default minimum of three.
             TaskId = strong ? "refund-ticket-stuck-lock" : "triage",
-            TaskSummary = "A refund ticket stuck on a lock",
+            TaskSummary = strong ? "A refund ticket stuck on a lock" : "A refund stuck on a lock",
             ReuseConfidence = 0.75,
             Reflection = new Reflection(
                 Guid.NewGuid(), runId, "Check the lock table before retrying.", [], [], [], [], null, [],

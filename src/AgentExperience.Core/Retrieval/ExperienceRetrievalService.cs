@@ -448,6 +448,9 @@ public sealed class ExperienceRetrievalService
             // A filter of the source's, like the status list and the floor: applied before its limit, so
             // model-authored records cannot fill the window that deterministic ones would otherwise take.
             ExcludeModelAuthored = request.ExcludeModelAuthored,
+
+            // How much of the request a record must cover to be a text candidate.
+            MinimumMatchedTerms = _policy.MinimumMatchedTerms,
         };
 
         // Too many earlier searches were abandoned and are still running against the store (story 16.5).

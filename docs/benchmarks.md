@@ -189,7 +189,7 @@ row-level security off, or keep it off until it has measured its own tenants. Ma
 restore the index, but that is a superuser's decision about a built-in function and not one this library makes.
 
 **Since story 17.7 the text channel keeps its GIN indexes with row-level security on.** While row-level security is
-enabled, it searches through `agent_experience.search_experience_text` (`0024`), a `SECURITY DEFINER` function that runs
+enabled, it searches through `agent_experience.search_experience_text` (`0024`, replaced by `0025`), a `SECURITY DEFINER` function that runs
 the same statement as the owner, whom the policies do not bind, while applying the read policy's own admission itself
 (see [Enabling row-level security](guide/deployment.md#enabling-row-level-security)). The plan is again the GIN indexes'
 `Bitmap Index Scan`, which `PostgresTextSearchRowLevelSecurityTests` asserts on through `auto_explain` over a 20,000-record
@@ -230,7 +230,7 @@ is regenerated: run the tests with `AGENTEXPERIENCE_RETRIEVALQUALITY_GOLDEN_UPDA
 the change. The diff is the change, query by query. The tests also fail if any search returns an ineligible record, if
 two runs differ, or if an `exact` query's record is not in the first three.
 
-**Today's numbers** (0.1.0-preview.8 behaviour, recorded 2026-10-10):
+**Before any-term matching** (0.1.0-preview.8 behaviour, recorded 2026-10-10):
 
 | Adapter | Recall@3 | Recall@8 | MRR | Zero candidates | `realistic` zero | `morphology` recall@8 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -247,3 +247,43 @@ two runs differ, or if an `exact` query's record is not in the first three.
 - **Precision is low because recall is**, not because of noise: across all 48 queries there are two false positives
   in the first 8 in memory and three on PostgreSQL. Story 20.2's move away from AND matching will show its precision
   cost here.
+
+### Any-term matching (story 20.2)
+
+Story 20.2 made a record a candidate when it contains at least `MinimumMatchedTerms` distinct query terms (capped at
+the query's term count), ranked by how much of the query it covers. The only value tuned against this benchmark is
+that minimum, and the rule for choosing it was fixed before any run: run it at 1, 2 and 3, and take the value with the
+highest overall recall@8 on PostgreSQL whose false positives@8 are at most 1.0 on both adapters (ties to the higher
+value). The corpus and queries did not change.
+
+| Minimum | In-memory R@8 | In-memory FP@8 | In-memory zero | PostgreSQL R@8 | PostgreSQL FP@8 | PostgreSQL zero |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.978 | 5.708 | 0.000 | 1.000 | 6.167 | 0.000 |
+| 2 | 0.889 | 1.417 | 0.146 | 0.978 | 2.271 | 0.063 |
+| **3 (default)** | **0.700** | **0.417** | **0.292** | **0.844** | **0.521** | **0.188** |
+
+Only 3 keeps false positives at or below 1.0 on both adapters, so it is the default, and the goldens are regenerated at
+it. A hyphenated compound counts as one term on PostgreSQL ("multi-stage" is one, not three), so a single shared
+compound cannot meet the minimum alone. **Today's numbers** (recorded 2026-10-10):
+
+| Adapter | Recall@3 | Recall@8 | MRR | FP@8 | Zero candidates | `realistic` recall@8 | `morphology` recall@8 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| In-memory | 0.700 | 0.700 | 0.678 | 0.417 | 0.292 | 0.800 | 0.286 |
+| PostgreSQL | 0.844 | 0.844 | 0.833 | 0.521 | 0.188 | 1.000 | 1.000 |
+
+- **Realistic requests now find their record**: 10 of 10 on PostgreSQL and 8 of 10 in memory, where both found none.
+  In memory, without stemming, one of the two still finds nothing and the other finds two records but not its own.
+- **The cost is a little noise.** About one unexpected record in every two queries in the first 8, mostly a sibling
+  record of the same family (for example `exact-01`'s "EF Core migration fails on startup" now also brings three other
+  migration records that share three of its words).
+- **Paraphrases are only partly solved** (0.563 in memory, 0.500 on PostgreSQL): a paraphrase that shares fewer than
+  three words with the record still finds nothing. Lowering the minimum finds them, at four to twelve times the noise;
+  the vector channel is the answer for wording that shares no words.
+- **Stemming still separates the adapters**: PostgreSQL now finds all 7 morphology queries (the minimum lets "failures"
+  match on the record's other words), the in-memory source 2.
+- **A full match ranks as before in the source.** In memory its relevance is unchanged; on PostgreSQL its relevance is
+  now 1 (the share of the query's terms it contains) and, for a plain-word request, full matches keep their old order
+  through `ts_rank_cd` against the AND of the terms.
+- **This is the source's order, not Core's final ranking.** The benchmark calls the candidate source directly; Core
+  then re-scores candidates with confidence, recency, status and environment, and on PostgreSQL sees every full match
+  at the same text relevance, so what an agent is finally shown can be ordered differently.

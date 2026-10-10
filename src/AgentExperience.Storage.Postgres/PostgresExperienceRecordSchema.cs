@@ -354,6 +354,22 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string TextSearchFunctionScriptName = "0024_text_search_function.sql";
 
+    /// <summary>
+    /// The script that makes text search match on any term and rank by coverage behind row-level security
+    /// too: it drops <c>0024</c>'s <c>agent_experience.search_experience_text</c>, whose signature gains the minimum
+    /// number of matched terms, and creates its replacement, which applies the store's own any-term match and coverage
+    /// ordering, built from the same constants. Its header carries the security review.
+    /// </summary>
+    /// <remarks>
+    /// It revokes <c>EXECUTE</c> from <c>PUBLIC</c>, and dropping the old function drops the application role's grant
+    /// on it: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then a search with row-level security on runs the store's own statement under the
+    /// policies, as it does whenever the function is not granted. No table, column or index changes, and no lock is
+    /// taken on any table.
+    /// </remarks>
+    public const string TextSearchAnyTermScriptName = "0025_text_search_any_term.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -361,7 +377,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0024</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0025</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -386,6 +402,7 @@ public static class PostgresExperienceRecordSchema
         LibraryReflectorAuthorshipScriptName,
         RecordedOnlyEvidenceScriptName,
         TextSearchFunctionScriptName,
+        TextSearchAnyTermScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

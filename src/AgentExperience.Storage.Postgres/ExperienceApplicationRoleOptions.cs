@@ -84,7 +84,7 @@ public sealed class ExperienceApplicationRoleOptions
     /// (run both migrators first) or when the application role can reach a role with <c>BYPASSRLS</c>.
     /// </para>
     /// <para>
-    /// It also grants <c>EXECUTE</c> on <c>agent_experience.search_experience_text</c> (<c>0024</c>), the
+    /// It also grants <c>EXECUTE</c> on <c>agent_experience.search_experience_text</c> (<c>0025</c>), the
     /// owner-run text search that keeps the GIN indexes usable under the policies, and refuses to enable anything unless
     /// that function is exactly the canonical definition. With row-level security off the grant is revoked.
     /// </para>

@@ -798,6 +798,11 @@ internal static partial class ExperienceRecordValidator
             errors.Add(new("Limit", $"must be between {ExperienceCandidateQuery.MinLimit} and {ExperienceCandidateQuery.MaxLimit}."));
         }
 
+        if (query.MinimumMatchedTerms < 1)
+        {
+            errors.Add(new("MinimumMatchedTerms", "must be at least 1."));
+        }
+
         return errors;
     }
 

@@ -3,8 +3,8 @@ using Npgsql;
 namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
-/// <c>agent_experience.search_experience_text</c> (<c>0024</c>): the text channel's search behind row-level
-/// security, run as the owner so the planner can use the GIN indexes. A test holds the script equal to <see cref="Ddl"/>,
+/// <c>agent_experience.search_experience_text</c> (<c>0024</c>, replaced by <c>0025</c> for any-term matching): the text
+/// channel's search behind row-level security, run as the owner so the planner can use the GIN indexes. A test holds the script equal to <see cref="Ddl"/>,
 /// and the privileges call refuses to enable row-level security unless the catalog's function is exactly this one.
 /// </summary>
 /// <remarks>
@@ -38,7 +38,7 @@ internal static class TextSearchFunction
 {
     /// <summary>The function's identity, as <c>to_regprocedure</c> reads it.</summary>
     internal const string Signature =
-        "agent_experience.search_experience_text(text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean)";
+        "agent_experience.search_experience_text(text, text, text, text, text, text, text, text[], double precision, integer, boolean, boolean, integer)";
 
     /// <summary>The single <c>proconfig</c> entry it must carry.</summary>
     internal const string Config = "search_path=pg_catalog, pg_temp";
@@ -47,7 +47,7 @@ internal static class TextSearchFunction
     internal const string Arguments =
         "p_tenant_id text, p_application_id text, p_project_id text, p_team_id text, p_agent_id text, p_user_id text, " +
         "p_task_text text, p_statuses text[], p_min_confidence double precision, p_limit integer, " +
-        "p_exclude_model_authored boolean, p_with_grants boolean";
+        "p_exclude_model_authored boolean, p_with_grants boolean, p_minimum_matched_terms integer";
 
     /// <summary>
     /// The columns it returns, as <c>pg_get_function_result</c> renders them inside <c>TABLE(...)</c>: the record columns
@@ -70,19 +70,19 @@ internal static class TextSearchFunction
     /// <summary>The statement the candidate source runs in place of its own search while row-level security is on.</summary>
     internal const string CallSql =
         "SELECT * FROM agent_experience.search_experience_text(@tenant_id, @application_id, @project_id, @team_id, @agent_id, " +
-        "@user_id, @task_text, @statuses, @min_confidence, @limit, @exclude_model_authored, @with_grants)";
+        "@user_id, @task_text, @statuses, @min_confidence, @limit, @exclude_model_authored, @with_grants, @minimum_matched_terms)";
 
     /// <summary>The store parameters the function's arguments stand in for, in the order <see cref="Parameterize"/> renames them.</summary>
     private static readonly string[] Parameters =
     [
         "tenant_id", "application_id", "project_id", "team_id", "agent_id", "user_id",
-        "task_text", "statuses", "min_confidence", "limit",
+        "task_text", "statuses", "min_confidence", "limit", "minimum_matched_terms",
     ];
 
     /// <summary>The function's body: <c>prosrc</c>, exactly.</summary>
     internal static string Body { get; } = BuildBody();
 
-    /// <summary>The DDL <c>0024</c> contains for the function.</summary>
+    /// <summary>The DDL <c>0025</c> contains for the function. (<c>0024</c> holds the previous, all-terms definition, frozen.)</summary>
     internal static string Ddl { get; } =
         "CREATE OR REPLACE FUNCTION agent_experience.search_experience_text(\n" +
         "    " + Arguments.Replace(", p_", ",\n    p_", StringComparison.Ordinal) + ")\n" +

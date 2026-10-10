@@ -93,8 +93,9 @@ public class SamplePostgresModeTests(SamplePostgresFixture fixture)
             block.Split('\n').Where(line => !line.StartsWith("Matched: ", StringComparison.Ordinal)).ToArray();
 
         Assert.Equal(Unmatched(memory), Unmatched(postgres));
+        // Both stores report a record covering every query term as relevance 1, so today the Matched: lines agree too.
         Assert.Equal("Matched: text relevance 1.00", Matched(memory));
-        Assert.Matches(@"^Matched: text relevance 0\.\d\d$", Matched(postgres));
+        Assert.Equal(Matched(memory), Matched(postgres));
         Assert.InRange(
             System.Text.Encoding.UTF8.GetByteCount(postgres) - System.Text.Encoding.UTF8.GetByteCount(memory),
             -MaxBlockSizeDifference,
