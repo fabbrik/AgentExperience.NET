@@ -23,6 +23,8 @@
     <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
          test project references another. -->
     <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+    <!-- Story 20.6: signs records as earlier releases did (claims versions 1 and 2), to check they still confirm. -->
+    <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
     <!-- The crypto-shredding key store an encrypted seeder writes, compiled here against today's key-management
          contracts so the test re-opens what the published preview wrapped. -->
     <Compile Include="..\AgentExperience.Upgrade.Seeders\Shared\FileWrappedKeyRepository.cs" Link="Shared\FileWrappedKeyRepository.cs" />

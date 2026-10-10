@@ -6,6 +6,31 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Provenance signing covers what the `Tried:` line shows (story 20.6)
+
+- **Claims version 3, signed by default.** With provenance signing configured, finalization now signs claims version 3
+  (`aexp-prov:v3`, algorithm `HMAC-SHA256.aexp-prov.v3`, new constant
+  `ExperienceProvenanceSignature.HmacSha256ClaimsV3`): the version 2 claims, with a content digest that also covers
+  every attempt's and every tool call's `Error`. So the error classes on a `Tried:` line and each call's
+  `[returned]`/`[failed: …]` marker are signed: flipping which call failed, or rewriting an error's class or text,
+  leaves the record's content unconfirmed, and it is fenced or excluded as model-authored (`UnconfirmedContent`). The
+  version 3 content encoding is the version 2 one with the errors added where the attempts are encoded; every other
+  byte is unchanged.
+- **Version 1 and 2 signatures verify exactly as before.** A version 2 signature still confirms its record's content,
+  so upgrading fences nothing, and nothing is re-signed. **The error text of a version 2 record is unsigned:** a party
+  that can write the store can change its error classes and per-call markers without breaking the signature.
+- **Rolling deploys.** `SignClaimsVersion` now accepts 1, 2 or 3 (default 3; anything else throws
+  `ArgumentOutOfRangeException`). Nodes on `0.1.0-preview.7` to `0.1.0-preview.9` refuse a version 3 signature as one
+  they cannot check, so sign 2 until every node runs this build, then 3.
+- **Rolling back** to `0.1.0-preview.7`–`0.1.0-preview.9` after signing version 3: those builds refuse a version 3
+  signature, so on them every record signed version 3 has unconfirmed content (fenced or excluded as model-authored)
+  and its run vouches for nothing in independence verification. Records signed version 2 are unaffected. To keep a
+  rollback open, sign 2 until you no longer need it.
+- **Error text must have a canonical encoding.** Version 3 signs every attempt's and tool call's error text, so a lone
+  surrogate there (which a custom `ISanitizer` can pass through) now ends finalization `Failed` at the create stage,
+  with nothing stored, as one in any other signed text already did.
+- **No migration.** The stores hold the algorithm as free text; nothing in either store changes.
+
 ### Each call on a `Tried:` line says how it ended (story 20.3)
 
 - **Behaviour change: per-call outcome markers.** On a record in the reader's own scope, every call on a `Tried:` line
@@ -26,8 +51,9 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **A tool name cannot spell a marker.** Square brackets in a tool name, and the look-alikes `［` `］`, `⟦` `⟧` and
   `【` `】`, now render as `(` and `)`, as `→` and `,` were already neutralized, on every record's line. A written name
   can still carry the library's own bracketed marks: `[delimiter removed]` and the `[...]` clamp mark.
-- **Not signed.** Provenance signing's claims version 2 encodes only whether each attempt failed, so the error classes
-  and per-call markers are not covered by the signature; a claims version 3 that covers them is planned.
+- **Signed under claims version 3.** Provenance signing's claims version 2 encodes only whether each attempt failed,
+  so on a version 2 record the error classes and per-call markers are unsigned. Claims version 3 (story 20.6, below)
+  covers them, and finalization signs it by default.
 - **New constants** on `HistoricalReferenceWriter`: `CallReturned`, `CallFailed`, `CallFailedClassPrefix` and
   `CallMarkerEnd`.
 - **Quick start.** The demo's tool now throws on a non-zero exit, so its failed call is recorded as failed, and its

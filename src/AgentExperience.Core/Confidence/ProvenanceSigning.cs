@@ -15,25 +15,28 @@ namespace AgentExperience.Core.Confidence;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What is signed.</b> Claims version 2 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>):
+/// <b>What is signed.</b> Claims version 3 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV3"/>):
 /// a record's finalization claims -- its <see cref="ExperienceRecord.ExperienceId"/>, its
 /// <see cref="ExperienceRecord.Scope"/> (all six fields), its <see cref="ExperienceRecord.SourceRunId"/>,
 /// <see cref="ExperienceRecord.ClosedRoundId"/> and <see cref="ExperienceRecord.Origin"/>, and the exposures in its
 /// <see cref="Provenance.ExposedTo"/> -- then a SHA-256 digest of its content, everything injection renders from it:
 /// its <see cref="ExperienceRecord.TaskId"/> and <see cref="ExperienceRecord.TaskSummary"/>, its outcome's status and
 /// evidence count, its environment (all fields and attributes), its attempts (each tool call's name and argument
-/// values, through their JSON form, numbers canonicalized by exact decimal value), and its reflection's free text,
-/// evidence count, <see cref="Reflection.Authorship"/> and <see cref="Reflection.Producer"/>. Lifecycle status,
-/// counters and timestamps change through the lifecycle and stay unsigned. <b>Not covered:</b> the digest encodes only
-/// whether each attempt failed, never an attempt's or a tool call's error, so the error classes a <c>Tried:</c> line
-/// shows and each call's <c>[returned]</c>/<c>[failed: …]</c> marker, which injection derives from each call's
-/// <see cref="ToolCallRecord.Error"/>, are not signed: a party that can write the store can change them without
-/// breaking the signature. A claims version 3 that covers them is planned. A version 1 signature (<see cref="ExperienceProvenanceSignature.HmacSha256"/>),
-/// made by <c>0.1.0-preview.6</c> and earlier, still verifies for the finalization claims it covers.
+/// values, through their JSON form, numbers canonicalized by exact decimal value, and each attempt's and each tool
+/// call's error text), and its reflection's free text, evidence count, <see cref="Reflection.Authorship"/> and
+/// <see cref="Reflection.Producer"/>. So the error classes a <c>Tried:</c> line shows and each call's
+/// <c>[returned]</c>/<c>[failed: …]</c> marker, which injection derives from each call's
+/// <see cref="ToolCallRecord.Error"/>, are signed too. Lifecycle status, counters and timestamps change through the
+/// lifecycle and stay unsigned. A claims version 2 signature (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>),
+/// made by <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> or during a <see cref="SignClaimsVersion"/> = 2
+/// rollout, still verifies and still confirms content, but its digest encodes only whether each attempt failed: the
+/// error text of a version 2 record is unsigned, and a party that can write the store can change it without breaking
+/// the signature. A version 1 signature (<see cref="ExperienceProvenanceSignature.HmacSha256"/>), made by
+/// <c>0.1.0-preview.6</c> and earlier, still verifies for the finalization claims it covers.
 /// </para>
 /// <para>
 /// <b>What it does to authorship.</b> With these options registered, a record's content is <em>confirmed</em> only
-/// when it carries a version 2 signature under a key in the ring that verifies, carries no signature and its ID is in
+/// when it carries a version 3 or version 2 signature under a key in the ring that verifies, carries no signature and its ID is in
 /// <see cref="TrustUnsignedRecordIds"/>, or is confirmed by <see cref="ConfirmV1Content"/> or
 /// <see cref="ConfirmContentRecordIds"/>. A record whose content is not confirmed -- a version 1 signature, none, an
 /// unknown key, one that does not verify, or content that cannot be encoded -- counts as model-authored: <c>ExperienceRetrievalService</c> excludes
@@ -69,7 +72,7 @@ public sealed class ExperienceProvenanceSigningOptions
 
     private readonly ReadOnlyDictionary<string, byte[]> _keys;
     private readonly ReadOnlySet<Guid> _trustUnsignedRecordIds = new(new HashSet<Guid>());
-    private readonly int _signClaimsVersion = 2;
+    private readonly int _signClaimsVersion = 3;
     private readonly ReadOnlySet<Guid> _confirmContentRecordIds = new(new HashSet<Guid>());
 
     /// <summary>
@@ -142,8 +145,8 @@ public sealed class ExperienceProvenanceSigningOptions
     /// or one that does not verify -- is refused whether or not its record's ID is listed.
     /// </para>
     /// <para>
-    /// A listed record's content (everything a version 2 signature would cover: its task ID and summary, outcome status
-    /// and evidence count, environment, attempts with their tool names and argument values, and its reflection's free
+    /// A listed record's content (everything a version 3 signature would cover: its task ID and summary, outcome status
+    /// and evidence count, environment, attempts with their tool names, argument values and error text, and its reflection's free
     /// text, evidence count, authorship and producer) counts as confirmed too, so its authorship is what it
     /// declares. Being unsigned, that content stays editable by a party that can write the store.
     /// </para>
@@ -159,26 +162,29 @@ public sealed class ExperienceProvenanceSigningOptions
     }
 
     /// <summary>
-    /// The claims version finalization signs new records with: 2 (the default) signs the finalization claims and a
-    /// digest of the record's content; 1 signs the finalization claims only, as <c>0.1.0-preview.6</c> and earlier did.
-    /// Verification accepts both whatever this says.
+    /// The claims version finalization signs new records with: 3 (the default) signs the finalization claims and a
+    /// digest of the record's content, attempt and tool-call error text included; 2 signs the same digest without any
+    /// error text, as <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> did; 1 signs the finalization claims only,
+    /// as <c>0.1.0-preview.6</c> and earlier did. Verification accepts all three whatever this says.
     /// </summary>
     /// <remarks>
-    /// Set it to 1 only for the duration of a rolling deploy in which nodes on an earlier build still verify: they
-    /// refuse a version 2 signature as one they cannot check, so a record signed version 2 would vouch for nothing on
-    /// them. Records signed version 1 have content nothing confirms, so with signing on they are fenced as
-    /// model-authored at injection (unless <see cref="ConfirmV1Content"/> is set); switch back to 2 once every node
-    /// runs this build.
+    /// Lower it only for the duration of a rolling deploy in which nodes on an earlier build still verify: they refuse
+    /// a signature under a claims version they do not know as one they cannot check, so the record would vouch for
+    /// nothing on them. Sign 2 until every node runs this build, then switch back to 3. A version 2 signature still
+    /// confirms its record's content, but not its error text: the error classes and each call's
+    /// <c>[returned]</c>/<c>[failed: …]</c> marker of a version 2 record are unsigned. Set it to 1 only when nodes on
+    /// <c>0.1.0-preview.6</c> or earlier still verify: records signed version 1 have content nothing confirms, so with
+    /// signing on they are fenced as model-authored at injection (unless <see cref="ConfirmV1Content"/> is set).
     /// </remarks>
-    /// <exception cref="ArgumentOutOfRangeException">Set to anything but 1 or 2.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Set to anything but 1, 2 or 3.</exception>
     public int SignClaimsVersion
     {
         get => _signClaimsVersion;
         init
         {
-            if (value is not (1 or 2))
+            if (value is not (1 or 2 or 3))
             {
-                throw new ArgumentOutOfRangeException(nameof(value), value, "The provenance claims version must be 1 or 2.");
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The provenance claims version must be 1, 2 or 3.");
             }
 
             _signClaimsVersion = value;
@@ -189,7 +195,7 @@ public sealed class ExperienceProvenanceSigningOptions
     /// A transition setting: when <see langword="true"/>, a version 1 signature that verifies also confirms its
     /// record's content, so records signed by <c>0.1.0-preview.6</c> and earlier are judged by the authorship they declare instead of
     /// being fenced as model-authored. <see langword="false"/> (the default) confirms content only through a
-    /// version 2 signature or <see cref="TrustUnsignedRecordIds"/>.
+    /// version 3 or version 2 signature or <see cref="TrustUnsignedRecordIds"/>.
     /// </summary>
     /// <remarks>
     /// Setting it accepts, for those records, the exposure version 1 left open: a party that could write the store
@@ -205,10 +211,10 @@ public sealed class ExperienceProvenanceSigningOptions
     /// default) lists none. Copied when set.
     /// </summary>
     /// <remarks>
-    /// A listed record whose signature is present but does not verify (a changed claim, an unknown key, a version 2
-    /// signature over different content) is still unconfirmed: the list vouches for reviewed content, not for an edit
+    /// A listed record whose signature is present but does not verify (a changed claim, an unknown key, a version 3
+    /// or version 2 signature over different content) is still unconfirmed: the list vouches for reviewed content, not for an edit
     /// made since. Its content can still be changed unnoticed while it carries a version 1 signature or none, so list
-    /// only what was reviewed, and prefer replacing such lessons with records finalized under version 2.
+    /// only what was reviewed, and prefer replacing such lessons with records finalized under version 3.
     /// </remarks>
     public IReadOnlySet<Guid> ConfirmContentRecordIds
     {
@@ -384,12 +390,21 @@ internal enum ProvenanceSignatureCheck
 /// stored order. An argument value is encoded through its JSON form (see <c>WriteValue</c>), so a value reads back to
 /// the same bytes from either store. A test pins the bytes against a golden vector.
 /// </para>
+/// <para>
+/// Claims version 3 (<see cref="EncodeV3"/>) is the version 2 encoding under the tag <c>aexp-prov:v3</c>, followed by
+/// the digest of <see cref="EncodeContentV3"/>: the version 2 content encoding with every error added where the attempts
+/// are encoded. Per attempt, the byte saying whether it has an error becomes <see cref="Attempt.Error"/> as a
+/// string (that byte is its presence byte, so the length and UTF-8 bytes follow it when present); per tool call,
+/// <see cref="ToolCallRecord.Error"/> follows its arguments as a string. Every other byte is the version 2 byte.
+/// </para>
 /// </remarks>
 internal sealed class ProvenanceSigner
 {
     internal const string VersionTag = "aexp-prov:v1";
 
     internal const string VersionTagV2 = "aexp-prov:v2";
+
+    internal const string VersionTagV3 = "aexp-prov:v3";
 
     /// <summary>The one sentence a caller is told for any signature that does not vouch: no oracle for which check failed.</summary>
     internal const string RefusalText = "its provenance signature does not vouch for it";
@@ -444,19 +459,22 @@ internal sealed class ProvenanceSigner
 
     /// <summary>
     /// Signs <paramref name="record"/> under the current key, with the claims version the options name
-    /// (<see cref="ExperienceProvenanceSigningOptions.SignClaimsVersion"/>): version 2, the finalization claims and the
-    /// content digest, by default; version 1, the finalization claims only, during a rolling deploy.
+    /// (<see cref="ExperienceProvenanceSigningOptions.SignClaimsVersion"/>): version 3, the finalization claims and the
+    /// content digest with error text, by default; version 2 (content without error text) or version 1 (the
+    /// finalization claims only) during a rolling deploy.
     /// </summary>
     /// <exception cref="ArgumentException">A claim or a content field has no canonical encoding.</exception>
-    internal ExperienceProvenanceSignature Sign(ExperienceRecord record) =>
-        _signClaimsVersion == 1
-            ? new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256, HMACSHA256.HashData(_keys[_currentKeyId], Encode(record)))
-            : new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV2, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV2(record)));
+    internal ExperienceProvenanceSignature Sign(ExperienceRecord record) => _signClaimsVersion switch
+    {
+        1 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256, HMACSHA256.HashData(_keys[_currentKeyId], Encode(record))),
+        2 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV2, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV2(record))),
+        _ => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV3, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV3(record))),
+    };
 
     /// <summary>
     /// Whether <paramref name="record"/>'s content -- everything the injection writer renders from it (see
-    /// <see cref="EncodeContent"/>) -- is confirmed: it carries a claims version 2 signature, under a key in the ring,
-    /// that verifies; or a version 1 signature that verifies while
+    /// <see cref="EncodeContent"/>) -- is confirmed: it carries a claims version 3 or version 2 signature, under a key
+    /// in the ring, that verifies (version 2 covers no error text); or a version 1 signature that verifies while
     /// <see cref="ExperienceProvenanceSigningOptions.ConfirmV1Content"/> is set or its ID is in
     /// <see cref="ExperienceProvenanceSigningOptions.ConfirmContentRecordIds"/>; or no signature, and its ID is in the
     /// cutover set or that list.
@@ -469,14 +487,16 @@ internal sealed class ProvenanceSigner
             return listed || _trustUnsigned.Contains(record.ExperienceId);
         }
 
+        var v3 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV3, StringComparison.Ordinal);
         var v2 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV2, StringComparison.Ordinal);
         var v1 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256, StringComparison.Ordinal);
-        return (v2 || (v1 && (_confirmV1Content || listed))) && Verify(record) == ProvenanceSignatureCheck.Valid;
+        return (v3 || v2 || (v1 && (_confirmV1Content || listed))) && Verify(record) == ProvenanceSignatureCheck.Valid;
     }
 
     /// <summary>
     /// Checks <paramref name="record"/>'s signature against its claims as they now stand: the version the signature's
-    /// algorithm names (version 1, the finalization claims; version 2, those claims and the content digest).
+    /// algorithm names (version 1, the finalization claims; version 2, those claims and the content digest; version 3,
+    /// those claims and the content digest with error text).
     /// </summary>
     internal ProvenanceSignatureCheck Verify(ExperienceRecord record)
     {
@@ -493,7 +513,11 @@ internal sealed class ProvenanceSigner
         }
 
         Func<ExperienceRecord, byte[]> encode;
-        if (string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV2, StringComparison.Ordinal))
+        if (string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV3, StringComparison.Ordinal))
+        {
+            encode = EncodeV3;
+        }
+        else if (string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV2, StringComparison.Ordinal))
         {
             encode = EncodeV2;
         }
@@ -565,7 +589,20 @@ internal sealed class ProvenanceSigner
     {
         using var buffer = new MemoryStream();
         WriteClaims(buffer, record, VersionTagV2);
-        buffer.Write(SHA256.HashData(EncodeContentCore(record)));
+        buffer.Write(SHA256.HashData(EncodeContentCore(record, includeErrors: false)));
+        return buffer.ToArray();
+    });
+
+    /// <summary>
+    /// The canonical encoding of <paramref name="record"/>'s claims version 3: its finalization claims under the tag
+    /// <c>aexp-prov:v3</c>, then the SHA-256 digest of <see cref="EncodeContentV3"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">A claim or a content field has no canonical encoding.</exception>
+    internal static byte[] EncodeV3(ExperienceRecord record) => Guarded(() =>
+    {
+        using var buffer = new MemoryStream();
+        WriteClaims(buffer, record, VersionTagV3);
+        buffer.Write(SHA256.HashData(EncodeContentCore(record, includeErrors: true)));
         return buffer.ToArray();
     });
 
@@ -574,9 +611,16 @@ internal sealed class ProvenanceSigner
     /// from it -- in the order the type's remarks pin.
     /// </summary>
     /// <exception cref="ArgumentException">A string is not well-formed UTF-16, or an argument value has no JSON form.</exception>
-    internal static byte[] EncodeContent(ExperienceRecord record) => Guarded(() => EncodeContentCore(record));
+    internal static byte[] EncodeContent(ExperienceRecord record) => Guarded(() => EncodeContentCore(record, includeErrors: false));
 
-    private static byte[] EncodeContentCore(ExperienceRecord record)
+    /// <summary>
+    /// The canonical content encoding of claims version 3: <see cref="EncodeContent"/> with every attempt's and every
+    /// tool call's error text added where the attempts are encoded, in the order the type's remarks pin.
+    /// </summary>
+    /// <exception cref="ArgumentException">A string is not well-formed UTF-16, or an argument value has no JSON form.</exception>
+    internal static byte[] EncodeContentV3(ExperienceRecord record) => Guarded(() => EncodeContentCore(record, includeErrors: true));
+
+    private static byte[] EncodeContentCore(ExperienceRecord record, bool includeErrors)
     {
         ArgumentNullException.ThrowIfNull(record);
 
@@ -625,10 +669,11 @@ internal sealed class ProvenanceSigner
         }
 
         // The attempts, as the Tried: and Worked: lines derive from them: each attempt's sequence number and whether it
-        // failed, and each tool call's sequence number, name and arguments (keys sorted, values canonical). Not encoded,
-        // and so not signed by claims version 2: any error text, so neither the error classes nor each call's
-        // [returned]/[failed: ...] marker, which injection reads from ToolCallRecord.Error. Claims version 3 is planned
-        // to cover them; changing this encoding would invalidate every version 2 signature.
+        // failed, and each tool call's sequence number, name and arguments (keys sorted, values canonical). Claims
+        // version 3 (includeErrors) also encodes each attempt's error text after its failure byte -- that byte is the
+        // string's presence byte, so only the length and text are added -- and each tool call's error, as a string,
+        // after its arguments: the error classes and each call's [returned]/[failed: ...] marker. Version 2 encodes no
+        // error text; its bytes must never change, or every version 2 signature would stop verifying.
         if (record.Attempts is { } attempts)
         {
             buffer.WriteByte(1);
@@ -643,7 +688,15 @@ internal sealed class ProvenanceSigner
 
                 buffer.WriteByte(1);
                 WriteInt32(buffer, attempt.SequenceNumber);
-                buffer.WriteByte(attempt.Error is null ? (byte)0 : (byte)1);
+                if (includeErrors)
+                {
+                    WriteString(buffer, attempt.Error);
+                }
+                else
+                {
+                    buffer.WriteByte(attempt.Error is null ? (byte)0 : (byte)1);
+                }
+
                 if (attempt.ToolCalls is not { } calls)
                 {
                     buffer.WriteByte(0);
@@ -664,6 +717,10 @@ internal sealed class ProvenanceSigner
                     WriteInt32(buffer, call.SequenceNumber);
                     WriteString(buffer, call.ToolName);
                     WriteArguments(buffer, call.Arguments);
+                    if (includeErrors)
+                    {
+                        WriteString(buffer, call.Error);
+                    }
                 }
             }
         }

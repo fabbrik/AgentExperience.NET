@@ -8,12 +8,22 @@ using AgentExperience.Abstractions;
 namespace AgentExperience.Tests.Shared;
 
 /// <summary>
-/// Signs records as finalization would, from the documented canonical encodings (claims version 1, and version 2 of
-/// story 17.2, whose content digest covers everything the writer renders), written independently of Core's internal signer so these tests can stand in for any release.
+/// Signs records as finalization would, from the documented canonical encodings (claims version 1; version 2 of story
+/// 17.2, whose content digest covers everything the writer renders but error text; and version 3 of story 20.6, whose
+/// digest adds every attempt's and tool call's error text), written independently of Core's internal signer so these tests can stand in for any release.
 /// </summary>
 internal static class SignedRecords
 {
-    /// <summary>The record with a claims version 2 signature over it as it stands.</summary>
+    /// <summary>The record with a claims version 3 signature over it as it stands: what finalization signs by default.</summary>
+    public static ExperienceRecord SignV3(ExperienceRecord record, string keyId, byte[] key) => record with
+    {
+        ProvenanceSignature = new ExperienceProvenanceSignature(
+            keyId,
+            ExperienceProvenanceSignature.HmacSha256ClaimsV3,
+            HMACSHA256.HashData(key, Concat(Claims(record, "aexp-prov:v3"), SHA256.HashData(Content(record, includeErrors: true))))),
+    };
+
+    /// <summary>The record with a claims version 2 signature over it as it stands, as 0.1.0-preview.7 to .9 signed it.</summary>
     public static ExperienceRecord SignV2(ExperienceRecord record, string keyId, byte[] key) => record with
     {
         ProvenanceSignature = new ExperienceProvenanceSignature(
@@ -103,8 +113,12 @@ internal static class SignedRecords
         return bytes.ToArray();
     }
 
-    /// <summary>The documented content encoding (story 17.2), in its pinned field order.</summary>
-    public static byte[] Content(ExperienceRecord record)
+    /// <summary>
+    /// The documented content encoding (story 17.2), in its pinned field order; with <paramref name="includeErrors"/>,
+    /// the claims version 3 encoding (story 20.6): each attempt's failure byte becomes its error as a string, and each
+    /// call's error follows its arguments as a string.
+    /// </summary>
+    public static byte[] Content(ExperienceRecord record, bool includeErrors = false)
     {
         var bytes = new Writer();
         bytes.Str(record.TaskId);
@@ -133,7 +147,15 @@ internal static class SignedRecords
         {
             bytes.Byte(1);
             bytes.Int32(attempt.SequenceNumber);
-            bytes.Byte(attempt.Error is null ? (byte)0 : (byte)1);
+            if (includeErrors)
+            {
+                bytes.Str(attempt.Error);
+            }
+            else
+            {
+                bytes.Byte(attempt.Error is null ? (byte)0 : (byte)1);
+            }
+
             bytes.Byte(1);
             bytes.Int32(attempt.ToolCalls.Count);
             foreach (var call in attempt.ToolCalls)
@@ -147,6 +169,11 @@ internal static class SignedRecords
                 {
                     bytes.Str(key);
                     bytes.Json(value is JsonElement element ? element : JsonSerializer.SerializeToElement(value, value?.GetType() ?? typeof(object), StoreJson));
+                }
+
+                if (includeErrors)
+                {
+                    bytes.Str(call.Error);
                 }
             }
         }

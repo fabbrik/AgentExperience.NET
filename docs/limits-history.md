@@ -276,6 +276,19 @@ instead.
   reveal it. What the row still says: the bounds are settings any session may set, disclosure levels are enforced in
   the library's code, those two clauses, and a new one: under the policies the search uses the table-wide GIN index, so its cost reflects matches in every tenant, a weak timing and statistics side channel (a tenant-leading GIN index needs `btree_gin`, which the library does not require).
 
+## Narrowed since `0.1.0-preview.9`
+
+- **KL-18** (model-authored lessons) is **narrowed** by story 20.6. Its clause that the signed content leaves out the
+  error classes a `Tried:` line shows and each call's `[returned]`/`[failed: …]` marker was removable by code, and is
+  gone for new records. With signing configured, finalization now signs claims version 3 (`aexp-prov:v3`, algorithm
+  `HMAC-SHA256.aexp-prov.v3`) by default: the version 2 claims, with a content digest that also covers every
+  attempt's and every tool call's error text. A record whose error text changed after it was signed version 3 no
+  longer verifies, so its content is unconfirmed and it is fenced or excluded as `UnconfirmedContent`. Version 1 and
+  version 2 signatures verify exactly as before, and a version 2 signature still confirms content, so upgrading fences
+  nothing. `SignClaimsVersion = 2` keeps signing version 2 during a rolling deploy from `0.1.0-preview.7`–`.9`. What
+  the row still says: a version 2 record's error text stays unsigned, because re-signing would vouch for error text
+  nobody checked. See [Signing provenance](guide/confidence.md#signing-provenance).
+
 ## How the project got here
 
 The work was planned in four epics, all implemented and tested before `0.1.0-preview.1`:

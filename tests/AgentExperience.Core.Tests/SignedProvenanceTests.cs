@@ -44,8 +44,8 @@ public class SignedProvenanceTests
         var created = Assert.Single(world.Store.Created, record => record.SourceRunId == runId);
         var signature = Assert.IsType<ExperienceProvenanceSignature>(created.ProvenanceSignature);
         Assert.Equal("key-1", signature.KeyId);
-        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV2, signature.Algorithm);
-        Assert.Equal("HMAC-SHA256.aexp-prov.v2", signature.Algorithm);
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, signature.Algorithm);
+        Assert.Equal("HMAC-SHA256.aexp-prov.v3", signature.Algorithm);
 
         // Within what every store, on this build or an earlier one, accepts as an algorithm.
         Assert.Matches("^[A-Za-z0-9._-]{1,64}$", signature.Algorithm);
@@ -68,7 +68,7 @@ public class SignedProvenanceTests
         Assert.NotEmpty(world.Store.Created);
         foreach (var record in world.Store.Created)
         {
-            Assert.Equal(HMACSHA256.HashData(KeyOne, CanonicalV2(record)), record.ProvenanceSignature!.Value.ToArray());
+            Assert.Equal(HMACSHA256.HashData(KeyOne, CanonicalV3(record)), record.ProvenanceSignature!.Value.ToArray());
         }
 
         // Deterministic: the same claims in another exposure order encode identically.
@@ -82,9 +82,10 @@ public class SignedProvenanceTests
         };
         Assert.Equal(Canonical(reordered), Canonical(reordered with { Provenance = reordered.Provenance with { ExposedTo = [.. reordered.Provenance.ExposedTo.Reverse()] } }));
 
-        // And the encoding starts with its version tag: v2 for what finalization signs since story 17.2.
+        // And the encoding starts with its version tag: v3 for what finalization signs since story 20.6.
         Assert.Equal(Encoding.UTF8.GetBytes("aexp-prov:v1"), Canonical(reuse).AsSpan(5, 12).ToArray());
         Assert.Equal(Encoding.UTF8.GetBytes("aexp-prov:v2"), CanonicalV2(reuse).AsSpan(5, 12).ToArray());
+        Assert.Equal(Encoding.UTF8.GetBytes("aexp-prov:v3"), CanonicalV3(reuse).AsSpan(5, 12).ToArray());
     }
 
     [Fact]
@@ -475,7 +476,7 @@ public class SignedProvenanceTests
         var world = new World(options);
         await world.FinalizeLessonAndReuseAsync();
 
-        Assert.All(world.Store.Created, record => Assert.Equal(HMACSHA256.HashData(KeyOne, CanonicalV2(record)), record.ProvenanceSignature!.Value.ToArray()));
+        Assert.All(world.Store.Created, record => Assert.Equal(HMACSHA256.HashData(KeyOne, CanonicalV3(record)), record.ProvenanceSignature!.Value.ToArray()));
     }
 
     [Fact]
@@ -733,6 +734,49 @@ public class SignedProvenanceTests
         Assert.Equal(ConfidenceUpdateOutcome.Applied, (await verifier.ApplyEvidenceAsync(Reviewer, world.Machine(reuseRun, reuseRound), CancellationToken.None)).Outcome);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Error_text_with_no_canonical_encoding_fails_finalization_at_create_under_claims_version_3(bool inCallError)
+    {
+        // Story 20.6: a custom sanitizer can let a lone surrogate through into an error. Version 3 signs error text, so
+        // such a run cannot be signed: it ends Failed at the create stage with nothing stored, as other signed text does.
+        var capture = new InMemoryExperienceCaptureService(new PassThroughSanitizer(), new CaptureLimits(8, 8, 1_000, 1_000));
+        var world = new World(Signing, capture: capture);
+        var runId = Guid.NewGuid();
+        Assert.Equal(StartRunOutcome.Started, capture.StartRun(
+            runId, "task-1", "a task", TestScope,
+            new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string>()),
+            new Provenance("tests", null, Now, null), Now).Outcome);
+        var call = new RawToolCall(Guid.NewGuid(), "refund", new Dictionary<string, object?>(), Now, TimeSpan.FromMilliseconds(5), null, inCallError ? "bad \ud800" : "boom");
+        var appended = await capture.AppendAttemptAsync(
+            runId, new AppendAttemptRequest(Guid.NewGuid(), Now, TimeSpan.FromSeconds(1), [call], null, inCallError ? "TimeoutException" : "bad \ud800"));
+        Assert.Equal(AppendAttemptOutcome.Recorded, appended.Outcome);
+        Assert.Equal(CompleteRunOutcome.Recorded, (await capture.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, Now.AddMinutes(1))).Outcome);
+
+        var round = Guid.NewGuid();
+        var result = await world.Finalization.FinalizeAsync(new FinalizeExperienceRequest(
+            RunId: runId,
+            Authorization: Reviewer,
+            ClosedRound: new ClosedVerificationRound(round, "rev-1"),
+            RequiredChecks: [new RequiredCheck("tests", "TestResult")],
+            Evidence: [new Evidence(Guid.NewGuid(), round, "rev-1", "tests", "TestResult", CheckResult.Pass, "ci", null, Now)],
+            CurrentArtifactRevision: "rev-1",
+            StorageDecision: StorageDecision.Permit,
+            FinalizedAt: Now.AddMinutes(2)));
+
+        Assert.Equal(FinalizationOutcome.Failed, result.Outcome);
+        Assert.Equal(FinalizationStage.CreateRecord, result.Stage);
+        Assert.Empty(world.Store.Created);
+    }
+
+    /// <summary>A sanitizer that allows every payload exactly as given, as a non-conforming custom one might.</summary>
+    private sealed class PassThroughSanitizer : ISanitizer
+    {
+        public Task<SanitizedPayload> SanitizeAsync(RawPayload payload, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new SanitizedPayload(SanitizationDecision.Allowed, payload.Fields, [], [], null));
+    }
+
     [Fact]
     public async Task A_retry_that_collides_with_a_record_whose_signature_does_not_vouch_is_reported_not_replayed()
     {
@@ -828,6 +872,12 @@ public class SignedProvenanceTests
     /// <summary>The pinned content encoding of <see cref="GoldenRecord"/>; drift here breaks every stored v2 signature.</summary>
     private const string GoldenContentHex = "01000000067461736B2D31010000000852C3A973756DC3A9010000000100000000010100000004686F7374010000000631302E302E3001000000096C696E75782D7836340001000000020100000001610100000001310100000006726567696F6E010000000265750100000001010000000000010000000101000000000100000006726566756E640100000002010000000161010100000001780100000001620401000000033245300101000000064C6573736F6E0100000001010000000273310100000000000100000002010000000270310100000002703201000000010100000001770000000000000000010000000A70726F64756365722F31";
 
+    /// <summary>
+    /// The pinned claims version 3 content encoding of <see cref="GoldenRecord"/> with a failed attempt and a failed
+    /// call; drift here breaks every stored v3 signature.
+    /// </summary>
+    private const string GoldenContentV3Hex = "01000000067461736B2D31010000000852C3A973756DC3A9010000000100000000010100000004686F7374010000000631302E302E3001000000096C696E75782D7836340001000000020100000001610100000001310100000006726567696F6E0100000002657501000000010100000000010000001654696D656F7574457863657074696F6E3A20736C6F77010000000101000000000100000006726566756E640100000002010000000161010100000001780100000001620401000000033245300100000004626F6F6D0101000000064C6573736F6E0100000001010000000273310100000000000100000002010000000270310100000002703201000000010100000001770000000000000000010000000A70726F64756365722F31";
+
     [Fact]
     public void The_content_encoding_matches_the_pinned_golden_vector_and_the_documented_encoding()
     {
@@ -836,6 +886,29 @@ public class SignedProvenanceTests
         Assert.Equal(GoldenContentHex, Convert.ToHexString(ProvenanceSigner.EncodeContent(record)));
         Assert.Equal(CanonicalContent(record), ProvenanceSigner.EncodeContent(record));
         Assert.Equal(CanonicalV2(record), ProvenanceSigner.EncodeV2(record));
+
+        // Story 20.6: claims version 3 adds the error text and leaves every other byte as version 2 has it. Without
+        // errors, each attempt's v2 failure byte is already v3's presence byte, and each call gains one zero byte.
+        Assert.Equal(CanonicalContentV3(record), ProvenanceSigner.EncodeContentV3(record));
+        Assert.Equal(CanonicalV3(record), ProvenanceSigner.EncodeV3(record));
+        Assert.Equal(ProvenanceSigner.EncodeContent(record).Length + 1, ProvenanceSigner.EncodeContentV3(record).Length);
+        var failing = WithErrors(record, attemptError: "TimeoutException: slow", callError: "boom");
+        Assert.Equal(GoldenContentV3Hex, Convert.ToHexString(ProvenanceSigner.EncodeContentV3(failing)));
+        Assert.Equal(CanonicalContentV3(failing), ProvenanceSigner.EncodeContentV3(failing));
+        Assert.Equal(CanonicalV3(failing), ProvenanceSigner.EncodeV3(failing));
+
+        // Only the error text changed, presence kept: v3 content differs, v2 content does not.
+        foreach (var changed in new[]
+        {
+            WithErrors(record, attemptError: "InvalidOperationException: slow", callError: "boom"),
+            WithErrors(record, attemptError: "TimeoutException: slow", callError: "boom!"),
+        })
+        {
+            Assert.NotEqual(ProvenanceSigner.EncodeContentV3(failing), ProvenanceSigner.EncodeContentV3(changed));
+            Assert.Equal(ProvenanceSigner.EncodeContent(failing), ProvenanceSigner.EncodeContent(changed));
+        }
+
+        Assert.ThrowsAny<ArgumentException>(() => ProvenanceSigner.EncodeContentV3(WithErrors(record, attemptError: null, callError: "bad \ud800")));
 
         // A null reflection encodes as absent: everything before it, then a single zero byte.
         var bare = record with { Reflection = null };
@@ -852,12 +925,12 @@ public class SignedProvenanceTests
     }
 
     [Fact]
-    public async Task An_untouched_v2_record_verifies_and_its_content_is_confirmed_so_it_renders_by_its_own_authorship()
+    public async Task An_untouched_v3_record_verifies_and_its_content_is_confirmed_so_it_renders_by_its_own_authorship()
     {
         var world = new World(Signing);
         await world.FinalizeLessonAndReuseAsync();
         var lesson = world.Lesson;
-        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV2, lesson.ProvenanceSignature!.Algorithm);
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, lesson.ProvenanceSignature!.Algorithm);
         Assert.Equal(ReflectionAuthorship.Deterministic, lesson.Reflection!.Authorship);
 
         var signer = ProvenanceSigner.Create(Signing)!;
@@ -1003,9 +1076,22 @@ public class SignedProvenanceTests
         Assert.True(RetrievalOver(Signing, unknownKey).IsModelAuthored(unknownKey));
         Assert.True(RetrievalOver(Signing, unknownAlgorithm).IsModelAuthored(unknownAlgorithm));
 
-        // A v2 value presented as v1 does not verify either: the algorithm names the claims it covers.
+        // A v3 value presented as v1 does not verify either: the algorithm names the claims it covers.
         var relabelled = record with { ProvenanceSignature = genuine with { Algorithm = ExperienceProvenanceSignature.HmacSha256 } };
         Assert.Equal(ProvenanceSignatureCheck.Invalid, signer.Verify(relabelled));
+
+        // Nor between versions 2 and 3 (story 20.6), in either direction, on a record with error text or without.
+        foreach (var subject in new[] { record, WithErrors(record, attemptError: "TimeoutException: slow", callError: "boom") })
+        {
+            var overV2 = HMACSHA256.HashData(KeyOne, ProvenanceSigner.EncodeV2(subject));
+            var overV3 = HMACSHA256.HashData(KeyOne, ProvenanceSigner.EncodeV3(subject));
+            var v3LabelOverV2 = subject with { ProvenanceSignature = new("key-1", ExperienceProvenanceSignature.HmacSha256ClaimsV3, overV2) };
+            var v2LabelOverV3 = subject with { ProvenanceSignature = new("key-1", ExperienceProvenanceSignature.HmacSha256ClaimsV2, overV3) };
+            Assert.Equal(ProvenanceSignatureCheck.Invalid, signer.Verify(v3LabelOverV2));
+            Assert.Equal(ProvenanceSignatureCheck.Invalid, signer.Verify(v2LabelOverV3));
+            Assert.False(signer.ConfirmsContent(v3LabelOverV2));
+            Assert.False(signer.ConfirmsContent(v2LabelOverV3));
+        }
     }
 
     [Fact]
@@ -1082,15 +1168,23 @@ public class SignedProvenanceTests
     }
 
     public static TheoryData<string> RenderedFields() =>
-        ["ToolName", "ArgumentValue", "ArgumentAdded", "ToolCallOrder", "AttemptError", "EnvironmentHost", "EnvironmentMetadata", "OutcomeStatus", "EvidenceCount"];
+        [
+            "ToolName", "ArgumentValue", "ArgumentAdded", "ToolCallOrder", "AttemptError", "AttemptErrorText", "ToolCallError",
+            "ToolCallErrorCleared", "ToolCallErrorText", "EnvironmentHost", "EnvironmentMetadata", "OutcomeStatus", "EvidenceCount",
+        ];
 
     [Theory]
     [MemberData(nameof(RenderedFields))]
     public async Task Every_field_the_writer_renders_is_covered_so_changing_one_leaves_the_content_unconfirmed(string field)
     {
         var signer = ProvenanceSigner.Create(Signing)!;
-        var record = GoldenRecord();
+
+        // The error cases start from a failed attempt with a failed call, so there is error text to change or clear.
+        var record = field is "AttemptErrorText" or "ToolCallErrorCleared" or "ToolCallErrorText"
+            ? WithErrors(GoldenRecord(), attemptError: "TimeoutException: slow", callError: "boom")
+            : GoldenRecord();
         var signed = record with { ProvenanceSignature = signer.Sign(record) };
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, signed.ProvenanceSignature!.Algorithm);
         Assert.True(signer.ConfirmsContent(signed));
 
         var attempt = signed.Attempts[0];
@@ -1103,6 +1197,12 @@ public class SignedProvenanceTests
             "ArgumentAdded" => WithCall(call with { Arguments = new Dictionary<string, object?>(StringComparer.Ordinal) { ["b"] = 2, ["a"] = "x", ["c"] = true } }),
             "ToolCallOrder" => WithCall(call with { SequenceNumber = 5 }),
             "AttemptError" => signed with { Attempts = [attempt with { Error = "boom" }] },
+
+            // Story 20.6: the error class a Tried: line shows, with presence unchanged, and each call's marker.
+            "AttemptErrorText" => signed with { Attempts = [attempt with { Error = "InvalidOperationException: slow" }] },
+            "ToolCallError" => WithCall(call with { Error = "boom" }),
+            "ToolCallErrorCleared" => WithCall(call with { Error = null }),
+            "ToolCallErrorText" => WithCall(call with { Error = "boom!" }),
             "EnvironmentHost" => signed with { Environment = signed.Environment with { HostName = "elsewhere" } },
             "EnvironmentMetadata" => signed with { Environment = signed.Environment with { Metadata = new Dictionary<string, string> { ["region"] = "us", ["a"] = "1" } } },
             "OutcomeStatus" => signed with { Outcome = signed.Outcome with { Status = TaskVerificationStatus.Unknown } },
@@ -1117,6 +1217,43 @@ public class SignedProvenanceTests
         Assert.False(service.IsContentConfirmed(tampered));
         var excluding = await service.RetrieveAsync(RetrieveRequest(tampered, exclude: true));
         Assert.Equal([new ExcludedExperience(tampered.ExperienceId, RetrievalExclusionReason.UnconfirmedContent)], excluding.Excluded);
+    }
+
+    public static TheoryData<string> ErrorFields() => ["AttemptErrorText", "ToolCallError", "ToolCallErrorCleared", "ToolCallErrorText"];
+
+    [Theory]
+    [MemberData(nameof(ErrorFields))]
+    public void A_v2_record_still_confirms_when_only_its_error_text_changed_the_documented_gap(string field)
+    {
+        // Story 20.6: claims version 2 encodes only whether each attempt failed, so its error text stays unsigned. A
+        // v2 record from before the upgrade keeps verifying and confirming exactly as it did; only v3 covers the text.
+        var signer = ProvenanceSigner.Create(Signing)!;
+        var record = WithErrors(GoldenRecord(), attemptError: "TimeoutException: slow", callError: field == "ToolCallError" ? null : "boom");
+        var v2 = AgentExperience.Tests.Shared.SignedRecords.SignV2(record, "key-1", KeyOne);
+        Assert.Equal(HMACSHA256.HashData(KeyOne, ProvenanceSigner.EncodeV2(record)), v2.ProvenanceSignature!.Value.ToArray());
+        Assert.True(signer.ConfirmsContent(v2));
+
+        var attempt = v2.Attempts[0];
+        var call = attempt.ToolCalls[0];
+        var tampered = field switch
+        {
+            "AttemptErrorText" => v2 with { Attempts = [attempt with { Error = "InvalidOperationException: slow" }] },
+            "ToolCallError" => v2 with { Attempts = [attempt with { ToolCalls = [call with { Error = "boom" }] }] },
+            "ToolCallErrorCleared" => v2 with { Attempts = [attempt with { ToolCalls = [call with { Error = null }] }] },
+            "ToolCallErrorText" => v2 with { Attempts = [attempt with { ToolCalls = [call with { Error = "boom!" }] }] },
+            _ => throw new ArgumentOutOfRangeException(nameof(field)),
+        };
+
+        Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(tampered));
+        Assert.True(signer.ConfirmsContent(tampered));
+        Assert.False(RetrievalOver(Signing, tampered).IsModelAuthored(tampered));
+
+        // The same edit under a v3 signature is caught.
+        var v3 = AgentExperience.Tests.Shared.SignedRecords.SignV3(record, "key-1", KeyOne);
+        Assert.Equal(signer.Sign(record), v3.ProvenanceSignature);
+        var tamperedV3 = tampered with { ProvenanceSignature = v3.ProvenanceSignature };
+        Assert.Equal(ProvenanceSignatureCheck.Invalid, signer.Verify(tamperedV3));
+        Assert.False(signer.ConfirmsContent(tamperedV3));
     }
 
     [Fact]
@@ -1258,8 +1395,9 @@ public class SignedProvenanceTests
     [Fact]
     public async Task SignClaimsVersion_1_signs_new_records_as_an_earlier_build_verifies_them_and_both_versions_verify()
     {
-        Assert.Equal(2, Signing.SignClaimsVersion);
-        foreach (var invalid in new[] { 0, 3, -1 })
+        Assert.Equal(3, Signing.SignClaimsVersion);
+        Assert.Contains("SignClaimsVersion = 3", Signing.ToString(), StringComparison.Ordinal);
+        foreach (var invalid in new[] { 0, 4, -1 })
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = invalid });
         }
@@ -1277,13 +1415,43 @@ public class SignedProvenanceTests
         });
         Assert.Equal(ConfidenceUpdateOutcome.Applied, (await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(reuseRun, reuseRound), CancellationToken.None)).Outcome);
 
-        // A node on this build signing version 2 verifies both.
+        // A node on this build signing version 3 verifies both.
         var signer = ProvenanceSigner.Create(Signing)!;
         Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(world.Lesson));
         Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(world.Lesson with { ProvenanceSignature = signer.Sign(world.Lesson) }));
 
         // Its content is unconfirmed, as for any version 1 record.
         Assert.True(RetrievalOver(rolling, world.Lesson).IsModelAuthored(world.Lesson));
+    }
+
+    [Fact]
+    public async Task SignClaimsVersion_2_signs_new_records_as_preview_9_verifies_them_and_their_content_is_confirmed()
+    {
+        var rolling = new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = 2 };
+        Assert.Contains("SignClaimsVersion = 2", rolling.ToString(), StringComparison.Ordinal);
+        var world = new World(rolling);
+        var (reuseRun, reuseRound) = await world.FinalizeLessonAndReuseAsync();
+
+        // Exactly the 17.2 encoding, so a node on 0.1.0-preview.7 to .9 verifies it.
+        Assert.All(world.Store.Created, record =>
+        {
+            Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV2, record.ProvenanceSignature!.Algorithm);
+            Assert.Equal(HMACSHA256.HashData(KeyOne, CanonicalV2(record)), record.ProvenanceSignature.Value.ToArray());
+        });
+        Assert.Equal(ConfidenceUpdateOutcome.Applied, (await world.Lifecycle.ApplyEvidenceAsync(Reviewer, world.Machine(reuseRun, reuseRound), CancellationToken.None)).Outcome);
+
+        // A node signing version 3 verifies it, and its content is confirmed: upgrading fences nothing.
+        var signer = ProvenanceSigner.Create(Signing)!;
+        Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(world.Lesson));
+        Assert.True(signer.ConfirmsContent(world.Lesson));
+        Assert.False(RetrievalOver(Signing, world.Lesson).IsModelAuthored(world.Lesson));
+        Assert.False(RetrievalOver(rolling, world.Lesson).IsModelAuthored(world.Lesson));
+
+        // And a version 3 record verifies under the rollout options too.
+        var v3 = world.Lesson with { ProvenanceSignature = signer.Sign(world.Lesson) };
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, v3.ProvenanceSignature!.Algorithm);
+        Assert.Equal(ProvenanceSignatureCheck.Valid, ProvenanceSigner.Create(rolling)!.Verify(v3));
+        Assert.True(ProvenanceSigner.Create(rolling)!.ConfirmsContent(v3));
     }
 
     [Fact]
@@ -1454,6 +1622,26 @@ public class SignedProvenanceTests
     /// implementation (<c>tests/Shared/SignedRecords.cs</c>).
     /// </summary>
     internal static byte[] CanonicalContent(ExperienceRecord record) => AgentExperience.Tests.Shared.SignedRecords.Content(record);
+
+    /// <summary>
+    /// The documented claims version 3 encoding (story 20.6), written independently of the library's: the version 1
+    /// claims under the v3 tag, then the SHA-256 of the content encoding with error text.
+    /// </summary>
+    internal static byte[] CanonicalV3(ExperienceRecord record) =>
+        [.. Canonical(record, "aexp-prov:v3"), .. SHA256.HashData(CanonicalContentV3(record))];
+
+    /// <summary>The documented claims version 3 content encoding: the shared test signer's, with error text.</summary>
+    internal static byte[] CanonicalContentV3(ExperienceRecord record) => AgentExperience.Tests.Shared.SignedRecords.Content(record, includeErrors: true);
+
+    /// <summary><paramref name="record"/> with its first attempt's error and its first call's error set.</summary>
+    private static ExperienceRecord WithErrors(ExperienceRecord record, string? attemptError, string? callError)
+    {
+        var attempt = record.Attempts[0];
+        return record with
+        {
+            Attempts = [attempt with { Error = attemptError, ToolCalls = [attempt.ToolCalls[0] with { Error = callError }, .. attempt.ToolCalls.Skip(1)] }, .. record.Attempts.Skip(1)],
+        };
+    }
 
     private static byte[] Canonical(ExperienceRecord record, string versionTag)
     {

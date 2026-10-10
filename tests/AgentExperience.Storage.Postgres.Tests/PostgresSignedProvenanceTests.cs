@@ -140,7 +140,7 @@ public sealed class PostgresSignedProvenanceTests
         var tenant = NewTenant();
         var (auth, scope) = (Authorize(tenant), Scope(tenant));
         var lesson = await FinalizeAsync(auth, scope, Guid.NewGuid());
-        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV2, lesson.Signature!.Algorithm);
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, lesson.Signature!.Algorithm);
 
         var retrieval = new ExperienceRetrievalService(
             new NoCandidates(), RetrievalPolicy.Default, RankingWeights.Default, TimeProvider.System, null, null, null, null, Signing);
@@ -167,12 +167,15 @@ public sealed class PostgresSignedProvenanceTests
         Assert.True(retrieval.IsModelAuthored(tampered));
     }
 
-    [Fact]
-    public async Task A_v2_signature_over_every_rendered_field_still_confirms_after_the_store_round_trip()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task A_v2_or_v3_signature_over_every_rendered_field_still_confirms_after_the_store_round_trip(int claimsVersion)
     {
         // Story 17.2: the content digest covers attempts (tool names and argument values of every JSON kind),
         // environment and outcome. The store hands values back as its own CLR types, plaintext or sealed; the canonical
-        // encoding goes through their JSON form, so the signature made over what was written still confirms.
+        // encoding goes through their JSON form, so the signature made over what was written still confirms. Story
+        // 20.6: version 3 also covers the error text, here non-ASCII in both an attempt error and a call error.
         var tenant = NewTenant();
         var (auth, scope) = (Authorize(tenant), Scope(tenant));
         var full = Full(scope);
@@ -189,8 +192,24 @@ public sealed class PostgresSignedProvenanceTests
             ["hugeText"] = System.Text.Json.JsonDocument.Parse("1e17").RootElement,
             ["scaled"] = 1.50m,
         };
-        var record = full with { Attempts = [full.Attempts[0] with { ToolCalls = [call with { Arguments = arguments }, .. full.Attempts[0].ToolCalls.Skip(1)] }, .. full.Attempts.Skip(1)] };
-        var signed = SignedRecords.SignV2(record, "integration-key-1", Key);
+        var record = full with
+        {
+            Attempts =
+            [
+                full.Attempts[0] with
+                {
+                    Error = "TimeoutException: délai dépassé ✓",
+                    ToolCalls = [call with { Arguments = arguments, Error = "délai dépassé ✓" }, .. full.Attempts[0].ToolCalls.Skip(1)],
+                },
+                .. full.Attempts.Skip(1),
+            ],
+        };
+        var signed = claimsVersion == 3
+            ? SignedRecords.SignV3(record, "integration-key-1", Key)
+            : SignedRecords.SignV2(record, "integration-key-1", Key);
+        Assert.Equal(
+            claimsVersion == 3 ? ExperienceProvenanceSignature.HmacSha256ClaimsV3 : ExperienceProvenanceSignature.HmacSha256ClaimsV2,
+            signed.ProvenanceSignature!.Algorithm);
 
         var retrieval = new ExperienceRetrievalService(
             new NoCandidates(), RetrievalPolicy.Default, RankingWeights.Default, TimeProvider.System, null, null, null, null, Signing);
@@ -199,6 +218,8 @@ public sealed class PostgresSignedProvenanceTests
 
         var read = (await _store.GetAsync(auth, scope, signed.ExperienceId, CancellationToken.None)).Record!;
         Assert.Equal(signed.ProvenanceSignature, read.ProvenanceSignature);
+        Assert.Equal("TimeoutException: délai dépassé ✓", read.Attempts[0].Error);
+        Assert.Equal("délai dépassé ✓", read.Attempts[0].ToolCalls[0].Error);
         Assert.True(retrieval.IsContentConfirmed(read));
         Assert.False(retrieval.IsModelAuthored(read));
     }

@@ -2033,3 +2033,17 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 **Given** the transfer experiment
 **When** it runs on at least two providers' models
 **Then** each run's report and ledger entry are committed with cost, the README states what the results do and do not show, and a negative result is reported as plainly as a positive one.
+
+### Story 20.6: Sign What the Tried: Line Shows
+
+**Traces:** NFR (provenance integrity) · **Depends on:** 20.3 · **Added:** 2026-10-10, after 20.3's review found that claims v2 does not cover the per-call outcome markers 20.3 renders
+
+**Acceptance Criteria:**
+
+**Given** provenance signing is on
+**When** finalization signs a new record
+**Then** it signs claims version 3 by default. Version 3 is version 2's claims and content digest plus every attempt's and every tool call's stored error text (presence, then the text), so that changing any error the `Tried:` line renders from, whether an attempt's class or excerpt or a call's marker, leaves the content unconfirmed. A test adds the per-call and per-attempt error cases to the "every rendered field is covered" check.
+
+**Given** records signed under versions 1 and 2, and nodes on an earlier build during a rolling deploy
+**When** they are verified
+**Then** version 1 and version 2 signatures keep verifying exactly as before (version 2 still confirms content, and the docs say its error text is unsigned). `SignClaimsVersion` accepts 1, 2 or 3, so a rollout can sign version 2 until every node verifies version 3. The upgrade suite proves that version 1 and version 2 signed records in an upgraded database still verify as before. (No seeded preview signs, so these records are written by the current store; the encoding of the payload's `Error` fields has not changed since they were introduced.)

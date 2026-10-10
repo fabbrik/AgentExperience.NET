@@ -647,7 +647,7 @@ rely on**, and the approval boundary remains the control for any tool call a les
 - **Unconfirmed content counts as model-authored when signing is on.** With provenance signing configured, retrieval
   and the provider decide on the same record (the provider asks `ExperienceRetrievalService.IsModelAuthored` and
   `IsContentConfirmed` about the record it re-read, and the writer fences by that answer): a record whose content no
-  claims version 2 signature confirms is omitted under `Exclude` as
+  claims version 3 or version 2 signature confirms is omitted under `Exclude` as
   `InjectionOmissionReason.UnconfirmedContent` (retrieval lists it as `RetrievalExclusionReason.UnconfirmedContent`),
   or labelled and fenced whatever it declares. In the compact rendering its header is `--- RECORD n ---`, with no
   task, and its `Confidence:` line carries the lifecycle status but no verification status (`Confidence: 0.67 · Validated`); the fence holds a `Task:` line, a `Verification:`

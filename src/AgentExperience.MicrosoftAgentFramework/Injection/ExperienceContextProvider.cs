@@ -1224,7 +1224,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // was model-authored when ranked; this re-checks the re-read record, so one that changed since cannot
             // slip through. Decided by the retrieval service on the re-read record, failing closed: any authorship
             // that is not Deterministic counts, as does the library's own model-backed reflector, and, with
-            // provenance signing configured, content no claims version 2 signature confirms (story 17.2). The writer
+            // provenance signing configured, content no claims version 3 or version 2 signature confirms (story 17.2). The writer
             // fences by the same decision. No detail.
             var modelAuthored = _retrieval.IsModelAuthored(current);
             if (_excludeModelAuthored && modelAuthored)
