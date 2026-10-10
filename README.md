@@ -195,7 +195,7 @@ Read [Concepts in five minutes](docs/guide/concepts.md) for the whole model and 
 
 ## Status
 
-`0.1.0-preview.8` is a preview: it claims no production readiness, and public APIs may change between previews (each
+`0.1.0-preview.9` is a preview: it claims no production readiness, and public APIs may change between previews (each
 change is a reviewed diff against a checked-in API baseline). Stable enough to evaluate: the capture, verify, store,
 retrieve and inject loop, the PostgreSQL schema (with journaled migrations and upgrade tests from every published
 preview), and the tenant-isolation and sanitization rules. Supported: .NET 10, PostgreSQL 15 to 18, and
