@@ -208,22 +208,22 @@ public static class LiveReuseExperiment
 
     public static DateTimeOffset TrialInstant { get; } = new(2026, 3, 1, 10, 0, 0, TimeSpan.Zero);
 
-    private static readonly AuthorizationContext Authorization = new(
+    internal static readonly AuthorizationContext Authorization = new(
         TenantId: "live-reuse",
         PrincipalId: "live-reuse-harness",
         Roles: ["experience:read", "experience:write"],
         IssuedAt: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
-    private static readonly EnvironmentFingerprint HarnessEnvironment = new(
+    internal static readonly EnvironmentFingerprint HarnessEnvironment = new(
         HostName: "live-reuse-host",
         RuntimeVersion: "net10.0",
         OperatingSystem: "live-reuse-os",
         ApplicationVersion: "1.0.0-experiment",
         Metadata: new Dictionary<string, string>(StringComparer.Ordinal) { ["Fixture"] = "simulated-database" });
 
-    private static readonly RequiredCheck[] RequiredChecks = [new RequiredCheck(CheckId, "ToolExitCode")];
+    internal static readonly RequiredCheck[] RequiredChecks = [new RequiredCheck(CheckId, "ToolExitCode")];
 
-    private static readonly SanitizationOptions Sanitization = new(new Dictionary<string, SanitizationPolicy>(StringComparer.Ordinal)
+    internal static readonly SanitizationOptions Sanitization = new(new Dictionary<string, SanitizationPolicy>(StringComparer.Ordinal)
     {
         [SanitizationKinds.ToolArguments] = new SanitizationPolicy(
             AllowedFieldNames: new HashSet<string>(StringComparer.Ordinal) { "service", "migration", "strategy" },
@@ -241,7 +241,7 @@ public static class LiveReuseExperiment
             MaxFieldNameLength: 100),
     });
 
-    private static readonly CaptureLimits Limits = new(
+    internal static readonly CaptureLimits Limits = new(
         MaxAttemptsPerRun: 16,
         MaxToolCallsPerAttempt: 50,
         MaxResultLength: 4_000,
@@ -468,15 +468,48 @@ public static class LiveReuseExperiment
         CancellationToken cancellationToken,
         bool showStrategy = true)
     {
+        var wiring = new RunWiring(
+            ScopeFor(instance),
+            instance.Service + "/" + (phase == "learning" ? "learning" : "ticket"),
+            clock => BuildContainer(clock, memory ?? finalizeInto ?? new InMemoryRecordStore()),
+            Inject: memory is not null,
+            Finalize: finalizeInto is not null,
+            ShowStrategy: showStrategy,
+            Cluster: null);
+
+        var outcome = await RunCoreAsync(
+            RunSettings.From(options, design), metered, sequence, phase, instance, condition, acceptedStrategy,
+            taskText, migration, attemptLimit, wiring, cancellationToken).ConfigureAwait(false);
+        return outcome.Record;
+    }
+
+    /// <summary>
+    /// One run, wired by <paramref name="wiring"/>: which scope and container it uses, whether the context provider
+    /// injects, and whether a verified run is finalized into the container's store. Both experiments run through here.
+    /// </summary>
+    internal static async Task<TrialOutcome> RunCoreAsync(
+        RunSettings settings,
+        MeteredChatClient metered,
+        int sequence,
+        string phase,
+        MigrationInstance instance,
+        string condition,
+        string acceptedStrategy,
+        string taskText,
+        string migration,
+        int attemptLimit,
+        RunWiring wiring,
+        CancellationToken cancellationToken)
+    {
         var ids = new RunIdentities(phase + "/" + condition, instance.Index);
         var frozen = new FrozenClock(phase == "learning" ? LearningInstant : TrialInstant);
-        var scope = ScopeFor(instance);
-        var taskId = instance.Service + "/" + (phase == "learning" ? "learning" : "ticket");
+        var scope = wiring.Scope;
+        var taskId = wiring.TaskId;
 
-        await using var provider = BuildContainer(frozen, memory ?? finalizeInto ?? new InMemoryRecordStore());
+        await using var provider = wiring.Container(frozen);
 
         var capture = provider.GetRequiredService<IExperienceCaptureService>();
-        var environment = new MigrationEnvironment(instance, acceptedStrategy, migration);
+        var environment = new MigrationEnvironment(instance, acceptedStrategy, migration, wiring.Cluster);
         var evidence = new List<Evidence>();
         var log = new WorkLog();
         var toolCalls = 0;
@@ -484,7 +517,7 @@ public static class LiveReuseExperiment
 
         metered.ResetObservation();
         var usageBefore = metered.Totals;
-        var started = options.Clock.GetTimestamp();
+        var started = settings.Clock.GetTimestamp();
 
         var status = RunStatus.Completed;
         string? classification = null;
@@ -505,10 +538,10 @@ public static class LiveReuseExperiment
                 {
                     Instructions = Instructions,
                     Tools = environment.Tools,
-                    Temperature = design.Temperature,
-                    Seed = options.Descriptor.SeedSent ? design.Seed : null,
+                    Temperature = settings.Temperature,
+                    Seed = settings.SeedSent ? settings.Seed : null,
                 },
-                AIContextProviders = memory is null
+                AIContextProviders = !wiring.Inject
                     ? []
                     : [new ExperienceContextProvider(
                         provider.GetRequiredService<ExperienceRetrievalService>(),
@@ -521,7 +554,7 @@ public static class LiveReuseExperiment
 
                             // Story 6.2: the one argument that distinguishes the approaches, allowlisted so the
                             // block's own Tried: line for the working attempt carries the working strategy.
-                            ApproachArguments = showStrategy
+                            ApproachArguments = wiring.ShowStrategy
                                 ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { [MigrationEnvironment.ApplyToolName] = ["strategy"] }
                                 : new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal),
                         })],
@@ -550,7 +583,7 @@ public static class LiveReuseExperiment
                 while (true)
                 {
                     var before = recorder.Calls.Count;
-                    var response = await RunStepAsync(agent, WorkLog.Messages(taskText, log), options, cancellationToken).ConfigureAwait(false);
+                    var response = await RunStepAsync(agent, WorkLog.Messages(taskText, log), settings, cancellationToken).ConfigureAwait(false);
                     var made = recorder.Calls.Skip(before).ToList();
                     foreach (var call in made)
                     {
@@ -573,7 +606,7 @@ public static class LiveReuseExperiment
                         break;
                     }
 
-                    if (environment.Attempts.Any(change => change.Turn == attempt) || recorder.Calls.Count + unknownThisAttempt >= design.ToolCallsPerAttempt)
+                    if (environment.Attempts.Any(change => change.Turn == attempt) || recorder.Calls.Count + unknownThisAttempt >= settings.ToolCallsPerAttempt)
                     {
                         break;
                     }
@@ -630,7 +663,7 @@ public static class LiveReuseExperiment
         catch (AttemptTimeoutException)
         {
             status = RunStatus.Errored;
-            classification = "attempt timed out after " + options.CallTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " s";
+            classification = "attempt timed out after " + settings.CallTimeout.TotalSeconds.ToString(CultureInfo.InvariantCulture) + " s";
         }
         catch (Exception ex) when (ex is not HarnessIntegrityException && !cancellationToken.IsCancellationRequested)
         {
@@ -641,7 +674,7 @@ public static class LiveReuseExperiment
             classification = Classify(ex);
         }
 
-        var latency = options.Clock.GetElapsedTime(started).TotalMilliseconds;
+        var latency = settings.Clock.GetElapsedTime(started).TotalMilliseconds;
         var usage = metered.Totals.Minus(usageBefore);
         var blockStrategies = BlockStrategies(metered.FirstBlockSeen);
         var blockStrategy = blockStrategies.Count > 0 ? blockStrategies[0] : null;
@@ -650,6 +683,7 @@ public static class LiveReuseExperiment
         bool? verified = null;
         int? failedAttempts = null;
         IReadOnlyList<string> storedStrategies = [];
+        ExperienceRecord? stored = null;
 
         if (status == RunStatus.Completed)
         {
@@ -671,13 +705,13 @@ public static class LiveReuseExperiment
 
             failedAttempts = run.Attempts.Count(attempt => attempt.Error is not null);
 
-            if (finalizeInto is not null && verified == true)
+            if (wiring.Finalize && verified == true)
             {
-                storedStrategies = await FinalizeAsync(provider, ids, evidence, frozen, finalizeInto, scope, sequence, cancellationToken).ConfigureAwait(false);
+                (storedStrategies, stored) = await FinalizeAsync(provider, ids, evidence, frozen, scope, sequence, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        return new RunRecord(
+        var record = new RunRecord(
             sequence,
             phase,
             instance.Index,
@@ -703,6 +737,8 @@ public static class LiveReuseExperiment
             StoredStrategies = storedStrategies,
             BlockStrategies = blockStrategies,
         };
+
+        return new TrialOutcome(record, metered.FirstBlockSeen, stored);
     }
 
     /// <summary>
@@ -736,9 +772,9 @@ public static class LiveReuseExperiment
         return [.. contents.OfType<FunctionCallContent>().Where(call => !answered.Contains(call.CallId))];
     }
 
-    private static async Task<AgentResponse> RunStepAsync(AIAgent agent, IReadOnlyList<ChatMessage> messages, LiveExperimentOptions options, CancellationToken cancellationToken)
+    private static async Task<AgentResponse> RunStepAsync(AIAgent agent, IReadOnlyList<ChatMessage> messages, RunSettings settings, CancellationToken cancellationToken)
     {
-        using var timeout = new CancellationTokenSource(options.CallTimeout, options.Clock);
+        using var timeout = new CancellationTokenSource(settings.CallTimeout, settings.Clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
@@ -754,12 +790,11 @@ public static class LiveReuseExperiment
     /// Finalizes a verified learning run into its store, reads the record back, and returns the strategies its final
     /// attempt's <c>apply_migration</c> calls carry as stored, in call order -- what the working attempt's injected Tried: line will show.
     /// </summary>
-    private static async Task<IReadOnlyList<string>> FinalizeAsync(
+    private static async Task<(IReadOnlyList<string> Strategies, ExperienceRecord Record)> FinalizeAsync(
         IServiceProvider provider,
         RunIdentities ids,
         IReadOnlyList<Evidence> evidence,
         FrozenClock clock,
-        InMemoryRecordStore store,
         Scope scope,
         int sequence,
         CancellationToken cancellationToken)
@@ -781,6 +816,7 @@ public static class LiveReuseExperiment
             throw new HarnessIntegrityException($"Run {sequence} verified but finalization returned {finalized.Outcome} at stage {finalized.Stage}.");
         }
 
+        var store = provider.GetRequiredService<IExperienceRecordStore>();
         var readBack = await store.GetAsync(Authorization, scope, finalized.Record.ExperienceId, cancellationToken).ConfigureAwait(false);
         if (readBack.Outcome != ExperienceStoreOutcome.Found || readBack.Record is null)
         {
@@ -802,7 +838,7 @@ public static class LiveReuseExperiment
                 .Select(value => value!)];
 
         return strategies.Count > 0
-            ? strategies
+            ? (strategies, readBack.Record)
             : throw new HarnessIntegrityException($"Run {sequence}'s stored record has no apply_migration strategy on its final attempt.");
     }
 
@@ -1054,3 +1090,27 @@ internal sealed class FrozenClock(DateTimeOffset instant) : TimeProvider
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
         System.CreateTimer(callback, state, dueTime, period);
 }
+
+/// <summary>The settings every run of one experiment shares: the model settings, the clock and the per-call timeout.</summary>
+internal sealed record RunSettings(TimeProvider Clock, TimeSpan CallTimeout, bool SeedSent, float Temperature, long Seed, int ToolCallsPerAttempt)
+{
+    public static RunSettings From(LiveExperimentOptions options, LivePreregistration design) =>
+        new(options.Clock, options.CallTimeout, options.Descriptor.SeedSent, design.Temperature, design.Seed, design.ToolCallsPerAttempt);
+}
+
+/// <summary>
+/// How one run is wired: its record scope and capture task ID, the container its library services come from, whether
+/// the shipped context provider injects from that container's store (and with the strategy allowlisted or not),
+/// whether a verified run is finalized into it, and the cluster <c>describe_service</c> reports, if any.
+/// </summary>
+internal sealed record RunWiring(
+    Scope Scope,
+    string TaskId,
+    Func<FrozenClock, ServiceProvider> Container,
+    bool Inject,
+    bool Finalize,
+    bool ShowStrategy,
+    string? Cluster);
+
+/// <summary>A run's record, the first block its model was shown (verbatim), and the record it stored, if any.</summary>
+internal sealed record TrialOutcome(RunRecord Record, string? Block, ExperienceRecord? Stored);

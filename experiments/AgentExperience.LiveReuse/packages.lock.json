@@ -291,7 +291,7 @@
       "agentexperience.core": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.3, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.9, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }
@@ -299,23 +299,31 @@
       "agentexperience.microsoftagentframework": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Core": "[0.1.0-preview.3, )",
+          "AgentExperience.Core": "[0.1.0-preview.9, )",
           "Microsoft.Agents.AI": "[1.22.0, 2.0.0)"
         }
       },
       "agentexperience.sample.endtoend": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Core": "[0.1.0-preview.3, )",
-          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.3, )",
-          "AgentExperience.Storage.Postgres": "[0.1.0-preview.3, )",
+          "AgentExperience.Core": "[0.1.0-preview.9, )",
+          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.9, )",
+          "AgentExperience.Storage.Postgres": "[0.1.0-preview.9, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.12, 10.0.12]"
+        }
+      },
+      "agentexperience.storage.inmemory": {
+        "type": "Project",
+        "dependencies": {
+          "AgentExperience.Abstractions": "[0.1.0-preview.9, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
       },
       "agentexperience.storage.postgres": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.3, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.9, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
           "Npgsql": "[10.0.3, )",
           "dbup-core": "[6.1.1, )",

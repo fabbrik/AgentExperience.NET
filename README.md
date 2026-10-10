@@ -80,8 +80,9 @@ strategy withheld, and stale experience. Mean failed attempts per task:
 
 Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
 the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
-general. A harder experiment, where the lesson has to transfer, is planned. The samples and the reuse baseline use
-scripted models: they show the loop works, not that it helps.
+general. A harder experiment, where the lesson has to transfer to a different system through the library's own
+retrieval, is [in progress, no live results yet](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment).
+The samples and the reuse baseline use scripted models: they show the loop works, not that it helps.
 
 ## Quick start
 

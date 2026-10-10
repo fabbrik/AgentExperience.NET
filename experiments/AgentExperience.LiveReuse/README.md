@@ -250,3 +250,101 @@ Each run writes `results/<provider>-<model>-<date>.md` and a `.json` beside it (
 
 `--scripted` prints the same report for the scripted stand-in, headed **SCRIPTED RUN. No model was called.** Its
 numbers are properties of the script and prove only the harness.
+
+## Transfer experiment
+
+**Status: in progress, no live results yet.** Pre-registered in
+[`preregistration.transfer.json`](preregistration.transfer.json) (story 20.4), registered in the commit that adds the
+file (parent `c3dcb37`). No live results existed at registration; the offline scripted results are part of the design.
+Nothing below is a model result.
+
+The experiment above shows a model acting on a lesson from **its own service**, retrieved out of a store that holds
+only that service's record. Real use is harder: a lesson learned on one system has to be found by the library's own
+retrieval, in a shared store full of other experience, and has to help on a **different** system that shares only a
+trait. This second experiment measures that, beside the first one, which it leaves untouched (its pre-registration,
+ledger, reports and tests are unchanged).
+
+**Design.**
+
+- *The trait.* Six clusters (`halyard`, `keel`, `mizzen`, `bowsprit`, `capstan`, `taffrail`). Every database proxy in
+  a cluster accepts exactly one rollout strategy, and each cluster maps to a different one (cluster *i* accepts
+  strategy (5*i*+1) mod 6 of the tool's listing order), locked with every service's cluster by a digest the
+  pre-registration records (`traitAssignmentSha256`). A second digest (`taskTextSha256`) locks every rendered task
+  text and `describe_service` output. Every task text names its service and cluster -- ``roll out migration `m` on `svc`
+  (cluster `keel`)`` -- and `describe_service` reports the cluster; nothing names a strategy.
+- *Services.* One learning service per cluster and two unseen evaluation services per cluster (12 instances).
+  Learning and evaluation texts use different templates and migrations.
+- *One shared store.* One scope and one `InMemoryExperienceRecordStore` (the library's, not the sample's). It holds
+  24 verified **distractors**, two per cluster from each of two other task families whose texts name the same
+  clusters: cache flushes (a simulated `flush_read_cache` tool) and config rollouts (``Roll out config change `c` on
+  `svc` (cluster `k`)``, a simulated `push_config` tool that takes no strategy, worded like the migration tickets as
+  real tickets would be). A fixed script finalizes them through the library, so a live run spends no model call on
+  them. Then the learning runs (memory disabled, the model under test) that verified: at most 6 lessons and 24
+  distractors against an injection cap of 8 records, so retrieval has to choose.
+- *Retrieval and injection.* Every trial is a fresh container over the shared store with the library's
+  `InMemoryExperienceCandidateSource` and `RetrievalPolicy.Default with { Timeout = 15 s }` (model-free retrieval is
+  fast; the 500 ms default would cut slow CI runners), and the shipped `ExperienceContextProvider` with its default
+  limits (8 records, 16 KB) and a 15 s eligibility-check timeout. The query is the evaluation task text.
+- *Conditions*, per instance, in the rotated order: `memory-disabled`; `memory-enabled` (the full store, allowlist
+  `{apply_migration: [strategy]}`); `memory-placebo` (the same store, no allowlist); and `mismatched-trait` (a copy of
+  the store **without** the learning record of the instance's own cluster, allowlist on), so whatever it retrieves is
+  another cluster's lesson or a distractor.
+- *Gate and verdict.* The 9.1 sign test and four-term gate, on memory-enabled against memory-disabled (reference),
+  memory-enabled against the placebo (content), and mismatched-trait against memory-disabled (control, expected
+  `NoDemonstratedBenefit`). The conclusions are `TransferBenefitAttributableToContent`,
+  `TransferBenefitNotAttributableToContent`, `TransferNoDemonstratedBenefit`, `TransferInconclusive` and
+  `TransferNotEvaluated`, registered with the same structure as the first experiment's.
+- *Exclusions.* An instance whose cluster's learning run did not verify is excluded before evaluation and runs no
+  trial; an instance with an errored trial is excluded from every comparison. More than 4 exclusions make the run
+  `TransferInconclusive`.
+- *Reported, never gated:* whether the same-cluster record was in the memory-enabled block and its rank there;
+  `followed_block` (the model's first strategy was the one on the block's first working line);
+  `followed_transferred_lesson` (its first strategy was the one the same-cluster lesson stored); and a **harm**
+  comparison, mismatched-trait against memory-disabled: pairs worse, better and tied, and both means.
+- *Integrity.* Checked as each run ends, so a broken design stops before the rest of the budget is spent, and again
+  at the end. The harness refuses to report if a memory-disabled trial or a learning run saw a block, if a block names
+  a record its store does not hold, if memory-enabled and the placebo saw different records, if the placebo's block
+  names any strategy, or if the mismatched store or block holds the same-cluster record or its first working line
+  names the cluster's strategy.
+
+**Run it.** The same variables, caps and rules as above, with `--experiment transfer`:
+
+```bash
+# Offline: the whole transfer harness against the scripted stand-in. No key, no network, writes nothing.
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment transfer --scripted
+
+# Live (spends money; never run in CI):
+export GEMINI_API_KEY=...
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment transfer
+```
+
+A live transfer run appends to its own ledger, `results/transfer-ledger.tsv`, before its first model call, and writes
+`results/transfer-<provider>-<model>-<date>.md` and `.json`. Its confirmatory rule is its own: the **first complete
+run per provider and model** in that ledger. The pre-registered budget defaults are 500 model calls and 4,000,000
+tokens (the blocks are longer: eight records each); `AGENTEXPERIENCE_LIVE_MAX_CALLS` and
+`AGENTEXPERIENCE_LIVE_MAX_TOKENS` override them. Without a provider configured it prints `SKIPPED: ...` and exits 0.
+
+**What the offline run shows.** The scripted operator tries the first strategy on the block's first working line,
+then the listing order. Its report is golden-tested
+([`TransferGoldenReport.md`](../AgentExperience.LiveReuse.Tests/TransferGoldenReport.md)). With the task texts as
+written, once, before they were first run:
+
+- **The same-cluster lesson is never injected.** In all 12 memory-enabled blocks, all 8 slots go to config-rollout
+  distractors: their tickets share the migration tickets' wording (`roll out`, `cluster`, `live in production`), and
+  the in-memory candidate source's word matching ranks them above every migration lesson. A config rollout of the
+  instance's own cluster ranks first in 8 of 12 blocks; in the other 4 (the `mizzen` and `bowsprit` instances), the
+  first is `accountsapi`'s or `paymentsui`'s, whose descriptions share a word with the query (`migration`, `column`).
+- So nothing transfers: mean failed attempts are 2.50 in every condition, every pair ties, the harm comparison shows 0
+  worse and 0 better of 12, and the conclusion is `TransferNoDemonstratedBenefit`.
+- This is a result about retrieval, not a defect of the harness, and it is reported, not fixed: the texts are not
+  edited to change a rank. A live run would measure a model against the same blocks.
+
+**What it does not show.** Anything about a real model: the script follows the block by construction, so the offline
+numbers measure where the library's retrieval ranks the same-cluster lesson, and prove the harness. The trait is named
+in the text (`cluster ...`), so a live result would show that a model finds and trusts a lesson keyed by a named trait,
+not that it discovers an unnamed one. Retrieval here is the in-memory store's word matching; PostgreSQL full-text or
+vector search would rank differently. The two instances of a cluster share one learning record, so their pairs are not
+independent. The mismatched-trait control is weaker than it looks: under the bijection its block can name the other
+clusters' strategies, and a capable model could find its own by elimination. A control that passes can only move the
+conclusion to `TransferBenefitNotAttributableToContent`, a conservative error that withholds a claim and never makes
+one; the harm comparison reports what the mismatched block cost.
