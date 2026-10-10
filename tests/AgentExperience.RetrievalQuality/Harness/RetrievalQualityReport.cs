@@ -44,13 +44,14 @@ internal static class RetrievalQualityReport
         Line(Invariant($"Search: Limit {RetrievalQualityRun.Limit}, MinimumConfidence {RetrievalQualityRun.MinimumConfidence:0.00}, statuses {string.Join(", ", ExperienceStatuses.EligibleForReuse)}."));
         Line();
         Line("R@k: recall in the first k candidates, and MRR: mean reciprocal rank of the first expected record, both over");
-        Line("the queries that expect a record (lab). P@k: expected records in the first k divided by k, over every query");
-        Line("(a query that expects nothing counts 0). zero: share of every query that got no candidate. k = 8 is what");
-        Line("injection shows an agent by default.");
+        Line("the queries that expect a record (lab). P@k: share of the first k candidates that are expected, over the");
+        Line("labelled queries that got a candidate (- when none did). FP@8: unexpected candidates in the first 8, averaged");
+        Line("over every query: the noise an agent would be shown. zero: share of every query that got no candidate.");
+        Line("k = 8 is what injection shows an agent by default.");
         Line();
 
         Line("METRICS");
-        Line(Row("category", "n", "lab", "R@1", "R@3", "R@8", "P@3", "P@8", "MRR", "zero"));
+        Line(Row("category", "n", "lab", "R@1", "R@3", "R@8", "P@3", "P@8", "FP@8", "MRR", "zero"));
         Line(Row(RetrievalMetrics.Of(result.Outcomes), "overall"));
         foreach (var category in RetrievalCorpus.Categories)
         {
@@ -121,6 +122,7 @@ internal static class RetrievalQualityReport
         Number(metrics.RecallAt8),
         Number(metrics.PrecisionAt3),
         Number(metrics.PrecisionAt8),
+        Number(metrics.FalsePositivesAt8),
         Number(metrics.MeanReciprocalRank),
         Number(metrics.ZeroCandidateShare));
 

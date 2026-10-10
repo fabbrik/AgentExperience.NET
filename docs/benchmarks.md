@@ -213,8 +213,9 @@ corpus was written before the first run and is not tuned to its results.
 Each query goes straight to `IExperienceCandidateSource.SearchAsync` (limit 50, confidence floor 0.5, the reusable
 statuses), so the numbers are lexical recall with no clock, environment or ranking policy mixed in. Per adapter,
 overall and per category, the report gives recall@1/3/8 and mean reciprocal rank (over the queries that expect a
-record), precision@3/8 (divided by k, over every query), the share of queries that got no candidate at all, every miss
-and every false positive in the first 8. k = 8 is what injection shows an agent by default.
+record), precision@3/8 (the share of the first k candidates that are expected, over the queries that expect a record
+and got one), false positives@8 (unexpected candidates in the first 8, over every query: the noise an agent would be
+shown), the share of queries that got no candidate at all, every miss and every false positive in the first 8. k = 8 is what injection shows an agent by default.
 
 **Running it.**
 

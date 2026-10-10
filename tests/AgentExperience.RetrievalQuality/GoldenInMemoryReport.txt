@@ -10,19 +10,20 @@ Queries: 48 (exact 8, paraphrase 8, realistic 10, morphology 7, distractor-overl
 Search: Limit 50, MinimumConfidence 0.50, statuses Validated, Reinforced.
 
 R@k: recall in the first k candidates, and MRR: mean reciprocal rank of the first expected record, both over
-the queries that expect a record (lab). P@k: expected records in the first k divided by k, over every query
-(a query that expects nothing counts 0). zero: share of every query that got no candidate. k = 8 is what
-injection shows an agent by default.
+the queries that expect a record (lab). P@k: share of the first k candidates that are expected, over the
+labelled queries that got a candidate (- when none did). FP@8: unexpected candidates in the first 8, averaged
+over every query: the noise an agent would be shown. zero: share of every query that got no candidate.
+k = 8 is what injection shows an agent by default.
 
 METRICS
-category               n  lab    R@1    R@3    R@8    P@3    P@8    MRR   zero
-overall               48   45  0.333  0.378  0.378  0.118  0.044  0.356  0.646
-exact                  8    8  1.000  1.000  1.000  0.333  0.125  1.000  0.000
-paraphrase             8    8  0.000  0.000  0.000  0.000  0.000  0.000  1.000
-realistic             10   10  0.000  0.000  0.000  0.000  0.000  0.000  1.000
-morphology             7    7  0.000  0.000  0.000  0.000  0.000  0.000  1.000
-distractor-overlap     9    8  0.875  1.000  1.000  0.296  0.111  0.938  0.111
-stopword-heavy         6    4  0.000  0.250  0.250  0.056  0.021  0.125  0.833
+category               n  lab    R@1    R@3    R@8    P@3    P@8   FP@8    MRR   zero
+overall               48   45  0.333  0.378  0.378  0.941  0.941  0.042  0.356  0.646
+exact                  8    8  1.000  1.000  1.000  1.000  1.000  0.000  1.000  0.000
+paraphrase             8    8  0.000  0.000  0.000      -      -  0.000  0.000  1.000
+realistic             10   10  0.000  0.000  0.000      -      -  0.000  0.000  1.000
+morphology             7    7  0.000  0.000  0.000      -      -  0.000  0.000  1.000
+distractor-overlap     9    8  0.875  1.000  1.000  0.938  0.938  0.111  0.938  0.111
+stopword-heavy         6    4  0.000  0.250  0.250  0.500  0.500  0.167  0.125  0.833
 
 MISSES (expected records not in the first 8 candidates)
 paraphrase-01: mig-04 (zero candidates)

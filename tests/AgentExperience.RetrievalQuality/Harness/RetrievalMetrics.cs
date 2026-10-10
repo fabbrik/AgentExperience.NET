@@ -11,10 +11,12 @@ namespace AgentExperience.RetrievalQuality.Harness;
 /// <see langword="null"/> when there are none.
 /// </para>
 /// <para>
-/// <b>Precision@k</b> is the number of expected records in the first k candidates divided by k -- not by the number
-/// returned, so returning fewer than k is not rewarded -- averaged over every query. A query that expects nothing
-/// counts with precision 0, as every candidate it gets is a false positive. <b>Zero-candidate share</b> is the share of
-/// all queries that got no candidate at all.
+/// <b>Precision@k</b> is the share of the first k candidates that are expected records, averaged over the labelled
+/// queries that got a candidate (a query with none has no precision; recall already counts it), and
+/// <see langword="null"/> when there are none. <b>False positives@8</b> is the number of candidates in the first 8 that
+/// no label expects, averaged over every query, including those that expect nothing: the noise an agent would be shown.
+/// Unlike a precision divided by k, it rises when partial matching adds distractors. <b>Zero-candidate share</b> is the
+/// share of all queries that got no candidate at all.
 /// </para>
 /// <para>
 /// k = 8 is the injection provider's default <c>MaxRecords</c>: what an agent would actually be shown.
@@ -25,8 +27,9 @@ namespace AgentExperience.RetrievalQuality.Harness;
 /// <param name="RecallAt1">Mean recall@1 over the labelled queries.</param>
 /// <param name="RecallAt3">Mean recall@3 over the labelled queries.</param>
 /// <param name="RecallAt8">Mean recall@8 over the labelled queries.</param>
-/// <param name="PrecisionAt3">Mean precision@3 over every query.</param>
-/// <param name="PrecisionAt8">Mean precision@8 over every query.</param>
+/// <param name="PrecisionAt3">Mean precision@3 over the labelled queries that got a candidate.</param>
+/// <param name="PrecisionAt8">Mean precision@8 over the labelled queries that got a candidate.</param>
+/// <param name="FalsePositivesAt8">Mean number of unexpected candidates in the first 8, over every query.</param>
 /// <param name="MeanReciprocalRank">Mean reciprocal rank over the labelled queries.</param>
 /// <param name="ZeroCandidates">The number of queries that got no candidate.</param>
 internal sealed record RetrievalMetrics(
@@ -35,8 +38,9 @@ internal sealed record RetrievalMetrics(
     double? RecallAt1,
     double? RecallAt3,
     double? RecallAt8,
-    double PrecisionAt3,
-    double PrecisionAt8,
+    double? PrecisionAt3,
+    double? PrecisionAt8,
+    double FalsePositivesAt8,
     double? MeanReciprocalRank,
     int ZeroCandidates)
 {
@@ -47,14 +51,16 @@ internal sealed record RetrievalMetrics(
     public static RetrievalMetrics Of(IReadOnlyList<QueryOutcome> outcomes)
     {
         var labelled = outcomes.Where(o => o.Query.Expected.Count > 0).ToList();
+        var answered = labelled.Where(o => o.Returned.Count > 0).ToList();
         return new RetrievalMetrics(
             outcomes.Count,
             labelled.Count,
             MeanOrNull(labelled, o => Recall(o, 1)),
             MeanOrNull(labelled, o => Recall(o, 3)),
             MeanOrNull(labelled, o => Recall(o, 8)),
-            outcomes.Count == 0 ? 0d : outcomes.Average(o => Precision(o, 3)),
-            outcomes.Count == 0 ? 0d : outcomes.Average(o => Precision(o, 8)),
+            MeanOrNull(answered, o => Precision(o, 3)),
+            MeanOrNull(answered, o => Precision(o, 8)),
+            outcomes.Count == 0 ? 0d : outcomes.Average(o => FalsePositives(o, 8)),
             MeanOrNull(labelled, ReciprocalRank),
             outcomes.Count(o => o.Returned.Count == 0));
     }
@@ -74,7 +80,9 @@ internal sealed record RetrievalMetrics(
 
     private static double Recall(QueryOutcome outcome, int k) => (double)Hits(outcome, k) / outcome.Query.Expected.Count;
 
-    private static double Precision(QueryOutcome outcome, int k) => (double)Hits(outcome, k) / k;
+    private static double Precision(QueryOutcome outcome, int k) => (double)Hits(outcome, k) / Math.Min(k, outcome.Returned.Count);
+
+    private static int FalsePositives(QueryOutcome outcome, int k) => Math.Min(k, outcome.Returned.Count) - Hits(outcome, k);
 
     private static double ReciprocalRank(QueryOutcome outcome)
     {
