@@ -195,3 +195,55 @@ the same statement as the owner, whom the policies do not bind, while applying t
 `Bitmap Index Scan`, which `PostgresTextSearchRowLevelSecurityTests` asserts on through `auto_explain` over a 20,000-record
 tenant. The table and the plans above are story 15.1's measurements and were not re-run; the paragraph above describes
 the store before story 17.7, and `ts_match_vq` is still not marked leakproof.
+
+## Retrieval quality (story 20.1)
+
+The benchmarks above time retrieval; `tests/AgentExperience.RetrievalQuality` measures whether it finds the right
+lesson at all. It is a test project, not a BenchmarkDotNet run: no model, no network, no credentials, and its output is
+deterministic, so CI checks it on every build.
+
+**What it measures.** A checked-in corpus (`Corpus/records.json`) of 53 experience records: 30 in five task families
+(EF Core migrations, flaky tests, Docker, NuGet, authentication), 16 distractors that share two or three words with a
+family but answer none of its tasks, and 7 records no search may return (another project's scope, `Candidate` or
+`Quarantined` status, confidence below the floor). 48 queries (`Corpus/queries.json`), each labelled with a category and
+the records it should find: `exact` (a record's own words), `paraphrase`, `realistic` (long requests worded the way a
+developer types them to an agent), `morphology` (plural and verb forms), `distractor-overlap` and `stopword-heavy`. The
+corpus was written before the first run and is not tuned to its results.
+
+Each query goes straight to `IExperienceCandidateSource.SearchAsync` (limit 50, confidence floor 0.5, the reusable
+statuses), so the numbers are lexical recall with no clock, environment or ranking policy mixed in. Per adapter,
+overall and per category, the report gives recall@1/3/8 and mean reciprocal rank (over the queries that expect a
+record), precision@3/8 (the share of the first k candidates that are expected, over the queries that expect a record
+and got one), false positives@8 (unexpected candidates in the first 8, over every query: the noise an agent would be
+shown), the share of queries that got no candidate at all, every miss and every false positive in the first 8. k = 8 is what injection shows an agent by default.
+
+**Running it.**
+
+```bash
+dotnet test tests/AgentExperience.RetrievalQuality                                         # both adapters; Docker
+dotnet test tests/AgentExperience.RetrievalQuality --filter "FullyQualifiedName!~Postgres" # in-memory only
+```
+
+Each adapter's report is compared byte for byte with its golden, `GoldenInMemoryReport.txt` and
+`GoldenPostgresReport.txt`. A change to which records a query finds, or in what order, fails the test until the golden
+is regenerated: run the tests with `AGENTEXPERIENCE_RETRIEVALQUALITY_GOLDEN_UPDATE=1`, read the diff, and commit it with
+the change. The diff is the change, query by query. The tests also fail if any search returns an ineligible record, if
+two runs differ, or if an `exact` query's record is not in the first three.
+
+**Today's numbers** (0.1.0-preview.8 behaviour, recorded 2026-10-10):
+
+| Adapter | Recall@3 | Recall@8 | MRR | Zero candidates | `realistic` zero | `morphology` recall@8 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| In-memory | 0.378 | 0.378 | 0.356 | 0.646 | 1.000 | 0.000 |
+| PostgreSQL | 0.511 | 0.511 | 0.500 | 0.521 | 1.000 | 0.857 |
+
+- **Every realistic request finds nothing, on both adapters.** Both require every query term to match (the in-memory
+  source's whole-word AND, PostgreSQL's `websearch_to_tsquery`), and since story 18.3 the query is the user's latest
+  message. A long request always carries words no lesson contains. Every paraphrase finds nothing for the same reason.
+- **Exact keywords work**: every `exact` query has its record first, on both adapters.
+- **Stemming is the whole difference between the adapters.** PostgreSQL finds 6 of the 7 morphology queries and the
+  in-memory source none; the one PostgreSQL misses asks for "failures", which the English stemmer does not reduce to
+  the record's "fail".
+- **Precision is low because recall is**, not because of noise: across all 48 queries there are two false positives
+  in the first 8 in memory and three on PostgreSQL. Story 20.2's move away from AND matching will show its precision
+  cost here.

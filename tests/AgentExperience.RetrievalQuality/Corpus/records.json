@@ -1,0 +1,534 @@
+{
+  "records": [
+    {
+      "id": "mig-01",
+      "group": "migrations",
+      "taskId": "ef-core-migration-fails-on-startup",
+      "summary": "Apply pending EF Core migrations when the API fails on startup with a missing column error",
+      "lesson": "Run dotnet ef database update against the target database before deploying; the startup failure was a migration that had never been applied.",
+      "status": "Validated",
+      "confidence": 0.82,
+      "scope": "query"
+    },
+    {
+      "id": "mig-02",
+      "group": "migrations",
+      "taskId": "add-migration-for-nullable-column",
+      "summary": "Add an EF Core migration that makes the customer email column nullable",
+      "lesson": "Generate the migration with dotnet ef migrations add, then check the generated AlterColumn call keeps existing data before applying it.",
+      "status": "Reinforced",
+      "confidence": 0.91,
+      "scope": "query"
+    },
+    {
+      "id": "mig-03",
+      "group": "migrations",
+      "taskId": "migration-snapshot-merge-conflict",
+      "summary": "Resolve a merge conflict in the EF Core model snapshot after two branches added migrations",
+      "lesson": "Remove the later migration, merge the snapshot from main, and regenerate the migration so the snapshot and the migration chain agree.",
+      "status": "Validated",
+      "confidence": 0.74,
+      "scope": "query"
+    },
+    {
+      "id": "mig-04",
+      "group": "migrations",
+      "taskId": "rollback-failed-migration",
+      "summary": "Roll back a failed database migration in production",
+      "lesson": "Update the database to the previous migration by name, then remove the broken migration; never edit a migration that has already been applied.",
+      "status": "Validated",
+      "confidence": 0.68,
+      "scope": "query"
+    },
+    {
+      "id": "mig-05",
+      "group": "migrations",
+      "taskId": "migration-timeout-large-table",
+      "summary": "Database migration times out while adding an index to a large orders table",
+      "lesson": "Create the index concurrently in a raw SQL migration and raise the command timeout; the default thirty second timeout is too short for large tables.",
+      "status": "Reinforced",
+      "confidence": 0.88,
+      "scope": "query"
+    },
+    {
+      "id": "mig-06",
+      "group": "migrations",
+      "taskId": "seed-data-migration",
+      "summary": "Seed reference data for country codes through an EF Core migration",
+      "lesson": "Use HasData in the model configuration so the seed rows are part of the migration and stay idempotent across environments.",
+      "status": "Validated",
+      "confidence": 0.61,
+      "scope": "query"
+    },
+    {
+      "id": "ci-01",
+      "group": "flaky-tests",
+      "taskId": "flaky-integration-test-timeout",
+      "summary": "Fix a flaky integration test that times out intermittently in the CI pipeline",
+      "lesson": "The test raced the background worker; wait on the worker's completion signal instead of a fixed delay, and the timeout went away.",
+      "status": "Reinforced",
+      "confidence": 0.86,
+      "scope": "query"
+    },
+    {
+      "id": "ci-02",
+      "group": "flaky-tests",
+      "taskId": "parallel-tests-shared-database",
+      "summary": "Tests fail only when xunit runs them in parallel against a shared database",
+      "lesson": "Give each test class its own database or tenant, or put the classes in one collection so they do not run in parallel.",
+      "status": "Validated",
+      "confidence": 0.79,
+      "scope": "query"
+    },
+    {
+      "id": "ci-03",
+      "group": "flaky-tests",
+      "taskId": "test-depends-on-local-timezone",
+      "summary": "Date formatting test passes locally but fails on the CI build agent",
+      "lesson": "The build agent runs in UTC; pass an explicit time zone and the invariant culture instead of relying on the machine's local settings.",
+      "status": "Validated",
+      "confidence": 0.72,
+      "scope": "query"
+    },
+    {
+      "id": "ci-04",
+      "group": "flaky-tests",
+      "taskId": "ci-pipeline-out-of-disk",
+      "summary": "CI pipeline job fails with no space left on device during the build",
+      "lesson": "Clean the Docker build cache and old images at the start of the job; the runner's disk filled with layers from earlier builds.",
+      "status": "Validated",
+      "confidence": 0.66,
+      "scope": "query"
+    },
+    {
+      "id": "ci-05",
+      "group": "flaky-tests",
+      "taskId": "quarantine-flaky-test",
+      "summary": "Quarantine a flaky end-to-end test without hiding real failures",
+      "lesson": "Mark the test with a skip reason that links the tracking issue and keep running it in a nightly job, so it is fixed rather than forgotten.",
+      "status": "Validated",
+      "confidence": 0.7,
+      "scope": "query"
+    },
+    {
+      "id": "ci-06",
+      "group": "flaky-tests",
+      "taskId": "snapshot-test-line-endings",
+      "summary": "Snapshot tests fail on Windows agents because of line endings",
+      "lesson": "Normalize line endings to LF before comparing, and set a gitattributes rule so the checked-in snapshot files are not converted on checkout.",
+      "status": "Reinforced",
+      "confidence": 0.84,
+      "scope": "query"
+    },
+    {
+      "id": "dock-01",
+      "group": "docker",
+      "taskId": "docker-image-too-large",
+      "summary": "Reduce the size of the Docker image for the ASP.NET Core API",
+      "lesson": "Use a multi-stage build: compile in the SDK image and copy only the published output into the smaller runtime image.",
+      "status": "Reinforced",
+      "confidence": 0.9,
+      "scope": "query"
+    },
+    {
+      "id": "dock-02",
+      "group": "docker",
+      "taskId": "container-exits-immediately",
+      "summary": "Container exits immediately after starting with exit code 139",
+      "lesson": "The base image architecture did not match the host; build for linux/amd64 explicitly or use a multi-platform image.",
+      "status": "Validated",
+      "confidence": 0.63,
+      "scope": "query"
+    },
+    {
+      "id": "dock-03",
+      "group": "docker",
+      "taskId": "docker-build-cache-invalidated",
+      "summary": "Docker build reinstalls every package on each build because the layer cache is invalidated",
+      "lesson": "Copy the project files and restore before copying the rest of the source, so a code change does not invalidate the restore layer.",
+      "status": "Validated",
+      "confidence": 0.77,
+      "scope": "query"
+    },
+    {
+      "id": "dock-04",
+      "group": "docker",
+      "taskId": "container-cannot-reach-database",
+      "summary": "Application container cannot connect to the database container with docker compose",
+      "lesson": "Use the compose service name as the host instead of localhost, and wait for the database health check before starting the application.",
+      "status": "Reinforced",
+      "confidence": 0.87,
+      "scope": "query"
+    },
+    {
+      "id": "dock-05",
+      "group": "docker",
+      "taskId": "container-runs-as-root",
+      "summary": "Security scan flags the container for running as root",
+      "lesson": "Add a non-root user in the Dockerfile and switch to it with USER before the entrypoint; the runtime image already ships an app user.",
+      "status": "Validated",
+      "confidence": 0.75,
+      "scope": "query"
+    },
+    {
+      "id": "dock-06",
+      "group": "docker",
+      "taskId": "container-memory-limit-oom",
+      "summary": "Container is killed by the OOM killer under load in Kubernetes",
+      "lesson": "Set the memory limit above the working set and let the .NET garbage collector see the container limit; server GC with a low limit caused the kills.",
+      "status": "Validated",
+      "confidence": 0.69,
+      "scope": "query"
+    },
+    {
+      "id": "pkg-01",
+      "group": "nuget",
+      "taskId": "nuget-version-conflict-downgrade",
+      "summary": "Build fails with a NuGet package downgrade warning treated as an error",
+      "lesson": "Reference the higher version directly in the project that reports NU1605, so every project resolves the same version.",
+      "status": "Reinforced",
+      "confidence": 0.85,
+      "scope": "query"
+    },
+    {
+      "id": "pkg-02",
+      "group": "nuget",
+      "taskId": "private-feed-authentication",
+      "summary": "Restore fails with 401 Unauthorized from the private NuGet feed",
+      "lesson": "Add the feed credentials to nuget.config through an environment variable token instead of committing a password, and clear the local credential cache.",
+      "status": "Validated",
+      "confidence": 0.73,
+      "scope": "query"
+    },
+    {
+      "id": "pkg-03",
+      "group": "nuget",
+      "taskId": "transitive-vulnerable-package",
+      "summary": "Audit reports a vulnerable transitive package dependency",
+      "lesson": "Pin the patched version with a direct package reference and check that the lock file records it; the parent package had not shipped a fix.",
+      "status": "Validated",
+      "confidence": 0.8,
+      "scope": "query"
+    },
+    {
+      "id": "pkg-04",
+      "group": "nuget",
+      "taskId": "lock-file-out-of-date",
+      "summary": "Locked mode restore fails because packages.lock.json is out of date",
+      "lesson": "Run dotnet restore without locked mode after changing a package reference and commit the regenerated lock file with the change.",
+      "status": "Reinforced",
+      "confidence": 0.92,
+      "scope": "query"
+    },
+    {
+      "id": "pkg-05",
+      "group": "nuget",
+      "taskId": "central-package-management-migration",
+      "summary": "Move package versions into Directory.Packages.props with central package management",
+      "lesson": "Enable ManagePackageVersionsCentrally, move every version into PackageVersion items, and remove Version attributes from the project files.",
+      "status": "Validated",
+      "confidence": 0.67,
+      "scope": "query"
+    },
+    {
+      "id": "pkg-06",
+      "group": "nuget",
+      "taskId": "assembly-binding-mismatch-runtime",
+      "summary": "Application throws FileLoadException at runtime for a package assembly version mismatch",
+      "lesson": "Two packages pulled different major versions of the same dependency; align them so a single version is deployed.",
+      "status": "Validated",
+      "confidence": 0.6,
+      "scope": "query"
+    },
+    {
+      "id": "auth-01",
+      "group": "auth",
+      "taskId": "jwt-token-expired-401",
+      "summary": "API returns 401 Unauthorized after the JWT access token expires",
+      "lesson": "Refresh the access token with the refresh token before it expires instead of after the first 401, and allow a small clock skew.",
+      "status": "Reinforced",
+      "confidence": 0.89,
+      "scope": "query"
+    },
+    {
+      "id": "auth-02",
+      "group": "auth",
+      "taskId": "jwt-signature-validation-failed",
+      "summary": "JWT signature validation fails after the identity provider rotated its signing keys",
+      "lesson": "Load signing keys from the provider's metadata endpoint so rotated keys are picked up, rather than pinning a single key in configuration.",
+      "status": "Validated",
+      "confidence": 0.81,
+      "scope": "query"
+    },
+    {
+      "id": "auth-03",
+      "group": "auth",
+      "taskId": "cors-preflight-blocks-auth-header",
+      "summary": "Browser blocks requests with the Authorization header because of CORS preflight",
+      "lesson": "Allow the Authorization header and the frontend origin in the CORS policy, and register the CORS middleware before authentication.",
+      "status": "Validated",
+      "confidence": 0.76,
+      "scope": "query"
+    },
+    {
+      "id": "auth-04",
+      "group": "auth",
+      "taskId": "api-key-leaked-in-logs",
+      "summary": "API keys appear in the request logs",
+      "lesson": "Redact the Authorization header and api key query parameters in the logging middleware, and rotate any key that was already logged.",
+      "status": "Validated",
+      "confidence": 0.71,
+      "scope": "query"
+    },
+    {
+      "id": "auth-05",
+      "group": "auth",
+      "taskId": "oauth-redirect-uri-mismatch",
+      "summary": "OAuth login fails with redirect URI mismatch behind the reverse proxy",
+      "lesson": "Forward the original scheme and host headers so the app builds the https redirect URI the identity provider has registered.",
+      "status": "Reinforced",
+      "confidence": 0.83,
+      "scope": "query"
+    },
+    {
+      "id": "auth-06",
+      "group": "auth",
+      "taskId": "role-claims-missing-authorization",
+      "summary": "Authorization policy denies users whose role claims are missing from the token",
+      "lesson": "Map the provider's roles claim type to the role claim type the authorization policy checks; the claims were present under a different name.",
+      "status": "Validated",
+      "confidence": 0.65,
+      "scope": "query"
+    },
+    {
+      "id": "dis-01",
+      "group": "distractor",
+      "taskId": "crm-data-migration",
+      "summary": "Plan the customer data migration from the old CRM to the new sales platform",
+      "lesson": "Export contacts in batches and reconcile record counts with the sales team before switching over.",
+      "status": "Validated",
+      "confidence": 0.7,
+      "scope": "query"
+    },
+    {
+      "id": "dis-02",
+      "group": "distractor",
+      "taskId": "report-query-timeout",
+      "summary": "Monthly sales report query times out on a large table in the reporting warehouse",
+      "lesson": "Pre-aggregate the monthly totals into a summary table overnight instead of scanning the raw table at request time.",
+      "status": "Validated",
+      "confidence": 0.78,
+      "scope": "query"
+    },
+    {
+      "id": "dis-03",
+      "group": "distractor",
+      "taskId": "feature-flag-rollback",
+      "summary": "Roll back a feature release in production with a feature flag",
+      "lesson": "Turn the flag off for all users first and investigate after; redeploying the previous build took longer than the flag.",
+      "status": "Reinforced",
+      "confidence": 0.84,
+      "scope": "query"
+    },
+    {
+      "id": "dis-04",
+      "group": "distractor",
+      "taskId": "load-test-pipeline-report",
+      "summary": "Publish the load test results from the nightly pipeline to the team dashboard",
+      "lesson": "Export the percentile summary as JSON and let the dashboard read it; do not attach the raw test results.",
+      "status": "Validated",
+      "confidence": 0.62,
+      "scope": "query"
+    },
+    {
+      "id": "dis-05",
+      "group": "distractor",
+      "taskId": "meeting-time-zone-confusion",
+      "summary": "Schedule the release meeting across time zones for the distributed team",
+      "lesson": "Send invites in UTC with each local time listed; the calendar's time zone setting confused attendees.",
+      "status": "Validated",
+      "confidence": 0.66,
+      "scope": "query"
+    },
+    {
+      "id": "dis-06",
+      "group": "distractor",
+      "taskId": "windows-laptop-setup",
+      "summary": "Set up a new Windows laptop for a developer joining the team",
+      "lesson": "Install the SDK, Git with LF line endings configured, and Docker Desktop from the onboarding script.",
+      "status": "Validated",
+      "confidence": 0.73,
+      "scope": "query"
+    },
+    {
+      "id": "dis-07",
+      "group": "distractor",
+      "taskId": "reduce-image-size-website",
+      "summary": "Reduce image size on the marketing website to speed up page loads",
+      "lesson": "Serve WebP images at the displayed resolution and lazy load anything below the fold.",
+      "status": "Reinforced",
+      "confidence": 0.88,
+      "scope": "query"
+    },
+    {
+      "id": "dis-08",
+      "group": "distractor",
+      "taskId": "shipping-container-tracking",
+      "summary": "Track shipping container arrivals at the port for the logistics dashboard",
+      "lesson": "Poll the carrier's tracking API hourly and alert on containers that miss their estimated arrival.",
+      "status": "Validated",
+      "confidence": 0.69,
+      "scope": "query"
+    },
+    {
+      "id": "dis-09",
+      "group": "distractor",
+      "taskId": "excel-memory-large-file",
+      "summary": "Excel runs out of memory loading a large CSV export under heavy load",
+      "lesson": "Split the export into monthly files or open it with Power Query instead of the grid.",
+      "status": "Validated",
+      "confidence": 0.64,
+      "scope": "query"
+    },
+    {
+      "id": "dis-10",
+      "group": "distractor",
+      "taskId": "npm-package-version-upgrade",
+      "summary": "Upgrade the npm package versions for the React frontend",
+      "lesson": "Run npm outdated, upgrade one major version at a time, and rerun the UI tests after each upgrade.",
+      "status": "Validated",
+      "confidence": 0.77,
+      "scope": "query"
+    },
+    {
+      "id": "dis-11",
+      "group": "distractor",
+      "taskId": "restore-backup-fails",
+      "summary": "Restore of the nightly database backup fails on the staging server",
+      "lesson": "The backup file was from a newer server version; restore it on a matching version and then upgrade.",
+      "status": "Validated",
+      "confidence": 0.71,
+      "scope": "query"
+    },
+    {
+      "id": "dis-12",
+      "group": "distractor",
+      "taskId": "stale-lock-file-script",
+      "summary": "Deployment script fails because a stale lock file remains from a crashed process",
+      "lesson": "Delete the lock file when the recorded process ID is no longer running, before starting the script again.",
+      "status": "Validated",
+      "confidence": 0.68,
+      "scope": "query"
+    },
+    {
+      "id": "dis-13",
+      "group": "distractor",
+      "taskId": "expired-tls-certificate",
+      "summary": "API returns certificate errors after the TLS certificate expired",
+      "lesson": "Automate renewal with the ACME client and alert thirty days before the certificate expires.",
+      "status": "Reinforced",
+      "confidence": 0.86,
+      "scope": "query"
+    },
+    {
+      "id": "dis-14",
+      "group": "distractor",
+      "taskId": "website-redirect-loop-cdn",
+      "summary": "Marketing website is stuck in a redirect loop after moving behind the CDN proxy",
+      "lesson": "The CDN terminated https and the origin redirected http back to https; trust the forwarded protocol header at the origin.",
+      "status": "Validated",
+      "confidence": 0.74,
+      "scope": "query"
+    },
+    {
+      "id": "dis-15",
+      "group": "distractor",
+      "taskId": "access-review-user-roles",
+      "summary": "Update the spreadsheet of user roles for the quarterly access review",
+      "lesson": "Export current role assignments from the admin portal and have each manager confirm their team's users.",
+      "status": "Validated",
+      "confidence": 0.63,
+      "scope": "query"
+    },
+    {
+      "id": "dis-16",
+      "group": "distractor",
+      "taskId": "build-agent-license-renewal",
+      "summary": "Renew the license for the code signing tool on the build agent",
+      "lesson": "Request the renewal through procurement a month before the license lapses.",
+      "status": "Validated",
+      "confidence": 0.6,
+      "scope": "query"
+    },
+    {
+      "id": "inel-scope-01",
+      "group": "ineligible",
+      "taskId": "ef-core-migration-fails-on-startup",
+      "summary": "Apply pending EF Core migrations when the API fails on startup",
+      "lesson": "Run dotnet ef database update before deploying; a migration had never been applied.",
+      "status": "Validated",
+      "confidence": 0.9,
+      "scope": "other"
+    },
+    {
+      "id": "inel-scope-02",
+      "group": "ineligible",
+      "taskId": "jwt-token-expired-401",
+      "summary": "API returns 401 Unauthorized when the JWT access token expires",
+      "lesson": "Refresh the access token before it expires.",
+      "status": "Reinforced",
+      "confidence": 0.9,
+      "scope": "other"
+    },
+    {
+      "id": "inel-candidate-01",
+      "group": "ineligible",
+      "taskId": "docker-image-too-large",
+      "summary": "Reduce the size of the Docker image with a multi-stage build",
+      "lesson": "Copy only the published output into the runtime image.",
+      "status": "Candidate",
+      "confidence": 0.9,
+      "scope": "query"
+    },
+    {
+      "id": "inel-candidate-02",
+      "group": "ineligible",
+      "taskId": "parallel-tests-shared-database",
+      "summary": "Tests fail when they run in parallel against a shared database",
+      "lesson": "Do not run test classes that share a database in parallel.",
+      "status": "Candidate",
+      "confidence": 0.9,
+      "scope": "query"
+    },
+    {
+      "id": "inel-quarantined-01",
+      "group": "ineligible",
+      "taskId": "flaky-integration-test-timeout",
+      "summary": "Fix a flaky integration test that times out in the CI pipeline",
+      "lesson": "Increase the test timeout until the flaky integration test passes.",
+      "status": "Quarantined",
+      "confidence": 0.9,
+      "scope": "query"
+    },
+    {
+      "id": "inel-lowconf-01",
+      "group": "ineligible",
+      "taskId": "lock-file-out-of-date",
+      "summary": "Locked mode restore fails because the lock file is out of date",
+      "lesson": "Delete packages.lock.json and restore again.",
+      "status": "Validated",
+      "confidence": 0.3,
+      "scope": "query"
+    },
+    {
+      "id": "inel-lowconf-02",
+      "group": "ineligible",
+      "taskId": "jwt-signature-validation-failed",
+      "summary": "JWT signature validation fails after the identity provider rotated its signing keys",
+      "lesson": "Turn off signature validation until the keys settle.",
+      "status": "Validated",
+      "confidence": 0.49,
+      "scope": "query"
+    }
+  ]
+}
