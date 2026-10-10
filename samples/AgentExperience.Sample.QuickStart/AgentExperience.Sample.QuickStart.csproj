@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The one-minute demo: the README quick start's wiring, run twice on one ticket, so the second run's model is
+       handed what the first run learned. Run it with dotnet run (see README.md): it needs no key and no network, and
+       with OPENAI_API_KEY set it talks to a real model instead. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AgentExperience.Sample.QuickStart</RootNamespace>
+    <!-- A demonstration, never a package. -->
+    <IsPackable>false</IsPackable>
+    <!-- Directory.Build.props turns on GenerateDocumentationFile with TreatWarningsAsErrors; the demo documents the
+         types a reader follows, not every member. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The container, for BuildServiceProvider, as the README quick start says to install. Same pin as the other samples. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.12]" />
+    <!-- The optional real model, over any OpenAI-compatible endpoint. Exact-pinned to the version the live experiment
+         uses (it depends on Microsoft.Extensions.AI.Abstractions 10.10.0, the shipping floor), and only here: never in src/. -->
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="[10.10.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentExperience.Sample.QuickStart.Tests" />
+  </ItemGroup>
+
+</Project>

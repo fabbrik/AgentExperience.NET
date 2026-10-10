@@ -16,6 +16,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   See [Retrieval quality](docs/benchmarks.md#retrieval-quality-story-201). Test-only: no behaviour or public API
   change.
 
+### A one-minute quick-start demo
+
+- `dotnet run --project samples/AgentExperience.Sample.QuickStart` runs the README quick start's one-call wiring twice
+  on the same ticket, against a tool with one working strategy, and prints both runs and the block the second run's
+  model was sent. It uses a scripted stand-in model by default (no key, no network, deterministic output guarded by a
+  golden test) and a real model on any OpenAI-compatible endpoint when `OPENAI_API_KEY` is set. The README now opens
+  with it, and with the live experiment's results ("Does it help?"). No library change.
+
 ## 0.1.0-preview.8
 
 A maintenance preview. It fixes how a reflection timeout is reported, and makes the codebase easier to keep correct.
