@@ -1971,3 +1971,61 @@ Found by the 2026-10-05 architecture review.
 ### Story 19.4: Guard Against Package Version Drift
 
 **Acceptance Criteria:** a release test fails when two projects reference different versions of the same package (the upgrade seeders exempt). Replaces adopting central package management, which the floating-dependency probe and the per-project pin checks rely on not having (decided 2026-10-05).
+
+## Epic 20: Show That Lessons Reach and Help Realistic Tasks
+
+Found by the 2026-10-10 review. The live experiment shows a real model acting on an injected strategy, but in a setup kinder than real use. It retrieves through the sample's any-word matcher, not the library's adapters. Each service retrieves only its own experience. The strategy reaches the block only through the argument allowlist. The library's own lexical retrieval (in-memory and PostgreSQL) requires every query term to match, and since story 18.3 the query is the user's latest message, so a realistic request rarely finds anything unless vectors are on. This epic measures that, fixes it, and then asks the harder question: does a lesson learned on one system help on a different one that shares a trait?
+
+### Story 20.1: A Retrieval Benchmark Without a Model
+
+**Traces:** FR6
+
+As a maintainer,
+I want to measure whether the right lesson is found for a realistic request,
+So that retrieval changes are judged by numbers, not by the unit tests' hand-picked wording.
+
+**Acceptance Criteria:**
+
+**Given** a checked-in corpus of stored experiences (several task families, distractors from unrelated families, varied wording) and queries written the way users write requests (paraphrased, longer, extra words), each labelled with the records that should match
+**When** the benchmark runs against the in-memory store and against PostgreSQL text search
+**Then** it reports recall@k, precision@k and the share of queries with no candidates, per adapter; the results are a golden report a test compares, so a change in retrieval quality shows up in review; and it runs without a model, credentials or network beyond Docker.
+
+### Story 20.2: Match on Any Term, Rank by Coverage
+
+**Traces:** FR6 · **Depends on:** 20.1
+
+**Acceptance Criteria:**
+
+**Given** a task text whose words only partly appear in a stored record
+**When** lexical retrieval runs (in-memory and PostgreSQL, including the row-level-security search function)
+**Then** a record matching some of the terms is a candidate, ranked by how many terms it covers and where (summary over task ID and lesson). A minimum coverage, configurable, keeps one-word coincidences out. The 20.1 benchmark shows recall rising without precision collapsing on the distractors, and the behaviour change is labelled in the CHANGELOG.
+
+### Story 20.3: Let a Lesson Name the Approach That Worked
+
+**Traces:** FR5 · **Depends on:** 18.1
+
+**Acceptance Criteria:**
+
+**Given** a host that allowlists approach arguments (`ApproachArguments`)
+**When** a run is reflected
+**Then** the default reflector's lesson and the model-backed reflector's input include the allowlisted argument values of the failed and working attempts, bounded and sanitized as on the `Tried:` lines, so a lesson can say what worked and not only which tool. Nothing outside the allowlist reaches the reflector, and a test proves the reflector's input carries no other argument.
+
+### Story 20.4: A Transfer Experiment
+
+**Traces:** FR6 · **Depends on:** 20.2, 20.3
+
+**Acceptance Criteria:**
+
+**Given** the live harness
+**When** it is extended with a pre-registered transfer design
+**Then** retrieval goes through the library's own adapter, not the sample's matcher. Learning runs on some services and evaluation on unseen services that share a hidden trait with one of them, all under one shared scope. The store also holds experience of unrelated services as distractors. The conditions are memory-disabled, memory-enabled, placebo (strategy withheld) and a mismatched-trait control. The offline scripted run is golden-tested like the existing experiment, and no live run is needed to merge.
+
+### Story 20.5: Run It on Real Models
+
+**Depends on:** 20.4 · **Needs:** model API keys from the maintainer
+
+**Acceptance Criteria:**
+
+**Given** the transfer experiment
+**When** it runs on at least two providers' models
+**Then** each run's report and ledger entry are committed with cost, the README states what the results do and do not show, and a negative result is reported as plainly as a positive one.
