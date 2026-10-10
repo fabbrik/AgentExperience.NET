@@ -455,9 +455,11 @@ model-authored, as does the library reflector's producer, for the guard, the lab
 adapter and both stores decide it by one shared rule, and PostgreSQL's migration `0022` states it again in SQL.
 
 **Authorship and the free text are signed when signing is on.** With [provenance signing](confidence.md#signing-provenance)
-configured, finalization signs claims version 2, which covers everything injection renders from the record: the
-task text, outcome status, environment, attempts (tool names and argument values), and the reflection's free text,
-authorship and producer. A record whose content no version 2 signature confirms (signed before this
+configured, finalization signs claims version 2, which covers what injection renders from the record: the
+task text, outcome status, environment, attempts (tool names and argument values, and whether each attempt failed),
+and the reflection's free text, authorship and producer. It does not cover error classes or each call's
+`[returned]`/`[failed: …]` marker, which come from error text it does not encode; a claims version 3 that covers them is
+planned. A record whose content no version 2 signature confirms (signed before this
 release, unsigned and not in the cutover set, or changed after it was signed) counts as model-authored: it is labelled
 and fenced at injection and left out under `Exclude`, whatever authorship it declares. Without signing, a party that
 can write the store (an application role with `AllowSealing` over a plaintext payload, or anything that bypasses the
@@ -555,7 +557,8 @@ Signing is opt-in. With an `ExperienceProvenanceSigningOptions` registered (or p
 finalization is built over), every record `FinalizeAsync` creates carries
 `ExperienceRecord.ProvenanceSignature`: an HMAC-SHA256, under the ring's `CurrentKeyId`, over claims version 2 -- the
 record's finalization claims (its ID, scope, source run, closed round, origin and exposures) and a digest of its
-content (everything injection renders: task text, outcome status, environment, attempts and the reflection) -- written
+content (what injection renders: task text, outcome status, environment, attempts and the reflection, but not error
+classes or per-call outcome markers) -- written
 in the same create
 as the record. Confidence verification then refuses a run whose record is unsigned, signed under a key that is not in
 the ring, or changed in any signed claim or content after it was signed. So a record written through `CreateAsync`,

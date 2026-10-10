@@ -68,8 +68,15 @@ public static class QuickStart
         await using var provider = services.BuildServiceProvider();
 
         var log = new ModelInputLog(model);   // keeps what the model was sent, to print it below
+        // The tool throws on a wrong strategy, so a failed call is captured as failed. Let the model read the exit text,
+        // and let it try every strategy without the function loop giving up on consecutive errors.
+        var functions = new FunctionInvokingChatClient(log)
+        {
+            IncludeDetailedErrors = true,
+            MaximumConsecutiveErrorsPerRequest = RefundDesk.Strategies.Count + 1,
+        };
         var injection = provider.GetAgentExperienceContextProvider();
-        AIAgent agent = new ChatClientAgent(log, new ChatClientAgentOptions
+        AIAgent agent = new ChatClientAgent(functions, new ChatClientAgentOptions
         {
             ChatOptions = new ChatOptions
             {

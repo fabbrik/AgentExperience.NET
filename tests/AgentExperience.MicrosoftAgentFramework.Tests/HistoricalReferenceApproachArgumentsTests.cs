@@ -85,13 +85,19 @@ public class HistoricalReferenceApproachArgumentsTests
     /// <summary>
     /// The final attempt's <c>Tried:</c> line for <paramref name="steps"/>, without its outcome, written with
     /// <c>" -> "</c> between calls for readability. Since story 18.1 the line carries no qualifier, so whether it
-    /// shows arguments changes nothing but the calls themselves.
+    /// shows arguments changes nothing but the calls themselves. Since story 20.3 each call is followed by its own
+    /// outcome; every call here completed.
     /// </summary>
     private static string Expected(string steps, bool arguments)
     {
         _ = arguments;
-        return "  - attempt 0: " + steps.Replace(" -> ", HistoricalReferenceWriter.ToolSeparator, StringComparison.Ordinal);
+        return "  - attempt 0: " + string.Join(
+            HistoricalReferenceWriter.ToolSeparator,
+            steps.Split(" -> ").Select(step => step + Done));
     }
+
+    /// <summary>The marker that follows a call that completed, with its leading space.</summary>
+    private const string Done = " " + HistoricalReferenceWriter.CallReturned;
 
     // ---- The default is unchanged -----------------------------------------------------------------
 
@@ -348,7 +354,7 @@ public class HistoricalReferenceApproachArgumentsTests
         // quotes around it are the only ones, and what follows the closing one is the line's own ")."
         var opening = line.IndexOf("strategy=\"", StringComparison.Ordinal) + "strategy=\"".Length;
         var closing = line.IndexOf('"', opening);
-        Assert.Equal(")", line[(closing + 1)..]);
+        Assert.Equal(")" + Done, line[(closing + 1)..]);
         Assert.Equal(2, line.Count(character => character == '"'));
         Assert.Contains("x')", line, StringComparison.Ordinal);
         Assert.DoesNotContain("->", line[opening..closing], StringComparison.Ordinal);
@@ -473,7 +479,7 @@ public class HistoricalReferenceApproachArgumentsTests
 
         // Every call is still named, in order: the cap drops arguments, never steps.
         Assert.Equal(HistoricalReferenceWriter.MaxApproachToolNames, line.Split(HistoricalReferenceWriter.ToolSeparator).Length);
-        Assert.EndsWith(HistoricalReferenceWriter.ToolSeparator + Tool + HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.ToolSeparator + Tool + Done + HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -495,7 +501,7 @@ public class HistoricalReferenceApproachArgumentsTests
         Assert.EndsWith(HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
         Assert.DoesNotContain("tiny-same-call", line, StringComparison.Ordinal);
         Assert.DoesNotContain("tiny-later-call", line, StringComparison.Ordinal);
-        Assert.EndsWith(HistoricalReferenceWriter.ToolSeparator + Tool + HistoricalReferenceWriter.ToolSeparator + Tool + HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
+        Assert.EndsWith(HistoricalReferenceWriter.ToolSeparator + Tool + Done + HistoricalReferenceWriter.ToolSeparator + Tool + Done + HistoricalReferenceWriter.AttemptArgumentsClamped, line, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -539,7 +545,8 @@ public class HistoricalReferenceApproachArgumentsTests
         Assert.DoesNotContain(PlantedOutsideAllowlist, withAllowlist.Text, StringComparison.Ordinal);
         if (level == ExperienceGrantDisclosure.LessonAndApproach)
         {
-            Assert.Equal(Expected(Tool, arguments: false), ApproachLine(withAllowlist.Text));
+            // A borrowed line carries no per-call outcome marker (story 20.3).
+            Assert.Equal("  - attempt 0: " + Tool, ApproachLine(withAllowlist.Text));
         }
         else
         {

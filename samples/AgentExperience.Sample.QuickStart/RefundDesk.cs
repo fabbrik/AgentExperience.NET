@@ -12,8 +12,15 @@ public sealed record RefundAttempt(string Strategy, bool Succeeded);
 /// one strategy works, and a wrong one says only "not that one", so nothing in the tool's answers tells the model which.
 /// </summary>
 /// <remarks>
+/// <para>
 /// <see cref="RefundReleased"/> is the verdict <c>Verify</c> reads: the desk's own state, set only by a call with the
 /// working strategy. Nothing the model says can make it true.
+/// </para>
+/// <para>
+/// A call that exits non-zero throws, as a real tool reports failure, so capture records it as a failed call and
+/// the injected <c>Tried:</c> line marks it <c>[failed: …]</c>. The agent's function-calling loop hands the model an
+/// error result for it and the run goes on.
+/// </para>
 /// </remarks>
 public sealed class RefundDesk
 {
@@ -38,9 +45,9 @@ public sealed class RefundDesk
         Tool = AIFunctionFactory.Create(
             RunRefundCheck,
             ToolName,
-            "Runs the refund check for a ticket with the named strategy, and reports an exit code (exit=0 means the refund "
-                + "is released). Valid strategies: " + string.Join(", ", Strategies)
-                + ". Exactly one of them works for a locked refund; a rejected strategy changes nothing.");
+            "Runs the refund check for a ticket with the named strategy. It returns exit=0 when the refund is released; "
+                + "any other strategy fails with an error naming its exit code, and changes nothing. Valid strategies: "
+                + string.Join(", ", Strategies) + ". Exactly one of them works for a locked refund.");
 
     public AIFunction Tool { get; }
 
@@ -59,13 +66,14 @@ public sealed class RefundDesk
     {
         if (!Strategies.Contains(strategy, StringComparer.Ordinal))
         {
-            return "exit=64 unknown strategy; nothing was changed";
+            // Not an attempt at the refund, so not in Attempts; still a failed call.
+            throw new InvalidOperationException("exit=64 unknown strategy; nothing was changed");
         }
 
         var succeeded = string.Equals(strategy, WorkingStrategy, StringComparison.Ordinal);
         _attempts.Add(new RefundAttempt(strategy, succeeded));
         return succeeded
             ? "exit=0 the refund is released"
-            : "exit=3 the refund is still stuck; nothing was changed";
+            : throw new InvalidOperationException("exit=3 the refund is still stuck; nothing was changed");
     }
 }

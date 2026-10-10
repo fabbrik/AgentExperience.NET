@@ -56,7 +56,7 @@ public class ExperienceInjectionTests
             SequenceNumber: sequence,
             StartedAt: InjectionRecords.Now,
             Duration: TimeSpan.FromSeconds(1),
-            ToolCalls: [call],
+            ToolCalls: [error is null ? call : call with { Error = error }],
             Result: null,
             Error: error);
         harness.World.Publish(
@@ -67,7 +67,7 @@ public class ExperienceInjectionTests
 
         var text = harness.InjectedText()!;
         Assert.Contains("\n--- RECORD 1: triage-ticket ---\n", text, StringComparison.Ordinal);
-        Assert.Contains("  - attempt 1: retry_refund \u2192 failed\n", text, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 1: retry_refund [failed] \u2192 failed\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain("TimeoutException", text, StringComparison.Ordinal);
     }
 
@@ -219,8 +219,9 @@ public class ExperienceInjectionTests
         Assert.DoesNotContain(InjectionRecords.EvidenceDetail, everything, StringComparison.Ordinal);
 
         // The name of the tool the verified attempt called is the one thing that does cross, and it
-        // crosses on the Tried: and Worked: lines -- not smuggled into some other field.
-        Assert.Contains("  - attempt 0: refund_ticket \u2192 completed\n", everything, StringComparison.Ordinal);
+        // crosses on the Tried: and Worked: lines -- not smuggled into some other field. Since story 20.3 the call's
+        // own outcome follows it: the fixture's call carries an error, so only that error's class crosses.
+        Assert.Contains("  - attempt 0: refund_ticket [failed: unclassified error] \u2192 completed\n", everything, StringComparison.Ordinal);
         Assert.Contains("refund_ticket", everything, StringComparison.Ordinal);
     }
 
@@ -2034,9 +2035,11 @@ public class ExperienceInjectionTests
     /// <summary>
     /// SHA-256 of the Historical Reference block the pre-5.6 provider injected for the mixed world in
     /// <see cref="The_batched_re_read_produces_the_same_outcomes_block_and_access_rows_as_the_per_record_re_read"/>,
-    /// re-pinned in story 18.1, whose Tried: and Worked: lines replaced each record's Approach: line and whose withheld sentence now says "attempts", and changed nothing else.
+    /// re-pinned in story 18.1, whose Tried: and Worked: lines replaced each record's Approach: line and whose withheld sentence now says "attempts", and changed nothing else;
+    /// and again in story 20.3, which adds each call's own outcome to the reader's own record's Tried: line (the
+    /// fixture's call carries an error, so its class is shown) and leaves the borrowed record's line as it was.
     /// </summary>
-    private const string PreBatchBlockSha256 = "fcc03281e543b36b4bdaa0871e917bc1459b4dcf2f21cf3846e801f03963f627";
+    private const string PreBatchBlockSha256 = "de69660fbbd172272d7e6b14ed06c3210300421ddb16d0dde30fec8dd7439fc2";
 
     [Fact]
     public async Task A_store_that_throws_on_every_read_omits_every_selected_record_with_the_reason_a_failing_single_read_gave()

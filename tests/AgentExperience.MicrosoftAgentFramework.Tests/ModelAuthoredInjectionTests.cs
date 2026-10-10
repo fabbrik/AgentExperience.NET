@@ -139,7 +139,7 @@ public class ModelAuthoredInjectionTests
         + "Evidence: 1 evidence ID(s); no evidence detail is included.\n"
         + "Lesson: Check the lock table before retrying the refund.\n"
         + "Tried:\n"
-        + "  - attempt 0: refund_ticket \u2192 completed\n"
+        + "  - attempt 0: refund_ticket [failed: unclassified error] \u2192 completed\n"
         + "Worked: attempt 0 (the final attempt)\n"
         + "Reuse guidance: Reuse only when the ticket is a refund.\n"
         + "Preconditions:\n"

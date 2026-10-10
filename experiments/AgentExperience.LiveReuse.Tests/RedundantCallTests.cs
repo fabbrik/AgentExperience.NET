@@ -5,7 +5,8 @@ namespace AgentExperience.LiveReuse.Tests;
 
 /// <summary>
 /// A model may make a second, redundant <c>apply_migration</c> call in the response that got the migration live. The
-/// stored record keeps both calls and the final attempt's Tried: line lists both, in order, without marking which succeeded. The
+/// stored record keeps both calls and the final attempt's Tried: line lists both, in order; neither tool call threw, so both are
+/// marked [returned] and the line does not say which one released the migration. The
 /// harness must compare the whole sequence on both sides, and still refuse a block that differs from its store.
 /// </summary>
 public sealed class RedundantCallTests

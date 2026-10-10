@@ -51,7 +51,7 @@ public class CapabilityGateTests
         Assert.Equal(InjectionOutcome.Injected, harness.Last.Outcome);
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
         Assert.Empty(harness.Last.Omitted);
-        Assert.Contains("  - attempt 0: a, b \u2192 completed\n", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: a [returned], b [returned] \u2192 completed\n", harness.InjectedText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -239,7 +239,7 @@ public class CapabilityGateTests
         Assert.DoesNotContain("Worked:", harness.InjectedText(), StringComparison.Ordinal);
 
         // Its Tried: line still names the unavailable tool: what a run tried is history, not an approach to carry out.
-        Assert.Contains("  - attempt 0: unlisted_tool \u2192 completed\n", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: unlisted_tool [returned] \u2192 completed\n", harness.InjectedText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -263,7 +263,7 @@ public class CapabilityGateTests
         // The gate checks only the attempt the Worked: line names; the failed attempt is shown as history.
         Assert.Equal([InjectionRecords.Id(1)], harness.Last.InjectedExperienceIds);
         Assert.Empty(harness.Last.Omitted);
-        Assert.Contains("  - attempt 0: missing_tool \u2192 failed (HTTP 503)\n", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: missing_tool [returned] \u2192 failed (HTTP 503)\n", harness.InjectedText(), StringComparison.Ordinal);
         Assert.Contains("Worked: attempt 1" + HistoricalReferenceWriter.WorkedSuffix, harness.InjectedText(), StringComparison.Ordinal);
     }
 

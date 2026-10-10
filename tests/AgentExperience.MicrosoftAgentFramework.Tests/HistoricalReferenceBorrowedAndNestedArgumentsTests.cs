@@ -106,6 +106,15 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
     private static string Expected(string steps) =>
         "  - attempt 0: " + steps.Replace(" -> ", HistoricalReferenceWriter.ToolSeparator, StringComparison.Ordinal);
 
+    /// <summary>
+    /// The reader's own record's line for <paramref name="steps"/>: since story 20.3 each call is followed by its own
+    /// outcome (every call here completed), which a borrowed record's line never carries.
+    /// </summary>
+    private static string ExpectedOwned(string steps) =>
+        "  - attempt 0: " + string.Join(
+            HistoricalReferenceWriter.ToolSeparator,
+            steps.Split(" -> ").Select(step => step + " " + HistoricalReferenceWriter.CallReturned));
+
     /// <summary>Every planted marker, none of which may ever reach a block.</summary>
     private static readonly string[] Planted =
     [
@@ -157,7 +166,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         var text = Owned(PlantedRecord(json), reader);
 
         Assert.Equal(
-            Expected(
+            ExpectedOwned(
                 Tool + "(options.mode=\"fast\", targets.1=\"db-7\", blob=" + HistoricalReferenceWriter.ArgumentNotShown + ") -> " + OtherTool),
             ApproachLine(text));
         AssertNothingPlanted(text);
@@ -173,7 +182,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         var text = Owned(PlantedRecord(json), reader);
 
         Assert.Equal(
-            Expected(
+            ExpectedOwned(
                 Tool + "(options=" + HistoricalReferenceWriter.ArgumentNotShown
                     + ", targets=" + HistoricalReferenceWriter.ArgumentNotShown
                     + ", targets.2=" + HistoricalReferenceWriter.ArgumentNotShown + ") -> " + OtherTool),
@@ -208,7 +217,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         {
             var text = Owned(PlantedRecord(json), Allow((Tool, [path])));
 
-            Assert.Equal(Expected(Tool + " -> " + OtherTool), ApproachLine(text));
+            Assert.Equal(ExpectedOwned(Tool + " -> " + OtherTool), ApproachLine(text));
             AssertNothingPlanted(text);
         }
     }
@@ -220,7 +229,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         var text = Owned(record, Allow((Tool, ["options.mode"])));
 
-        Assert.Equal(Expected(Tool + "(options.mode=\"literal\")"), ApproachLine(text));
+        Assert.Equal(ExpectedOwned(Tool + "(options.mode=\"literal\")"), ApproachLine(text));
         Assert.DoesNotContain(PlantedSibling, text, StringComparison.Ordinal);
     }
 
@@ -232,7 +241,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
 
         var text = Owned(record, Allow((Tool, ["options.mode"])));
 
-        Assert.Equal(Expected(Tool), ApproachLine(text));
+        Assert.Equal(ExpectedOwned(Tool), ApproachLine(text));
         Assert.DoesNotContain(PlantedCase, text, StringComparison.Ordinal);
     }
 
@@ -288,7 +297,7 @@ public class HistoricalReferenceBorrowedAndNestedArgumentsTests
         var text = Owned(RecordWith(Call(0, Tool, Map(("options", disposed)))), Allow((Tool, ["options.mode"])));
 
         Assert.Equal(
-            Expected(Tool + "(options.mode=" + HistoricalReferenceWriter.ArgumentNotShown + ")"),
+            ExpectedOwned(Tool + "(options.mode=" + HistoricalReferenceWriter.ArgumentNotShown + ")"),
             ApproachLine(text));
     }
 

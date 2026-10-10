@@ -141,7 +141,7 @@ public class InjectedContentAuthorizationTests
         // The approach line really is what carried the tool name into the model's context.
         Assert.Equal(InjectionOutcome.Injected, Assert.Single(results).Outcome);
         var everything = string.Join("\n", model.LastMessages!.Select(m => m.Text));
-        Assert.Contains("  - attempt 0: " + DangerousTool + " \u2192 completed\n", everything, StringComparison.Ordinal);
+        Assert.Contains("  - attempt 0: " + DangerousTool + " [failed: unclassified error] \u2192 completed\n", everything, StringComparison.Ordinal);
 
         Assert.Equal(1, CountOf(everything, DangerousTool));
         Assert.True(model.EmittedCall);
@@ -298,7 +298,7 @@ public class InjectedContentAuthorizationTests
         Assert.Equal(InjectionOutcome.Injected, Assert.Single(results).Outcome);
         var everything = string.Join("\n", model.LastMessages!.Select(m => m.Text));
         Assert.Contains(
-            "  - attempt 0: " + BenignTool + "(strategy=\"" + Instruction + "\") \u2192 completed\n",
+            "  - attempt 0: " + BenignTool + "(strategy=\"" + Instruction + "\") [returned] \u2192 completed\n",
             everything,
             StringComparison.Ordinal);
 

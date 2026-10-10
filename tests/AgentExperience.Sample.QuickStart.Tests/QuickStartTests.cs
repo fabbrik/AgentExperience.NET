@@ -39,8 +39,59 @@ public class QuickStartTests
         // What changed run 2 is in its model's input: the library's block, carrying the working strategy.
         var block = Assert.IsType<string>(runs[1].Block);
         Assert.Contains(HistoricalReferenceWriter.BlockBegin, block, StringComparison.Ordinal);
-        Assert.Contains("run_refund_check(strategy=\"wait-for-lock\")", block, StringComparison.Ordinal);
+        Assert.Contains("run_refund_check(strategy=\"wait-for-lock\") [returned]", block, StringComparison.Ordinal);
+
+        // Run 1's wrong strategy threw, so it is marked failed on the line; the stand-in picks the returned call.
+        Assert.Contains("run_refund_check(strategy=\"retry-immediately\") [failed: InvalidOperationException]", block, StringComparison.Ordinal);
         Assert.Equal("wait-for-lock", ScriptedModel.Remembered(block));
+    }
+
+    [Fact]
+    public void The_stand_in_remembers_the_returned_call_even_when_it_is_not_the_last()
+    {
+        const string Block =
+            "Tried:\n"
+            + "  - attempt 0: run_refund_check(strategy=\"retry-immediately\") [failed: InvalidOperationException] \u2192 failed (InvalidOperationException)\n"
+            + "  - attempt 1: run_refund_check(strategy=\"wait-for-lock\") [returned], "
+            + "run_refund_check(strategy=\"skip-ledger-check\") [failed: InvalidOperationException] \u2192 completed\n"
+            + "Worked: attempt 1 (the final attempt)\n";
+
+        Assert.Equal("wait-for-lock", ScriptedModel.Remembered(Block));
+    }
+
+    [Fact]
+    public void The_stand_in_finds_the_strategy_wherever_it_sits_among_the_calls_arguments()
+    {
+        const string Block =
+            "Tried:\n"
+            + "  - attempt 0: run_refund_check(strategy=\"retry-immediately\", ticketId=\"4812\") [failed: InvalidOperationException], "
+            + "run_refund_check(strategy=\"wait-for-lock\", ticketId=\"x) [returned]\", note=\"(not shown: not a string, number or boolean)\") [returned] \u2192 completed\n"
+            + "Worked: attempt 0 (the final attempt)\n";
+
+        Assert.Equal("wait-for-lock", ScriptedModel.Remembered(Block));
+    }
+
+    [Fact]
+    public void A_strategy_spelled_inside_another_arguments_value_is_not_read()
+    {
+        const string Block =
+            "Tried:\n"
+            + "  - attempt 0: run_refund_check(note=\"a, strategy=\", ticketId=\"skip-ledger-check\") [returned], "
+            + "run_refund_check(ticketId=\"4812\", strategy=\"wait-for-lock\") [returned] \u2192 completed\n"
+            + "Worked: attempt 0 (the final attempt)\n";
+
+        Assert.Equal("wait-for-lock", ScriptedModel.Remembered(Block));
+    }
+
+    [Fact]
+    public void The_stand_in_remembers_nothing_when_no_call_of_the_worked_attempt_returned()
+    {
+        const string Block =
+            "Tried:\n"
+            + "  - attempt 0: run_refund_check(strategy=\"retry-immediately\") [failed: InvalidOperationException] \u2192 completed\n"
+            + "Worked: attempt 0 (the final attempt)\n";
+
+        Assert.Null(ScriptedModel.Remembered(Block));
     }
 
     [Fact]
