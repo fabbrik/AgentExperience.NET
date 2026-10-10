@@ -6,6 +6,18 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.10
+
+This preview makes lessons say more precisely what worked, makes sure the lessons a model is shown are ones it can act
+on, and adds an experiment that asks whether a lesson helps on a *different* system. Each call on a `Tried:` line now
+carries its own outcome (`[returned]`, `[failed: <class>]`), so a model can tell the failed approach from the working
+one inside a single attempt. Provenance signing moves to claims version 3, which also covers the error text those
+markers come from. The receiving-agent capability gate now runs before the record limit, and can use the run's own
+tools (`UseRunTools`), so lessons whose working approach needs a tool the agent lacks no longer take its slots. The
+transfer experiment (pre-registered, offline-tested, no live results yet) found that problem before any user did.
+
 ### Injection: only lessons the agent can act on (story 20.7)
 
 - **The capability gate runs before the record limit.** With `ExperienceInjectionOptions.ReceivingAgent` set, the
