@@ -66,7 +66,7 @@
        CHANGELOG). After each release, set the baseline to that release and delete the suppression files (RELEASING.md);
        a release test holds this version to the CHANGELOG. Restore downloads the baseline packages from nuget.org. -->
   <PropertyGroup Condition="'$(AgentExperienceShippingProject)' == 'true'">
-    <AgentExperiencePackageValidationBaseline>0.1.0-preview.8</AgentExperiencePackageValidationBaseline>
+    <AgentExperiencePackageValidationBaseline>0.1.0-preview.9</AgentExperiencePackageValidationBaseline>
     <EnablePackageValidation>true</EnablePackageValidation>
     <PackageValidationBaselineVersion>$(AgentExperiencePackageValidationBaseline)</PackageValidationBaselineVersion>
   </PropertyGroup>
