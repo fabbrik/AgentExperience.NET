@@ -455,12 +455,13 @@ model-authored, as does the library reflector's producer, for the guard, the lab
 adapter and both stores decide it by one shared rule, and PostgreSQL's migration `0022` states it again in SQL.
 
 **Authorship and the free text are signed when signing is on.** With [provenance signing](confidence.md#signing-provenance)
-configured, finalization signs claims version 2, which covers what injection renders from the record: the
-task text, outcome status, environment, attempts (tool names and argument values, and whether each attempt failed),
-and the reflection's free text, authorship and producer. It does not cover error classes or each call's
-`[returned]`/`[failed: …]` marker, which come from error text it does not encode; a claims version 3 that covers them is
-planned. A record whose content no version 2 signature confirms (signed before this
-release, unsigned and not in the cutover set, or changed after it was signed) counts as model-authored: it is labelled
+configured, finalization signs claims version 3, which covers what injection renders from the record: the
+task text, outcome status, environment, attempts (tool names and argument values, and each attempt's and each tool
+call's error, so the error classes and each call's `[returned]`/`[failed: …]` marker), and the reflection's free
+text, authorship and producer. A version 2 signature, made by `0.1.0-preview.7` through `0.1.0-preview.9` or during a
+`SignClaimsVersion = 2` rollout, still confirms its record's content, but its error text is unsigned. A record whose
+content no version 3 or version 2 signature confirms (signed before `0.1.0-preview.7`, unsigned and not in the
+cutover set, or changed after it was signed) counts as model-authored: it is labelled
 and fenced at injection and left out under `Exclude`, whatever authorship it declares. Without signing, a party that
 can write the store (an application role with `AllowSealing` over a plaintext payload, or anything that bypasses the
 store) can change a reflection's text or flip its authorship to `Deterministic`, and the label and `Exclude` then
@@ -555,10 +556,11 @@ revoked or rewritten.
 
 Signing is opt-in. With an `ExperienceProvenanceSigningOptions` registered (or passed to the lifecycle service
 finalization is built over), every record `FinalizeAsync` creates carries
-`ExperienceRecord.ProvenanceSignature`: an HMAC-SHA256, under the ring's `CurrentKeyId`, over claims version 2 -- the
+`ExperienceRecord.ProvenanceSignature`: an HMAC-SHA256, under the ring's `CurrentKeyId`, over claims version 3 -- the
 record's finalization claims (its ID, scope, source run, closed round, origin and exposures) and a digest of its
-content (what injection renders: task text, outcome status, environment, attempts and the reflection, but not error
-classes or per-call outcome markers) -- written
+content (what injection renders: task text, outcome status, environment, attempts with their error classes and
+per-call outcome markers, and the reflection; a version 2 signature from an earlier release covers the same but the
+error text) -- written
 in the same create
 as the record. Confidence verification then refuses a run whose record is unsigned, signed under a key that is not in
 the ring, or changed in any signed claim or content after it was signed. So a record written through `CreateAsync`,
@@ -573,9 +575,12 @@ key under the same ID: a record signed under a key the checker lacks would vouch
 whose run already has a stored record that does not carry a valid signature ends `Failed` at the create stage,
 saying so, instead of replaying it as `AlreadyFinalized`. A run whose scope has no strict UTF-8 encoding (a lone
 surrogate), or whose record content has no canonical encoding (a lone surrogate, or a tool argument value with no
-JSON form), cannot be signed and also ends `Failed`, with nothing stored. During a rolling deploy in which nodes on an
-earlier build still verify, set `SignClaimsVersion = 1` so they can check what this one signs; see
-[Signing provenance](confidence.md#signing-provenance).
+JSON form), cannot be signed and also ends `Failed`, with nothing stored. Under claims version 3 that includes the
+error text of every attempt and tool call: a lone surrogate there (which a custom `ISanitizer` can let through) ends
+`Failed` at the create stage, as one in any other signed text already did. During a rolling deploy in which nodes on
+an earlier build still verify, set `SignClaimsVersion = 2` while nodes on `0.1.0-preview.7` to `0.1.0-preview.9`
+remain, and `SignClaimsVersion = 1` only while nodes on `0.1.0-preview.6` or earlier remain, so they can check what
+this one signs; see [Signing provenance](confidence.md#signing-provenance).
 
 ```csharp
 services.AddSingleton(new ExperienceProvenanceSigningOptions(

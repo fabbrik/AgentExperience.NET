@@ -91,7 +91,10 @@ Then, as the application role, with today's crypto-shredding over the same keys 
   service with the documented reason, admitted `HostTrusted` by the opt-out, and, for `0.1.0-preview.2`, admitted
   `Verified` about the run the preview exposed; the expiring grant, which after it expires admits nothing and is
   purged by `PurgeExpiredAsync`; a new grant issued, read through and revoked; an erasure of an upgraded record (its
-  data key destroyed in the encrypted case); new reuse feedback naming an upgraded record; and a new embedding write;
+  data key destroyed in the encrypted case); new reuse feedback naming an upgraded record; a new embedding write; and
+  (story 20.6) a record signed claims version 2 and one signed version 1, as the previous releases signed them, written
+  through `tests/Shared/SignedRecords.cs` (no seeded preview signs): read back, the version 2 one still confirms its
+  content under today's version 3 default, and the version 1 one stays unconfirmed;
 - **the catalog:** the migration journal lists every current script exactly once; and the schema matches a fresh
   install of today's, created in a second database with the same roles and the same privileges call. The comparison
   covers relations (with their row-level security), row-level security policies, columns (type, nullability, default, generation), constraints (and whether each is validated),

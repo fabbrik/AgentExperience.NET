@@ -89,14 +89,17 @@ public sealed record ExperienceRecord(
     /// configured, finalization signs, under a host-held key, the claims confidence verification relies on --
     /// <see cref="ExperienceId"/>, <see cref="Scope"/>, <see cref="SourceRunId"/>, <see cref="ClosedRoundId"/>,
     /// <see cref="Origin"/> and <see cref="Provenance.ExposedTo"/> -- and verification refuses a run whose record
-    /// carries no signature, one under a key it does not hold, or one that does not verify. Since <c>0.1.0-preview.7</c> it
-    /// signs claims version 2 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>), which adds a digest of
-    /// everything injection renders from the record: <see cref="TaskId"/> and <see cref="TaskSummary"/>, the
-    /// <see cref="Outcome"/>'s status and evidence count, the <see cref="Environment"/> (all fields and attributes), the
-    /// <see cref="Attempts"/> (each tool call's name and argument values, numbers by exact decimal value), and the
-    /// reflection's free text, evidence count, <see cref="Reflection.Authorship"/> and <see cref="Reflection.Producer"/>. With signing configured, a record
-    /// whose content no version 2 signature confirms is treated as model-authored wherever authorship is decided.
-    /// Status, counters and timestamps change through the lifecycle and are not signed.
+    /// carries no signature, one under a key it does not hold, or one that does not verify. By default
+    /// (<c>SignClaimsVersion</c>) it signs claims version 3 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV3"/>), which adds a digest of everything injection
+    /// renders from the record: <see cref="TaskId"/> and <see cref="TaskSummary"/>, the <see cref="Outcome"/>'s status
+    /// and evidence count, the <see cref="Environment"/> (all fields and attributes), the <see cref="Attempts"/> (each
+    /// tool call's name and argument values, numbers by exact decimal value, and each attempt's and each tool call's
+    /// error text), and the reflection's free text, evidence count, <see cref="Reflection.Authorship"/> and
+    /// <see cref="Reflection.Producer"/>. From <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> it signed claims
+    /// version 2 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>), the same digest without any error
+    /// text: such a signature still confirms content, but its record's error text is unsigned. With signing configured,
+    /// a record whose content no version 3 or version 2 signature confirms is treated as model-authored wherever
+    /// authorship is decided. Status, counters and timestamps change through the lifecycle and are not signed.
     /// </para>
     /// <para>
     /// A store persists it as given and never checks it; a store does not hold the key. It is not secret, but
@@ -111,7 +114,7 @@ public sealed record ExperienceRecord(
 /// the record (see <see cref="ExperienceRecord.ProvenanceSignature"/>).
 /// </summary>
 /// <param name="KeyId">The identifier of the host-held key it was made under. Never the key itself.</param>
-/// <param name="Algorithm">The signature algorithm and claims version: <see cref="HmacSha256ClaimsV2"/> for every signature finalization makes since <c>0.1.0-preview.7</c>, or <see cref="HmacSha256"/> for one made before it.</param>
+/// <param name="Algorithm">The signature algorithm and claims version: <see cref="HmacSha256ClaimsV3"/> for every signature finalization makes by default since <c>0.1.0-preview.10</c>, <see cref="HmacSha256ClaimsV2"/> for one made by <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> (or during a rollout), or <see cref="HmacSha256"/> for one made before them.</param>
 /// <param name="Value">The signature bytes.</param>
 public sealed record ExperienceProvenanceSignature(string KeyId, string Algorithm, ReadOnlyMemory<byte> Value)
 {
@@ -125,11 +128,20 @@ public sealed record ExperienceProvenanceSignature(string KeyId, string Algorith
     /// HMAC-SHA256 over claims version 2 (<c>aexp-prov:v2</c>): the version 1 claims, then a SHA-256 digest of the
     /// record's content -- its task ID and summary, its outcome's status and evidence count, its environment (all fields
     /// and attributes), its attempts (each tool call's name and argument values, numbers canonicalized by exact decimal
-    /// value), and its reflection's free text, evidence count, authorship and producer. What finalization signs
-    /// since <c>0.1.0-preview.7</c>. The value names the claims version, so a verifier never has to guess it, and uses only the
+    /// value), and its reflection's free text, evidence count, authorship and producer. What finalization signed from
+    /// <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c>, and still signs during a rollout; it still verifies and
+    /// confirms content, but covers no attempt's or tool call's error text. The value names the claims version, so a verifier never has to guess it, and uses only the
     /// characters a store accepts in an algorithm (<c>[A-Za-z0-9._-]</c>), so a store on an earlier build persists it too.
     /// </summary>
     public const string HmacSha256ClaimsV2 = "HMAC-SHA256.aexp-prov.v2";
+
+    /// <summary>
+    /// HMAC-SHA256 over claims version 3 (<c>aexp-prov:v3</c>): the version 2 claims, with a content digest that also
+    /// covers every attempt's and every tool call's error text, so the error classes and each call's
+    /// <c>[returned]</c>/<c>[failed: …]</c> marker a <c>Tried:</c> line shows are signed. What finalization signs by
+    /// default since <c>0.1.0-preview.10</c>. Like version 2, it uses only the characters a store accepts in an algorithm.
+    /// </summary>
+    public const string HmacSha256ClaimsV3 = "HMAC-SHA256.aexp-prov.v3";
 
     /// <summary>
     /// Value equality over every member, <see cref="Value"/> compared byte by byte rather than by the memory it

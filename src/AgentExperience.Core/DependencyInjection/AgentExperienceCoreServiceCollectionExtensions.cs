@@ -259,7 +259,7 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// <para>
     /// Registered <see cref="ExperienceProvenanceSigningOptions"/> (directly or as an explicitly registered
     /// <c>IOptions&lt;T&gt;</c>, in any order relative to this call, as for <see cref="AddAgentExperienceCore"/>) make
-    /// the service decide authorship against them: a record whose content no claims version 2 signature
+    /// the service decide authorship against them: a record whose content no claims version 3 or version 2 signature
     /// confirms counts as model-authored.
     /// </para>
     /// </remarks>

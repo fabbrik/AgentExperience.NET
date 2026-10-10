@@ -268,7 +268,7 @@ public sealed class ExperienceRetrievalService
     /// <param name="confidenceDecay">Optional. As for the eight-argument constructor.</param>
     /// <param name="provenanceSigning">
     /// Optional. The same signing options the lifecycle service checks against. With them, a record whose content is
-    /// not confirmed by a claims version 2 signature (or the options' cutover set) counts as model-authored (see
+    /// not confirmed by a claims version 3 or version 2 signature (or the options' cutover set) counts as model-authored (see
     /// <see cref="IsModelAuthored"/>): excluded under <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, and
     /// fenced as model-authored by injection. <see langword="null"/> decides authorship exactly as before. Copied.
     /// </param>
@@ -316,7 +316,7 @@ public sealed class ExperienceRetrievalService
 
     /// <summary>
     /// Whether this service confirms <paramref name="record"/>'s content: always without provenance signing; with it,
-    /// only when a claims version 2 signature under a key in the ring verifies over everything the injection writer
+    /// only when a claims version 3 or version 2 signature under a key in the ring verifies over everything the injection writer
     /// renders from the record (its task text, outcome status, environment, attempts and reflection), when the
     /// options' cutover set lists it unsigned, or, under <see cref="ExperienceProvenanceSigningOptions.ConfirmV1Content"/>,
     /// when a version 1 signature verifies. A record whose content is not confirmed counts as model-authored
@@ -798,7 +798,7 @@ public sealed class ExperienceRetrievalService
             // Story 14.4: the sources leave model-authored records out before their limits; this catches what one still
             // returned -- a source that does not honour the request. Fail closed on authorship, by the one shared rule
             // (story 17.1: the library's own model-backed reflector counts whatever authorship it declared) and, with
-            // provenance signing configured, on content no claims version 2 signature confirms (story 17.2). Without
+            // provenance signing configured, on content no claims version 3 or version 2 signature confirms (story 17.2). Without
             // signing, a record with no reflection is kept.
             if (request.ExcludeModelAuthored && RecordAuthorship.ExclusionReason(record, _signer) is { } authorshipReason)
             {

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Lifecycle;
+using AgentExperience.Core.Retrieval;
 using AgentExperience.Storage.Postgres;
 using AgentExperience.Storage.Postgres.Vectors;
 using AgentExperience.Tests.Shared;
@@ -365,6 +366,7 @@ internal sealed class Verification
             ("an erasure", ErasureAsync),
             ("new reuse feedback", NewFeedbackAsync),
             ("a new embedding", NewEmbeddingAsync),
+            ("signed records from earlier releases", SignedRecordsAsync),
 
             // The catalog.
             ("the migration journal", JournalAsync),
@@ -1024,6 +1026,81 @@ internal sealed class Verification
             Exposures: [new ExperienceReuseExposure(id, Attributed: false, EvidenceId: null)]);
         var recorded = await _feedback.RecordAsync(Auth, feedback, CancellationToken.None);
         _report.Check(recorded.Outcome == ExperienceReuseFeedbackStoreOutcome.Recorded, $"new reuse feedback naming a-validated ({id})", $"it was {recorded.Outcome}");
+    }
+
+    /// <summary>
+    /// Story 20.6: the previews this suite seeds predate signing, so records signed by the previous release are written
+    /// here through <see cref="SignedRecords"/>, the independent encoder, into the upgraded database. Read back through
+    /// today's store and judged under today's default signing options (claims version 3), a version 2 record -- error
+    /// text and all -- still confirms its content, so upgrading fences nothing, and a version 1 record is unconfirmed,
+    /// exactly as before.
+    /// </summary>
+    private async Task SignedRecordsAsync()
+    {
+        var key = Enumerable.Range(0, 32).Select(value => (byte)(value * 7 + 3)).ToArray();
+        var signing = new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["upgrade-key"] = key }, "upgrade-key");
+        var retrieval = new ExperienceRetrievalService(
+            _candidates, RetrievalPolicy.Default, RankingWeights.Default, TimeProvider.System, null, null, null, null, signing);
+        var (_, scope, _) = Identify(Record("a-validated"));
+
+        foreach (var (name, sign, confirmed) in new (string, Func<ExperienceRecord, ExperienceRecord>, bool)[]
+        {
+            ("a v2-signed record", record => SignedRecords.SignV2(record, "upgrade-key", key), true),
+            ("a v1-signed record", record => SignedRecords.SignV1(record, "upgrade-key", key), false),
+        })
+        {
+            var signed = sign(SignedRecord(scope));
+            var created = await _store.CreateAsync(Auth, signed, CancellationToken.None);
+            _report.Check(created.Outcome == ExperienceStoreOutcome.Created, name, $"creating it was {created.Outcome}");
+            var read = (await _store.GetAsync(Auth, scope, signed.ExperienceId, CancellationToken.None)).Record;
+            _report.Check(read is not null && Equals(read.ProvenanceSignature, signed.ProvenanceSignature), name, "its signature did not read back as written");
+            _report.Check(
+                read is not null && retrieval.IsContentConfirmed(read) == confirmed,
+                name,
+                confirmed
+                    ? "its content is no longer confirmed under today's signing: the upgrade would fence it"
+                    : "its content is confirmed, but a version 1 signature never confirmed content");
+        }
+    }
+
+    private static ExperienceRecord SignedRecord(Scope scope)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new ExperienceRecord(
+            ExperienceId: Guid.NewGuid(),
+            SourceRunId: Guid.NewGuid(),
+            Scope: scope,
+            TaskId: "signed-before-the-upgrade",
+            TaskSummary: "a record the previous release signed",
+            Attempts:
+            [
+                new Attempt(
+                    Guid.NewGuid(),
+                    0,
+                    now,
+                    TimeSpan.FromSeconds(1),
+                    [
+                        new ToolCallRecord(Guid.NewGuid(), 0, "run_check", new Dictionary<string, object?> { ["strategy"] = "retry", ["tries"] = 2 }, now, TimeSpan.FromMilliseconds(5), null, "InvalidOperationException: locked"),
+                        new ToolCallRecord(Guid.NewGuid(), 1, "run_check", new Dictionary<string, object?> { ["strategy"] = "wait" }, now, TimeSpan.FromMilliseconds(5), "ok", null),
+                    ],
+                    null,
+                    "TimeoutException: slow"),
+            ],
+            Outcome: new Outcome(TaskVerificationStatus.Verified, [], "checks passed", now),
+            CompletionScore: 1,
+            Reflection: null,
+            Environment: new EnvironmentFingerprint("host", "10.0.0", "linux-x64", null, new Dictionary<string, string> { ["region"] = "eu" }),
+            Provenance: new Provenance("upgrade-tests", null, now, null),
+            Status: ExperienceStatus.Candidate,
+            ReuseConfidence: 0,
+            SupportingValidations: 0,
+            Contradictions: 0,
+            Revision: 0,
+            CreatedAt: now,
+            UpdatedAt: now)
+        {
+            Origin = ExperienceRecordOrigin.Finalized,
+        };
     }
 
     private async Task NewEmbeddingAsync()

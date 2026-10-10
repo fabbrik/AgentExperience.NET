@@ -570,6 +570,45 @@ public class ModelAuthoredInjectionTests
     }
 
     [Fact]
+    public async Task A_v3_record_whose_call_error_was_flipped_in_the_store_is_fenced_with_its_marker_inside_or_omitted_as_unconfirmed()
+    {
+        // Story 20.6: claims version 3 signs each call's error, from which the Tried: line's per-call marker comes. The
+        // store now says the failed call returned; the signature was left as it was.
+        var genuine = SignedRecords.SignV3(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
+        var attempt = genuine.Attempts[^1];
+        Assert.NotNull(attempt.ToolCalls[0].Error);
+        var tampered = genuine with
+        {
+            Attempts = [.. genuine.Attempts.Take(genuine.Attempts.Count - 1), attempt with { ToolCalls = [attempt.ToolCalls[0] with { Error = null }] }],
+        };
+
+        // Untouched, it renders unfenced.
+        var control = new Harness { Signing = SigningRing() };
+        control.World.Index(genuine, relevance: 1d);
+        await control.Agent().RunAsync("refund ticket stuck on a lock");
+        Assert.DoesNotContain(HistoricalReferenceWriter.ModelAuthoredLine, control.InjectedText()!, StringComparison.Ordinal);
+
+        var include = new Harness { Signing = SigningRing() };
+        var exclude = new Harness { Signing = SigningRing(), Policy = ModelAuthoredLessonPolicy.Exclude };
+        foreach (var harness in new[] { include, exclude })
+        {
+            harness.World.Index(genuine, relevance: 1d);
+            harness.World.Store(tampered);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        var text = include.InjectedText()!;
+        var open = text.IndexOf(HistoricalReferenceWriter.ModelAuthoredLine, StringComparison.Ordinal);
+        var close = text.IndexOf(HistoricalReferenceWriter.ModelAuthoredEndLine, StringComparison.Ordinal);
+        var marker = text.IndexOf(HistoricalReferenceWriter.CallReturned, StringComparison.Ordinal);
+        Assert.True(open >= 0 && open < marker && marker < close);
+        Assert.Equal(marker, text.LastIndexOf(HistoricalReferenceWriter.CallReturned, StringComparison.Ordinal));
+
+        Assert.Empty(exclude.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.UnconfirmedContent), Assert.Single(exclude.Last.Omitted));
+    }
+
+    [Fact]
     public async Task With_signing_a_v2_record_tampered_before_the_re_read_is_fenced_or_omitted_by_the_provider()
     {
         // Retrieval ranked the genuine signed snapshot; the store now holds the same record with its lesson changed and
@@ -637,9 +676,9 @@ public class ModelAuthoredInjectionTests
     [Fact]
     public async Task The_host_decision_is_told_the_provider_s_verdict_not_the_declared_authorship()
     {
-        var confirmed = SignedRecords.SignV2(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
+        var confirmed = SignedRecords.SignV3(Record(InjectionRecords.Id(1), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
         var unconfirmed = SignedRecords.SignV1(Record(InjectionRecords.Id(2), ReflectionAuthorship.Deterministic), "key-1", SigningKey);
-        var model = SignedRecords.SignV2(Record(InjectionRecords.Id(3), ReflectionAuthorship.Model), "key-1", SigningKey);
+        var model = SignedRecords.SignV3(Record(InjectionRecords.Id(3), ReflectionAuthorship.Model), "key-1", SigningKey);
         var verdicts = new Dictionary<Guid, bool>();
         var harness = new Harness
         {
