@@ -31,9 +31,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// through <see cref="RetrieveExperienceRequest.ExcludeModelAuthored"/>, and any it still returns is dropped before
 /// that limit is applied, and again after the re-read); with
 /// <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
-/// capability gate then drops each record whose working attempt (the one its <c>Worked:</c> line names) calls a tool the agent lacks or may not use
-/// -- after the record limit, so a gated record still takes a slot and the agent may get fewer records than
-/// the limit; the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
+/// capability gate drops each record whose working attempt (the one its <c>Worked:</c> line names) calls a tool the agent lacks or may not use
+/// -- on the ranked record before the record limit, so a gated record takes no slot, and again on the re-read record
+/// (a borrowed record, whose grant's disclosure level only the re-read reveals, is decided there); the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
 /// asked about each survivor; and <see cref="HistoricalReferenceWriter"/> renders the rest inside the
 /// byte budget. Every record that falls out at any of those steps is reported with its reason.
 /// </para>
@@ -325,6 +325,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var unfilteredRequest = _unfilteredRequest.Value;
         _unfilteredRequest.Value = null;
 
+        // Story 20.7: the capability gate this invocation runs under -- with UseRunTools, over the tools MAF hands
+        // this invocation, taken once here, before the host's resolver runs.
+        // A gate that can reject nothing (no tool check, and no risk check below Critical) is no gate: it neither widens
+        // retrieval nor checks a record.
+        var capabilityGate = _capabilityGate?.ForInvocation(context.AIContext.Tools) is { CanReject: true } active ? active : null;
+
         RetrieveExperienceRequest? request;
         try
         {
@@ -391,7 +397,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         try
         {
-            return await InjectResolvedAsync(context, request, trace, cancellationToken).ConfigureAwait(false);
+            return await InjectResolvedAsync(context, request, capabilityGate, trace, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -411,6 +417,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private async ValueTask<AIContext> InjectResolvedAsync(
         InvokingContext context,
         RetrieveExperienceRequest request,
+        CapabilityGate? capabilityGate,
         InjectionTrace trace,
         CancellationToken cancellationToken)
     {
@@ -462,7 +469,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             try
             {
-                retrieved = await _retrieval.RetrieveAsync(request, cancellationToken).ConfigureAwait(false);
+                retrieved = await _retrieval.RetrieveAsync(GatedWindow(request, capabilityGate, _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit), cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -490,7 +497,24 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         var correlationId = retrieved?.CorrelationId ?? request.CorrelationId;
         var omitted = new List<OmittedExperience>();
-        var selected = stopped is null && retrieved is not null ? Select(retrieved.Records, omitted, session) : [];
+        List<RankedExperience> selected;
+        try
+        {
+            selected = stopped is null && retrieved is not null ? Select(retrieved.Records, omitted, session, capabilityGate, request.Limit) : [];
+        }
+        catch (Exception ex)
+        {
+            // The pre-limit capability gate is part of the final eligibility check, moved ahead of the limit: a failure
+            // there is reported exactly as one in CheckAsync is, and nothing is injected.
+            return Nothing(
+                trace,
+                InjectionOutcome.Failed,
+                omitted,
+                retrieved,
+                correlationId,
+                new InjectionFailure($"The final eligibility check threw {ex.GetType().FullName}.", ex),
+                session);
+        }
 
         // Every record the session holds and has not withdrawn, other than those re-read as candidates
         // anyway: their answer there decides them too.
@@ -506,7 +530,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         CheckOutcome recheckOutcome;
         try
         {
-            recheckOutcome = await CheckAsync(request, selected, recheck, omitted, session, cancellationToken).ConfigureAwait(false);
+            recheckOutcome = await CheckAsync(request, selected, recheck, omitted, session, capabilityGate, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -678,6 +702,15 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // Exposure is bookkeeping for later evidence; it never costs the invocation its context.
         }
     }
+
+    /// <summary>
+    /// Why <paramref name="gate"/> keeps <paramref name="record"/> out, or <see langword="null"/> when it passes: the
+    /// tools of the attempt its <c>Worked:</c> line names, unless it is borrowed under a grant that withholds that line.
+    /// </summary>
+    private static InjectionOmissionReason? Gated(CapabilityGate gate, ExperienceRecord record, bool sharedByGrant, ExperienceGrantDisclosure? disclosure) =>
+        !sharedByGrant || HistoricalReferenceWriter.ShowsApproach(disclosure)
+            ? gate.Check(HistoricalReferenceWriter.ApproachToolCalls(record, out _))
+            : null;
 
     /// <summary>The content-free failure reason for a session state that does not read under <paramref name="key"/>.</summary>
     internal static string UnreadableSessionState(string key) =>
@@ -896,27 +929,63 @@ public sealed class ExperienceContextProvider : AIContextProvider
     public override IReadOnlyList<string> StateKeys => _stateKeys;
 
     /// <summary>
+    /// The request retrieval is asked: <paramref name="request"/> itself, unless a capability gate is active and the
+    /// request names a limit smaller than <see cref="ExperienceInjectionLimits.MaxRecords"/> times
+    /// <see cref="ReceivingAgentCapabilities.GatedRetrievalWindowMultiplier"/>, in which case that larger window, capped
+    /// by the retrieval policy's candidate limit, so records the gate keeps out can be backfilled from below. A request
+    /// with no limit already gets the whole candidate window; one whose limit retrieval would refuse is left for
+    /// retrieval to refuse; and a gate that can reject nothing widens nothing. What the host's own limit admits is still
+    /// all that can be injected (<see cref="Select"/>).
+    /// </summary>
+    internal static RetrieveExperienceRequest GatedWindow(RetrieveExperienceRequest request, CapabilityGate? gate, int maxRecords, int candidateLimit)
+    {
+        if (gate is not { CanReject: true } || request.Limit is not { } limit)
+        {
+            return request;
+        }
+
+        if (limit <= 0 || limit > candidateLimit)
+        {
+            return request;
+        }
+
+        var window = (int)Math.Min(
+            candidateLimit,
+            Math.Max(limit, (long)maxRecords * gate.WindowMultiplier));
+        return window == limit ? request : request with { Limit = window };
+    }
+
+    /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the
     /// rest, so the final eligibility check only ever re-reads records that could actually be injected.
     /// With session tracking, a revision the session already holds takes no slot, and the session's
-    /// remaining record budget caps the selection too.
+    /// remaining record budget caps the selection too. So does a record the capability gate keeps out:
+    /// it is omitted here, on the ranked record, and a lower-ranked record takes the slot. The host's own
+    /// <paramref name="requestLimit"/> caps the selection as well, since retrieval may have been asked for a wider
+    /// window to backfill from (<see cref="GatedWindow"/>); a record ranked past that limit that is not selected was
+    /// fetched only as backfill and is not reported.
     /// </summary>
-    private List<RankedExperience> Select(IReadOnlyList<RankedExperience> ranked, List<OmittedExperience> omitted, SessionTracker? session)
+    private List<RankedExperience> Select(IReadOnlyList<RankedExperience> ranked, List<OmittedExperience> omitted, SessionTracker? session, CapabilityGate? gate, int? requestLimit)
     {
         var sessionRemaining = session?.RemainingRecords ?? int.MaxValue;
-        var limit = Math.Min(_options.Limits.MaxRecords, sessionRemaining);
+        var limit = Math.Min(Math.Min(_options.Limits.MaxRecords, sessionRemaining), requestLimit is > 0 ? requestLimit.Value : int.MaxValue);
         var selected = new List<RankedExperience>(Math.Min(ranked.Count, limit));
+        var reported = requestLimit is > 0 ? requestLimit.Value : int.MaxValue;
 
         for (var index = 0; index < ranked.Count; index++)
         {
             var candidate = ranked[index];
+
+            // Past the host's own window: backfill only. Selected if a slot is left, otherwise dropped unreported --
+            // a record the host's request never asked for is not an omission of it.
+            var omittedHere = index < reported ? omitted : new List<OmittedExperience>();
 
             if (candidate?.Record is null)
             {
                 // Unreachable with Core's retrieval service, which never ranks a null. Accounted for
                 // anyway rather than silently dropped -- with Guid.Empty, because there is no ID to
                 // report -- so "every record that falls out is reported" stays literally true.
-                omitted.Add(new OmittedExperience(
+                omittedHere.Add(new OmittedExperience(
                     Guid.Empty,
                     InjectionOmissionReason.Unreadable,
                     $"The candidate ranked {index + 1} of {ranked.Count} carried no record and could not be identified."));
@@ -928,7 +997,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // story 14.4 retrieval leaves them out already, so this is defence in depth.
             if (_excludeModelAuthored && _retrieval.IsModelAuthored(candidate.Record))
             {
-                omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, AuthorshipOmission(candidate.Record.Reflection)));
+                omittedHere.Add(new OmittedExperience(candidate.Record.ExperienceId, AuthorshipOmission(candidate.Record.Reflection)));
                 continue;
             }
 
@@ -937,7 +1006,17 @@ public sealed class ExperienceContextProvider : AIContextProvider
             if (session?.State.ActiveFor(candidate.Record.ExperienceId) is { Confirmed: true } delivered
                 && delivered.Revision >= candidate.Record.Revision)
             {
-                omitted.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.AlreadyDelivered, AlreadyDeliveredDetail));
+                omittedHere.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.AlreadyDelivered, AlreadyDeliveredDetail));
+                continue;
+            }
+
+            // The capability gate (story 20.7), before the limit: a record whose approach this agent cannot, or must
+            // not, carry out takes no slot. Exactly the check the re-read record gets below, on the ranked one. A ranked
+            // candidate carries no grant disclosure level, so a borrowed one counts as withholding its approach and
+            // passes unprobed here; its re-read decides it. No detail.
+            if (gate is not null && Gated(gate, candidate.Record, candidate.SharedByGrant, candidate.GrantDisclosure) is { } gated)
+            {
+                omittedHere.Add(new OmittedExperience(candidate.Record.ExperienceId, gated));
                 continue;
             }
 
@@ -949,7 +1028,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 continue;
             }
 
-            omitted.Add(sessionRemaining < _options.Limits.MaxRecords
+            omittedHere.Add(sessionRemaining < _options.Limits.MaxRecords
                 ? new OmittedExperience(
                     candidate.Record.ExperienceId,
                     InjectionOmissionReason.OverSessionBudget,
@@ -983,6 +1062,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         List<DeliveredRecord> recheck,
         List<OmittedExperience> omitted,
         SessionTracker? session,
+        CapabilityGate? capabilityGate,
         CancellationToken cancellationToken)
     {
         var injectable = new List<RankedExperience>(selected.Count);
@@ -1240,9 +1320,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
             // tool names. Before the host's decision,
             // so a gated record is never shown to it; with no detail, so no tool name reaches the result. It
             // withdraws nothing: like the environment attributes, it is about this agent, not the record.
-            if (_capabilityGate is { } gate
-                && (!refreshed.SharedByGrant || HistoricalReferenceWriter.ShowsApproach(refreshed.GrantDisclosure))
-                && gate.Check(HistoricalReferenceWriter.ApproachToolCalls(current, out _)) is { } gated)
+            if (capabilityGate is { } gate
+                && Gated(gate, current, refreshed.SharedByGrant, refreshed.GrantDisclosure) is { } gated)
             {
                 omitted.Add(new OmittedExperience(experienceId, gated));
                 continue;

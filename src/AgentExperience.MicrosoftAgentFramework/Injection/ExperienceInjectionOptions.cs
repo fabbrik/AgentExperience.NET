@@ -492,22 +492,29 @@ public sealed class ExperienceInjectionOptions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Checked on the record the final eligibility re-read returned, after
-    /// <see cref="InjectionOmissionReason.AlreadyDelivered"/> and before <see cref="DecideInjection"/>. A gated
+    /// Checked on each ranked candidate after <see cref="InjectionOmissionReason.AlreadyDelivered"/> and
+    /// <em>before</em> the <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, so a gated record takes no slot and
+    /// a lower-ranked record the agent can act on fills it; and again on the record the final eligibility re-read
+    /// returned, before <see cref="DecideInjection"/>. While a gate is configured, a request that names its own
+    /// <see cref="RetrieveExperienceRequest.Limit"/> asks retrieval for a wider window
+    /// (<see cref="ReceivingAgentCapabilities.GatedRetrievalWindowMultiplier"/>), at up to that many times the retrieval
+    /// cost and latency; that limit still caps what is injected. The decision on the ranked revision is final, a record
+    /// that fails only the re-read gate leaves its slot empty, and a gated record past the session's record budget is
+    /// reported with its gate reason rather than <see cref="InjectionOmissionReason.OverSessionBudget"/>. A gated
     /// record is never passed to <see cref="DecideInjection"/>, rendered, charged to the session budget, or
     /// recorded as a run exposure, and its omission carries no detail, so no tool name reaches the result or
     /// telemetry. See <see cref="ReceivingAgentCapabilities"/> for exactly what is checked.
     /// </para>
     /// <para>
-    /// The gate sits between the re-read and <see cref="DecideInjection"/>, so it runs after the
-    /// <see cref="ExperienceInjectionLimits.MaxRecords"/> cut: a gated record still takes a record slot, and the
-    /// agent may get fewer records than the limit. It checks only the tools of the attempt the <c>Worked:</c> line names (not an earlier attempt), not
+    /// The agent may still get fewer records than the limit when fewer eligible records remain. It checks only the tools of the attempt the <c>Worked:</c> line names (not an earlier attempt), not
     /// tool names the lesson text may mention. <see cref="ReceivingAgentCapabilities.ToolRiskClasses"/> has no
     /// effect without <see cref="ReceivingAgentCapabilities.MaxRiskClass"/>; <see cref="ToolRiskClass.Critical"/>
     /// as the maximum disables the risk check; and an available tool missing from
     /// <see cref="ReceivingAgentCapabilities.ToolRiskClasses"/> counts as <see cref="ToolRiskClass.Critical"/>. A
-    /// gated borrowed record still writes a grant access row, because the store disclosed it on the re-read, but
-    /// it is never injected or recorded as an exposure.
+    /// ranked candidate does not carry its grant's disclosure level, so before the limit a borrowed record is treated
+    /// as withholding its approach and passes (its lender's tools cannot be probed); it is gated on its re-read record,
+    /// where it still takes a slot and still writes a grant access row, because the store disclosed it on the re-read,
+    /// but it is never injected or recorded as an exposure.
     /// </para>
     /// <para>
     /// Passing the gate grants nothing: the host's approval boundary still decides every tool call.

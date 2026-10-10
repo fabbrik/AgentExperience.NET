@@ -6,6 +6,39 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Injection: only lessons the agent can act on (story 20.7)
+
+- **The capability gate runs before the record limit.** With `ExperienceInjectionOptions.ReceivingAgent` set, the
+  provider now applies the tool and risk checks (unchanged semantics) to the ranked candidates before taking
+  `Limits.MaxRecords`, so a gated record takes no slot and a lower-ranked record the agent can act on fills it. The
+  re-read record is still checked again before `DecideInjection`. While a gate is configured, a request that names its
+  own `Limit` asks retrieval for `MaxRecords × ReceivingAgentCapabilities.GatedRetrievalWindowMultiplier` (new init
+  property, default 4, at least 1) records, capped by the policy's candidate limit: up to that many times the retrieval
+  cost and latency. A gate that can reject nothing widens nothing. The request's own `Limit` still caps what is
+  injected, and backfill fetched past it and not used is not reported. Gated records are still omitted as
+  `ToolUnavailable` or `RiskClassExceeded`, with no detail. A borrowed record is still decided only on its re-read,
+  because a ranked candidate does not carry its grant's disclosure level. The decision on the ranked revision is final
+  (a newer revision that would pass stays out), and a record that fails only the re-read gate leaves its slot empty.
+- **Behaviour change for hosts that already set `AvailableTools` (or `MaxRiskClass`):** gated records no longer consume
+  record slots, so a block can now hold records that previously fell past the limit as `OverRecordLimit`, and a
+  gated owned record is no longer re-read (so no longer appears in that re-read's batch), and a gated record past the
+  session's record budget now reports `ToolUnavailable`/`RiskClassExceeded` rather than `OverSessionBudget`. Without
+  `ReceivingAgent`, blocks, omissions and outcomes are byte-identical.
+- **`ReceivingAgentCapabilities.UseRunTools`** (default `false`): check approach tools against the invocation's own
+  tools as MAF hands them to the provider (`AIContext.Tools`: a `ChatClientAgent`'s default tools plus the run's
+  `ChatClientAgentRunOptions` tools, proven by a test with a real `ChatClientAgent`), intersected with `AvailableTools`
+  when that is set too. Taken once per invocation, ordinal, blank names ignored; a run with no tools has an empty set.
+  Trade-off: a tool exposed under another name (an MCP prefix, a rename) does not match, so memory is withheld
+  silently except for the `ToolUnavailable` omission. Tools added by context providers that run after this one, by
+  function-invocation middleware (`AdditionalTools`), or hosted server-side are not seen, and their records are
+  withheld: register the provider after any provider that adds tools.
+- **Transfer experiment, amendment 1** (before any live run): the transfer harness turns on `UseRunTools`, as a real
+  host would. The offline scripted run moves from the same-cluster lesson injected in 0 of 12 blocks
+  (`TransferNoDemonstratedBenefit`) to 12 of 12, first in 11 (`TransferBenefitAttributableToContent`); no distractor
+  takes a slot -- because the gate removes all 24 distractors, not because retrieval ranks better. Made after, and
+  because of, the registered offline outcome; no live result existed. A property of the scripted operator, not a model
+  result. The 9.1 experiment is unchanged.
+
 ### Experiments: a transfer experiment, pre-registered (story 20.4)
 
 - **`experiments/AgentExperience.LiveReuse` gains a second experiment, `--experiment transfer`**: a lesson learned on

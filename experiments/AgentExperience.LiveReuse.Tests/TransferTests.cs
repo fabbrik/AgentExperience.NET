@@ -17,9 +17,9 @@ public sealed class TransferTests : IDisposable
     /// The git blob id of <c>preregistration.transfer.json</c> as registered, and its amendment count. Any change to the
     /// file fails this test until both are updated, so editing the registration is always a visible act in review.
     /// </summary>
-    private const string RegisteredBlobId = "f568bcd660433abe6d472271b918ae804c0226d9";
+    private const string RegisteredBlobId = "2d4407c34c60948f4f7155ed07f9bc15e33143a4";
 
-    private const int RegisteredAmendments = 0;
+    private const int RegisteredAmendments = 1;
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "transfer-tests-" + Guid.NewGuid().ToString("N"));
 
@@ -247,10 +247,14 @@ public sealed class TransferTests : IDisposable
         // The distractors cost no model call: every call the model received belongs to a learning run or a trial.
         Assert.Equal(model.Calls.Count, result.Learning.Select(learning => learning.Run).Concat(result.Trials.Select(trial => trial.Run)).Sum(run => run.Usage.ModelCalls));
 
-        // The store holds 30 records against a cap of 8, so retrieval chooses; every block is full.
+        // The store holds 30 records against a cap of 8. With the run-tools gate (amendment 1), no distractor -- whose
+        // working approach calls push_config or flush_read_cache, which the evaluation agent lacks -- takes a slot: every
+        // block holds the 6 learning records and nothing else.
         var enabled = result.Trials.Where(trial => trial.Run.Condition == "memory-enabled").ToList();
+        var distractorTasks = result.Distractors.Select(distractor => distractor.TaskId).ToHashSet(StringComparer.Ordinal);
         Assert.All(enabled, trial => Assert.True(trial.Run.BlockSeen));
-        Assert.All(enabled, trial => Assert.Equal(8, trial.BlockRecords.Count));
+        Assert.All(enabled, trial => Assert.Equal(6, trial.BlockRecords.Count));
+        Assert.All(result.Trials, trial => Assert.DoesNotContain(trial.BlockRecords, distractorTasks.Contains));
 
         // The mismatched store never holds the same-cluster record, and its first working line never names the trait.
         Assert.All(result.Trials.Where(trial => trial.Run.Condition == "mismatched-trait"), trial =>
@@ -266,12 +270,13 @@ public sealed class TransferTests : IDisposable
             Assert.Equal(enabled.Single(other => other.Run.Instance == trial.Run.Instance).BlockRecords, trial.BlockRecords);
         });
 
-        // The recorded offline result with the texts as written (see the golden): the config-rollout tickets, worded like
-        // the migration tickets, fill every block, no same-cluster lesson is injected, and a script that follows the block
-        // gains nothing. Reported, not fixed.
-        Assert.All(enabled, trial => Assert.False(trial.SameClusterInjected));
-        Assert.Equal(TransferConclusion.TransferNoDemonstratedBenefit, result.Conclusion);
-        Assert.Equal(new HarmComparison(12, 0, 0, 12, 2.5, 2.5), result.Harm);
+        // The recorded offline result with the texts as written and the run-tools gate (see the golden and amendment 1):
+        // the same-cluster lesson is in every memory-enabled block, first for 11 of 12 instances, and a script that
+        // follows the block gains. Reported, not tuned. (Before the amendment: in no block, and no benefit.)
+        Assert.All(enabled, trial => Assert.True(trial.SameClusterInjected));
+        Assert.Equal(11, enabled.Count(trial => trial.SameClusterRank == 1));
+        Assert.Equal(TransferConclusion.TransferBenefitAttributableToContent, result.Conclusion);
+        Assert.Equal(new HarmComparison(12, 6, 0, 6, 3.0, 2.5), result.Harm);
     }
 
     [Fact]

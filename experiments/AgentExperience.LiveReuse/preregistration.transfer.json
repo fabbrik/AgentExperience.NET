@@ -3,6 +3,7 @@
   "registeredFor": "AgentExperience.NET story 20.4 -- a transfer experiment: a lesson learned on one service, found by the library's own retrieval in a shared store, used on a different service that shares only a trait",
   "registeredAgainstCommit": "registered in the commit that adds this file (parent c3dcb37)",
   "registeredOn": "2026-10-10",
+  "originalRegistrationGitBlobId": "f568bcd660433abe6d472271b918ae804c0226d9",
   "liveResultsExistedAtRegistration": false,
   "resultsNote": "no live results existed at registration; the offline scripted results are part of the design",
   "hypothesis": "A real model handed, as a Historical Reference built by the library's own retrieval over a shared store of other experience, the verified experience of an earlier run on a different service in the same cluster needs fewer failed attempts to get a migration live on an unseen service than the same model with memory disabled and than the same model shown the same block with the working strategy withheld; the same store without the same-cluster record gives it no such benefit.",
@@ -99,5 +100,13 @@
     "followed_transferred_lesson",
     "harm_mismatched_vs_disabled"
   ],
-  "amendments": []
+  "amendments": [
+    {
+      "date": "2026-10-10",
+      "change": "Story 20.7: in the three injecting evaluation conditions (memory-enabled, memory-placebo, mismatched-trait), the ExperienceContextProvider is configured with ReceivingAgent = new ReceivingAgentCapabilities { UseRunTools = true }, so a record whose verified working approach calls a tool the evaluation agent was not given this run (push_config, flush_read_cache) is omitted as ToolUnavailable before the 8-record limit is taken, and lower-ranked records fill the slots. This is what a real MAF host would configure. No task text, trait assignment, store content, ranking weight, condition, metric, gate or attempt limit changes; memory-disabled and the learning runs inject nothing and are unchanged.",
+      "why": "This amendment was made after, and because of, the registered offline outcome. The offline scripted results are part of the design and were registered with this file (git blob f568bcd660433abe6d472271b918ae804c0226d9, PR #118): the same-cluster lesson reached the memory-enabled block in 0 of 12 instances, because config-rollout distractors that share the evaluation ticket's wording filled all 8 slots, and the conclusion was TransferNoDemonstratedBenefit. Those records' working approach used push_config, a tool the evaluation agent does not have, so they could not have helped. The library gained a tool gate that runs before the record limit and reads the run's tools (story 20.7); this applies it. Only live results did not exist: no live run had been made. The amended file's blob is the one the harness tests pin and every report prints. With the gate on, all 24 distractors are removed before ranking matters, so they no longer test ranking against look-alike tickets; the only ranking contest left is among the learning records.",
+      "resultsExisted": false,
+      "resultsChanged": "Offline scripted results only. Before: the same-cluster record in the memory-enabled block for 0 of 12 instances; mean failed attempts 2.500 in every condition; reference, content and mismatched-trait comparisons NoDemonstratedBenefit; conclusion TransferNoDemonstratedBenefit. After: the same-cluster record in the block for 12 of 12 instances, ranked first for 11 (third for mailqueue); blocks hold the 6 (mismatched: 5) learning records and no distractor; mean failed attempts 0.417 memory-enabled, 2.500 memory-disabled, 2.500 memory-placebo, 3.000 mismatched-trait; reference and content comparisons BenefitDemonstrated (p = 0.0020, 9 fewer, 3 tied), mismatched-trait control NoDemonstratedBenefit (6 more, 6 tied); conclusion TransferBenefitAttributableToContent. These are properties of the scripted operator, not model results."
+    }
+  ]
 }

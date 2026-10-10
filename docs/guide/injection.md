@@ -149,7 +149,7 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `Rendering` | `Compact` | The block's layout: `Compact`, with a short preamble, a `Matched:` line and no identifiers or bookkeeping, or `Verbose`, the earlier layout (byte for byte, except that record text starting a line with `Matched:` is now neutralized). See [The payload](#the-payload). |
 | `MessageRole` | `User` | The chat role the block is sent in: `User` or `System`. Some chat APIs reject, move or merge a system message that is not first, so test `System` with your provider. See [The payload](#the-payload). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. Synchronous on purpose: with session tracking on it runs while the session's lock is held. Per-candidate I/O has no async hook: prefetch what it needs, keyed by scope, in `ResolveRequestAsync`, or decide offline. |
-| `ReceivingAgent` | none (off) | The receiving agent's tools and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
+| `ReceivingAgent` | none (off) | The receiving agent's tools (declared, or the run's own with `UseRunTools`) and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected and takes no record slot. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
 | `ModelAuthoredLessons` (since `0.1.0-preview.5`) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since `0.1.0-preview.6`); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. No result is emitted when the caller cancels the invocation: the cancellation propagates instead. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
@@ -564,13 +564,45 @@ new ExperienceInjectionOptions
   `ToolRiskClasses` is still `Critical`. The first failure decides the reason. Leave `AvailableTools` or
   `MaxRiskClass` `null` to skip that check: `ToolRiskClasses` has no effect without `MaxRiskClass`, and
   `MaxRiskClass = ToolRiskClass.Critical` disables the risk check.
-- **Where it sits.** Between the final eligibility re-read and `DecideInjection`: on the re-read record, after the
-  eligibility rules and `AlreadyDelivered`. That is after the `Limits.MaxRecords` cut, so a gated record still takes a
-  record slot and the agent may get fewer records than the limit. A gated record is never shown to the host's decision, rendered,
+- **Where it sits: before the record limit.** The gate runs on the ranked candidates, after `AlreadyDelivered` and
+  *before* the `Limits.MaxRecords` cut, so a gated record takes no slot and the next eligible record down the ranking
+  fills it. It runs again on the record the final eligibility re-read returns, before `DecideInjection`, so a record
+  that changed since retrieval cannot slip through. To leave something to backfill from, while a gate that can reject
+  anything is configured, a request that names its own `Limit` asks retrieval for `Limits.MaxRecords` ×
+  `ReceivingAgentCapabilities.GatedRetrievalWindowMultiplier` (default 4, at least 1) records, capped by the policy's
+  candidate limit (a larger `Limit` is kept; a request with no `Limit` already gets the whole candidate window). That
+  can cost up to the multiplier times the retrieval work and latency while a gate is active. Your `Limit` still caps
+  what is injected, and a record ranked past it that was fetched only as backfill and not injected is not reported. A
+  record the window never reached is not reported, as before; fewer eligible records than the limit simply make a
+  smaller block.
+- **What the earlier decision means.** The gate's decision on the ranked revision is final: a record gated there stays
+  out even if a newer revision would pass. A record that passes there but fails the gate on its re-read leaves its
+  slot empty; nothing backfills it. And a gated record that also lies past the session's record budget is reported as
+  `ToolUnavailable` or `RiskClassExceeded`, not `OverSessionBudget`. A gated record is never shown to the host's decision, rendered,
   charged to the session budget, tracked as delivered, or recorded as a run exposure. It withdraws nothing: like the
-  request's environment attributes, it is about this agent, not the record. The re-read before it is still a
-  delivery, so a gated borrowed record writes a grant access row (the store disclosed it), as one `DecideInjection`
-  denies does, but it is never injected or recorded as an exposure.
+  request's environment attributes, it is about this agent, not the record.
+- **Borrowed records are decided at the re-read.** A ranked candidate does not carry its grant's disclosure level, so
+  before the limit a borrowed record counts as withholding its approach and passes. The re-read decides it: one whose
+  grant shows the approach and fails the gate there has taken a slot, and since that re-read is a delivery it writes a
+  grant access row (the store disclosed it), as one `DecideInjection` denies does, but it is never injected or
+  recorded as an exposure.
+- **Gating on the run's own tools.** MAF hands a context provider the invocation's tools (`AIContext.Tools`: a
+  `ChatClientAgent`'s default tools plus the run's own `ChatClientAgentRunOptions` tools). Set `UseRunTools = true` and
+  the tool check uses their names, taken once per invocation, instead of a static list -- intersected with
+  `AvailableTools` when you set that too. Blank names are ignored, names compare ordinally, and a run with no tools
+  admits only records whose approach calls none (or that have no approach). It sees exactly `AIContext.Tools` as MAF
+  hands it to this provider: tools a context provider registered after this one adds, tools function-invocation
+  middleware adds (`FunctionInvokingChatClient.AdditionalTools`), and server-side (hosted) tools are not seen, and
+  records whose approach calls them are withheld. Register this provider after any provider that adds tools:
+
+  ```csharp
+  ReceivingAgent = new ReceivingAgentCapabilities { UseRunTools = true },
+  ```
+
+  It is off by default because names must match exactly: a tool this run exposes under another name -- an MCP
+  server's prefix, a rename, a wrapper -- does not match what the recorded run called, and the record is withheld
+  with nothing in the block to say so. The result's `ToolUnavailable` omissions are where that shows; watch them when
+  you turn it on.
 - **It leaks nothing.** The omission's `Detail` is `null`, so no tool name reaches the result or telemetry.
 - **It grants nothing.** A record that passes teaches an approach; the approval boundary still decides every tool
   call (see [Labeling is not a security control](#labeling-is-not-a-security-control)).
@@ -689,10 +721,10 @@ call anyway; the tool body never runs. See the [security suite](../security-suit
 | --- | --- |
 | Resolve | `ResolveRequestAsync` (or the synchronous `ResolveRequest`) turns the invocation into a `RetrieveExperienceRequest`. Returning `null` skips this invocation (`Skipped`); throwing, or a faulted task, injects nothing and is reported (`Failed`) |
 | Retrieve | `ExperienceRetrievalService` applies scope, status, confidence, expiry, and environment eligibility, then ranks. Its own timeout bounds the call |
-| Record limit | The top `Limits.MaxRecords` (default 8) in rank order are kept (with `ModelAuthoredLessons = Exclude`, model-authored records are omitted first and take no slot); the rest are recorded as `OverRecordLimit` and are never even re-read. The provider owns this limit — `HistoricalReferenceWriter.Write` *rejects* an untrimmed list rather than applying it a second time |
+| Record limit | The top `Limits.MaxRecords` (default 8) in rank order are kept (with `ModelAuthoredLessons = Exclude`, model-authored records are omitted first and take no slot; so are records `AlreadyDelivered` to the session and, with `ReceivingAgent` set, records the capability gate keeps out); the rest are recorded as `OverRecordLimit` and are never even re-read. The provider owns this limit — `HistoricalReferenceWriter.Write` *rejects* an untrimmed list rather than applying it a second time |
 | Final eligibility check | Every kept candidate is re-read through the store in **one** batched call, `IExperienceRecordStore.GetManyAsync`, in the request's own authorization and scope, and each is put through **every rule retrieval applies**: eligible status, the policy's reuse-confidence floor, the policy's `MaxAge`, and the request's required environment attributes. Any of those now failing → `Ineligible`, with the rule named; no longer readable → `Unreadable`. The re-read version is the one rendered. Bounded by `Limits.EligibilityCheckTimeout` (default 500 ms) |
 | Model-authored exclusion | With `ModelAuthoredLessons = Exclude`, a model-authored record is omitted as `ModelAuthored` at the record limit (taking no slot) and again after the re-read |
-| Capability gate | With `ReceivingAgent` set, a record whose approach calls a tool the agent lacks, or one riskier than it may use, is omitted as `ToolUnavailable` or `RiskClassExceeded`, before the host is asked about it |
+| Capability gate | With `ReceivingAgent` set, a record whose approach calls a tool the agent lacks, or one riskier than it may use, is omitted as `ToolUnavailable` or `RiskClassExceeded`: on the ranked record before the record limit (taking no slot), and again on the re-read record before the host is asked about it |
 | Host decision | `DecideInjection` is asked about each survivor. A denial omits it as `HostDenied` whatever its stored confidence or status, and **never writes to the record**. Fail-closed: a callback that throws or returns `null` denies |
 | Write | Records are written in rank order until the next would exceed `Limits.MaxBytes` (default 16 KB of UTF-8); that record and everything after it are recorded as `OverByteBudget` |
 

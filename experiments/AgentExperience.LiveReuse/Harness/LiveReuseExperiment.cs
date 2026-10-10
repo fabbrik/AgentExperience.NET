@@ -557,6 +557,10 @@ public static class LiveReuseExperiment
                             ApproachArguments = wiring.ShowStrategy
                                 ? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { [MigrationEnvironment.ApplyToolName] = ["strategy"] }
                                 : new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal),
+
+                            // Story 20.7, transfer only: gate on the run's own tools, as a real MAF host would, so a record
+                            // whose working approach calls a tool this agent does not have takes no block slot.
+                            ReceivingAgent = wiring.UseRunTools ? new ReceivingAgentCapabilities { UseRunTools = true } : null,
                         })],
             });
 
@@ -1101,7 +1105,9 @@ internal sealed record RunSettings(TimeProvider Clock, TimeSpan CallTimeout, boo
 /// <summary>
 /// How one run is wired: its record scope and capture task ID, the container its library services come from, whether
 /// the shipped context provider injects from that container's store (and with the strategy allowlisted or not),
-/// whether a verified run is finalized into it, and the cluster <c>describe_service</c> reports, if any.
+/// whether a verified run is finalized into it, the cluster <c>describe_service</c> reports, if any, and whether
+/// injection gates records on the run's own tools (<see cref="ReceivingAgentCapabilities.UseRunTools"/>; the transfer
+/// experiment only, by pre-registration amendment 1 there).
 /// </summary>
 internal sealed record RunWiring(
     Scope Scope,
@@ -1110,7 +1116,8 @@ internal sealed record RunWiring(
     bool Inject,
     bool Finalize,
     bool ShowStrategy,
-    string? Cluster);
+    string? Cluster,
+    bool UseRunTools = false);
 
 /// <summary>A run's record, the first block its model was shown (verbatim), and the record it stored, if any.</summary>
 internal sealed record TrialOutcome(RunRecord Record, string? Block, ExperienceRecord? Stored);
