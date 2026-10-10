@@ -52,6 +52,7 @@
     <EmbeddedResource Include="Migrations\0022_library_reflector_authorship.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0022_library_reflector_authorship.sql" />
     <EmbeddedResource Include="Migrations\0023_recorded_only_evidence.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0023_recorded_only_evidence.sql" />
     <EmbeddedResource Include="Migrations\0024_text_search_function.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0024_text_search_function.sql" />
+    <EmbeddedResource Include="Migrations\0025_text_search_any_term.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0025_text_search_any_term.sql" />
   </ItemGroup>
 
   <ItemGroup>

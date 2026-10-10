@@ -27,7 +27,8 @@ and then prints the Historical Reference block run 2's model was sent. Run it tw
 - **Verify.** After each run, `options.Verify` reads the desk's own state: was the refund released? That is the
   evidence, never what the model says. Run 1 passes, so it is stored as a `Validated` lesson.
 - **Retrieve and inject.** Run 2's task text matches run 1's, so the lesson is found and injected. The ticket text is
-  the same in both runs on purpose: today's text search needs every word of the new task to match.
+  the same in both runs to keep the demo simple; text search needs only three of the new task's words (fewer for a
+  shorter task) to match the stored task and lesson.
 - **The approach.** `AgentExperienceDefaults.SanitizationAllowing("strategy")` keeps the `strategy` argument at
   capture, and `ExperienceInjectionOptions.ApproachArguments` lets the block's `Tried:` line show it. Without those two
   lines the block names only the tool. Run 1 was one invocation, so it is one attempt that lists both calls in order;

@@ -27,10 +27,20 @@ namespace AgentExperience.Storage.Postgres;
 /// confidence floor to be returned, and is then ranked by Core exactly like any other candidate.
 /// </para>
 /// <para>
-/// <b>Relevance.</b> <c>websearch_to_tsquery</c> parses the task text (it accepts arbitrary input --
-/// quotes, <c>or</c>, <c>-</c> -- and never raises a syntax error on it), and <c>ts_rank_cd</c> with
-/// normalization flag 32 divides the raw rank by itself plus one, so the reported relevance is
-/// already in [0, 1). It is a within-search measure: two records' relevances are comparable to each
+/// <b>Matching.</b> The query's terms are the distinct lexemes <c>ts_debug('english', task_text)</c> gives: its words
+/// stemmed, with stopwords dropped, and a hyphenated compound counted once, as the whole compound. Quotes, <c>or</c> and
+/// <c>-</c> are plain text to that parser, never operators, and nothing it is given raises a syntax error. A row is a
+/// candidate when its vector contains at least <see cref="ExperienceCandidateQuery.MinimumMatchedTerms"/> of those
+/// lexemes, capped at their number, so a one-word query still matches. The row is first found through an OR of the
+/// lexemes, each a quoted <c>tsquery</c> literal, which the GIN indexes can answer; the count then runs on the rows
+/// found. A query with no lexemes left builds no <c>tsquery</c> and matches nothing.
+/// </para>
+/// <para>
+/// <b>Relevance.</b> The share of the query's lexemes the row contains, in (0, 1]: 1 for a row containing every one.
+/// Rows are ordered by it, then by <c>ts_rank_cd</c> with normalization flag 32 (where and how densely the lexemes
+/// occur: against the AND of the lexemes for a row that has them all, so for a plain-word request full matches keep the
+/// order they had when every term was required, and against their OR for a partial one), then by ID. Fields are not
+/// weighted here, unlike the in-memory source: that needs weighted vectors and a backfill. It is a within-search measure: two records' relevances are comparable to each
 /// other, not to a relevance from a different query.
 /// </para>
 /// <para>
@@ -83,8 +93,57 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// here is still unqualified and still resolves to this one table.
     /// </summary>
     private const string SearchSelect =
-        $"SELECT {ExperienceRecordSql.SelectColumns}, " +
-        $"ts_rank_cd({RankedVector}, websearch_to_tsquery('{SearchConfiguration}', @task_text), 32) AS {RelevanceColumn}, ";
+        $"SELECT {ExperienceRecordSql.SelectColumns}, {Coverage} AS {RelevanceColumn}, ";
+
+    /// <summary>
+    /// The query's terms: the distinct lexemes of the task text under <see cref="SearchConfiguration"/>, as a
+    /// <c>text[]</c>, empty when there are none. A hyphenated compound counts once, as its whole-compound lexeme: the
+    /// parts the parser also emits for it (<c>hword_part</c>, <c>hword_asciipart</c>, <c>hword_numpart</c>) are skipped,
+    /// so "multi-stage" is one term, not three. A record's vector still holds the parts, so a request's "stage" matches
+    /// a record's "multi-stage". An uncorrelated subquery, so it is computed once per statement, never per row.
+    /// </summary>
+    internal const string QueryLexemes =
+        "(SELECT coalesce(array_agg(DISTINCT query_lexeme), '{}'::text[]) " +
+        $"FROM ts_debug('{SearchConfiguration}', @task_text) AS query_token, unnest(query_token.lexemes) AS query_lexeme " +
+        "WHERE query_token.alias NOT IN ('hword_part', 'hword_asciipart', 'hword_numpart'))";
+
+    /// <summary>
+    /// The OR of <see cref="QueryLexemes"/> as a <c>tsquery</c>: each lexeme a quoted literal (a backslash and a quote
+    /// inside it escaped, so it is read back as exactly that lexeme and never as an operator), joined by <c>|</c>. It is
+    /// <c>NULL</c> when there are no lexemes, and <c>@@ NULL</c> matches nothing. An uncorrelated subquery, computed once
+    /// per statement, so the GIN indexes can answer it.
+    /// </summary>
+    internal const string AnyTermQuery =
+        "(SELECT string_agg('''' || replace(replace(query_lexeme, chr(92), chr(92) || chr(92)), '''', '''''') || '''', ' | ')::tsquery " +
+        $"FROM unnest({QueryLexemes}) AS query_lexemes(query_lexeme))";
+
+    /// <summary>
+    /// The AND of <see cref="QueryLexemes"/>, quoted as in <see cref="AnyTermQuery"/>: for a plain-word request (no
+    /// quotes, <c>-</c>, <c>or</c>, hyphenated compounds or repeated words, which <c>websearch_to_tsquery</c> read as
+    /// syntax or kept) the query it built before any-term matching, so such a request ranks a row containing every lexeme
+    /// by <see cref="TieBreakRank"/> exactly as it did then.
+    /// </summary>
+    internal const string AllTermsQuery =
+        "(SELECT string_agg('''' || replace(replace(query_lexeme, chr(92), chr(92) || chr(92)), '''', '''''') || '''', ' & ')::tsquery " +
+        $"FROM unnest({QueryLexemes}) AS query_lexemes(query_lexeme))";
+
+    /// <summary>
+    /// The order among rows of equal <see cref="Coverage"/>: <c>ts_rank_cd</c> with normalization flag 32, against
+    /// <see cref="AllTermsQuery"/> for a row containing every lexeme (so for a plain-word request full matches keep the
+    /// order they had when every term was required) and against <see cref="AnyTermQuery"/> for a partial one (against
+    /// which an AND ranks nothing).
+    /// </summary>
+    internal const string TieBreakRank =
+        $"CASE WHEN {MatchedTerms} = cardinality({QueryLexemes}) THEN ts_rank_cd({RankedVector}, {AllTermsQuery}, 32) " +
+        $"ELSE ts_rank_cd({RankedVector}, {AnyTermQuery}, 32) END";
+
+    /// <summary>How many of <see cref="QueryLexemes"/> the row's vector contains: its lexeme count less what is left once they are deleted.</summary>
+    internal const string MatchedTerms =
+        $"(length({RankedVector}) - length(ts_delete({RankedVector}, {QueryLexemes})))";
+
+    /// <summary>The share of the query's lexemes the row contains, as a <c>real</c> in [0, 1].</summary>
+    internal const string Coverage =
+        $"({MatchedTerms}::real / greatest(cardinality({QueryLexemes}), 1)::real)";
 
     /// <summary>
     /// The vector a row is ranked on: a sealed record's derived <c>search_vector_sealed</c> (<c>0016</c>), or a
@@ -96,11 +155,13 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     /// <summary>
     /// The match, stated per kind of row so each half can use its own GIN index: a plaintext row through
     /// <c>search_vector</c>, a sealed row through <c>search_vector_sealed</c> only -- never through the
-    /// generated vector of its placeholder task ID.
+    /// generated vector of its placeholder task ID. Any lexeme finds the row; the minimum then keeps it only when it
+    /// contains enough of them, capped at the query's lexeme count.
     /// </summary>
     internal const string MatchPredicate =
-        $"((search_vector_sealed IS NULL AND search_vector @@ websearch_to_tsquery('{SearchConfiguration}', @task_text)) " +
-        $"OR search_vector_sealed @@ websearch_to_tsquery('{SearchConfiguration}', @task_text))";
+        $"((search_vector_sealed IS NULL AND search_vector @@ {AnyTermQuery}) " +
+        $"OR search_vector_sealed @@ {AnyTermQuery}) " +
+        $"AND {MatchedTerms} >= least(@minimum_matched_terms, cardinality({QueryLexemes}))";
 
     private const string SearchFrom =
         $" FROM {ExperienceRecordSql.Table} r WHERE ";
@@ -130,7 +191,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
     private const string SearchFilterTail =
         $"AND {MatchPredicate} " +
-        $"ORDER BY {RelevanceColumn} DESC, experience_id LIMIT @limit";
+        $"ORDER BY {RelevanceColumn} DESC, {TieBreakRank} DESC, experience_id LIMIT @limit";
 
     /// <summary>Every filter after the scope predicate, through the limit. Shared with <see cref="TextSearchFunction"/>.</summary>
     internal const string SearchFilters = SearchFilterHead + SearchFilterTail;
@@ -406,6 +467,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
                 parameters.Add(new NpgsqlParameter<string[]>("statuses", NpgsqlDbType.Array | NpgsqlDbType.Text) { TypedValue = statuses });
                 parameters.Add(new NpgsqlParameter<double>("min_confidence", query.MinimumConfidence));
                 parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+                parameters.Add(new NpgsqlParameter<int>("minimum_matched_terms", query.MinimumMatchedTerms));
                 if (useFunction)
                 {
                     parameters.Add(new NpgsqlParameter<bool>("exclude_model_authored", query.ExcludeModelAuthored));
@@ -450,7 +512,7 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
     }
 
     /// <summary>
-    /// Reads the rank and clamps it into [0, 1]. Normalization flag 32 already bounds it, but a rank
+    /// Reads the coverage and clamps it into [0, 1]. The statement already bounds it, but a value
     /// read back as NaN or out of range would otherwise travel into Core's ranking arithmetic and
     /// poison every comparison against it.
     /// </summary>

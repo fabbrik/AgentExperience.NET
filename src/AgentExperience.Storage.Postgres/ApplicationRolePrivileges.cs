@@ -51,7 +51,7 @@ internal static class ApplicationRolePrivileges
     /// The <c>SECURITY DEFINER</c> functions -- the three purges and <c>0016</c>'s sealing transition -- by
     /// signature, and the opt-in that grants each. Every one is revoked from <c>PUBLIC</c> by its script, and
     /// the verification refuses any <c>SECURITY DEFINER</c> function the role can reach without its opt-in. The fifth,
-    /// <c>0024</c>'s text search (<see cref="TextSearchFunction"/>), is handled beside them: its opt-in is
+    /// <c>0024</c>/<c>0025</c>'s text search (<see cref="TextSearchFunction"/>), is handled beside them: its opt-in is
     /// <see cref="ExperienceApplicationRoleOptions.EnableRowLevelSecurity"/>, and its definition is verified too.
     /// </summary>
     internal static IReadOnlyList<(string Signature, Func<ExperienceApplicationRoleOptions, bool> Granted)> PurgeFunctions { get; } =
@@ -299,7 +299,7 @@ internal static class ApplicationRolePrivileges
         {
             violations.Add($"{TextSearchFunction.Signature}: the text search function is not the canonical definition; " +
                 "re-run, as the owner, the CREATE OR REPLACE FUNCTION statement that " +
-                "PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchFunctionScriptName) returns");
+                "PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName) returns");
         }
 
         static string Lf(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal);

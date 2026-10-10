@@ -5,9 +5,12 @@ namespace AgentExperience.Storage.Conformance;
 /// <summary>
 /// The behaviour every <see cref="IExperienceCandidateSource"/> must show, observed through the ports alone: it
 /// filters by exact scope, by the requested statuses and by the minimum confidence; it ranks before it applies the
-/// limit; it returns the strongest match first with a relevance in [0, 1]; it never returns a record that matches
-/// none of the query's terms; it returns each matched record exactly as stored; it sees a committed write on
-/// the next search; and, asked to, it leaves model-authored records out before the limit. Exact relevance values are not part of the contract. Records are seeded through the record
+/// limit; it returns the strongest match first with a relevance in [0, 1]; it returns a record only when it contains at
+/// least the query's minimum of matched terms, capped at the query's term count, and, of two records whose terms lie in
+/// the same fields, ranks the one covering more terms first with a strictly higher relevance (a source may weight
+/// fields, so across fields this need not hold); it returns each matched record exactly as stored; it sees a
+/// committed write on the next search; and, asked to, it leaves model-authored records out before the limit. Exact
+/// relevance values are not part of the contract. Records are seeded through the record
 /// store the source reads from, so a subclass supplies both: <see cref="CreateRecordStore"/> and
 /// <see cref="CreateCandidateSource"/> must see the same records.
 /// </summary>
@@ -203,12 +206,13 @@ public abstract class CandidateSourceConformanceTests
     }
 
     [Fact]
-    public async Task The_strongest_match_comes_first_with_a_strictly_higher_relevance_and_every_relevance_is_in_zero_to_one()
+    public async Task The_strongest_match_comes_first_and_every_relevance_is_in_zero_to_one()
     {
         var tenant = NewTenant();
         var scope = Scope(tenant);
 
-        // The weak match is stored first, so insertion order cannot pass for ranking.
+        // The weak match is stored first, so insertion order cannot pass for ranking. Both contain every query term, so
+        // a source that ranks by coverage alone may report them equal; the order is still the strongest first.
         var weak = await SeedWeakAsync(tenant, scope);
         var strong = await SeedStrongAsync(tenant, scope);
 
@@ -217,8 +221,52 @@ public abstract class CandidateSourceConformanceTests
         Assert.Equal([strong, weak], Ids(result));
         Assert.All(result.Candidates, candidate => Assert.InRange(candidate.Relevance, 0d, 1d));
         Assert.True(
-            result.Candidates[0].Relevance > result.Candidates[1].Relevance,
-            $"The stronger match must report a strictly higher relevance; got {result.Candidates[0].Relevance} and {result.Candidates[1].Relevance}.");
+            result.Candidates[0].Relevance >= result.Candidates[1].Relevance,
+            $"The stronger match must not report a lower relevance; got {result.Candidates[0].Relevance} and {result.Candidates[1].Relevance}.");
+    }
+
+    [Fact]
+    public async Task A_record_covering_more_of_the_query_s_terms_ranks_first_with_a_strictly_higher_relevance()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+
+        // Fewer terms stored first; each record says its terms once, in the summary.
+        var one = await SeedAsync(tenant, scope, taskId: "t1", summary: "Refund requested by the customer", lesson: "Escalate");
+        var two = await SeedAsync(tenant, scope, taskId: "t2", summary: "Refund policy questions", lesson: "Escalate");
+        var three = await SeedAsync(tenant, scope, taskId: "t3", summary: "Refund policy for a disputed invoice", lesson: "Escalate");
+
+        var result = await SearchAsync(tenant, scope, "refund policy invoice", minimumMatchedTerms: 1);
+
+        Assert.Equal([three, two, one], Ids(result));
+        Assert.True(result.Candidates[0].Relevance > result.Candidates[1].Relevance);
+        Assert.True(result.Candidates[1].Relevance > result.Candidates[2].Relevance);
+        Assert.True(result.Candidates[2].Relevance > 0d);
+    }
+
+    [Fact]
+    public async Task A_record_below_the_minimum_of_matched_terms_is_not_returned_and_the_minimum_is_capped_at_the_query_s_terms()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var one = await SeedAsync(tenant, scope, taskId: "t1", summary: "Refund requested by the customer", lesson: "Escalate");
+        var two = await SeedAsync(tenant, scope, taskId: "t2", summary: "Refund policy questions", lesson: "Escalate");
+        var three = await SeedAsync(tenant, scope, taskId: "t3", summary: "Refund policy for a disputed invoice", lesson: "Escalate");
+
+        Assert.Equal([three, two], Ids(await SearchAsync(tenant, scope, "refund policy invoice", minimumMatchedTerms: 2)));
+
+        // Every term required, as with AllTerms.
+        Assert.Equal([three], Ids(await SearchAsync(tenant, scope, "refund policy invoice", minimumMatchedTerms: ExperienceCandidateQuery.AllTerms)));
+
+        // A one-term query matches on its one term whatever the minimum.
+        Assert.Equal(
+            new[] { one, two, three }.Order(),
+            Ids(await SearchAsync(tenant, scope, "refund", minimumMatchedTerms: ExperienceCandidateQuery.AllTerms)).Order());
+
+        // Below 1 is not a minimum.
+        var invalid = await SearchAsync(tenant, scope, "refund", minimumMatchedTerms: 0);
+        Assert.Equal(ExperienceStoreOutcome.Invalid, invalid.Outcome);
+        Assert.Contains(invalid.Errors, error => error.Path == nameof(ExperienceCandidateQuery.MinimumMatchedTerms));
     }
 
     [Fact]
@@ -338,10 +386,15 @@ public abstract class CandidateSourceConformanceTests
         string taskText,
         double minimumConfidence = 0d,
         int limit = ExperienceCandidateQuery.DefaultLimit,
-        bool excludeModelAuthored = false) =>
+        bool excludeModelAuthored = false,
+        int minimumMatchedTerms = ExperienceCandidateQuery.DefaultMinimumMatchedTerms) =>
         Source.SearchAsync(
             Authorize(tenant),
-            new ExperienceCandidateQuery(scope, taskText, Eligible, minimumConfidence, limit) { ExcludeModelAuthored = excludeModelAuthored },
+            new ExperienceCandidateQuery(scope, taskText, Eligible, minimumConfidence, limit)
+            {
+                ExcludeModelAuthored = excludeModelAuthored,
+                MinimumMatchedTerms = minimumMatchedTerms,
+            },
             CancellationToken.None);
 
     private static Guid[] Ids(ExperienceCandidateSearchResult result) =>
@@ -365,8 +418,8 @@ public abstract class CandidateSourceConformanceTests
         lesson: "Apply the refund policy before reissuing the invoice");
 
     /// <summary>
-    /// Every query term once, in the task summary only, among many unrelated words. (Whether a record matching only
-    /// some of the terms is returned at all is the implementation's choice, so the weak match carries them all.)
+    /// Every query term once, in the task summary only, among many unrelated words, so it covers the query as fully as
+    /// the strong match and is weaker only in where and how often the terms occur.
     /// </summary>
     private Task<Guid> SeedWeakAsync(string tenant, Scope scope) => SeedAsync(
         tenant,

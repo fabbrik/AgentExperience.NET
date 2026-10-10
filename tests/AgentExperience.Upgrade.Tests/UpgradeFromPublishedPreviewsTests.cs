@@ -480,9 +480,9 @@ internal sealed class Verification
             var scope = item["scope"].Deserialize<Scope>(UpgradeReport.Json)!;
             var search = await _candidates.SearchAsync(
                 Auth,
-                new ExperienceCandidateQuery(scope, (string)item["text"]!, Eligible, MinimumConfidence: 0),
+                new ExperienceCandidateQuery(scope, (string)item["text"]!, Eligible, MinimumConfidence: 0) { MinimumMatchedTerms = ExperienceCandidateQuery.AllTerms },
                 CancellationToken.None);
-            _report.Compare($"text search {item["name"]}", item["result"], search);
+            _report.Compare($"text search {item["name"]}", AtFullCoverage(item["result"]), search);
             _report.Check(search.Candidates.Count > 0, $"text search {item["name"]}", "it found nothing, so it proves nothing");
         }
     }
@@ -805,10 +805,35 @@ internal sealed class Verification
             var scope = item["scope"].Deserialize<Scope>(UpgradeReport.Json)!;
             var search = await _candidates.SearchAsync(
                 Auth,
-                new ExperienceCandidateQuery(scope, (string)item["text"]!, Eligible, MinimumConfidence: 0) { ExcludeModelAuthored = true },
+                new ExperienceCandidateQuery(scope, (string)item["text"]!, Eligible, MinimumConfidence: 0)
+                {
+                    ExcludeModelAuthored = true,
+                    MinimumMatchedTerms = ExperienceCandidateQuery.AllTerms,
+                },
                 CancellationToken.None);
-            _report.Compare($"excluding text search {item["name"]}", item["result"], search);
+            _report.Compare($"excluding text search {item["name"]}", AtFullCoverage(item["result"]), search);
         }
+    }
+
+    /// <summary>
+    /// A text search the preview recorded, with each candidate's relevance as today's store reports it. Documented
+    /// (CHANGELOG, any-term matching, migration <c>0025</c>): PostgreSQL relevance is now the share of the query's terms
+    /// a record contains, no longer <c>ts_rank_cd</c>. Every candidate the preview returned contained every term (it
+    /// required them all), so today it is 1; the candidates and their order must not change, because a full match is
+    /// still ordered by the same <c>ts_rank_cd</c>, then by ID.
+    /// </summary>
+    private static JsonNode? AtFullCoverage(JsonNode? result)
+    {
+        var copy = result?.DeepClone();
+        if (copy?["candidates"] is JsonArray candidates)
+        {
+            foreach (var candidate in candidates.OfType<JsonObject>())
+            {
+                candidate["relevance"] = 1d;
+            }
+        }
+
+        return copy;
     }
 
     // ------------------------------------------------------------------ writes

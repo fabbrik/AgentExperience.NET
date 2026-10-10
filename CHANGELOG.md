@@ -6,6 +6,52 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Text search matches on any term and ranks by coverage (story 20.2)
+
+- **Behaviour change: a record no longer needs every query term.** Both lexical candidate sources (in-memory and
+  PostgreSQL, including `search_experience_text` under row-level security) return a record when it contains at least
+  `ExperienceCandidateQuery.MinimumMatchedTerms` distinct query terms, capped at the query's term count so a one-word
+  query still matches. The default is **3**, chosen by a rule fixed before the benchmark ran: the value with the highest
+  overall recall@8 on PostgreSQL whose false positives in the first 8 stay at most 1.0 on both adapters (1 and 2 gave
+  5.7 to 6.2 and 1.4 to 2.3 false positives). On the story 20.1 benchmark, recall@8 rises from 0.378 to 0.700 in
+  memory and from 0.511 to 0.844 on PostgreSQL, false positives in the first 8 are 0.417 and 0.521, and the realistic
+  requests that found nothing now find their record (8 of 10 in memory, 10 of 10 on PostgreSQL). See
+  [Retrieval quality](docs/benchmarks.md#retrieval-quality-story-201).
+- **Ranking.** Candidates are ranked by how much of the query they cover. In memory, relevance is the existing
+  field-weighted fraction (summary 3, task ID 1, lesson 1, out of 5 per query term), so a record containing every term
+  keeps exactly the relevance and source order it had. On PostgreSQL, relevance is now the share of the query's
+  lexemes the record contains, in (0, 1], with `ts_rank_cd` and then the experience ID breaking ties; it was
+  `ts_rank_cd` alone, in [0, 1). The `ts_rank_cd` tie-break ranks a full match against the AND of the terms, so for a
+  plain-word request (no quotes, `-word`, `or`, hyphenated compounds or repeated words, which `websearch_to_tsquery`
+  read as phrases, negation, OR, or kept) the source returns full matches in their old order. Fields are not weighted
+  on PostgreSQL yet (that needs weighted vectors and a backfill).
+- **What Core sees.** Core's retrieval score uses this relevance. On PostgreSQL every full match now reports exactly 1,
+  so Core no longer sees text strength between full matches: confidence, recency and status decide between them,
+  whatever order the source returned them in.
+- **The text and vector balance moved.** With the vector channel on, Core takes the higher of a record's text and
+  vector relevance. A PostgreSQL full text match is now 1.0, above almost any vector hit (`1 - cosine_distance / 2`),
+  while a partial match on a long request (3 of 11 terms is about 0.27) now loses to most vector hits; before, every
+  text relevance was a `ts_rank_cd` value well below 1.
+- **The query.** PostgreSQL builds an OR of the distinct lexemes of `ts_debug('english', task_text)`, each a quoted
+  `tsquery` literal, so the GIN indexes still answer it. A hyphenated compound counts as one term, its whole-compound
+  lexeme ("multi-stage" is one term, not three). Quotes, `or` and `-` are plain words and negate nothing,
+  where `websearch_to_tsquery` read them as operators. Text with no terms left after stopwords still matches nothing.
+- **The old behaviour stays reachable.** `MinimumMatchedTerms = ExperienceCandidateQuery.AllTerms` (or any value at
+  least the query's term count) requires every term again. Core sets it from the new
+  `RetrievalPolicy.MinimumMatchedTerms` (default 3, at least 1); a value below 1 is `Invalid` at the port and throws
+  in the policy.
+- **Migration `0025_text_search_any_term.sql`** drops `0024`'s `search_experience_text`, whose signature gains
+  `p_minimum_matched_terms`, and creates its replacement from the same SQL constants as the store's statement. It
+  stays `SECURITY DEFINER` with its pinned `search_path`, `EXECUTE` is revoked from `PUBLIC`, and the privileges call
+  still verifies it byte for byte. `0024` is unchanged. Its security review is in its header.
+- **Upgrade note.** Run `MigrateAsync`, then, **with row-level security on, re-run the privileges call**
+  (`ApplyApplicationRolePrivilegesAsync`): dropping the old function drops the application role's `EXECUTE` grant,
+  and until the call grants the new one, text searches run the store's own statement under the policies (correct,
+  but without the GIN index), as they do whenever the function is not granted. With row-level security off, migrating
+  is enough.
+- **Public API (additive).** `ExperienceCandidateQuery.MinimumMatchedTerms`, `DefaultMinimumMatchedTerms` and
+  `AllTerms`; `RetrievalPolicy.MinimumMatchedTerms`; `PostgresExperienceRecordSchema.TextSearchAnyTermScriptName`.
+
 ### A retrieval benchmark without a model (story 20.1)
 
 - `tests/AgentExperience.RetrievalQuality` measures how often lexical retrieval finds the right lesson: a checked-in
@@ -14,7 +60,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   in memory and 0.511 on PostgreSQL, and every one of the 10 realistic requests (long, paraphrased, worded the way a
   developer types them to an agent) finds no candidate at all on either adapter, because every query term must match.
   See [Retrieval quality](docs/benchmarks.md#retrieval-quality-story-201). Test-only: no behaviour or public API
-  change.
+  change. (Story 20.2 above changes these numbers.)
 
 ### A one-minute quick-start demo
 

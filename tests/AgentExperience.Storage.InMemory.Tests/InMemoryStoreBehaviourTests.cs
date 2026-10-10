@@ -35,7 +35,7 @@ public sealed class InMemoryStoreBehaviourTests
     }
 
     [Fact]
-    public async Task A_record_must_contain_every_query_term_and_relevance_is_the_weighted_fraction_of_them()
+    public async Task With_every_term_required_a_record_must_contain_them_all_and_relevance_is_the_weighted_fraction_of_them()
     {
         var tenant = NewTenant();
         var scope = Scope(tenant);
@@ -43,14 +43,80 @@ public sealed class InMemoryStoreBehaviourTests
         var split = await SeedAsync(tenant, scope, taskId: "ticket", summary: "refund", lesson: "check the policy");
         await SeedAsync(tenant, scope, taskId: "refund", summary: "refund", lesson: "refund"); // "policy" missing: no match
 
-        // Repeating a term in the query does not count it twice.
-        var result = await SearchAsync(tenant, scope, "Refund, policy; REFUND");
+        // Repeating a term in the query does not count it twice. AllTerms, capped at the two terms, is the rule before 20.2.
+        var result = await SearchAsync(tenant, scope, "Refund, policy; REFUND", ExperienceCandidateQuery.AllTerms);
 
         Assert.Equal([everywhere, split], result.Candidates.Select(c => c.Record.ExperienceId));
         Assert.Equal(1d, result.Candidates[0].Relevance);
 
         // refund: summary (3); policy: lesson (1); out of 2 terms x 5.
         Assert.Equal(4d / 10d, result.Candidates[1].Relevance);
+    }
+
+    [Fact]
+    public async Task A_partial_match_at_the_minimum_is_a_candidate_ranked_below_a_full_one_and_one_below_it_is_not()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        const string Request =
+            "after the deploy the refund worker hangs because the invoice export holds the ledger lock and nothing retries it";
+        var full = await SeedAsync(
+            tenant, scope, taskId: "t1", summary: "deploy refund worker hangs invoice export holds ledger lock nothing retries", lesson: "x");
+        var three = await SeedAsync(tenant, scope, taskId: "t2", summary: "refund ledger lock", lesson: "x");
+        var one = await SeedAsync(tenant, scope, taskId: "t3", summary: "ledger reconciliation", lesson: "x");
+        await SeedAsync(tenant, scope, taskId: "t4", summary: "certificate rotation", lesson: "x");
+
+        // Eleven terms once stopwords go; at minimum 2, three shared terms are enough and one is not.
+        var result = await SearchAsync(tenant, scope, Request, 2);
+        Assert.Equal([full, three], result.Candidates.Select(c => c.Record.ExperienceId));
+        Assert.True(result.Candidates[1].Relevance < result.Candidates[0].Relevance);
+
+        // A full match keeps the relevance it had when every term was required: 3 of 5 per term, all in the summary.
+        Assert.Equal(3d / 5d, result.Candidates[0].Relevance);
+        Assert.Equal((await SearchAsync(tenant, scope, Request, ExperienceCandidateQuery.AllTerms)).Candidates.Single().Relevance, result.Candidates[0].Relevance);
+
+        // refund, ledger, lock in the summary: 3 x 3 out of 11 terms x 5.
+        Assert.Equal(9d / 55d, result.Candidates[1].Relevance);
+
+        // At minimum 1 the single shared term is enough, and it ranks last.
+        Assert.Equal([full, three, one], (await SearchAsync(tenant, scope, Request, 1)).Candidates.Select(c => c.Record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task The_minimum_is_capped_at_the_query_s_term_count_so_a_short_query_still_matches()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var refund = await SeedAsync(tenant, scope, summary: "Resolve a refund");
+
+        Assert.Equal([refund], (await SearchAsync(tenant, scope, "refund", 2)).Candidates.Select(c => c.Record.ExperienceId));
+        Assert.Equal([refund], (await SearchAsync(tenant, scope, "the refund", ExperienceCandidateQuery.AllTerms)).Candidates.Select(c => c.Record.ExperienceId));
+        Assert.Empty((await SearchAsync(tenant, scope, "refund invoice", ExperienceCandidateQuery.AllTerms)).Candidates);
+    }
+
+    [Fact]
+    public async Task Quotes_minus_and_or_in_the_request_are_plain_words_and_negate_nothing()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var refund = await SeedAsync(tenant, scope, summary: "Resolve a refund", lesson: "Retry once the lock clears");
+
+        // "-lock" does not exclude the record that has "lock"; it counts as a match like any word.
+        var result = await SearchAsync(tenant, scope, "\"refund\" -lock or invoice", 2);
+        Assert.Equal([refund], result.Candidates.Select(c => c.Record.ExperienceId));
+        Assert.Equal(ExperienceStoreOutcome.Found, (await SearchAsync(tenant, scope, "\"\" -- || ' or & ! ( ) :*", 1)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_minimum_below_one_is_invalid()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+
+        var result = await SearchAsync(tenant, scope, "refund", 0);
+
+        Assert.Equal(ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Contains(result.Errors, e => e.Path == "MinimumMatchedTerms");
     }
 
     [Fact]
@@ -463,9 +529,12 @@ public sealed class InMemoryStoreBehaviourTests
             Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Validated, expectedRevision) with { Confidence = confidence },
             CancellationToken.None);
 
-    private Task<ExperienceCandidateSearchResult> SearchAsync(string tenant, Scope scope, string text) =>
+    private Task<ExperienceCandidateSearchResult> SearchAsync(
+        string tenant, Scope scope, string text, int minimumMatchedTerms = ExperienceCandidateQuery.DefaultMinimumMatchedTerms) =>
         new InMemoryExperienceCandidateSource(_store).SearchAsync(
-            Authorize(tenant), new ExperienceCandidateQuery(scope, text, Eligible, 0d), CancellationToken.None);
+            Authorize(tenant),
+            new ExperienceCandidateQuery(scope, text, Eligible, 0d) { MinimumMatchedTerms = minimumMatchedTerms },
+            CancellationToken.None);
 
     private async Task<Guid> SeedAsync(
         string tenant,

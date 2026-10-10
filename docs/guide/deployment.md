@@ -473,7 +473,7 @@ then grants exactly this:
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
 | `seal_experience_record` (`0016`) | `EXECUTE` only with `AllowSealing` |
-| `search_experience_text` (`0024`) | `EXECUTE` only with `EnableRowLevelSecurity` (see [Enabling row-level security](#enabling-row-level-security)) |
+| `search_experience_text` (`0025`, replacing `0024`'s) | `EXECUTE` only with `EnableRowLevelSecurity` (see [Enabling row-level security](#enabling-row-level-security)) |
 | `schema_versions` (the journal), its sequence, and anything else | nothing |
 
 Then it checks the role's **effective** privileges — which also see grants to `PUBLIC`, grants made by another
@@ -572,7 +572,7 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    first) or a table carries a policy the migrations did not create; when `experience_grants` is missing or the
    application role may not read it; or when a default for any `agent_experience.auth_*` setting is configured for the
    application role or the database (`ALTER ROLE … SET`, `ALTER DATABASE … SET`), which would admit rows to a
-   statement that declared nothing; or when `0024`'s text search function is missing;
+   statement that declared nothing; or when `0025`'s text search function is missing;
 2. re-creates the five helper functions and every canonical policy from the definitions the migrations were written
    from, so a helper replaced or a policy altered by hand since the migration (`CREATE OR REPLACE FUNCTION …`,
    `ALTER POLICY … USING (true)`) is put back before anything is enabled;
@@ -583,7 +583,7 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
    permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
    volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; the text search function exactly
-   `0024`'s (below); no role the application role can reach holding `BYPASSRLS` — and rolls everything back on a
+   `0025`'s (below); no role the application role can reach holding `BYPASSRLS` — and rolls everything back on a
    difference.
 
 It never uses `FORCE ROW LEVEL SECURITY`, and puts back a table forced by hand. With `EnableRowLevelSecurity = false`
@@ -634,7 +634,7 @@ unaffected, as before.
 **Text search keeps its index**. Under the policies, `@@` — the full-text match — is not leakproof, so
 PostgreSQL would apply it only after the read policy and could not use the GIN indexes. So while row-level security is
 enabled on `experience_records` and the application role may execute it, the text channel runs its search through
-`agent_experience.search_experience_text` (`0024`), a `SECURITY DEFINER` function owned by the schema owner, and the
+`agent_experience.search_experience_text` (`0024`, replaced by `0025`), a `SECURITY DEFINER` function owned by the schema owner, and the
 planner uses `ix_experience_records_search` and `ix_experience_records_search_sealed` exactly as with row-level security
 off. With row-level security off the store sends its own statement, unchanged. There is no opt-out: enabling
 row-level security requires the function, and the privileges call refuses to enable it without. The candidate source
@@ -643,7 +643,14 @@ for at most five minutes, so a privileges call made by another process takes eff
 because the function was revoked or dropped since falls back to the store's own statement under the policies; any
 other error from inside the function is reported as a failure.
 
-Its security review, recorded in full in `0024`'s header:
+**After upgrading to `0025`, re-run the privileges call.** `0025` makes text search match on any term and rank by
+coverage (see [How the text channel matches](retrieval.md#how-the-text-channel-matches)). The function gains an
+argument, so the script drops `0024`'s and creates the new one, and dropping it drops the application role's
+`EXECUTE`. Until `ApplyApplicationRolePrivilegesAsync` grants the new function, text searches with row-level security
+on run the store's own statement under the policies: correct answers, without the GIN index. Deploys that already run
+the privileges call after `MigrateAsync` need nothing more.
+
+Its security review, recorded in full in `0024`'s header and restated for the replacement in `0025`'s:
 
 - **Why `SECURITY DEFINER`.** The barrier belongs to the policy, and the only roles it does not bind are the owner, a
   superuser and a `BYPASSRLS` role. Running this one query as the owner, inside a function the application role can

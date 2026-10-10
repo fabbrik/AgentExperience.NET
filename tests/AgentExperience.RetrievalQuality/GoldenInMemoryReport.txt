@@ -17,54 +17,52 @@ k = 8 is what injection shows an agent by default.
 
 METRICS
 category               n  lab    R@1    R@3    R@8    P@3    P@8   FP@8    MRR   zero
-overall               48   45  0.333  0.378  0.378  0.941  0.941  0.042  0.356  0.646
-exact                  8    8  1.000  1.000  1.000  1.000  1.000  0.000  1.000  0.000
-paraphrase             8    8  0.000  0.000  0.000      -      -  0.000  0.000  1.000
-realistic             10   10  0.000  0.000  0.000      -      -  0.000  0.000  1.000
-morphology             7    7  0.000  0.000  0.000      -      -  0.000  0.000  1.000
-distractor-overlap     9    8  0.875  1.000  1.000  0.938  0.938  0.111  0.938  0.111
-stopword-heavy         6    4  0.000  0.250  0.250  0.500  0.500  0.167  0.125  0.833
+overall               48   45  0.633  0.700  0.700  0.745  0.743  0.417  0.678  0.292
+exact                  8    8  1.000  1.000  1.000  0.854  0.844  0.500  1.000  0.000
+paraphrase             8    8  0.563  0.563  0.563  1.000  1.000  0.000  0.625  0.375
+realistic             10   10  0.800  0.800  0.800  0.630  0.630  0.800  0.800  0.100
+morphology             7    7  0.286  0.286  0.286  1.000  1.000  0.000  0.286  0.714
+distractor-overlap     9    8  0.750  1.000  1.000  0.667  0.667  0.667  0.875  0.111
+stopword-heavy         6    4  0.000  0.250  0.250  0.250  0.250  0.333  0.125  0.667
 
 MISSES (expected records not in the first 8 candidates)
-paraphrase-01: mig-04 (zero candidates)
 paraphrase-02: ci-02 (zero candidates)
 paraphrase-03: dock-01 (zero candidates)
-paraphrase-04: auth-01 (zero candidates)
-paraphrase-05: dock-06 (zero candidates)
-paraphrase-06: ci-03 (zero candidates)
 paraphrase-07: auth-04 (zero candidates)
-paraphrase-08: pkg-01, pkg-06 (zero candidates)
-realistic-01: mig-01 (zero candidates)
-realistic-02: ci-01 (zero candidates)
-realistic-03: dock-01 (zero candidates)
-realistic-04: auth-02 (zero candidates)
-realistic-05: pkg-01 (zero candidates)
-realistic-06: auth-03 (zero candidates)
-realistic-07: mig-05 (zero candidates)
-realistic-08: mig-03 (zero candidates)
-realistic-09: dock-05 (zero candidates)
+paraphrase-08: pkg-01 (1 candidates)
+realistic-02: ci-01 (2 candidates)
 realistic-10: ci-05 (zero candidates)
 morphology-01: mig-05 (zero candidates)
 morphology-02: mig-04 (zero candidates)
-morphology-03: ci-02 (zero candidates)
 morphology-04: dock-02 (zero candidates)
 morphology-05: auth-01 (zero candidates)
-morphology-06: auth-04 (zero candidates)
 morphology-07: pkg-03 (zero candidates)
 stopword-03: auth-01 (zero candidates)
-stopword-05: ci-02 (zero candidates)
+stopword-05: ci-02 (1 candidates)
 stopword-06: mig-02 (zero candidates)
 
 FALSE POSITIVES IN THE FIRST 8 (candidates no query label expects)
+exact-01: mig-02, mig-06, mig-03
+exact-03: dis-07
+realistic-01: mig-02
+realistic-02: ci-02, dis-10
+realistic-04: auth-04, pkg-02
+realistic-05: dock-03, pkg-04
+realistic-06: mig-01
+distractor-01: dis-02
+distractor-02: dis-03
 distractor-03: dis-07
+distractor-06: dis-12, dis-11
+distractor-08: dis-05
 stopword-02: mig-04
+stopword-05: dis-10
 
 QUERIES
 
 exact-01 [exact]
   text: EF Core migration fails on startup
   expected: mig-01 (rank 1)
-  returned 1: mig-01
+  returned 4: mig-01, mig-02, mig-06, mig-03
 
 exact-02 [exact]
   text: flaky integration test timeout
@@ -74,7 +72,7 @@ exact-02 [exact]
 exact-03 [exact]
   text: reduce Docker image size
   expected: dock-01 (rank 1)
-  returned 1: dock-01
+  returned 2: dock-01, dis-07
 
 exact-04 [exact]
   text: packages.lock.json out of date locked mode
@@ -103,8 +101,8 @@ exact-08 [exact]
 
 paraphrase-01 [paraphrase]
   text: roll back a broken schema change in prod
-  expected: mig-04 (not returned)
-  returned: none
+  expected: mig-04 (rank 1)
+  returned 1: mig-04
 
 paraphrase-02 [paraphrase]
   text: tests break when run concurrently against the same db
@@ -118,18 +116,18 @@ paraphrase-03 [paraphrase]
 
 paraphrase-04 [paraphrase]
   text: jwt expired, api now responds unauthorized
-  expected: auth-01 (not returned)
-  returned: none
+  expected: auth-01 (rank 1)
+  returned 1: auth-01
 
 paraphrase-05 [paraphrase]
   text: container gets OOM-killed on kubernetes under heavy traffic
-  expected: dock-06 (not returned)
-  returned: none
+  expected: dock-06 (rank 1)
+  returned 1: dock-06
 
 paraphrase-06 [paraphrase]
   text: unit test for date formatting is green on my machine but red on the build server
-  expected: ci-03 (not returned)
-  returned: none
+  expected: ci-03 (rank 1)
+  returned 1: ci-03
 
 paraphrase-07 [paraphrase]
   text: stop secrets showing up in our log output
@@ -138,53 +136,53 @@ paraphrase-07 [paraphrase]
 
 paraphrase-08 [paraphrase]
   text: two dependencies want different versions of the same library and the build complains about a downgrade
-  expected: pkg-01 (not returned), pkg-06 (not returned)
-  returned: none
+  expected: pkg-01 (not returned), pkg-06 (rank 1)
+  returned 1: pkg-06
 
 realistic-01 [realistic]
   text: Hey, can you take a look at the deploy? The API pod keeps crashing on startup and the logs say something about a column that doesn't exist in the database. I think someone forgot to run the migrations again.
-  expected: mig-01 (not returned)
-  returned: none
+  expected: mig-01 (rank 1)
+  returned 2: mig-01, mig-02
 
 realistic-02 [realistic]
   text: our CI has been red all morning, the integration tests randomly time out maybe one run in five, can you figure out what's going on and make them stable
   expected: ci-01 (not returned)
-  returned: none
+  returned 2: ci-02, dis-10
 
 realistic-03 [realistic]
   text: I need the docker image for the api to be way smaller, it's like 2GB right now and pushing it to the registry takes forever. Can you rework the Dockerfile?
-  expected: dock-01 (not returned)
-  returned: none
+  expected: dock-01 (rank 1)
+  returned 1: dock-01
 
 realistic-04 [realistic]
   text: After the identity team rotated their keys this morning every request to our service fails token validation. Please fix the auth config so it doesn't break the next time they rotate.
-  expected: auth-02 (not returned)
-  returned: none
+  expected: auth-02 (rank 1)
+  returned 3: auth-02, auth-04, pkg-02
 
 realistic-05 [realistic]
   text: dotnet restore blows up in the pipeline with NU1605 detected package downgrade, can you sort out the package versions so the build goes green again
-  expected: pkg-01 (not returned)
-  returned: none
+  expected: pkg-01 (rank 1)
+  returned 3: pkg-01, dock-03, pkg-04
 
 realistic-06 [realistic]
   text: The frontend team says their calls to our API fail in the browser with a CORS error as soon as they send the bearer token. Can you update the server so their requests go through?
-  expected: auth-03 (not returned)
-  returned: none
+  expected: auth-03 (rank 1)
+  returned 2: auth-03, mig-01
 
 realistic-07 [realistic]
   text: Adding the index on the orders table in the new migration keeps timing out when we deploy to staging, it's a big table with like 40 million rows. What should I change?
-  expected: mig-05 (not returned)
-  returned: none
+  expected: mig-05 (rank 1)
+  returned 1: mig-05
 
 realistic-08 [realistic]
   text: I merged main into my branch and now there's a conflict in the ModelSnapshot file because both of us added migrations. How do I fix this properly without breaking the migration history?
-  expected: mig-03 (not returned)
-  returned: none
+  expected: mig-03 (rank 1)
+  returned 1: mig-03
 
 realistic-09 [realistic]
   text: Our security scanner flagged that the app container is running as root, please update the Dockerfile so it runs as a normal user
-  expected: dock-05 (not returned)
-  returned: none
+  expected: dock-05 (rank 1)
+  returned 1: dock-05
 
 realistic-10 [realistic]
   text: Some of our end to end tests fail randomly and block every merge. I want to stop them blocking the team without just deleting them, what's the right way to handle this?
@@ -203,8 +201,8 @@ morphology-02 [morphology]
 
 morphology-03 [morphology]
   text: parallel test failures with shared databases
-  expected: ci-02 (not returned)
-  returned: none
+  expected: ci-02 (rank 1)
+  returned 1: ci-02
 
 morphology-04 [morphology]
   text: containers exiting immediately after start
@@ -218,8 +216,8 @@ morphology-05 [morphology]
 
 morphology-06 [morphology]
   text: redacting API keys from logs
-  expected: auth-04 (not returned)
-  returned: none
+  expected: auth-04 (rank 1)
+  returned 1: auth-04
 
 morphology-07 [morphology]
   text: pinned vulnerable dependencies
@@ -229,12 +227,12 @@ morphology-07 [morphology]
 distractor-01 [distractor-overlap]
   text: migration timeout large table
   expected: mig-05 (rank 1)
-  returned 1: mig-05
+  returned 2: mig-05, dis-02
 
 distractor-02 [distractor-overlap]
   text: roll back the production database migration
   expected: mig-04 (rank 1)
-  returned 1: mig-04
+  returned 2: mig-04, dis-03
 
 distractor-03 [distractor-overlap]
   text: reduce image size
@@ -254,7 +252,7 @@ distractor-05 [distractor-overlap]
 distractor-06 [distractor-overlap]
   text: restore fails lock file
   expected: pkg-04 (rank 1)
-  returned 1: pkg-04
+  returned 3: pkg-04, dis-12, dis-11
 
 distractor-07 [distractor-overlap]
   text: flaky test nightly
@@ -263,8 +261,8 @@ distractor-07 [distractor-overlap]
 
 distractor-08 [distractor-overlap]
   text: time zone UTC test
-  expected: ci-03 (rank 1)
-  returned 1: ci-03
+  expected: ci-03 (rank 2)
+  returned 2: dis-05, ci-03
 
 distractor-09 [distractor-overlap]
   text: order new office chairs for the team
@@ -294,7 +292,7 @@ stopword-04 [stopword-heavy]
 stopword-05 [stopword-heavy]
   text: how do I make it so the tests are not run at the same time
   expected: ci-02 (not returned)
-  returned: none
+  returned 1: dis-10
 
 stopword-06 [stopword-heavy]
   text: is there anything we should know before we add a migration

@@ -57,7 +57,7 @@ Nothing is scored before it is known to be reusable.
 | Status | SQL | Only `Validated` and `Reinforced`. `Candidate`, `Quarantined`, `Contested`, `Stale`, `Superseded`, and `Revoked` are never returned, whatever their text match |
 | Reuse confidence | SQL | Below `RetrievalPolicy.MinimumConfidence` (default 0.5) is excluded |
 | Authorship | SQL, then Core | Only when `RetrieveExperienceRequest.ExcludeModelAuthored` is set: a record whose reflection a model wrote (or whose producer is the library's own model-backed reflector) is excluded by each source before its limit, and Core excludes, as `ModelAuthored`, any a source still returned. A PostgreSQL row sealed without its authorship flag fails closed and is left out by its source. Off by default. See [Model-authored lessons](injection.md#model-authored-lessons) |
-| Text match | SQL | PostgreSQL full-text search over task ID, task summary, and reflection lesson (analyzed up to 100,000 characters) |
+| Text match | SQL | PostgreSQL full-text search over task ID, task summary, and reflection lesson (analyzed up to 100,000 characters): at least `RetrievalPolicy.MinimumMatchedTerms` (default 3) of the request's terms, capped at their number. See [How the text channel matches](#how-the-text-channel-matches) |
 | Vector match | SQL | pgvector cosine distance over the embedding of those same three fields (embedded up to 8,192 characters), filtered to the query's own model and dimension |
 | Expiry | Core | Last lifecycle activity older than `RetrievalPolicy.MaxAge` is excluded. `null` (the default) means no expiry |
 | Environment | Core | Every required attribute must equal the record's `EnvironmentFingerprint.Metadata` entry; a missing key excludes the record. A request with no required attributes sets `EnvironmentUnrestricted` on the result |
@@ -110,6 +110,47 @@ channels: the weighting can only reorder what the ceiling let through. When *eit
 ever looked at them. Raise `CandidateLimit` or narrow the task text when that matters. `request.Limit` may not
 exceed `CandidateLimit`; a larger value is rejected rather than quietly capped.
 
+## How the text channel matches
+
+A record is a text candidate when its indexed text (task ID, task summary and reflection lesson) contains at least
+`RetrievalPolicy.MinimumMatchedTerms` distinct terms of the request (default **3**), capped at the number of terms the
+request has, so a one- or two-word request still matches on the terms it has. What a term is depends on the store:
+
+- **In memory**, a term is a distinct word after Unicode normalization and case folding, less stopwords ("the", "how",
+  "do", ...) and less one-character words. Words match whole: "invoices" does not match "invoice".
+- **On PostgreSQL**, a term is a distinct stem from the `english` configuration, less stopwords: "invoices" and
+  "invoice" are one term, and a record matches on stems, not words. A hyphenated compound is one term
+  ("multi-stage"), though a request's "stage" still matches a record's "multi-stage".
+
+A request made only of stopwords matches nothing. Quotes, `or` and `-` are ordinary words: nothing in the request is
+query syntax, and nothing negates a term.
+
+Candidates are ordered by how much of the request they cover. On PostgreSQL the relevance is the share of the
+request's terms the record contains (1 when it has them all), with `ts_rank_cd` and then the experience ID breaking
+ties (for a plain-word request, the tie-break orders full matches exactly as every-term matching did); fields are not
+weighted. In memory it is a field-weighted share: a term counts 3 in the task summary, 1 in the task ID and 1 in the
+lesson, out of 5 per request term.
+
+This is the source's order. Core then scores candidates with its [weighted components](#ranking-is-explainable): on
+PostgreSQL every full match has relevance 1, so Core does not see text strength between full matches, and confidence,
+recency and status decide between them. With the [vector channel](#two-channels-one-answer) on, Core takes the higher of a
+record's text and vector relevance: a PostgreSQL full text match (1.0) beats almost any vector hit, while a partial
+match on a long request (3 of 11 terms is about 0.27) loses to most of them.
+
+The minimum is the trade between finding paraphrased, long requests and showing an agent unrelated lessons that
+share a word or two. It is a count, not a share of the request's terms, because requests are long: a useful match for
+a twelve-term request may cover only three of them, which a share high enough to keep short requests precise would
+reject. The default 3 was chosen on the [retrieval benchmark](../benchmarks.md#retrieval-quality-story-201)
+by a rule fixed before it ran: the highest PostgreSQL recall@8 with at most one false positive in the first 8 on both
+stores. `ExperienceCandidateQuery.AllTerms` (or any value at least the request's term count) requires every term,
+which is how text search matched up to 0.1.0-preview.8: fewer, more precise candidates, and a long request then rarely
+finds anything.
+
+```csharp
+// Every term required again, as up to 0.1.0-preview.8.
+var policy = RetrievalPolicy.Default with { MinimumMatchedTerms = ExperienceCandidateQuery.AllTerms };
+```
+
 ## Ranking is explainable
 
 Every returned record carries all five normalized components (each in 0–1) and the effective weight applied to it,
@@ -117,7 +158,7 @@ so the score is always reproducible from what the result holds.
 
 | Component | Default weight | Normalized as |
 | --- | --- | --- |
-| Relevance | 0.35 | `ts_rank_cd` of the text match, or `1 - cosine_distance / 2` of the vector match — whichever is higher for that record — normalized to 0–1 |
+| Relevance | 0.35 | The text match's coverage of the request (see [How the text channel matches](#how-the-text-channel-matches)), or `1 - cosine_distance / 2` of the vector match — whichever is higher for that record — normalized to 0–1 |
 | Confidence | 0.25 | The record's `ReuseConfidence`, or, with a [decay policy](#decaying-confidence-by-domain), that value times `2^(-age / halfLife)` for the record's domain. *Age* is measured from `CreatedAt` |
 | Recency | 0.15 | `2^(-age / RecencyHalfLife)`, half-life 30 days by default. *Age* is measured from `UpdatedAt` |
 | Status | 0.15 | `Reinforced` 1.0, `Validated` 0.5 |
@@ -280,15 +321,18 @@ ineligible.
 a record is *about*. Attempts, tool calls, evidence, and environment metadata are deliberately not indexed: matching
 on them would make retrieval recall incidental identifiers and error strings rather than applicable experience.
 
-**The query text** goes through `websearch_to_tsquery`, which accepts arbitrary user input — quotes, `or`, `-`,
-stray punctuation — and never raises a syntax error, so callers do not escape or sanitize around it. Multiple words
-are combined with AND, and it is capped at `ExperienceCandidateQuery.MaxTaskTextLength` (4096) characters; longer is
-`Invalid` before a connection opens. The text-search configuration is `english`, fixed by the generated column;
+**The query text** is analyzed with `ts_debug('english', ...)`, and its distinct lexemes, less the parts of a
+hyphenated compound, are the request's terms.
+They go into the `tsquery` as quoted literals joined by OR, so arbitrary user input — quotes, `or`, `-`, `&`, `:*`,
+backslashes, stray punctuation — is only words, never operators, and never raises a syntax error; callers do not
+escape or sanitize around it. A row is returned when it contains at least `MinimumMatchedTerms` of the terms (see
+[How the text channel matches](#how-the-text-channel-matches)). The text is capped at
+`ExperienceCandidateQuery.MaxTaskTextLength` (4096) characters; longer is `Invalid` before a connection opens. The text-search configuration is `english`, fixed by the generated column;
 changing it means a new migration that rebuilds the column, because already-indexed rows would otherwise keep the
 old analysis.
 
 Because the `english` configuration drops stopwords, **text made only of stopwords matches nothing at all** — `"the
-of and"` produces an empty query, and an empty query matches no row by construction. The result is an ordinary
+of and"` has no terms, so no `tsquery` is built and no row matches. The result is an ordinary
 `Found` with no candidates, indistinguishable from "nothing relevant is stored". A caller that wants to tell those
 apart has to decide it before calling.
 
