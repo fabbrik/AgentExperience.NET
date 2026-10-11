@@ -40,6 +40,73 @@ With no subscriber, no `Activity` is allocated and no measurement is recorded. A
 result whether or not anything is listening, and whether or not a sampler accepts its span. A failure inside
 telemetry, such as a listener callback that throws, is swallowed and never reaches the caller.
 
+## Run the console exporter with the end-to-end sample
+
+To see real spans and metrics without a collector, database or model credentials, create a small
+host beside this checkout. Run these commands from the repository root with the .NET 10 SDK:
+
+```bash
+dotnet new console --framework net10.0 --output ../AgentExperience.TelemetryHost
+dotnet add ../AgentExperience.TelemetryHost reference samples/AgentExperience.Sample.EndToEnd/AgentExperience.Sample.EndToEnd.csproj
+dotnet add ../AgentExperience.TelemetryHost package Microsoft.Extensions.Hosting --version 10.0.12
+dotnet add ../AgentExperience.TelemetryHost package OpenTelemetry.Extensions.Hosting --version 1.19.1
+dotnet add ../AgentExperience.TelemetryHost package OpenTelemetry.Exporter.Console --version 1.19.1
+```
+
+Replace the generated host's `Program.cs` with:
+
+```csharp
+using AgentExperience.Sample.EndToEnd;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+
+var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.ClearProviders();
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddSource("AgentExperience.Core", "AgentExperience.MicrosoftAgentFramework",
+            "AgentExperience.Storage.Postgres")
+        .AddConsoleExporter())
+    .WithMetrics(metrics => metrics
+        .AddMeter("AgentExperience.Core", "AgentExperience.MicrosoftAgentFramework",
+            "AgentExperience.Storage.Postgres")
+        .AddConsoleExporter());
+
+using var host = builder.Build();
+await host.StartAsync(); // Start the providers before the sample emits anything.
+try
+{
+    return await SampleHost.RunAsync(Console.Out, postgresConnectionString: null);
+}
+finally
+{
+    await host.StopAsync();
+} // Disposing the host also exports the remaining metric batch on this short run.
+```
+
+```bash
+dotnet run --project ../AgentExperience.TelemetryHost
+```
+
+The process exits 0 and prints the sample's seven stages plus spans including
+`agentexperience.finalize`, `agentexperience.retrieve` and `agentexperience.inject`, and the
+`agentexperience.operation.count` and `agentexperience.operation.duration` metrics. The PostgreSQL
+source is subscribed but emits nothing in this in-memory run. No HTTP exporter is configured;
+after package restore, this demo needs no network connection. The console exporter's formatting,
+trace IDs and timing values are not a stable transcript or an improvement measurement.
+
+The extra dependencies belong only to the sibling host. No `src/` project, repository package
+pin, or default sample output changes. `SampleHost.RunAsync` is the existing sample entry point
+(`samples/AgentExperience.Sample.EndToEnd/SampleHost.cs:103`); passing `null` explicitly keeps
+this demonstration in memory even if the PostgreSQL environment variable is set.
+
+See the [OpenTelemetry console exporter documentation](https://opentelemetry.io/docs/languages/dotnet/exporters/#console)
+for exporter options. For the sample's fixtures and limitations, read its
+[README](../samples/AgentExperience.Sample.EndToEnd/README.md).
+
 ## Sources and meters
 
 | Name | Kind | Emitted by | Operations |
