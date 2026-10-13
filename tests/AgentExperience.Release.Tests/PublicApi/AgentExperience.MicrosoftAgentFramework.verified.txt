@@ -30,6 +30,12 @@
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>? Verify { get; set; }
         public void UseDevelopmentIdentity(string? tenant = null) { }
     }
+    public sealed class ExperienceApproval : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceApproval>
+    {
+        public ExperienceApproval(string ApproverId, bool Approved) { }
+        public bool Approved { get; init; }
+        public string ApproverId { get; init; }
+    }
     public static class ExperienceCaptureAgentBuilderExtensions
     {
         public const string RunIdStateKey = "AgentExperience.RunId";
@@ -123,6 +129,11 @@
         public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength = 512) { }
         public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength, int followUpThreshold) { }
     }
+    public static class ExperienceToolResultClassifiers
+    {
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?> ExitCode(params string[] toolNames) { }
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?> HttpStatus(params string[] toolNames) { }
+    }
     public sealed class ExperienceToolResultContext
     {
         public ExperienceToolResultContext() { }
@@ -145,6 +156,15 @@
         public AgentExperience.Abstractions.ExperienceRun Run { get; }
         public AgentExperience.Abstractions.Evidence CreateEvidence(string checkId, string kind, AgentExperience.Abstractions.CheckResult result, string producer, string artifactRevision, string? detail = null) { }
         public static AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext Create(AgentExperience.Abstractions.ExperienceRun run, System.Guid roundId, AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, System.TimeProvider? timeProvider = null, System.Func<System.Guid>? newId = null) { }
+    }
+    public static class ExperienceVerifiers
+    {
+        public const string UnversionedRevision = "unversioned";
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>> AllOf(params System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>[] verifiers) { }
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>> AnyOf(params System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>[] verifiers) { }
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>> Approval(string checkId, System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceApproval?>> approve, string? artifactRevision = null) { }
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>> Check(string checkId, System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool?>> check, string? artifactRevision = null) { }
+        public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>> ToolSucceeded(string toolName, string? checkId = null, string? artifactRevision = null) { }
     }
     public interface IAgentExperienceBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
 }

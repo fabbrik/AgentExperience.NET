@@ -23,7 +23,9 @@ the agent builder then wires injection, capture, verification and storage. The
 services.AddAgentExperience(options =>
 {
     options.UseDevelopmentIdentity();                     // one fixed local identity; refused outside Development/Test
-    options.Verify = (context, cancellationToken) => ...;  // your own checks: without them nothing is stored
+    options.Verify = ExperienceVerifiers.ToolSucceeded("run_tests");  // your own checks: without them nothing is stored
+    // run_tests reports failure as "exit=N" in its result: classify it, or ToolSucceeded sees every call as returned.
+    options.Capture = capture => capture.ClassifyToolResult = ExperienceToolResultClassifiers.ExitCode("run_tests");
 }).UseInMemoryStorageForDevelopment();
 await using var provider = services.BuildServiceProvider();
 
@@ -106,6 +108,49 @@ included, one `-`; at most 100 characters, never fusing two words at the cut: `T
 under `"default"` when the agent has no usable name. Reading `options.TaskId` while it is unset still returns
 `"default"`, although runs use the agent's name; and distinct names can reduce to the same identifier (`Triage Bot` and
 `triage-bot`), so their runs share it. With several agents, set `TaskId` or `ResolveTaskId` explicitly.
+
+### Built-in verifiers
+
+`Verify` decides whether a run is stored, and as what. Writing one by hand means building the `RequiredCheck`s, the
+evidence (`context.CreateEvidence(...)`) and the artifact revision. `ExperienceVerifiers` builds them from a signal the
+host already has. Each member returns the exact delegate type of `Verify`, so `options.Verify =
+ExperienceVerifiers.ToolSucceeded("run_tests");` works. A verifier decides only from facts the host's code produced (the
+captured outcome of a tool call, or the host's own delegate), never from message text or model output. A verifier that
+returns `null` stores nothing; one that throws stores nothing and is reported through `OnCaptureFailure` at stage
+`Finalization`, like any `Verify`.
+
+| Verifier | Pass | Fail (stored `Quarantined`) | Not stored (`null`) | Check ID, evidence kind, producer |
+| --- | --- | --- | --- | --- |
+| `ToolSucceeded(toolName, checkId?, artifactRevision?)` | The run's **last** call to `toolName` (ordinal name match; ordered by attempt, then by call sequence within the attempt, across all attempts) returned | That call failed: it threw, or `ClassifyToolResult` named an error class for it | No call to `toolName` | `checkId` (default `toolName`), `ToolOutcome`, `tool:<toolName>` |
+| `Check(checkId, check, artifactRevision?)` | `check` returned `true` | `false` | `null` | `checkId`, `HostCheck`, `host` |
+| `Approval(checkId, approve, artifactRevision?)` | `approve` returned `ExperienceApproval(approverId, Approved: true)` | `Approved: false` | `null`; a blank `ApproverId` throws (reported, not stored) | `checkId`, `HumanApproval`, the approver ID |
+| `AllOf(verifiers…)` | Runs them in order; one verification with every check and all the evidence, so it passes only when every check does | Any check fails | The first one that returns `null` (the rest are not run). Duplicate check IDs, a `null` check or two different explicit revisions throw (reported, not stored) | Those of its verifiers; the one explicit revision, else `unversioned` |
+| `AnyOf(verifiers…)` | Runs them in order and returns the first verification that passed (every required check has `Pass` evidence of an accepted kind, none other), without running the rest | None passes: the first verification returned | All return `null` | That verification's |
+
+`ToolSucceeded` decides from each captured call's name, sequence and `Error`, never from a result, so it works when
+sanitization redacts results. The attempt order comes first because a call's sequence number counts only within its
+attempt: a retry that finally passed is judged by its passing call. It relies on capture to mark failures: a tool that
+reports failure in its result rather than by throwing counts as returned unless a classifier marks it failed, such as
+`ExperienceToolResultClassifiers.ExitCode("run_tests")` (`exit N` for a non-zero exit code) or
+`HttpStatus("fetch_page")` (`HTTP N` for a status of 400 or more), set through `options.Capture` (see
+[Tools that report failure in their result](capture.md#tools-that-report-failure-in-their-result)):
+
+```csharp
+options.Verify = ExperienceVerifiers.AllOf(
+    ExperienceVerifiers.ToolSucceeded("run_tests", artifactRevision: buildId),
+    ExperienceVerifiers.Approval("reviewed", async (context, cancellationToken) =>
+        // Your approval flow, returning ExperienceApproval? (null: no decision, nothing stored).
+        await reviews.GetDecisionAsync(context.Run.RunId, cancellationToken),
+        artifactRevision: buildId));
+options.Capture = capture => capture.ClassifyToolResult = ExperienceToolResultClassifiers.ExitCode("run_tests");
+```
+
+`Approval` stores the approver ID verbatim as the evidence's producer, so pass an opaque identifier (a user's object
+ID), not an email address or a name.
+
+**The revision.** Every verifier's `artifactRevision` defaults to `ExperienceVerifiers.UnversionedRevision`
+(`"unversioned"`). Pass a real one, such as a build ID or a commit, when the artifact the agent works on changes between
+runs, so a lesson is tied to the revision it was verified against.
 
 ### Injection on the agent, or on its options
 
