@@ -66,6 +66,7 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     [
         "AgentExperience.Core {self}",
         "Microsoft.Agents.AI [1.22.0, 2.0.0)",
+        "Microsoft.Extensions.Hosting.Abstractions 10.0.3",
     ],
     ["AgentExperience.Storage.Postgres"] =
     [

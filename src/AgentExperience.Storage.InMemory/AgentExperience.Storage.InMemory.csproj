@@ -27,6 +27,9 @@
     <!-- Story 17.1: the one rule that decides whether a reflection counts as model-authored, shared by Core, the MAF
          adapter and both stores so every authorship decision agrees. -->
     <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />
+    <!-- Story 21.1: the development-or-test environment rule, shared with the MAF adapter's development identity so
+         both development-only conveniences refuse exactly the same environments. -->
+    <Compile Include="..\Shared\DevelopmentEnvironment.Shared.cs" Link="Shared\DevelopmentEnvironment.Shared.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -87,13 +87,17 @@ The samples and the reuse baseline use scripted models: they show the loop works
 ## Quick start
 
 This wires the loop for one MAF agent, with the in-memory storage (development and tests only, nothing survives
-a restart): inject past lessons before each run, and capture, verify and store each run after it. It needs
-`0.1.0-preview.7` or later; earlier previews have only the [explicit wiring](docs/guide/deployment.md#explicit-wiring).
+a restart): inject past lessons before each run, and capture, verify and store each run after it. It needs the
+next preview (unreleased); from `0.1.0-preview.7` to `0.1.0-preview.10`, set `ResolveIdentity` as shown under
+*In production* below and also give the agent `provider.GetAgentExperienceContextProvider()` in
+`ChatClientAgentOptions.AIContextProviders`, and earlier previews have only the
+[explicit wiring](docs/guide/deployment.md#explicit-wiring).
 Install `AgentExperience.MicrosoftAgentFramework` and `AgentExperience.Storage.InMemory` (`--prerelease`), plus
 `Microsoft.Extensions.DependencyInjection` for `BuildServiceProvider` if your app does not already have it.
 You supply `chatClient` (any `Microsoft.Extensions.AI` `IChatClient`) and `RunTestsAsync`, your own check of the run.
-The in-memory storage refuses any environment but `Development`, `Test` or `Testing`, read from the host environment,
-else `DOTNET_ENVIRONMENT`, else `ASPNETCORE_ENVIRONMENT`; a console app with none set, like this one, needs nothing.
+The in-memory storage and `UseDevelopmentIdentity()` refuse any environment but `Development`, `Test` or `Testing`,
+read from the host environment, else `DOTNET_ENVIRONMENT`, else `ASPNETCORE_ENVIRONMENT`; a console app with none set,
+like this one, needs nothing.
 
 ```csharp
 using AgentExperience.Abstractions;
@@ -105,11 +109,8 @@ using Microsoft.Extensions.DependencyInjection;
 var services = new ServiceCollection();
 services.AddAgentExperience(options =>
 {
-    // Who the run is for: from your own authentication, never from model output. Null: no memory for this run.
-    options.ResolveIdentity = (context, cancellationToken) => ValueTask.FromResult<ExperienceIdentity?>(new(
-        new AuthorizationContext("contoso", "svc-support-agent", Roles: [], IssuedAt: DateTimeOffset.UtcNow),
-        new Scope("contoso", "support", "tickets")));
-    options.TaskId = "triage-ticket";
+    // Who the run is for: one fixed local identity, for development and tests only (see below for production).
+    options.UseDevelopmentIdentity();
     // Your own checks, never the model's word. Without Verify, runs are captured but nothing is stored.
     options.Verify = async (context, cancellationToken) =>
     {
@@ -122,9 +123,8 @@ services.AddAgentExperience(options =>
 }).UseInMemoryStorageForDevelopment();
 await using var provider = services.BuildServiceProvider();
 
-var injection = provider.GetAgentExperienceContextProvider();  // the lessons that apply, before the model is called
-AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [injection] })
-    .AsBuilder().UseAgentExperience(provider).Build();            // capture, verify and store, after each run
+// Inject the lessons that apply before each run; capture, verify and store each run after it.
+AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket").AsBuilder().UseAgentExperience(provider).Build();
 var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
 ```
 
@@ -134,12 +134,24 @@ terms with the stored task ID, task summary and lesson (fewer when it has fewer;
 count, and PostgreSQL matches word stems) and the
 lesson clears the confidence floor (0.5; a new lesson starts at 2/3). The task text is the user's latest message (joined to
 the previous one when it is a short follow-up), cleaned and cut to 512 UTF-16 code units, and is stored as the run's description, so redact sensitive prompts first
-(see [The task text](docs/guide/injection.md#the-task-text)). Injection needs both lines at the end: `UseAgentExperience`
-alone stores but injects nothing. Nothing throws into the agent: a slow store or `ResolveIdentity` means no memory for
+(see [The task text](docs/guide/injection.md#the-task-text)). Each run is stored under the agent's name as its task ID
+(`triage-ticket`; `options.TaskId` or `options.ResolveTaskId` sets another, and an unnamed agent's is `default`).
+`UseAgentExperience` wires capture and injection both; an agent that also lists
+`provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders` still gets exactly one
+block, and that wiring also lets injection see the replayed chat history and a run's own tools. Nothing throws into the agent: a slow store or `ResolveIdentity` means no memory for
 that run, reported through `options.Capture` and `options.Injection` callbacks. No tool argument value is kept until
 you allowlist it (`AgentExperienceDefaults.SanitizationAllowing("ticketId")`), and secret-named fields are redacted.
 The [one-call setup](docs/guide/deployment.md#the-one-call-setup) lists every option and default, and the
 [quick-start sample](samples/AgentExperience.Sample.QuickStart/README.md) runs this wiring.
+
+**In production**, the identity comes from your own authentication, never from model output: replace
+`UseDevelopmentIdentity()` with a resolver (returning `null` means no memory for that run).
+
+```csharp
+options.ResolveIdentity = (context, cancellationToken) => ValueTask.FromResult<ExperienceIdentity?>(new(
+    new AuthorizationContext("contoso", "svc-support-agent", Roles: [], IssuedAt: DateTimeOffset.UtcNow),
+    new Scope("contoso", "support", "tickets")));
+```
 
 **With PostgreSQL**, add the `AgentExperience.Storage.Postgres` package. You also supply two connection strings:
 `ownerConnectionString`, for the role that applies the schema on every deploy, and `appConnectionString`, for the

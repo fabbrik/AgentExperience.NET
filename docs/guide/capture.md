@@ -14,7 +14,7 @@ Package: `AgentExperience.MicrosoftAgentFramework`, over Core's `IExperienceCapt
 
 The [one-call setup](deployment.md#the-one-call-setup) (`services.AddAgentExperience(...)` and
 `UseAgentExperience(provider)`) wires capture for you, with safe sanitization and limits, the run described by your
-`TaskId`, the resolved identity's scope and the user's own words, and verification through `Verify`. Adjust any option
+`TaskId` (the agent's name when you set none), the resolved identity's scope and the user's own words, and verification through `Verify`. Adjust any option
 below through its `options.Capture` hook. Wired by hand, it looks like this:
 
 ```csharp

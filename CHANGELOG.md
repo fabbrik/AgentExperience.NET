@@ -6,6 +6,45 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Setup: a five-line first run (story 21.1)
+
+- **Behaviour change: the task ID defaults to the agent's name.** Under the one-call setup, when neither
+  `AgentExperienceOptions.TaskId` nor `ResolveTaskId` is set, a run is now captured under the invoked agent's `Name`,
+  reduced to an identifier (lower case; ASCII letters, digits, `.` and `_` kept; every run of other characters, dashes
+  included, one `-`; at most 100 characters, never fusing two words at the cut: `"Triage - Bot"` becomes `triage-bot`),
+  instead of `"default"`. An unnamed agent, or one whose name keeps nothing, still files under
+  `AgentExperienceOptions.DefaultTaskId` (`"default"`). A host that set neither and named its agent now files new runs
+  under the agent's name; records stored under `"default"` are unchanged and still found by retrieval, which matches on
+  text, but `ReuseEvidence = SameTask` no longer pairs them with new runs. Set
+  `options.TaskId = AgentExperienceOptions.DefaultTaskId` to keep the old behaviour. Reading `TaskId` while it is unset
+  still returns `"default"`, although runs use the agent's name; and distinct names can reduce to the same identifier
+  (`"Triage Bot"` and `"triage-bot"`), so their runs share it. A host with several agents should set `TaskId` or
+  `ResolveTaskId` explicitly.
+- **`AgentExperienceOptions.UseDevelopmentIdentity(string? tenant = null)`** (new): sets `ResolveIdentity` to one fixed
+  identity for development and tests: tenant `local` (or the one given), an application and a project named after the
+  host environment's `ApplicationName`, else the entry assembly (reduced the same way, `app` when there is none), and
+  the principal `local-developer` with no roles, issued at each invocation by the configured clock.
+  It refuses outside `Development`, `Test` or `Testing` by exactly the in-memory store's rule (one shared source file):
+  building an agent with `UseAgentExperience` or resolving the context provider throws `InvalidOperationException`
+  naming the rule, and under a Generic Host a hosted service refuses to start. There is no override. Setting `ResolveIdentity` afterwards replaces it, check included.
+- **Behaviour change: `UseAgentExperience(services)` now wires injection too.** When the agent was not given an
+  `ExperienceContextProvider` on `ChatClientAgentOptions.AIContextProviders`, the container's provider is added at the
+  agent level, through MAF's `AIAgentBuilder.UseAIContextProviders`, inside capture: the same block, the same session
+  account. An agent that already holds one (the two-line wiring) is left exactly as before and gets exactly one block.
+  At the agent level the provider does not see the chat history a `ChatClientAgent` replays (a short follow-up is not
+  joined with an earlier turn's request) or the tools a run adds through `ChatClientAgentRunOptions`: with
+  `ReceivingAgentCapabilities.UseRunTools` the gate reads the agent's default tools, and withholds a record whose
+  approach calls a run-only tool. Give the agent the provider on its options as well where either matters. A host
+  that used `UseAgentExperience` for capture only, with no provider on the agent, now gets lessons injected; set the
+  new **`AgentExperienceOptions.InjectWithUseAgentExperience`** (default `true`) to `false` to keep it capture-only.
+  A second `UseAgentExperience` on the same pipeline adds no second provider. With an inner agent that is not a
+  `ChatClientAgent`, the gate reads the tools the agent reports through `GetService<ChatOptions>()`, if any.
+- The MAF adapter now depends on `Microsoft.Extensions.Hosting.Abstractions` (floor 10.0.3, the in-memory store's),
+  for the `IHostEnvironment` the development identity's guard reads.
+- Docs: the README quick start and [the one-call setup](docs/guide/deployment.md#the-one-call-setup) use
+  `UseDevelopmentIdentity()` and the single `UseAgentExperience` line, with the production identity next to them. The
+  quick-start sample uses the same wiring; its output is unchanged.
+
 ### Capture: let a host say a returned tool call failed (story 20.9)
 
 - **`ExperienceCaptureOptions.ClassifyToolResult`** (new, default `null`): a

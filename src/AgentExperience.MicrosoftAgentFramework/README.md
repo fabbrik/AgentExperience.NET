@@ -20,7 +20,8 @@ It does two independent things; use either, or both (plus an opt-in model-backed
 
 Requires `Microsoft.Agents.AI` **1.22.0 or any later 1.x** (declared `[1.22.0, 2.0.0)`). Targets `net10.0`. CI
 tests the floor and the newest 1.x on every change and on a weekly schedule. MAF 2.0 and later are outside the range,
-and NuGet warns (NU1608) when a host resolves one. Brings in `AgentExperience.Core`.
+and NuGet warns (NU1608) when a host resolves one. Brings in `AgentExperience.Core` and
+`Microsoft.Extensions.Hosting.Abstractions` (10.0.3 or later), for the development identity's environment check.
 
 ## The one-call setup
 
@@ -30,18 +31,19 @@ on the builder it returns, with `.UseInMemoryStorageForDevelopment()` (`AgentExp
 `.UsePostgres(connectionString)` (`AgentExperience.Storage.Postgres`), then:
 
 ```csharp
-AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
-    {
-        AIContextProviders = [provider.GetAgentExperienceContextProvider()],   // injection, before the model
-    })
+AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket")
     .AsBuilder()
-    .UseAgentExperience(provider)                                             // capture and verification, after
+    .UseAgentExperience(provider)   // injection before the model; capture and verification after
     .Build();
 ```
 
-`UseAgentExperience` alone captures but injects nothing: the agent needs the provider in `AIContextProviders` too.
+`UseAgentExperience` wires injection at the agent level unless the agent already lists
+`provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders`; there the provider also
+sees the replayed chat history and a run's own tools, and the agent gets exactly one block either way. Runs are stored
+under the agent's name as their task ID unless `options.TaskId` or `options.ResolveTaskId` says otherwise.
 `options.ResolveIdentity` (required) says who each invocation runs for, from your own authentication;
-`options.Verify` runs your own checks on each completed run, and without it nothing is stored. The
+`options.UseDevelopmentIdentity()` sets one fixed local identity instead, and refuses outside `Development`, `Test` or
+`Testing`. `options.Verify` runs your own checks on each completed run, and without it nothing is stored. The
 [README quick start](https://github.com/fabbrik/AgentExperience.NET#quick-start) shows it whole, and
 [the deployment guide](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/deployment.md#the-one-call-setup)
 lists every option. The sections below are the explicit wiring, which keeps working unchanged.

@@ -19,6 +19,7 @@
         public AgentExperience.Core.Capture.CaptureLimits CaptureLimits { get; set; }
         public bool ContradictOnFailure { get; set; }
         public System.TimeSpan IdentityTimeout { get; set; }
+        public bool InjectWithUseAgentExperience { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions>? Injection { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceIdentity?>>? ResolveIdentity { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, string>? ResolveTaskId { get; set; }
@@ -27,6 +28,7 @@
         public string TaskId { get; set; }
         public System.TimeProvider? TimeProvider { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>? Verify { get; set; }
+        public void UseDevelopmentIdentity(string? tenant = null) { }
     }
     public static class ExperienceCaptureAgentBuilderExtensions
     {

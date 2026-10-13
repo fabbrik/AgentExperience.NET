@@ -346,7 +346,7 @@
       "agentexperience.core": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.8, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.10, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }
@@ -354,15 +354,16 @@
       "agentexperience.microsoftagentframework": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Core": "[0.1.0-preview.8, )",
-          "Microsoft.Agents.AI": "[1.22.0, 2.0.0)"
+          "AgentExperience.Core": "[0.1.0-preview.10, )",
+          "Microsoft.Agents.AI": "[1.22.0, 2.0.0)",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
       },
       "agentexperience.sample.quickstart": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.8, )",
-          "AgentExperience.Storage.InMemory": "[0.1.0-preview.8, )",
+          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.10, )",
+          "AgentExperience.Storage.InMemory": "[0.1.0-preview.10, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.10.0, 10.10.0]",
           "Microsoft.Extensions.DependencyInjection": "[10.0.12, 10.0.12]"
         }
@@ -370,7 +371,7 @@
       "agentexperience.storage.inmemory": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.8, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.10, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }

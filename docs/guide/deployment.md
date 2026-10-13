@@ -16,14 +16,27 @@ on .NET 8 or 9 stays on `0.1.0-preview.3`, the last release that targets `net8.0
 
 `services.AddAgentExperience(...)` (in `AgentExperience.MicrosoftAgentFramework`) registers Core, retrieval and the
 injection provider with safe defaults, and returns a builder to choose the storage on. `UseAgentExperience(provider)` on
-the agent builder then wires capture, verification and storage, and `provider.GetAgentExperienceContextProvider()` is
-the agent's context provider. The [README quick start](../../README.md#quick-start) shows it whole.
+the agent builder then wires injection, capture, verification and storage. The
+[README quick start](../../README.md#quick-start) shows it whole. For development and tests:
+
+```csharp
+services.AddAgentExperience(options =>
+{
+    options.UseDevelopmentIdentity();                     // one fixed local identity; refused outside Development/Test
+    options.Verify = (context, cancellationToken) => ...;  // your own checks: without them nothing is stored
+}).UseInMemoryStorageForDevelopment();
+await using var provider = services.BuildServiceProvider();
+
+AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket").AsBuilder().UseAgentExperience(provider).Build();
+```
+
+In production the identity comes from your own authentication, and the storage is PostgreSQL:
 
 ```csharp
 services.AddAgentExperience(options =>
 {
     options.ResolveIdentity = (context, cancellationToken) => ...;   // required: your authentication, never model output
-    options.TaskId = "triage-ticket";                                // or ResolveTaskId, per invocation; default "default"
+    options.TaskId = "triage-ticket";                                // or ResolveTaskId, per invocation; default: the agent's name
     options.Verify = (context, cancellationToken) => ...;           // optional: without it nothing is stored
     // Optional, each with a safe default:
     // options.Sanitization = ...;   AgentExperienceDefaults.Sanitization: no tool argument kept until allowlisted
@@ -53,7 +66,7 @@ What the library fills in, so the host does not:
 | | The one-call setup | Explicit wiring |
 | --- | --- | --- |
 | Who the run is for | `ResolveIdentity` returns an `ExperienceIdentity(Authorization, Scope)`, used for capture, retrieval and finalization alike; `null` means no capture and no injection for that invocation | Each resolver builds its own `AuthorizationContext` and `Scope` |
-| Run description | `TaskId` (or `ResolveTaskId`), the identity's scope, and `DerivedTaskText` | `ResolveRun` |
+| Run description | `TaskId` (or `ResolveTaskId`; with neither, the agent's name reduced to an identifier, else `"default"`), the identity's scope, and `DerivedTaskText` | `ResolveRun` |
 | Retrieval request | The identity and `DerivedTaskText`; no text means no injection | `ResolveRequestAsync` |
 | Finalization request | `Verify` returns the required checks, the evidence and the artifact revision; the library adds a new `ClosedVerificationRound` (identifier from `NewId`), that revision as the current one, `StorageDecision.Permit`, the finalization time and the authorization. `context.CreateEvidence(...)` builds evidence bound to the round; evidence naming another round or revision is reported and nothing is stored. `ExperienceVerificationContext.Create(...)` builds a context for unit-testing `Verify` | `ResolveFinalizationAsync` builds the whole `FinalizeExperienceRequest` |
 
@@ -75,9 +88,50 @@ that stays an explicit step for the owner role ([Applying the schema](#applying-
 encryption, vectors, signing and independence options are registered with the calls below, beside the one-call setup.
 
 `AddAgentExperience` registers with `TryAdd`, so a service the host registered first is kept; calling it twice throws.
-MAF's agent builder can add only a message-level context provider, which does not see the chat client agent's session
-and history the injection provider works with, so the provider goes on `ChatClientAgentOptions.AIContextProviders`
-rather than on the builder.
+
+**The development identity.** `options.UseDevelopmentIdentity(tenant)` sets `ResolveIdentity` to one fixed identity:
+the tenant (`local` by default), an application and a project named after the registered `IHostEnvironment`'s
+`ApplicationName`, else the entry assembly (under a test runner, the runner's; `app` when it has no usable name), and
+the principal `local-developer` with no roles, issued at each invocation by the configured clock. Every invocation then runs as the same caller in the
+same scope. It runs only where the in-memory storage does, by the same rule: the environment named `Development`,
+`Test` or `Testing` (case-insensitive), read from the registered `IHostEnvironment`, else `DOTNET_ENVIRONMENT`, else
+`ASPNETCORE_ENVIRONMENT`, with nothing to check when none is set. Anywhere else, `UseAgentExperience` and
+`GetAgentExperienceContextProvider` throw `InvalidOperationException` naming the rule, and under a Generic Host a hosted
+service throws from `StartAsync`, so the host refuses to start; there is no override. Setting
+`ResolveIdentity` afterwards replaces it.
+
+**The task ID.** With neither `TaskId` nor `ResolveTaskId` set, each run is captured under the invoked agent's `Name`,
+reduced to an identifier (lower case; ASCII letters, digits, `.` and `_` kept; every run of other characters, dashes
+included, one `-`; at most 100 characters, never fusing two words at the cut: `Triage - Bot` becomes `triage-bot`), and
+under `"default"` when the agent has no usable name. Reading `options.TaskId` while it is unset still returns
+`"default"`, although runs use the agent's name; and distinct names can reduce to the same identifier (`Triage Bot` and
+`triage-bot`), so their runs share it. With several agents, set `TaskId` or `ResolveTaskId` explicitly.
+
+### Injection on the agent, or on its options
+
+`UseAgentExperience` adds the container's context provider at the agent level, through MAF's
+`AIAgentBuilder.UseAIContextProviders`, unless the agent already holds any `ExperienceContextProvider` in
+`ChatClientAgentOptions.AIContextProviders` (any one, deliberately, to avoid double injection) or an earlier
+`UseAgentExperience` on the same pipeline already added one; then it adds nothing, and the agent gets exactly one block
+either way. The provider is resolved only when it is added, when the agent is built. The two wirings inject the same block and keep the same session account. What the agent
+level cannot see: the chat history a `ChatClientAgent` replays (so a short follow-up is not joined with an earlier
+turn's request), and the tools a run adds through `ChatClientAgentRunOptions` (with
+`ReceivingAgentCapabilities.UseRunTools`, the capability gate reads the agent's default tools only, and withholds a
+record whose approach calls a run-only tool; an inner agent that is not a `ChatClientAgent` offers the tools it reports
+through `GetService<ChatOptions>()`, and none otherwise). Where either matters, give the agent the provider on its
+options too:
+
+```csharp
+AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "triage-ticket",
+        AIContextProviders = [provider.GetAgentExperienceContextProvider()],
+    })
+    .AsBuilder().UseAgentExperience(provider).Build();
+```
+
+`options.InjectWithUseAgentExperience = false` turns the agent-level injection off: an agent without the provider on its
+options is then captured and verified but not injected, as `UseAgentExperience` alone did before it wired injection.
 
 ## Wiring it all together
 

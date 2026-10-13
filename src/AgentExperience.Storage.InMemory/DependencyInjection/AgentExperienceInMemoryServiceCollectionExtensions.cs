@@ -119,40 +119,12 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
 internal sealed class InMemoryStorageRegistration(InMemoryStorageOptions options)
 {
     /// <summary>The environment names the stores run in without the override. Compared case-insensitively.</summary>
-    internal static readonly IReadOnlyList<string> AllowedEnvironments = ["Development", "Test", "Testing"];
+    internal static IReadOnlyList<string> AllowedEnvironments => DevelopmentEnvironment.AllowedEnvironments;
 
     /// <summary>Throws when the environment is not a development or test one and the override is off.</summary>
     public void Check(IServiceProvider provider)
     {
-        if (options.AllowProductionEnvironment)
-        {
-            return;
-        }
-
-        string? name;
-        string source;
-        if (provider.GetService<IHostEnvironment>() is { } environment)
-        {
-            name = environment.EnvironmentName;
-            source = "the host environment";
-        }
-        else if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") is { } dotnet)
-        {
-            name = dotnet;
-            source = "DOTNET_ENVIRONMENT";
-        }
-        else if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") is { } aspnetcore)
-        {
-            name = aspnetcore;
-            source = "ASPNETCORE_ENVIRONMENT";
-        }
-        else
-        {
-            // No host and no environment variable: a plain console app or a test, with nothing to check.
-            return;
-        }
-
-        if (name is not null && AllowedEnvironments.Contains(name, StringComparer.OrdinalIgnoreCase))
+        if (options.AllowProductionEnvironment || DevelopmentEnvironment.IsAllowed(provider, out var name, out var source))
         {
             return;
         }

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Preview, not production ready. Microsoft Agent Framework (MAF) adapter for AgentExperience.NET: one AIAgentBuilder.UseExperienceCapture(...) call records every MAF invocation (ordinary, streaming, failed, cancelled, or abandoned mid-stream) and its tool calls as a sanitized Experience Run through AgentExperience.Core's IExperienceCaptureService. Requires Microsoft.Agents.AI 1.22.0 or any later 1.x.</Description>
+    <Description>Preview, not production ready. Microsoft Agent Framework (MAF) adapter for AgentExperience.NET: one AIAgentBuilder.UseExperienceCapture(...) call records every MAF invocation (ordinary, streaming, failed, cancelled, or abandoned mid-stream) and its tool calls as a sanitized Experience Run through AgentExperience.Core's IExperienceCaptureService, and an ExperienceContextProvider injects the verified lessons that apply before the model is called. With services.AddAgentExperience(...), one AIAgentBuilder.UseAgentExperience(services) call wires both. Requires Microsoft.Agents.AI 1.22.0 or any later 1.x, and Microsoft.Extensions.Hosting.Abstractions 10.0.3 or later within the same major.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
@@ -15,6 +15,9 @@
          silently run against an adapter nobody built for it. A newer 1.x minor restores with no warning.
          docs/compatibility-evidence.md has the evidence. -->
     <PackageReference Include="Microsoft.Agents.AI" Version="[1.22.0, 2.0.0)" />
+    <!-- Story 21.1: a floor, like the in-memory store's. Supplies IHostEnvironment, which the development identity's
+         environment guard reads (the same rule as the in-memory store, linked below). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -45,6 +48,9 @@
     <Compile Include="..\Shared\ErrorClass.Shared.cs" Link="Shared\ErrorClass.Shared.cs" />
     <!-- Story 18.2: the default reflector's wording the compact block leaves out, written by one and matched by the other. -->
     <Compile Include="..\Shared\DefaultReflectionText.Shared.cs" Link="Shared\DefaultReflectionText.Shared.cs" />
+    <!-- Story 21.1: the development-or-test environment rule the in-memory store uses, so the development identity
+         refuses exactly the environments that store refuses. -->
+    <Compile Include="..\Shared\DevelopmentEnvironment.Shared.cs" Link="Shared\DevelopmentEnvironment.Shared.cs" />
   </ItemGroup>
 
 </Project>
