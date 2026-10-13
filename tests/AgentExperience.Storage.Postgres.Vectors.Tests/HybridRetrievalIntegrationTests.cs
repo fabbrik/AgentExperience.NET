@@ -374,7 +374,9 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
             CancellationToken.None);
 
         Assert.Equal(ExperienceVectorSearchOutcome.Found, result.Outcome);
-        Assert.Equal(byMeaning, Assert.Single(result.Candidates).Record.ExperienceId);
+        var candidate = Assert.Single(result.Candidates);
+        Assert.Equal(byMeaning, candidate.Record.ExperienceId);
+        Assert.Equal(level, candidate.GrantDisclosure);
         Assert.Empty(failures);
 
         var row = Assert.Single((await log.QueryAsync(
@@ -383,11 +385,12 @@ public class HybridRetrievalIntegrationTests(VectorsFixture fixture)
         Assert.Equal(level, row.Disclosure);
 
         // Retrieval matches; it does not deliver. Like the grant ID, the level is filled in only by the
-        // pre-injection re-read.
+        // pre-injection re-read. The level the search matched it under is carried separately, for gating only (story 20.8).
         var retrieved = await world.Retrieval().RetrieveAsync(new RetrieveExperienceRequest(world.Authorization, recipient, SemanticTaskText));
         var ranked = Assert.Single(retrieved.Records);
         Assert.True(ranked.SharedByGrant);
         Assert.Null(ranked.GrantDisclosure);
+        Assert.Equal(level, ranked.MatchedGrantDisclosure);
     }
 
     private static RetrieveExperienceRequest Request(TestWorld world, string taskText) =>

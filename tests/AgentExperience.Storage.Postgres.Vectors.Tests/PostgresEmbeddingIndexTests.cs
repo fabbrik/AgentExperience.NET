@@ -557,7 +557,7 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         var mine = await world.AddRecordAsync("refund-retry", "Retry a refund ticket", "Retry once", scope: recipient);
         await world.Indexing.IndexAsync(world.Authorization, owner, borrowed);
         await world.Indexing.IndexAsync(world.Authorization, recipient, mine);
-        var grant = await world.GrantAsync(borrowed, owner, recipient);
+        var grant = await world.GrantAsync(borrowed, owner, recipient, ExperienceGrantDisclosure.LessonAndApproach);
 
         var failures = new List<ExperienceGrantAccessFailure>();
         var log = new PostgresExperienceGrantAccessLog(world.DataSource);
@@ -581,6 +581,11 @@ public class PostgresEmbeddingIndexTests(VectorsFixture fixture)
         var shared = Assert.Single(result.Candidates, candidate => candidate.SharedByGrant);
         Assert.Equal(borrowed, shared.Record.ExperienceId);
         Assert.Equal(grant.GrantId, shared.PermittingGrantId);
+
+        // Story 20.8: the level the statement matched it under travels with it, from the column its access row records;
+        // the reader's own record carries none.
+        Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, shared.GrantDisclosure);
+        Assert.Null(Assert.Single(result.Candidates, candidate => !candidate.SharedByGrant).GrantDisclosure);
 
         var rows = await log.QueryAsync(
             world.Authorization, new ExperienceGrantAccessQuery(owner), CancellationToken.None);

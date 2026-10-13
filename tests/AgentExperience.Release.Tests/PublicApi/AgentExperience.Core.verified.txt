@@ -810,6 +810,7 @@ namespace AgentExperience.Core.Retrieval
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public AgentExperience.Abstractions.ExperienceGrantDisclosure? MatchedGrantDisclosure { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
         public double Score { get; init; }

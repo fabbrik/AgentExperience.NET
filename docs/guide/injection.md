@@ -581,11 +581,25 @@ new ExperienceInjectionOptions
   `ToolUnavailable` or `RiskClassExceeded`, not `OverSessionBudget`. A gated record is never shown to the host's decision, rendered,
   charged to the session budget, tracked as delivered, or recorded as a run exposure. It withdraws nothing: like the
   request's environment attributes, it is about this agent, not the record.
-- **Borrowed records are decided at the re-read.** A ranked candidate does not carry its grant's disclosure level, so
-  before the limit a borrowed record counts as withholding its approach and passes. The re-read decides it: one whose
-  grant shows the approach and fails the gate there has taken a slot, and since that re-read is a delivery it writes a
-  grant access row (the store disclosed it), as one `DecideInjection` denies does, but it is never injected or
-  recorded as an exposure.
+- **Borrowed records are gated by the level their grant was matched under.** The PostgreSQL text search (including
+  its row-level-security function) and vector index report the level of the grant they matched a borrowed record under
+  (`ExperienceCandidate.GrantDisclosure`, carried on as `RankedExperience.MatchedGrantDisclosure`). A borrowed record
+  matched under `LessonAndApproach` or `LessonApproachAndArguments` is tool-checked before the limit like your own, so
+  one whose working tools the agent lacks takes no slot and is never re-read: there is no delivery (re-read) access
+  row, though the search-time access row a PostgreSQL search wrote stays. That omission is final. If the grant was
+  revoked and reissued as `LessonOnly` between the search and the re-read (a level cannot be changed in place), the
+  record is still dropped, although the re-read would have injected it with its approach withheld. One matched under
+  `LessonOnly`, or from a source that reports no level (or one this build does not define), counts as withholding its
+  approach and passes unprobed, so the lender's tool names cannot be probed. For every record that passes, the re-read
+  checks it again on the level that read reports, which is also the only level rendering and the audit trail use. A
+  record that passed before the limit but fails there has taken a slot, and since that re-read is a delivery it writes
+  a grant access row (the store disclosed it), as one `DecideInjection` denies does, but it is never injected or
+  recorded as an exposure. When text and vector search both find a record, the candidate the first channel to return
+  it (text) contributed is kept, only the higher relevance is taken from the other, and the kept candidate's level
+  goes with it.
+- **A gate that throws.** A gate that throws before the limit and one that throws on the re-read fail the invocation
+  the same way: outcome `Failed`, nothing injected, and the same failure reason ("The final eligibility check threw
+  ...").
 - **Gating on the run's own tools.** MAF hands a context provider the invocation's tools (`AIContext.Tools`: a
   `ChatClientAgent`'s default tools plus the run's own `ChatClientAgentRunOptions` tools). Set `UseRunTools = true` and
   the tool check uses their names, taken once per invocation, instead of a static list -- intersected with

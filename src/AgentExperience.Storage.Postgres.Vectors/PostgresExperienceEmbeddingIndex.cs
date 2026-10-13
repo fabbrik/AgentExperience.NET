@@ -767,12 +767,20 @@ public sealed class PostgresExperienceEmbeddingIndex : IExperienceEmbeddingIndex
             }
 
             var row = rows[i];
+            var shared = ExperienceRecordRows.ReadSharedByGrant(row);
+            var disclosure = ExperienceRecordRows.ReadPermittingDisclosure(row);
+
+            // The level the predicate matched the record under travels with the shared flag, and only with it. A
+            // shared row whose level is missing or unknown has none here, which every consumer reads as LessonOnly.
             candidates.Add(new ExperienceCandidate(
                 record,
                 ReadRelevance(row),
-                ExperienceRecordRows.ReadSharedByGrant(row),
-                ExperienceRecordRows.ReadPermittingGrant(row)));
-            disclosures.Add(ExperienceRecordRows.ReadPermittingDisclosure(row));
+                shared,
+                ExperienceRecordRows.ReadPermittingGrant(row))
+            {
+                GrantDisclosure = shared ? disclosure : null,
+            });
+            disclosures.Add(disclosure);
         }
 
         if (candidates.Count > 0)

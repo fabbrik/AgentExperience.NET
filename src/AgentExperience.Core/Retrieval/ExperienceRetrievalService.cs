@@ -939,7 +939,9 @@ public sealed class ExperienceRetrievalService
             {
                 // Only the relevance is merged, never the record: the two channels read the record at
                 // different instants, and adopting the other snapshot would let the expiry, status, and
-                // environment checks below be decided on the staler of the two.
+                // environment checks below be decided on the staler of the two. Nor the sharing: the candidate
+                // kept is the one from the channel absorbed first (text, then vector), and its SharedByGrant and the grant
+                // level matched with it stay together.
                 var kept = merged[existing];
                 if (Normalize(candidate.Relevance) > Normalize(kept.Relevance))
                 {
@@ -999,8 +1001,13 @@ public sealed class ExperienceRetrievalService
         }
 
         // Passed through, never decided here: only the adapter that applied the scope predicate knows
-        // whether a grant was what admitted this record.
-        return new RankedExperience(record, score, components, candidate.SharedByGrant);
+        // whether a grant was what admitted this record. The level its predicate matched the record under travels
+        // with the flag, and only with it; it is for decisions taken before the delivery read, which fills
+        // GrantDisclosure.
+        return new RankedExperience(record, score, components, candidate.SharedByGrant)
+        {
+            MatchedGrantDisclosure = candidate.SharedByGrant ? candidate.GrantDisclosure : null,
+        };
     }
 
     /// <summary>

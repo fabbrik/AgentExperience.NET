@@ -511,10 +511,16 @@ public sealed class ExperienceInjectionOptions
     /// effect without <see cref="ReceivingAgentCapabilities.MaxRiskClass"/>; <see cref="ToolRiskClass.Critical"/>
     /// as the maximum disables the risk check; and an available tool missing from
     /// <see cref="ReceivingAgentCapabilities.ToolRiskClasses"/> counts as <see cref="ToolRiskClass.Critical"/>. A
-    /// ranked candidate does not carry its grant's disclosure level, so before the limit a borrowed record is treated
-    /// as withholding its approach and passes (its lender's tools cannot be probed); it is gated on its re-read record,
-    /// where it still takes a slot and still writes a grant access row, because the store disclosed it on the re-read,
-    /// but it is never injected or recorded as an exposure.
+    /// borrowed record matched under a grant that shows the approach is tool-checked before the limit too, by the level
+    /// the candidate source matched it under; if gated it takes no slot and is never re-read, so it has no delivery
+    /// access row (a search-time access row the store's search wrote stays). That omission is final, even if the grant
+    /// was revoked and reissued as <see cref="ExperienceGrantDisclosure.LessonOnly"/> before the re-read, which would have
+    /// injected it with the approach withheld. One matched under <see cref="ExperienceGrantDisclosure.LessonOnly"/>, with
+    /// no level reported, or with a level this build does not define, is treated as withholding its approach and passes
+    /// there (its lender's tools cannot be probed). Its re-read decides it: under
+    /// <see cref="ExperienceGrantDisclosure.LessonOnly"/> it is injected with its approach withheld; one whose re-read
+    /// shows the approach and fails the gate has taken a slot and writes a delivery access row, because the store
+    /// disclosed it on the re-read, but is never injected or recorded as an exposure.
     /// </para>
     /// <para>
     /// Passing the gate grants nothing: the host's approval boundary still decides every tool call.

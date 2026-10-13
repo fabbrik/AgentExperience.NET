@@ -260,6 +260,31 @@ public class ExperienceRetrievalServiceTests
         Assert.Empty(result.Excluded);
     }
 
+    [Fact]
+    public async Task The_grant_level_a_channel_matched_a_shared_candidate_under_is_carried_for_gating_only()
+    {
+        // Story 20.8: the level travels with the shared flag onto MatchedGrantDisclosure. GrantDisclosure keeps its
+        // meaning -- filled only by the pre-injection re-read -- and an owned candidate carries no level whatever the
+        // channel said.
+        var shared = Record(Id(2), scope: RequestScope with { TeamId = "team-b" });
+        var service = Service(Found(
+            new ExperienceCandidate(Record(Id(1)), 0.4d) { GrantDisclosure = ExperienceGrantDisclosure.LessonAndApproach },
+            new ExperienceCandidate(shared, 0.9d, SharedByGrant: true) { GrantDisclosure = ExperienceGrantDisclosure.LessonApproachAndArguments }));
+
+        var result = await service.RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+        Assert.Equal([Id(2), Id(1)], result.Records.Select(ranked => ranked.Record.ExperienceId));
+        Assert.Equal(ExperienceGrantDisclosure.LessonApproachAndArguments, result.Records[0].MatchedGrantDisclosure);
+        Assert.Null(result.Records[0].GrantDisclosure);
+        Assert.Null(result.Records[1].MatchedGrantDisclosure);
+        Assert.Null(result.Records[1].GrantDisclosure);
+
+        // A channel that reports no level leaves none: the gate reads that as LessonOnly.
+        var silent = await Service(Found(new ExperienceCandidate(shared, 0.9d, SharedByGrant: true))).RetrieveAsync(Request());
+        Assert.Null(Assert.Single(silent.Records).MatchedGrantDisclosure);
+    }
+
     [Theory]
     [InlineData("team-b", null, null)]
     [InlineData(null, "agent-b", null)]

@@ -181,7 +181,23 @@ public sealed record ExperienceCandidate(
     ExperienceRecord Record,
     double Relevance,
     bool SharedByGrant = false,
-    Guid? PermittingGrantId = null);
+    Guid? PermittingGrantId = null)
+{
+    /// <summary>
+    /// The <see cref="ExperienceGrant.Disclosure"/> of the grant the implementation's own predicate matched this record
+    /// under, when <see cref="SharedByGrant"/> is <see langword="true"/>: the level of the same grant
+    /// <see cref="PermittingGrantId"/> names. Set only alongside <see cref="SharedByGrant"/>, and
+    /// <see langword="null"/> for a record the requester owns.
+    /// <para>
+    /// It is what the grant said when the search ran, not a delivery decision: a consumer that renders or audits a shared
+    /// record must take the level from its own read. It lets a consumer decide early -- before a record limit, say --
+    /// what that read is likely to show. A consumer treats <see langword="null"/> on a shared candidate, from an
+    /// implementation that cannot say, and any value it does not define as
+    /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>, the least disclosure.
+    /// </para>
+    /// </summary>
+    public ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+}
 
 /// <summary>
 /// The result of <see cref="IExperienceCandidateSource.SearchAsync"/>.

@@ -442,7 +442,7 @@ public class CapabilityGateTests
     }
 
     [Fact]
-    public async Task A_borrowed_record_whose_grant_shows_the_approach_is_gated_but_was_still_delivered_to_the_reader()
+    public async Task A_borrowed_record_whose_grant_shows_the_approach_is_gated_before_the_limit_and_never_re_read()
     {
         var owner = TestScope with { TeamId = "team-a" };
         var id = InjectionRecords.Id(1);
@@ -460,10 +460,36 @@ public class CapabilityGateTests
 
         Assert.Equal(new OmittedExperience(id, InjectionOmissionReason.ToolUnavailable), Assert.Single(harness.Last.Omitted));
 
-        // A ranked candidate does not carry its grant's disclosure level, so before the record limit a borrowed
-        // record is treated as withholding its approach (it cannot be probed) and passes; the gate decides it on
-        // the re-read, and the re-read is the delivery a grant's access log records, as for a record the host's
-        // DecideInjection then denies.
+        // Story 20.8: the search reported the level it matched the grant under, so the gate decided the record before
+        // the limit. It was never re-read, so no delivery happened and there is no delivery (re-read) access row. This
+        // fake's search writes no search-time rows; a PostgreSQL search's own access row would stay.
+        Assert.Empty(harness.World.Reads);
+        Assert.Empty(log.Rows);
+    }
+
+    [Fact]
+    public async Task A_borrowed_record_from_a_source_that_reports_no_level_is_gated_on_its_re_read_and_was_still_delivered()
+    {
+        var owner = TestScope with { TeamId = "team-a" };
+        var id = InjectionRecords.Id(1);
+        var log = new InMemoryGrantAccessLog();
+        var harness = new Harness
+        {
+            Scope = TestScope with { TeamId = "team-b" },
+            ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set() },
+        };
+        harness.World.SearchReportsGrantDisclosure = false;
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(InjectionRecords.Record(id, owner, attempts: Attempts("lender_tool")));
+        harness.World.Grant(id, harness.Scope, ExperienceGrantDisclosure.LessonAndApproach);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal(new OmittedExperience(id, InjectionOmissionReason.ToolUnavailable), Assert.Single(harness.Last.Omitted));
+
+        // With no matched level, before the record limit a borrowed record is treated as withholding its approach (it
+        // cannot be probed) and passes; the gate decides it on the re-read, and the re-read is the delivery a grant's
+        // access log records, as for a record the host's DecideInjection then denies.
         Assert.Equal(id, Assert.Single(log.Rows).ExperienceId);
     }
 
@@ -880,7 +906,7 @@ public class CapabilityGateTests
     }
 
     [Fact]
-    public async Task With_run_tools_a_borrowed_record_whose_grant_shows_the_approach_is_gated_on_its_re_read()
+    public async Task With_run_tools_a_borrowed_record_whose_grant_shows_the_approach_but_whose_level_was_not_reported_is_gated_on_its_re_read()
     {
         var owner = TestScope with { TeamId = "team-a" };
         var id = InjectionRecords.Id(1);
@@ -891,6 +917,7 @@ public class CapabilityGateTests
             ReceivingAgent = new ReceivingAgentCapabilities { UseRunTools = true },
             Tools = [Tool("reader_tool")],
         };
+        harness.World.SearchReportsGrantDisclosure = false;
         harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
         harness.World.Publish(InjectionRecords.Record(id, owner, attempts: Attempts("lender_tool")));
         harness.World.Grant(id, harness.Scope, ExperienceGrantDisclosure.LessonAndApproach);
@@ -901,8 +928,8 @@ public class CapabilityGateTests
         Assert.Empty(harness.Last.InjectedExperienceIds);
         Assert.Null(harness.InjectedText());
 
-        // Passed before the limit (a ranked candidate carries no disclosure level) and gated on the re-read, which is
-        // the delivery the grant's access log records.
+        // Passed before the limit (the source reported no matched level) and gated on the re-read, which is the
+        // delivery the grant's access log records. The re-read gate uses the run's tools too.
         Assert.Equal(id, Assert.Single(log.Rows).ExperienceId);
     }
 
@@ -953,6 +980,337 @@ public class CapabilityGateTests
         Assert.Empty(harness.Last.InjectedExperienceIds);
         Assert.Equal(2, harness.Last.Omitted.Count);
         Assert.All(harness.Last.Omitted, omission => Assert.Equal(InjectionOmissionReason.ToolUnavailable, omission.Reason));
+    }
+
+    // ---- Story 20.8: borrowed records before the record limit ---------------------------------------------
+
+    [Theory]
+    [InlineData(ExperienceGrantDisclosure.LessonAndApproach)]
+    [InlineData(ExperienceGrantDisclosure.LessonApproachAndArguments)]
+    public async Task A_borrowed_record_matched_under_an_approach_showing_grant_whose_tool_is_missing_takes_no_slot(ExperienceGrantDisclosure level)
+    {
+        var borrowed = InjectionRecords.Id(1);
+        var own = InjectionRecords.Id(2);
+        var log = new InMemoryGrantAccessLog();
+        var harness = BorrowingHarness(log);
+        harness.World.Publish(InjectionRecords.Record(borrowed, Lender, attempts: Attempts("c")), relevance: 1d);
+        harness.World.Grant(borrowed, harness.Scope, level);
+        harness.World.Publish(InjectionRecords.Record(own, harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // Omitted before the limit of 1, so the reader's own record ranked below it takes the slot.
+        Assert.Equal(InjectionOutcome.Injected, harness.Last.Outcome);
+        Assert.Equal([own], harness.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(borrowed, InjectionOmissionReason.ToolUnavailable), Assert.Single(harness.Last.Omitted));
+        Assert.Equal([own], harness.World.Reads);
+
+        // No delivery (re-read) access row; this fake's search writes no search-time rows.
+        Assert.Empty(log.Rows);
+    }
+
+    [Fact]
+    public async Task A_borrowed_record_matched_under_lesson_only_passes_before_the_limit_unprobed_and_its_re_read_decides_it()
+    {
+        var borrowed = InjectionRecords.Id(1);
+        var own = InjectionRecords.Id(2);
+        var log = new InMemoryGrantAccessLog();
+        var harness = BorrowingHarness(log);
+        harness.World.Publish(InjectionRecords.Record(borrowed, Lender, attempts: Attempts("c")), relevance: 1d);
+        harness.World.Grant(borrowed, harness.Scope, ExperienceGrantDisclosure.LessonOnly);
+        harness.World.Publish(InjectionRecords.Record(own, harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // As before 20.8: its approach is withheld, so the gate cannot probe "c"; it takes the slot and is injected.
+        Assert.Equal([borrowed], harness.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(own, InjectionOmissionReason.OverRecordLimit), Assert.Single(harness.Last.Omitted) with { Detail = null });
+        Assert.DoesNotContain("c [returned]", harness.InjectedText(), StringComparison.Ordinal);
+        Assert.Equal(borrowed, Assert.Single(log.Rows).ExperienceId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData((ExperienceGrantDisclosure)99)]
+    public async Task A_borrowed_record_whose_matched_level_is_missing_or_unknown_counts_as_lesson_only(ExperienceGrantDisclosure? matched)
+    {
+        var borrowed = InjectionRecords.Id(1);
+        var own = InjectionRecords.Id(2);
+        var harness = BorrowingHarness(new InMemoryGrantAccessLog());
+        harness.World.Publish(InjectionRecords.Record(borrowed, Lender, attempts: Attempts("c")), relevance: 1d);
+
+        // The store reports the same level on the search and the re-read: none, or one this build does not define.
+        harness.World.Grant(borrowed, harness.Scope, matched);
+        harness.World.Publish(InjectionRecords.Record(own, harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // Fail closed: LessonOnly, so it passes unprobed both times and fills the one slot, its approach withheld.
+        Assert.Equal([borrowed], harness.Last.InjectedExperienceIds);
+        Assert.Equal(InjectionOmissionReason.OverRecordLimit, Assert.Single(harness.Last.Omitted).Reason);
+        Assert.DoesNotContain("c [returned]", harness.InjectedText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_borrowed_record_the_source_reports_no_level_for_still_takes_the_slot_and_is_gated_on_its_re_read()
+    {
+        var borrowed = InjectionRecords.Id(1);
+        var own = InjectionRecords.Id(2);
+        var log = new InMemoryGrantAccessLog();
+        var harness = BorrowingHarness(log);
+        harness.World.SearchReportsGrantDisclosure = false;
+        harness.World.Publish(InjectionRecords.Record(borrowed, Lender, attempts: Attempts("c")), relevance: 1d);
+        harness.World.Grant(borrowed, harness.Scope, ExperienceGrantDisclosure.LessonAndApproach);
+        harness.World.Publish(InjectionRecords.Record(own, harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // Treated as LessonOnly before the limit, so it takes the slot; the re-read reports LessonAndApproach and the
+        // gate omits it there, leaving the slot empty -- the behaviour 20.7 shipped, for a source that cannot say.
+        Assert.Empty(harness.Last.InjectedExperienceIds);
+        Assert.Equal(
+            [
+                new OmittedExperience(own, InjectionOmissionReason.OverRecordLimit),
+                new OmittedExperience(borrowed, InjectionOmissionReason.ToolUnavailable),
+            ],
+            harness.Last.Omitted.Select(omission => omission with { Detail = null }));
+        Assert.Equal(borrowed, Assert.Single(log.Rows).ExperienceId);
+    }
+
+    [Fact]
+    public async Task Owned_records_are_gated_exactly_as_before_whatever_level_a_source_attaches_to_them()
+    {
+        // A source that wrongly attaches a level to an owned candidate changes nothing: retrieval carries a level only
+        // with the shared flag.
+        var plain = new Harness { ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set("a") }, Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 } };
+        PublishFive(plain);
+        await plain.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var labelled = new Harness { ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set("a") }, Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 } };
+        for (var i = 1; i <= 5; i++)
+        {
+            labelled.World.Publish(Verified(InjectionRecords.Id(i), i <= 3 ? "z" : "a"), relevance: 1d - (i * 0.1d));
+        }
+
+        labelled.World.LabelOwnedCandidates = ExperienceGrantDisclosure.LessonOnly;
+        await labelled.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([InjectionRecords.Id(4)], plain.Last.InjectedExperienceIds);
+        Assert.Equal(plain.InjectedText(), labelled.InjectedText());
+        Assert.Equal(plain.Last.Omitted, labelled.Last.Omitted);
+        Assert.Equal(plain.Last.InjectedExperienceIds, labelled.Last.InjectedExperienceIds);
+    }
+
+    [Fact]
+    public async Task A_gate_that_throws_before_the_limit_fails_the_invocation_exactly_as_one_that_throws_on_the_re_read()
+    {
+        var id = InjectionRecords.Id(1);
+
+        // Before the limit: the ranked record's approach cannot be read.
+        var early = new Harness { ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set("a") } };
+        early.World.Publish(InjectionRecords.Record(id, TestScope, attempts: ThrowingAttempts()));
+        await early.Agent().RunAsync("refund ticket stuck on a lock");
+
+        // On the re-read: the ranked record is fine, the record as it stands now is not.
+        var late = new Harness { ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set("a") } };
+        late.World.Publish(Verified(id, "a"));
+        late.World.Store(InjectionRecords.Record(id, TestScope, attempts: ThrowingAttempts()) with { Revision = 2 });
+        await late.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Empty(early.World.Reads);
+        Assert.Equal([id], late.World.Reads);
+        foreach (var result in new[] { early.Last, late.Last })
+        {
+            Assert.Equal(InjectionOutcome.Failed, result.Outcome);
+            Assert.Empty(result.InjectedExperienceIds);
+            Assert.Equal(0, result.PayloadBytes);
+            Assert.IsType<InvalidOperationException>(result.Failure!.Exception);
+        }
+
+        Assert.Null(early.InjectedText());
+        Assert.Null(late.InjectedText());
+        Assert.Equal("The final eligibility check threw System.InvalidOperationException.", early.Last.Failure!.Reason);
+        Assert.Equal(late.Last.Failure!.Reason, early.Last.Failure.Reason);
+        Assert.Equal(late.Last.Omitted, early.Last.Omitted);
+    }
+
+    [Fact]
+    public async Task With_run_tools_a_tool_added_by_a_provider_registered_before_this_one_is_seen_and_one_registered_after_is_not()
+    {
+        var experience = new Harness { ReceivingAgent = new ReceivingAgentCapabilities { UseRunTools = true } };
+        experience.World.Publish(Verified(InjectionRecords.Id(1), "provider_tool"));
+
+        var before = new ChatClientAgent(experience.Client, new ChatClientAgentOptions
+        {
+            AIContextProviders = [new ToolAddingProvider(Tool("provider_tool")), experience.Provider()],
+        });
+        await before.RunAsync("refund ticket stuck on a lock");
+        Assert.Equal([InjectionRecords.Id(1)], experience.Last.InjectedExperienceIds);
+        Assert.Empty(experience.Last.Omitted);
+
+        var after = new ChatClientAgent(experience.Client, new ChatClientAgentOptions
+        {
+            AIContextProviders = [experience.Provider(), new ToolAddingProvider(Tool("provider_tool"))],
+        });
+        await after.RunAsync("refund ticket stuck on a lock");
+        Assert.Empty(experience.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(InjectionRecords.Id(1), InjectionOmissionReason.ToolUnavailable), Assert.Single(experience.Last.Omitted));
+
+        // The model still got the tool: it was the provider's position, not the tool, that kept the record out.
+        Assert.Contains(experience.Client.LastOptions!.Tools!, tool => tool.Name == "provider_tool");
+    }
+
+    [Fact]
+    public async Task A_borrowed_record_matched_under_an_approach_showing_grant_whose_tool_is_too_risky_takes_no_slot()
+    {
+        var borrowed = InjectionRecords.Id(1);
+        var own = InjectionRecords.Id(2);
+        var log = new InMemoryGrantAccessLog();
+        var harness = new Harness
+        {
+            Scope = TestScope with { TeamId = "team-b" },
+            ReceivingAgent = new ReceivingAgentCapabilities
+            {
+                MaxRiskClass = ToolRiskClass.Medium,
+                ToolRiskClasses = Classes(("a", ToolRiskClass.Low), ("c", ToolRiskClass.High)),
+            },
+            Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+        };
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        harness.World.Publish(InjectionRecords.Record(borrowed, Lender, attempts: Attempts("c")), relevance: 1d);
+        harness.World.Grant(borrowed, harness.Scope, ExperienceGrantDisclosure.LessonAndApproach);
+        harness.World.Publish(InjectionRecords.Record(own, harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([own], harness.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(borrowed, InjectionOmissionReason.RiskClassExceeded), Assert.Single(harness.Last.Omitted));
+        Assert.Equal([own], harness.World.Reads);
+        Assert.Empty(log.Rows);
+    }
+
+    [Fact]
+    public async Task With_run_tools_a_borrowed_record_matched_under_lesson_and_approach_whose_tool_the_run_lacks_takes_no_slot()
+    {
+        var borrowed = InjectionRecords.Id(1);
+        var own = InjectionRecords.Id(2);
+        var harness = new Harness
+        {
+            Scope = TestScope with { TeamId = "team-b" },
+            ReceivingAgent = new ReceivingAgentCapabilities { UseRunTools = true },
+            Tools = [Tool("a")],
+            Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+        };
+        harness.World.Publish(InjectionRecords.Record(borrowed, Lender, attempts: Attempts("c")), relevance: 1d);
+        harness.World.Grant(borrowed, harness.Scope, ExperienceGrantDisclosure.LessonAndApproach);
+        harness.World.Publish(InjectionRecords.Record(own, harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([own], harness.Last.InjectedExperienceIds);
+        Assert.Equal(new OmittedExperience(borrowed, InjectionOmissionReason.ToolUnavailable), Assert.Single(harness.Last.Omitted));
+        Assert.Equal([own], harness.World.Reads);
+    }
+
+    [Fact]
+    public async Task With_no_gate_a_source_that_reports_matched_levels_and_one_that_does_not_give_identical_results()
+    {
+        var reporting = new Harness { Scope = TestScope with { TeamId = "team-b" } };
+        var silent = new Harness { Scope = TestScope with { TeamId = "team-b" } };
+        silent.World.SearchReportsGrantDisclosure = false;
+        var logs = new List<InMemoryGrantAccessLog>();
+        foreach (var harness in new[] { reporting, silent })
+        {
+            var log = new InMemoryGrantAccessLog();
+            logs.Add(log);
+            harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+            harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), Lender, attempts: Attempts("c")), relevance: 1d);
+            harness.World.Grant(InjectionRecords.Id(1), harness.Scope, ExperienceGrantDisclosure.LessonAndApproach);
+            harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), Lender, attempts: Attempts("d")), relevance: 0.8d);
+            harness.World.Grant(InjectionRecords.Id(2), harness.Scope, ExperienceGrantDisclosure.LessonOnly);
+            harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(3), harness.Scope, attempts: Attempts("a")), relevance: 0.5d);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        Assert.NotNull(reporting.InjectedText());
+        Assert.Equal(reporting.InjectedText(), silent.InjectedText());
+        Assert.Equal(reporting.Last.InjectedExperienceIds, silent.Last.InjectedExperienceIds);
+        Assert.Equal(reporting.Last.Omitted, silent.Last.Omitted);
+        Assert.Equal(reporting.Last.PayloadBytes, silent.Last.PayloadBytes);
+        Assert.Equal(
+            logs[0].Rows.Select(row => (row.ExperienceId, row.Disclosure)),
+            logs[1].Rows.Select(row => (row.ExperienceId, row.Disclosure)));
+        Assert.Equal(2, logs[0].Rows.Count);
+    }
+
+    [Fact]
+    public async Task A_re_read_that_reports_the_record_no_longer_shared_clears_the_matched_level_the_host_sees()
+    {
+        var id = InjectionRecords.Id(1);
+        var reader = TestScope with { TeamId = "team-b" };
+        var seen = new List<ExperienceInjectionDecisionContext>();
+        var harness = new Harness
+        {
+            Scope = reader,
+            ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set("a") },
+            Decide = context =>
+            {
+                seen.Add(context);
+                return InjectionDecision.Permit;
+            },
+        };
+
+        // Indexed as the lender's, matched through a LessonAndApproach grant; stored, by the re-read, in the reader's own scope.
+        harness.World.Publish(InjectionRecords.Record(id, Lender, attempts: Attempts("a")));
+        harness.World.Grant(id, reader, ExperienceGrantDisclosure.LessonAndApproach);
+        harness.World.Store(InjectionRecords.Record(id, reader, attempts: Attempts("a")));
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        var context = Assert.Single(seen);
+        Assert.False(context.SharedByGrant);
+        Assert.False(context.Candidate.SharedByGrant);
+        Assert.Null(context.Candidate.MatchedGrantDisclosure);
+        Assert.Null(context.Candidate.GrantDisclosure);
+        Assert.Equal([id], harness.Last.InjectedExperienceIds);
+    }
+
+    private static readonly Scope Lender = TestScope with { TeamId = "team-a" };
+
+    /// <summary>A reader in team-b with tools {a}, a limit of 1, and the grant access log wired.</summary>
+    private static Harness BorrowingHarness(InMemoryGrantAccessLog log)
+    {
+        var harness = new Harness
+        {
+            Scope = TestScope with { TeamId = "team-b" },
+            ReceivingAgent = new ReceivingAgentCapabilities { AvailableTools = Set("a") },
+            Limits = ExperienceInjectionLimits.Default with { MaxRecords = 1 },
+        };
+        harness.World.Auditing = new ExperienceGrantAuditing(log, _ => { });
+        return harness;
+    }
+
+    /// <summary>One error-free attempt whose tool calls throw when read, so the gate cannot read the approach.</summary>
+    private static IReadOnlyList<Attempt> ThrowingAttempts() =>
+        [Attempts("a")[0] with { ToolCalls = new ThrowingCalls() }];
+
+    /// <summary>A tool call list that throws on every read.</summary>
+    private sealed class ThrowingCalls : IReadOnlyList<ToolCallRecord>
+    {
+        public ToolCallRecord this[int index] => throw new InvalidOperationException("the calls cannot be read");
+
+        public int Count => throw new InvalidOperationException("the calls cannot be read");
+
+        public IEnumerator<ToolCallRecord> GetEnumerator() => throw new InvalidOperationException("the calls cannot be read");
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>An <see cref="AIContextProvider"/> that adds one tool to the invocation.</summary>
+    private sealed class ToolAddingProvider(AITool tool) : AIContextProvider
+    {
+        protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default) =>
+            new(new AIContext { Tools = [tool] });
     }
 
     // ---- Helpers -------------------------------------------------------------------------------------

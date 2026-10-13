@@ -2057,3 +2057,13 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 **Given** a receiving-agent capability gate
 **When** ranked records are selected for the block
 **Then** the gate runs before the record limit, so a record whose working approach uses a tool the agent lacks never takes a slot and lower-ranked eligible records backfill from a bounded wider window. With `UseRunTools`, the available tools are this run's own MAF tools, intersected with any declared set. With no gate configured, output is byte-identical. The transfer experiment enables it through a recorded pre-registration amendment, made before any live result.
+
+### Story 20.8: Gate Borrowed Lessons Before the Record Limit
+
+**Traces:** FR5 · **Depends on:** 20.7 · **Added:** 2026-10-13, from 20.7's deferred work: a borrowed record passed the pre-limit gate unprobed and could still take a slot it then lost at the re-read
+
+**Acceptance Criteria:**
+
+**Given** a receiving-agent capability gate and a record shared by a grant whose disclosure shows the approach
+**When** ranked records are selected for the block
+**Then** the gate checks that record's working tools before the record limit, using the disclosure level the candidate source matched it under, so a borrowed lesson the agent cannot act on takes no slot and a lower-ranked one backfills. A borrowed record whose grant withholds the approach still passes unprobed. The re-read's level stays authoritative for rendering, audit and the final gate. With no gate configured, output is byte-identical.

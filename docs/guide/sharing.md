@@ -198,8 +198,12 @@ A store that says a record is shared but reports no level is rendered as `Lesson
 a record but never widen its level.
 
 The level is read from the same lateral join that names the permitting grant and comes back on
-`ExperienceRecordGetResult.GrantDisclosure` (`null` for the reader's own record); the search channels read it too, but
-put it only on the access row, never on an `ExperienceCandidate`. It reaches the host's risk policy as
+`ExperienceRecordGetResult.GrantDisclosure` (`null` for the reader's own record). The search channels read it too and
+put it on the access row and on the borrowed `ExperienceCandidate` (`GrantDisclosure`, `null` for the reader's own
+record), which Core carries on as `RankedExperience.MatchedGrantDisclosure`. That is the level the search matched the
+record under, used only to apply the capability gate before the record limit
+([Injection](injection.md)); `RankedExperience.GrantDisclosure`, which rendering and the host decision read, is still
+filled only by the pre-injection re-read. It reaches the host's risk policy as
 `ExperienceInjectionDecisionContext.GrantDisclosure`. It is stored on the grant, copied onto its `Issued` and `Revoked`
 events and onto every access row, and **cannot be changed**: the database refuses an `UPDATE` of it, so to widen or
 narrow it, revoke the grant and issue a new one — the one-active-grant rule means the revoke comes first, so the
