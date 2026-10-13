@@ -6,6 +6,42 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Verification: built-in verifiers (story 21.2)
+
+- **`ExperienceVerifiers`** (new static class): ready-made `AgentExperienceOptions.Verify` callbacks, each returning
+  `Verify`'s exact delegate type, that decide only from facts the host's code produced, never from model text:
+  - `ToolSucceeded(toolName, checkId?, artifactRevision?)`: passes when the run's last call to `toolName` (ordinal,
+    across all attempts, by sequence) returned, fails when it failed (thrown, or classified by `ClassifyToolResult`),
+    and stores nothing when there was no call. Calls are ordered by attempt, then by call sequence within the attempt.
+    It never reads a result, so it relies on capture (`ClassifyToolResult`) to mark return-value failures. Evidence kind
+    `ToolOutcome`, producer `tool:<toolName>`, check ID `toolName` by default.
+  - `Check(checkId, check, artifactRevision?)`: the host's own `bool?` verdict (`null` stores nothing). Kind
+    `HostCheck`, producer `host`.
+  - `Approval(checkId, approve, artifactRevision?)`: a person's decision, as the new public record
+    **`ExperienceApproval(string ApproverId, bool Approved)`** (`null` stores nothing). Kind `HumanApproval`; the
+    approver ID is stored verbatim as the producer, so pass an opaque identifier, not an email address. A blank
+    approver is reported through the `Verify` failure path and nothing is stored.
+  - `AllOf(...)` runs them in order, stopping at the first `null` (then nothing is stored), and returns one
+    verification with every check and all the evidence under the one explicit revision (else `unversioned`).
+    Duplicate check IDs, a `null` check or two different explicit revisions throw (reported, not stored).
+    `AnyOf(...)` returns the first verification that passed (every required check has `Pass` evidence of an accepted
+    kind and none other), else the first one returned, else `null`.
+  - `artifactRevision` defaults to **`ExperienceVerifiers.UnversionedRevision`** (`"unversioned"`); pass a real build ID
+    or commit when the artifact changes between runs.
+- **`ExperienceToolResultClassifiers`** (new static class): ready-made `ClassifyToolResult` functions returning
+  single error-class tokens, for the named tools only (`ExitCode("run_tests")`) or, with no names, every tool.
+  `ExitCode(...)` returns `exit N` for a non-zero exit code (`exit=N`, `exit N`, `exit code N`, `exit status N`,
+  `exited with code N`, `returncode=N`, and the JSON `exitCode`, `exit_code`, `returnCode`, `return_code`); a non-zero
+  code no token can carry (more than six digits, such as a Windows status code, or not an integer) is
+  `ToolReportedError`. `HttpStatus(...)` returns `HTTP N` for a status from 400 to 599 (a leading `HTTP N` or
+  `status N`, or the JSON `status`, `statusCode`, `status_code`). Both read strings, `TextContent`, `JsonElement`s and
+  other objects serialized as capture serializes them. A JSON object is read by its top-level properties only, whatever
+  its size; a JSON array names no code; in other text the last match counts.
+- Docs: the README quick start now verifies with `ExperienceVerifiers.ToolSucceeded("run_tests")` and the
+  `ExitCode("run_tests")` classifier, while the runnable quick-start sample keeps its own hand-written verifier (its
+  output is unchanged). The deployment guide has a [Built-in verifiers](docs/guide/deployment.md#built-in-verifiers)
+  section, and the capture guide describes the classifiers.
+
 ### Setup: a five-line first run (story 21.1)
 
 - **Behaviour change: the task ID defaults to the agent's name.** Under the one-call setup, when neither

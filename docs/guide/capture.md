@@ -416,6 +416,26 @@ var options = new ExperienceCaptureOptions
 };
 ```
 
+**Ready-made classifiers.** `ExperienceToolResultClassifiers.ExitCode(toolNames)` returns `exit N` for a non-zero
+exit code (`exit=N`, `exit N`, `exit code N`, `exit status N`, `exited with code N`, `returncode=N`, `"exitCode": N`,
+`"exit_code": N`, `"returnCode": N`, `"return_code": N`), and `HttpStatus(toolNames)` returns `HTTP N` for a status
+from 400 to 599 (a leading `HTTP N` or `status N`, or `"status": N` or `"statusCode": N`); both return `null`
+otherwise. Matching ignores case.
+- A JSON object (a `JsonElement`, a string that parses as one, or any other object, serialized as capture serializes
+  it) is read by its top-level properties only, whatever its size: the first of `exitCode`, `exit_code`, `returnCode`,
+  `return_code` (or `status`, `statusCode`, `status_code`) holding a number or a numeric string. An exit code quoted
+  inside its output does not count. A JSON array names no code.
+- Other text (a string, a `TextContent`, or a list of them) is matched whole up to 1 MiB (beyond that, its first and
+  last 64 KiB), and the **last** match counts, so a final `exit=1` wins over an earlier step's `exit 0`.
+- A non-zero exit code no token can carry is recorded as `ToolReportedError`: more than six digits (Windows status
+  codes such as `-1073741819`) or not an integer (`1.0`, `1e0`). Zero in any form is success.
+- Give the tool names (ordinal match) to leave every other tool's result alone; with none, a classifier applies to every
+  tool.
+
+Under the one-call setup, set one with `options.Capture = capture => capture.ClassifyToolResult =
+ExperienceToolResultClassifiers.ExitCode("run_tests");`, and see
+[Built-in verifiers](deployment.md#built-in-verifiers) to verify a run by its last test call.
+
 The classifier gets an `ExperienceToolResultContext`: the call's `ToolCallId` (which tells concurrent calls apart), the
 tool's registered `ToolName`, a read-only view of the captured `Arguments`, and the raw `Result` the tool returned,
 before it is converted to text (a `string`, a `JsonElement`, or any other object). It gets no other model text.

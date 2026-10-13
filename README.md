@@ -94,16 +94,16 @@ next preview (unreleased); from `0.1.0-preview.7` to `0.1.0-preview.10`, set `Re
 [explicit wiring](docs/guide/deployment.md#explicit-wiring).
 Install `AgentExperience.MicrosoftAgentFramework` and `AgentExperience.Storage.InMemory` (`--prerelease`), plus
 `Microsoft.Extensions.DependencyInjection` for `BuildServiceProvider` if your app does not already have it.
-You supply `chatClient` (any `Microsoft.Extensions.AI` `IChatClient`) and `RunTestsAsync`, your own check of the run.
+You supply `chatClient` (any `Microsoft.Extensions.AI` `IChatClient`) and `RunTestsAsync`, your own test run, given to
+the agent as its `run_tests` tool and returning text such as `exit=0`.
 The in-memory storage and `UseDevelopmentIdentity()` refuse any environment but `Development`, `Test` or `Testing`,
 read from the host environment, else `DOTNET_ENVIRONMENT`, else `ASPNETCORE_ENVIRONMENT`; a console app with none set,
 like this one, needs nothing.
 
 ```csharp
-using AgentExperience.Abstractions;
-using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
 var services = new ServiceCollection();
@@ -111,25 +111,31 @@ services.AddAgentExperience(options =>
 {
     // Who the run is for: one fixed local identity, for development and tests only (see below for production).
     options.UseDevelopmentIdentity();
-    // Your own checks, never the model's word. Without Verify, runs are captured but nothing is stored.
-    options.Verify = async (context, cancellationToken) =>
-    {
-        var result = await RunTestsAsync(context.Run, cancellationToken) ? CheckResult.Pass : CheckResult.Fail;
-        return new ExperienceVerification(
-            RequiredChecks: [new RequiredCheck("tests-pass", "TestResult")],
-            Evidence: [context.CreateEvidence("tests-pass", "TestResult", result, producer: "ci", "build-42")],
-            ArtifactRevision: "build-42");
-    };
+    // Your own checks, never the model's word: the run passes when its last run_tests call succeeded.
+    // Without Verify, runs are captured but nothing is stored.
+    options.Verify = ExperienceVerifiers.ToolSucceeded("run_tests");
+    // run_tests reports failure in its result ("exit=3"), not by throwing:
+    // a non-zero exit code marks the call failed.
+    options.Capture = capture =>
+        capture.ClassifyToolResult = ExperienceToolResultClassifiers.ExitCode("run_tests");
 }).UseInMemoryStorageForDevelopment();
 await using var provider = services.BuildServiceProvider();
 
 // Inject the lessons that apply before each run; capture, verify and store each run after it.
-AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket").AsBuilder().UseAgentExperience(provider).Build();
+AITool runTests = AIFunctionFactory.Create(RunTestsAsync, "run_tests");
+AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket", tools: [runTests])
+    .AsBuilder().UseAgentExperience(provider).Build();
 var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
 ```
 
-The first run finds nothing to inject. After it, `Verify` runs your check: a pass stores the lesson as `Validated`, a
-fail as `Quarantined` (never reused). The next run on a similar task gets the lesson if its task text shares at least three
+The first run finds nothing to inject. After it, `Verify` looks at the run's last `run_tests` call: one that returned
+stores the lesson as `Validated`, one that failed (it threw, or returned a non-zero exit code) as `Quarantined` (never
+reused), and a run that never called it is not stored. The next run's lesson names every call, so a run that failed with
+`exit=3` and then passed shows `run_tests [failed: exit 3], run_tests [returned]`. For a check of your own or a
+person's sign-off, use `ExperienceVerifiers.Check(...)` or `ExperienceVerifiers.Approval(...)` (combine them with
+`AllOf`/`AnyOf`; see [Built-in verifiers](docs/guide/deployment.md#built-in-verifiers)), and pass a real
+`artifactRevision` (a build or commit) when the code under test changes between runs.
+The next run on a similar task gets the lesson if its task text shares at least three
 terms with the stored task ID, task summary and lesson (fewer when it has fewer; stopwords and one-letter words do not
 count, and PostgreSQL matches word stems) and the
 lesson clears the confidence floor (0.5; a new lesson starts at 2/3). The task text is the user's latest message (joined to
