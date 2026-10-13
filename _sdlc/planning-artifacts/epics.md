@@ -2067,3 +2067,13 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 **Given** a receiving-agent capability gate and a record shared by a grant whose disclosure shows the approach
 **When** ranked records are selected for the block
 **Then** the gate checks that record's working tools before the record limit, using the disclosure level the candidate source matched it under, so a borrowed lesson the agent cannot act on takes no slot and a lower-ranked one backfills. A borrowed record whose grant withholds the approach still passes unprobed. The re-read's level stays authoritative for rendering, audit and the final gate. With no gate configured, output is byte-identical.
+
+### Story 20.9: Let a Host Say a Returned Tool Call Failed
+
+**Traces:** FR1, FR5 · **Depends on:** 20.3 · **Added:** 2026-10-13, from 20.3's deferred work: many real tools report failure by return value, and capture records those calls as `[returned]`
+
+**Acceptance Criteria:**
+
+**Given** a host that sets `ExperienceCaptureOptions.ClassifyToolResult`
+**When** a tool call returns a result the classifier names an error class for
+**Then** the captured call carries that class as its error, so its `Tried:` marker reads `[failed: <class>]` and the reflectors see it as failed, while the result the model receives is unchanged. A class that is not a single error-class token the `Tried:` line can show (for example a name ending in `Error` or `Exception`, or `exit N`) is replaced by the fixed fallback class `ToolReportedError`, and a classifier that throws leaves the call recorded as returned. Both are reported through `OnCaptureFailure`. Without a classifier, capture is byte-identical.

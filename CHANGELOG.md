@@ -6,6 +6,37 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Capture: let a host say a returned tool call failed (story 20.9)
+
+- **`ExperienceCaptureOptions.ClassifyToolResult`** (new, default `null`): a
+  `Func<ExperienceToolResultContext, string?>` that runs in the function middleware after a tool *returned*. `null`
+  records the call as returned, as before; an error class records it as failed, with `ToolCallRecord.Error` set to the
+  class and `Result` still the text the model saw. The class then flows through the paths a thrown exception's type
+  name already takes: the claims-v3 provenance signature, the call's `[failed: <class>]` marker on `Tried:` lines, and
+  the default and model-backed reflectors' input. A tool that reports failure in its result (an exit code, `{"ok":false}`)
+  no longer has to throw to be marked failed.
+- **`ExperienceToolResultContext`** (new public sealed class with `required init` properties): the call's
+  `ToolCallId` (which tells concurrent calls apart), the tool's registered `ToolName`, a read-only view of the captured
+  `Arguments`, and the raw `Result` before text conversion. Nothing else reaches the classifier. The arguments are raw,
+  before sanitization, so a classifier must not log them; it must not change `Result` or argument values either.
+- **`ExperienceCaptureFailureStage.ToolResultClassification`** (new enum member, appended): classifier problems are
+  reported there, so they never hide a later `ToolCall` report of a call that could not be recorded.
+- **The class must be one token a `Tried:` line can show:** a type-like name ending in `Error` or `Exception`
+  (`LockHeldError`, `ExitCodeError`) or `exit N` (`exit 3`); `HTTP N`, `status N`, errno names and `Timeout` also
+  qualify. It must be exactly the first token the `Tried:` line's classifier finds in it, at most 40 characters.
+  Anything else is recorded as **`ExperienceCaptureOptions.ToolReportedErrorClass`** (new constant,
+  `"ToolReportedError"`, rendered `[failed: ToolReportedError]`) and reported once per run through `OnCaptureFailure`
+  at stage `ToolResultClassification`, with a fixed reason. Surrounding white space is trimmed; case and form are not
+  forgiven (`exit 3`, not `Exit 3`). A classifier that throws leaves the call recorded as returned and is reported at
+  stage `ToolResultClassification`: `Reason` names only the exception type, `Exception` carries the object. It runs
+  inline before the result goes back to the model (keep it fast; its time is not counted in the call's `Duration`),
+  never replaces the result, and is not called for a tool that throws or a call finishing after its run was finalized.
+- With no classifier, captured runs, records, blocks and signatures are unchanged. No change to `ToolCallRecord`,
+  storage, the signing encoding or the `Tried:` line's tokenizer. The quick-start sample's tool still throws.
+- Docs: [Capture](docs/guide/capture.md#tools-that-report-failure-in-their-result) shows a classifier for a non-zero
+  exit code; [Injection](docs/guide/injection.md#what-each-attempt-tried-and-what-worked) points to it where the
+  `[returned]` marker is described.
+
 ### Injection: gate borrowed lessons before the record limit (story 20.8)
 
 - **`ExperienceCandidate.GrantDisclosure`** (new init-only property, default `null`): the level of the grant

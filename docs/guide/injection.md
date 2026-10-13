@@ -338,9 +338,11 @@ same thing whichever reflector wrote the lesson.
   The marker comes from the call's captured error: `[returned]` when it has none, otherwise `[failed: <class>]`, where
   the class is only the *first* token of the error's class by the rule below (`[failed: TimeoutException]`, not
   `TimeoutException, exit 2`), so a marker is bounded and never holds the `, ` between calls; it is never an excerpt,
-  even under `FailureDetail = Excerpt` (`[failed]` under `None`). `[returned]` means only that the tool returned
-  rather than threw: **a call counts as failed only when the tool throws**, so a tool that reports failure in its
-  result (an exit code in a returned string, say) is marked `[returned]`. A borrowed record's line has no markers:
+  even under `FailureDetail = Excerpt` (`[failed]` under `None`). **A call counts as failed when the tool
+  throws, or when capture's `ClassifyToolResult` names an error class for the result it returned** (shown as, say,
+  `[failed: exit 3]`; see [Tools that report failure in their result](capture.md#tools-that-report-failure-in-their-result)).
+  Every other call is marked `[returned]`, so without a classifier a tool that reports failure in its result (an exit
+  code in a returned string, say) is marked `[returned]`. A borrowed record's line has no markers:
   the grant consents to the working attempt's calls, not to any failure class.
 - **The byte budget.** These lines make a record bigger than the single `Approach:` line did, so more of its budget
   goes to them and a block can drop whole records sooner. `MaxTriedAttempts` and the per-name and per-line bounds cap

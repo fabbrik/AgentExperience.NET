@@ -387,9 +387,35 @@ internal sealed class CaptureScope
         }
     }
 
-    /// <summary>Records a tool call that returned <paramref name="result"/>.</summary>
+    /// <summary>
+    /// Records a tool call that returned <paramref name="result"/>: as returned, or -- when the host's
+    /// <see cref="ExperienceCaptureOptions.ClassifyToolResult"/> names an error class for it -- as failed with that class,
+    /// keeping the result text the model saw.
+    /// </summary>
     internal void CompleteToolCall(PendingToolCall pending, object? result)
     {
+        // A call finishing after finalization took its snapshot is not recorded (see AddToolCall), so it is not
+        // classified either: the host's classifier runs only for a call capture can still record.
+        if (IsFinalized)
+        {
+            return;
+        }
+
+        // The call's duration ends when the tool returned, not after the host's classifier ran.
+        TimeSpan duration;
+        try
+        {
+            duration = _options.TimeProvider.GetElapsedTime(pending.StartTimestamp);
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(ExperienceCaptureFailureStage.ToolCall, $"Measuring a tool call's duration threw {ex.GetType().FullName}; the tool call is not recorded.", ex);
+            return;
+        }
+
+        // On the raw result, before it is converted to text; never replaces what the model receives.
+        var error = Classify(pending, result);
+
         string? text;
         try
         {
@@ -407,8 +433,70 @@ internal sealed class CaptureScope
             return;
         }
 
-        AddToolCall(pending, text, error: null);
+        AddToolCall(pending, text, error, duration);
     }
+
+    /// <summary>
+    /// The error class the host's <see cref="ExperienceCaptureOptions.ClassifyToolResult"/> names for a returned call:
+    /// <see langword="null"/> when there is no classifier, it returns <see langword="null"/>, or it throws (reported,
+    /// type only); the class itself when it is one error-class token; otherwise
+    /// <see cref="ExperienceCaptureOptions.ToolReportedErrorClass"/>, reported without the host's text.
+    /// </summary>
+    private string? Classify(PendingToolCall pending, object? result)
+    {
+        if (_options.ClassifyToolResult is not { } classify)
+        {
+            return null;
+        }
+
+        string? errorClass;
+        try
+        {
+            errorClass = classify(new ExperienceToolResultContext
+            {
+                ToolCallId = pending.ToolCallId,
+                ToolName = pending.ToolName,
+                Arguments = ReadOnlyView(pending.Arguments),
+                Result = result,
+            });
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(
+                ExperienceCaptureFailureStage.ToolResultClassification,
+                $"ClassifyToolResult threw {ex.GetType().FullName}; the tool call is recorded as returned.",
+                ex);
+            return null;
+        }
+
+        if (errorClass is null)
+        {
+            return null;
+        }
+
+        // Surrounding white space is forgiven; case and form are not ("exit 3", never "Exit 3" or "exit code 3").
+        errorClass = errorClass.Trim();
+        if (Reflections.ErrorClass.IsSingleToken(errorClass))
+        {
+            return errorClass;
+        }
+
+        ReportFailure(
+            ExperienceCaptureFailureStage.ToolResultClassification,
+            InvalidClassReason,
+            exception: null);
+        return ExperienceCaptureOptions.ToolReportedErrorClass;
+    }
+
+    /// <summary>The fixed reason reported when the host's classifier names a class that is not one error-class token.</summary>
+    internal static readonly string InvalidClassReason =
+        $"ClassifyToolResult returned a class that is not a single error-class token; the tool call is recorded as failed with {ExperienceCaptureOptions.ToolReportedErrorClass}.";
+
+    /// <summary>A view of captured arguments that a host cannot cast back to a mutable dictionary.</summary>
+    private static IReadOnlyDictionary<string, object?> ReadOnlyView(IReadOnlyDictionary<string, object?> arguments) =>
+        arguments is IDictionary<string, object?> mutable
+            ? new System.Collections.ObjectModel.ReadOnlyDictionary<string, object?>(mutable)
+            : arguments;
 
     /// <summary>Records a tool call that threw <paramref name="exception"/> (type name only).</summary>
     internal void FailToolCall(PendingToolCall pending, Exception exception) =>
@@ -837,7 +925,7 @@ internal sealed class CaptureScope
         }
     }
 
-    private void AddToolCall(PendingToolCall pending, string? result, string? error)
+    private void AddToolCall(PendingToolCall pending, string? result, string? error, TimeSpan? duration = null)
     {
         try
         {
@@ -846,7 +934,7 @@ internal sealed class CaptureScope
                 ToolName: pending.ToolName,
                 Arguments: pending.Arguments,
                 StartedAt: pending.StartedAt,
-                Duration: _options.TimeProvider.GetElapsedTime(pending.StartTimestamp),
+                Duration: duration ?? _options.TimeProvider.GetElapsedTime(pending.StartTimestamp),
                 Result: result,
                 Error: error);
 
