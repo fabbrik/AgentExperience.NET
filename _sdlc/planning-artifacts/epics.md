@@ -2077,3 +2077,94 @@ So that retrieval changes are judged by numbers, not by the unit tests' hand-pic
 **Given** a host that sets `ExperienceCaptureOptions.ClassifyToolResult`
 **When** a tool call returns a result the classifier names an error class for
 **Then** the captured call carries that class as its error, so its `Tried:` marker reads `[failed: <class>]` and the reflectors see it as failed, while the result the model receives is unchanged. A class that is not a single error-class token the `Tried:` line can show (for example a name ending in `Error` or `Exception`, or `exit N`) is replaced by the fixed fallback class `ToolReportedError`, and a classifier that throws leaves the call recorded as returned. Both are reported through `OnCaptureFailure`. Without a classifier, capture is byte-identical.
+
+## Epic 21: Make the First Run Worth It
+
+Found by the 2026-10-13 critique, which the maintainer approved. The engine is rigorous, but a MAF developer's first contact is a quick start that needs an identity resolver, a task ID, a verifier that builds evidence records, and two wiring lines, where forgetting one silently stores lessons that are never injected. Without a verifier nothing is stored, so the library appears to do nothing. Retrieval defaults to word overlap even when the app already has an embedding generator. There is no way to see what was learned, and nothing explains why to choose this over MAF's own memory options. This epic removes that ceremony without weakening the core rule: a lesson is stored only on evidence the host's own code produced, never on the model's word.
+
+### Story 21.1: A Five-Line Setup
+
+**Traces:** FR1, FR5 · **Depends on:** — · **Added:** 2026-10-13
+
+**Acceptance Criteria:**
+
+**Given** a MAF developer with an `IChatClient`
+**When** they follow the README quick start
+**Then** setup is about five lines:
+- an explicit development identity helper replaces the hand-built `AuthorizationContext`/`Scope` for local use, and still refuses outside Development/Test/Testing like the in-memory store;
+- the task ID defaults to the agent's name when none is resolved;
+- one documented call wires both injection and capture, so the "stores but never injects" mistake cannot happen silently: either the single call wires both, or a run with capture but no injection provider reports it once.
+
+Production setup keeps its explicit identity and scope requirements, and existing wiring keeps working unchanged.
+
+### Story 21.2: Built-in Verifiers
+
+**Traces:** FR2, FR3 · **Depends on:** 20.9 · **Added:** 2026-10-13
+
+**Acceptance Criteria:**
+
+**Given** a host that has no evidence plumbing of its own
+**When** it configures a verifier from a small built-in set
+**Then** the run is verified from facts the host's own code produced, never from the model's text:
+- a named tool's last call returned and was not classified failed (20.9);
+- an exit code, or an HTTP status, from a named tool's result;
+- a host-supplied check delegate;
+- an explicit human approval.
+
+Verifiers compose with all-of and any-of. Each produces the same `ExperienceVerification` a hand-written one would, with check IDs and evidence the docs name. The quick start uses one of them.
+
+### Story 21.3: Semantic Retrieval When the App Already Has Embeddings
+
+**Traces:** FR4 · **Depends on:** 20.2 · **Added:** 2026-10-13
+
+**Acceptance Criteria:**
+
+**Given** an app that registers a `Microsoft.Extensions.AI` `IEmbeddingGenerator<string, Embedding<float>>`
+**When** it uses the one-call setup
+**Then** retrieval uses hybrid text and vector matching by default, with the in-memory store for development and PostgreSQL with pgvector when the vector schema is applied. It falls back to text search, observably, when no generator is registered or the schema is absent. The retrieval benchmark (20.1) reports the hybrid default next to text-only, and the README states the difference measured.
+
+### Story 21.4: See What It Learned
+
+**Traces:** FR6 · **Depends on:** — · **Added:** 2026-10-13
+
+**Acceptance Criteria:**
+
+**Given** a running app using the library
+**When** a developer opens the lessons view
+**Then** they see each stored lesson with its task, status, confidence and evidence, the `Tried:`/`Worked:` lines exactly as an agent would see them, and when it was last injected. The view is read-only, goes through the same authorization and scope as retrieval, and is off unless the host maps it. It is development-first: it refuses outside Development/Test/Testing unless the host passes an authorization policy.
+
+### Story 21.5: Say Why, Plainly
+
+**Traces:** — · **Depends on:** 21.1 · **Added:** 2026-10-13
+
+**Acceptance Criteria:**
+
+**Given** a MAF developer comparing memory options
+**When** they read the README and a new comparison page
+**Then** they see in the first screen what the library does, the five-line setup and the measured result. The comparison with MAF's chat-history memory, the Mem0 provider and Foundry memory is factual: what each stores, what decides storage, and when to use which, including when this library is the wrong choice. The README's caveat paragraphs move into the guides it links.
+
+### Story 21.6: A Smaller Public Surface Before 1.0
+
+**Traces:** NFR · **Depends on:** 21.1–21.4 · **Added:** 2026-10-13
+
+**Acceptance Criteria:**
+
+**Given** the public API files
+**When** each public type is checked for an outside caller (samples, docs, a plausible host)
+**Then** types no host needs become internal, and advanced ones move to clearly named namespaces. The breaks are declared in the CHANGELOG with migration notes, and the public API line count is reported before and after.
+
+## Epic 22: Beyond .NET
+
+Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview since 2026-07-10). The maintainer approved supporting Python and Go after Epic 21. The PostgreSQL schema, its search functions, row-level security and grants are already language-neutral, so ports are thin clients: capture as MAF middleware, injection as a context provider, both over the same tables, so that a lesson learned in one language can help an agent in another.
+
+### Story 22.1: A Language-Neutral Contract
+
+**Acceptance Criteria:** **Given** the .NET implementation **When** the contract is written **Then** the stored record format, the injection block layout and its sanitization rules, and the search-function calls are specified independently of .NET, with conformance fixtures (record JSON, expected blocks) generated from the .NET golden tests, which every port must pass.
+
+### Story 22.2: Python Capture and Injection
+
+**Acceptance Criteria:** **Given** a Python MAF agent **When** it uses the Python package against the shared PostgreSQL schema **Then** it captures, verifies with built-in verifiers, stores and injects lessons that pass the 22.1 fixtures. A lesson written by .NET is injected by Python and vice versa.
+
+### Story 22.3: Go Capture and Injection
+
+**Acceptance Criteria:** As 22.2, for the Go SDK.
