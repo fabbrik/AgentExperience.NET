@@ -314,7 +314,7 @@
       "agentexperience.core": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.5, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.10, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }
@@ -322,14 +322,15 @@
       "agentexperience.microsoftagentframework": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Core": "[0.1.0-preview.5, )",
-          "Microsoft.Agents.AI": "[1.22.0, 2.0.0)"
+          "AgentExperience.Core": "[0.1.0-preview.10, )",
+          "Microsoft.Agents.AI": "[1.22.0, 2.0.0)",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
       },
       "agentexperience.storage.inmemory": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.5, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.10, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }

@@ -7,8 +7,9 @@ dotnet run --project samples/AgentExperience.Sample.QuickStart
 ```
 
 It wires one agent exactly as the [README quick start](../../README.md#quick-start) does
-(`services.AddAgentExperience(...)`, `.UseInMemoryStorageForDevelopment()`, `GetAgentExperienceContextProvider()`,
-and a `ChatClientAgent` with `.AsBuilder().UseAgentExperience(provider)`), then gives it the same ticket twice:
+(`services.AddAgentExperience(...)` with `UseDevelopmentIdentity()`, `.UseInMemoryStorageForDevelopment()`, and a
+`ChatClientAgent` named `triage-ticket` with `.AsBuilder().UseAgentExperience(provider)`), then gives it the same ticket
+twice:
 
 ```text
 Model: a scripted stand-in, not a real model (set OPENAI_API_KEY to use one)

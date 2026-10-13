@@ -4,6 +4,7 @@ using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework.Injection;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -132,6 +133,11 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         try
         {
             // WaitAsync also bounds a resolver that ignores its token.
+            if (Options.UsesDevelopmentIdentity)
+            {
+                return AgentExperienceOptions.DevelopmentIdentity(Options.DevelopmentTenantName, _applicationName, clock);
+            }
+
             return await Options.ResolveIdentity!(context, linked.Token).AsTask().WaitAsync(limit, clock, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested
@@ -180,13 +186,70 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         var identity = context.Identity
             ?? throw new InvalidOperationException("No identity was resolved for this invocation, so it has no scope to be captured under.");
 
-        var taskId = Options.ResolveTaskId is { } resolveTaskId ? resolveTaskId(IdentityContextOf(context)) : Options.TaskId;
+        var taskId = Options.ResolveTaskId is { } resolveTaskId
+            ? resolveTaskId(IdentityContextOf(context))
+            : Options.ExplicitTaskId ?? TaskIdOf(context.Agent);
         if (string.IsNullOrWhiteSpace(taskId))
         {
             throw new InvalidOperationException($"{nameof(AgentExperienceOptions.ResolveTaskId)} returned a blank task identifier.");
         }
 
         return new ExperienceRunDescriptor(taskId, identity.Scope, TaskDescription: context.DerivedTaskText);
+    }
+
+    /// <summary>
+    /// The task identifier of a run when the host set neither <see cref="AgentExperienceOptions.TaskId"/> nor
+    /// <see cref="AgentExperienceOptions.ResolveTaskId"/>: the agent's name, reduced to an identifier, else
+    /// <see cref="AgentExperienceOptions.DefaultTaskId"/>.
+    /// </summary>
+    internal static string TaskIdOf(AIAgent? agent)
+    {
+        string? name;
+        try
+        {
+            name = agent?.Name;
+        }
+        catch (Exception)
+        {
+            // An agent whose name cannot be read is an unnamed one.
+            name = null;
+        }
+
+        return ExperienceNames.Reduce(name) ?? AgentExperienceOptions.DefaultTaskId;
+    }
+
+    /// <summary>The host environment's application name, read when the container first resolves the registration.</summary>
+    private string? _applicationName;
+
+    /// <summary>
+    /// Runs when the container first resolves the registration: checks the environment (see
+    /// <see cref="CheckEnvironment"/>) and reads the host environment's application name for the development identity.
+    /// </summary>
+    internal void Bind(IServiceProvider services)
+    {
+        CheckEnvironment(services);
+        if (Options.UsesDevelopmentIdentity)
+        {
+            _applicationName = services.GetService<Microsoft.Extensions.Hosting.IHostEnvironment>()?.ApplicationName;
+        }
+    }
+
+    /// <summary>
+    /// Throws when <see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> is in force outside a development or
+    /// test environment. Runs when the container resolves the registration, and when a Generic Host starts.
+    /// </summary>
+    internal void CheckEnvironment(IServiceProvider services)
+    {
+        if (!Options.UsesDevelopmentIdentity || DevelopmentEnvironment.IsAllowed(services, out var name, out var source))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"{nameof(AgentExperienceOptions)}.{nameof(AgentExperienceOptions.UseDevelopmentIdentity)} is for development and tests only: every "
+            + "invocation runs as one fixed caller in one fixed scope, so everything stored is shared by everyone using the process. "
+            + $"It runs only when the environment is {string.Join(", ", DevelopmentEnvironment.AllowedEnvironments)}, and {source} is '{name}'. "
+            + $"Set {nameof(AgentExperienceOptions)}.{nameof(AgentExperienceOptions.ResolveIdentity)} from your own authentication instead.");
     }
 
     /// <summary>
@@ -282,4 +345,23 @@ internal sealed class AgentExperienceLifetimes : IDisposable
             lifetime.Dispose();
         }
     }
+}
+
+/// <summary>
+/// Refuses to let a Generic Host start in an environment the development identity may not run in, rather than waiting
+/// for the first agent to be built. Registered only when <see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> is
+/// in force.
+/// </summary>
+internal sealed class DevelopmentIdentityEnvironmentCheck(AgentExperienceRegistration registration, IServiceProvider provider)
+    : Microsoft.Extensions.Hosting.IHostedService
+{
+    /// <inheritdoc />
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        registration.CheckEnvironment(provider);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

@@ -91,7 +91,9 @@ public class DependencyBoundaryTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        Assert.Equal(["Microsoft.Agents.AI [1.22.0, 2.0.0)"], declared);
+        // Story 21.1: the hosting abstractions, for the IHostEnvironment the development identity's environment
+        // guard reads -- the same floor and the same rule as the in-memory store.
+        Assert.Equal(["Microsoft.Agents.AI [1.22.0, 2.0.0)", "Microsoft.Extensions.Hosting.Abstractions 10.0.3"], declared);
     }
 
     [Fact]

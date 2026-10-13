@@ -151,7 +151,8 @@ public sealed record ExperienceVerification(
 
 /// <summary>
 /// The one-call setup's configuration, passed to <c>services.AddAgentExperience(options => …)</c>. Only
-/// <see cref="ResolveIdentity"/> is required; everything else has a safe default.
+/// <see cref="ResolveIdentity"/> is required (<see cref="UseDevelopmentIdentity"/> sets it for development and tests);
+/// everything else has a safe default.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -168,7 +169,10 @@ public sealed record ExperienceVerification(
 /// </remarks>
 public sealed class AgentExperienceOptions
 {
-    /// <summary>The task identifier used when <see cref="ResolveTaskId"/> is not set.</summary>
+    /// <summary>
+    /// The task identifier used when neither <see cref="TaskId"/> nor <see cref="ResolveTaskId"/> is set and the agent
+    /// has no usable name.
+    /// </summary>
     public const string DefaultTaskId = "default";
 
     private string? _taskId;
@@ -187,9 +191,112 @@ public sealed class AgentExperienceOptions
     public Func<AgentExperienceIdentityContext, CancellationToken, ValueTask<ExperienceIdentity?>>? ResolveIdentity { get; set; }
 
     /// <summary>
-    /// The task identifier every run is captured under, when <see cref="ResolveTaskId"/> is not set. Defaults to
-    /// <see cref="DefaultTaskId"/>. Set this or <see cref="ResolveTaskId"/>, not both.
+    /// <b>For development and tests only.</b> Sets <see cref="ResolveIdentity"/> to one fixed identity, so a first run
+    /// needs no authentication: the tenant <paramref name="tenant"/> (<c>local</c> by default), an application and a
+    /// project both named after the application (the registered <c>IHostEnvironment</c>'s <c>ApplicationName</c>, else
+    /// the entry assembly's name, which under a test runner is the runner's; reduced to a scope segment the way
+    /// <see cref="TaskId"/> reduces an agent's name, <c>app</c> when there is none), and an authorization for the
+    /// principal <c>local-developer</c> with no roles, bounded to that application and project, issued at each
+    /// invocation by the configured clock.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>It runs only in a development or test environment</b>, by the rule the in-memory store uses: the environment
+    /// is allowed when its name is <c>Development</c>, <c>Test</c> or <c>Testing</c> (case-insensitive). The name is
+    /// the registered <c>IHostEnvironment</c>'s; with none registered it is the <c>DOTNET_ENVIRONMENT</c> variable,
+    /// else <c>ASPNETCORE_ENVIRONMENT</c>, and with neither set there is nothing to check. In any other environment,
+    /// building an agent with <c>UseAgentExperience</c> or resolving the context provider throws
+    /// <see cref="InvalidOperationException"/>. There is no override: in production the identity comes from the host's
+    /// own authentication, through <see cref="ResolveIdentity"/>. Under a Generic Host the check also runs when the host
+    /// starts, so a host in any other environment refuses to start.
+    /// </para>
+    /// <para>
+    /// Every invocation runs as the same caller in the same scope, so everything it stores is shared by everyone
+    /// using the process. Setting <see cref="ResolveIdentity"/> afterwards replaces it.
+    /// </para>
+    /// </remarks>
+    /// <param name="tenant">The tenant; <c>local</c> when <see langword="null"/>.</param>
+    /// <exception cref="ArgumentException"><paramref name="tenant"/> is empty or whitespace.</exception>
+    public void UseDevelopmentIdentity(string? tenant = null)
+    {
+        if (tenant is not null && string.IsNullOrWhiteSpace(tenant))
+        {
+            throw new ArgumentException("The development tenant may not be blank; pass null for the default, 'local'.", nameof(tenant));
+        }
+
+        var chosen = tenant ?? DevelopmentTenant;
+        _developmentTenant = chosen;
+
+        // Used as is only when the options are read outside AddAgentExperience: the one-call setup replaces it with
+        // DevelopmentIdentity(...) over the container's host environment and clock.
+        _developmentIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(
+            DevelopmentIdentity(chosen, applicationName: null, TimeProvider ?? System.TimeProvider.System));
+        ResolveIdentity = _developmentIdentity;
+    }
+
+    /// <summary>
+    /// The development identity for <paramref name="tenant"/>: the application and project named after
+    /// <paramref name="applicationName"/> (the host environment's), else the entry assembly, else
+    /// <see cref="DevelopmentApplication"/>, issued now by <paramref name="clock"/>.
+    /// </summary>
+    internal static ExperienceIdentity DevelopmentIdentity(string tenant, string? applicationName, TimeProvider clock)
+    {
+        var segment = ExperienceNames.Reduce(applicationName)
+            ?? ExperienceNames.Reduce(System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name)
+            ?? DevelopmentApplication;
+        return new ExperienceIdentity(
+            new AuthorizationContext(tenant, DevelopmentPrincipal, Roles: [], IssuedAt: clock.GetUtcNow(), ApplicationId: segment, ProjectId: segment),
+            new Scope(tenant, segment, segment));
+    }
+
+    /// <summary>The tenant <see cref="UseDevelopmentIdentity"/> was given, or its default.</summary>
+    internal string DevelopmentTenantName => _developmentTenant ?? DevelopmentTenant;
+
+    private string? _developmentTenant;
+
+    /// <summary>
+    /// Whether <c>UseAgentExperience</c> also wires injection, at the agent level, into an agent that was not given an
+    /// <see cref="ExperienceContextProvider"/> on its options. Defaults to <see langword="true"/>. Set it to
+    /// <see langword="false"/> for an agent that is to be captured (and verified) but not injected, which is what
+    /// <c>UseAgentExperience</c> alone did before it wired injection. An agent that holds the provider on its options
+    /// is injected either way.
+    /// </summary>
+    public bool InjectWithUseAgentExperience { get; set; } = true;
+
+    /// <summary>The tenant <see cref="UseDevelopmentIdentity"/> uses by default.</summary>
+    internal const string DevelopmentTenant = "local";
+
+    /// <summary>The principal <see cref="UseDevelopmentIdentity"/> authorizes.</summary>
+    internal const string DevelopmentPrincipal = "local-developer";
+
+    /// <summary>The application and project <see cref="UseDevelopmentIdentity"/> uses when the entry assembly has no usable name.</summary>
+    internal const string DevelopmentApplication = "app";
+
+    private Func<AgentExperienceIdentityContext, CancellationToken, ValueTask<ExperienceIdentity?>>? _developmentIdentity;
+
+    /// <summary>Whether <see cref="ResolveIdentity"/> is still the one <see cref="UseDevelopmentIdentity"/> set.</summary>
+    internal bool UsesDevelopmentIdentity => _developmentIdentity is not null && ReferenceEquals(ResolveIdentity, _developmentIdentity);
+
+    /// <summary>The task identifier set through <see cref="TaskId"/>, or <see langword="null"/> when it was not set.</summary>
+    internal string? ExplicitTaskId => _taskId;
+
+    /// <summary>
+    /// The task identifier every run is captured under, when <see cref="ResolveTaskId"/> is not set. Set this or
+    /// <see cref="ResolveTaskId"/>, not both.
+    /// </summary>
+    /// <remarks>
+    /// When neither is set, each run is captured under the invoked agent's <see cref="AIAgent.Name"/>, reduced to a
+    /// task identifier (lower case; ASCII letters, digits, <c>.</c> and <c>_</c> kept; every run of other characters,
+    /// dashes included, becomes one <c>-</c>; at most 100 characters, never fusing two words at the cut:
+    /// <c>"Triage - Bot"</c> becomes <c>triage-bot</c>), and
+    /// under <see cref="DefaultTaskId"/> when the agent has no name or nothing of it is kept.
+    /// <para>
+    /// Two things to know about that default. Reading this property while it is unset still returns
+    /// <see cref="DefaultTaskId"/>, although runs are captured under the agent's name. And distinct names can reduce to
+    /// the same identifier (<c>"Triage Bot"</c> and <c>"triage-bot"</c> both become <c>triage-bot</c>), so their runs
+    /// share one task identifier. A host with several agents should set this, or <see cref="ResolveTaskId"/>, explicitly.
+    /// </para>
+    /// </remarks>
     public string TaskId
     {
         get => _taskId ?? DefaultTaskId;

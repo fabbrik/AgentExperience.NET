@@ -13,8 +13,8 @@ public static class AgentExperienceServiceCollectionExtensions
 {
     /// <summary>
     /// Registers everything capture, injection and finalization need, with safe defaults, and returns a builder to
-    /// choose the storage on. Then build the agent with <c>UseAgentExperience(services)</c> and give it
-    /// <see cref="GetAgentExperienceContextProvider"/> as a context provider.
+    /// choose the storage on. Then build the agent with <c>UseAgentExperience(services)</c>, which wires capture and
+    /// injection both.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -30,7 +30,7 @@ public static class AgentExperienceServiceCollectionExtensions
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
-    /// <param name="configure">Sets the options; called once, here. <see cref="AgentExperienceOptions.ResolveIdentity"/> is required.</param>
+    /// <param name="configure">Sets the options; called once, here. <see cref="AgentExperienceOptions.ResolveIdentity"/> is required (<see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> sets it for development).</param>
     /// <returns>A builder to choose the storage on.</returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">The options are invalid, for example <see cref="AgentExperienceOptions.ResolveIdentity"/> is not set.</exception>
@@ -53,7 +53,20 @@ public static class AgentExperienceServiceCollectionExtensions
         configure(options);
         options.Validate();
 
-        services.AddSingleton(new AgentExperienceRegistration(options));
+        // Resolved through a factory, so the development identity's environment check runs when the container first
+        // hands the registration out, the moment the in-memory store checks its own.
+        var registration = new AgentExperienceRegistration(options);
+        services.AddSingleton(provider =>
+        {
+            registration.Bind(provider);
+            return registration;
+        });
+
+        if (options.UsesDevelopmentIdentity)
+        {
+            // And when a Generic Host starts, as the in-memory store checks its own.
+            services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(provider => new DevelopmentIdentityEnvironmentCheck(registration, provider));
+        }
 
         // Before retrieval, which registers the system clock when no clock is registered yet.
         if (options.TimeProvider is { } clock)
@@ -83,13 +96,18 @@ public static class AgentExperienceServiceCollectionExtensions
     /// <c>ChatClientAgentOptions.AIContextProviders</c>.
     /// </summary>
     /// <remarks>
-    /// MAF's agent builder can add only a message-level context provider, which sees the caller's input but not the
-    /// chat client agent's session and history the provider works with, so the provider goes on the agent's options:
+    /// Optional with <c>UseAgentExperience</c>, which wires injection at the agent level when the agent was not given
+    /// this provider. On the agent's options the provider also sees the chat history a chat client agent replays and
+    /// the tools a run adds:
     /// <c>new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [services.GetAgentExperienceContextProvider()] })</c>.
+    /// The agent then gets exactly one block either way.
     /// </remarks>
     /// <param name="services">The service provider built from the collection <see cref="AddAgentExperience"/> was called on.</param>
     /// <returns>The context provider.</returns>
-    /// <exception cref="InvalidOperationException"><see cref="AddAgentExperience"/> was not called, or no storage was chosen.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="AddAgentExperience"/> was not called, no storage was chosen, or
+    /// <see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> is used outside a development or test environment.
+    /// </exception>
     public static ExperienceContextProvider GetAgentExperienceContextProvider(this IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(services);

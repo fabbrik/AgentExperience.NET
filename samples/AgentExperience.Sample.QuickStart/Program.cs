@@ -45,11 +45,9 @@ public static class QuickStart
         var services = new ServiceCollection();
         services.AddAgentExperience(options =>
         {
-            // Who the run is for: from your own authentication, never from model output.
-            options.ResolveIdentity = (context, cancellationToken) => ValueTask.FromResult<ExperienceIdentity?>(new(
-                new AuthorizationContext("contoso", "svc-support-agent", Roles: [], IssuedAt: DateTimeOffset.UtcNow),
-                new Scope("contoso", "support", "tickets")));
-            options.TaskId = "triage-ticket";
+            // Who the run is for: one fixed local identity, refused outside Development/Test. In production set
+            // options.ResolveIdentity from your own authentication, never from model output.
+            options.UseDevelopmentIdentity();
             // The host's own check: is the refund released? The desk's state decides, never the model's word.
             options.Verify = (context, cancellationToken) =>
             {
@@ -75,16 +73,17 @@ public static class QuickStart
             IncludeDetailedErrors = true,
             MaximumConsecutiveErrorsPerRequest = RefundDesk.Strategies.Count + 1,
         };
-        var injection = provider.GetAgentExperienceContextProvider();
+        // The agent's name is the task identifier its runs are stored under. UseAgentExperience wires capture and
+        // injection both.
         AIAgent agent = new ChatClientAgent(functions, new ChatClientAgentOptions
         {
+            Name = "triage-ticket",
             ChatOptions = new ChatOptions
             {
                 Instructions = "You triage refund tickets. Release a stuck refund with run_refund_check, one strategy per call, "
                     + "and stop once a call exits 0.",
                 Tools = [desk.Tool],
             },
-            AIContextProviders = [injection],
         }).AsBuilder().UseAgentExperience(provider).Build();
 
         await output.WriteLineAsync($"Model: {modelLabel}");

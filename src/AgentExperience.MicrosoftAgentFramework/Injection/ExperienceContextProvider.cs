@@ -284,7 +284,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var trace = InjectionDiagnostics.Start();
         try
         {
-            return await InjectAsync(context, trace, cancellationToken).ConfigureAwait(false);
+            return await InjectAsync(context is null ? null : InjectionCall.From(context), trace, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -308,6 +308,52 @@ public sealed class ExperienceContextProvider : AIContextProvider
     }
 
     /// <summary>
+    /// The agent-level entry point the one-call setup's <see cref="ExperienceMessageContextProvider"/> calls: the same
+    /// injection as <see cref="ProvideAIContextAsync"/>, over what an agent-level provider sees of the invocation.
+    /// </summary>
+    /// <param name="agent">The agent being invoked.</param>
+    /// <param name="session">The caller's session, or <see langword="null"/>.</param>
+    /// <param name="messages">The request messages MAF filtered for the provider (external ones, by default).</param>
+    /// <param name="unfiltered">The request messages before that filtering, for the derived task text.</param>
+    /// <param name="tools">The tools the capability gate may treat as this invocation's, or <see langword="null"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The block's messages, or none.</returns>
+    internal async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(
+        AIAgent agent,
+        AgentSession? session,
+        IEnumerable<ChatMessage> messages,
+        IReadOnlyList<ChatMessage>? unfiltered,
+        IEnumerable<AITool>? tools,
+        CancellationToken cancellationToken)
+    {
+        _unfilteredRequest.Value = unfiltered;
+        var trace = InjectionDiagnostics.Start();
+        try
+        {
+            var injected = await InjectAsync(new InjectionCall(agent, session, messages, tools), trace, cancellationToken).ConfigureAwait(false);
+            return injected.Messages ?? [];
+        }
+        catch (Exception ex)
+        {
+            InjectionDiagnostics.Faulted(trace, ex, cancellationToken);
+            throw;
+        }
+        finally
+        {
+            _unfilteredRequest.Value = null;
+            InjectionDiagnostics.Closed(trace);
+            trace.Activity?.Dispose();
+        }
+    }
+
+    /// <summary>What the injection reads of one invocation, wherever the provider runs.</summary>
+    private sealed record InjectionCall(AIAgent Agent, AgentSession? Session, IEnumerable<ChatMessage>? Messages, IEnumerable<AITool>? Tools)
+    {
+        public static InjectionCall From(InvokingContext context) =>
+            new(context.Agent, context.Session, context.AIContext.Messages, context.AIContext.Tools);
+    }
+
+    /// <summary>
     /// The body of <see cref="ProvideAIContextAsync"/>, unchanged by instrumentation beyond threading
     /// <paramref name="trace"/> to the single place every outcome is reported from.
     /// </summary>
@@ -315,7 +361,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="trace">This injection's span and start timestamp.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     private async ValueTask<AIContext> InjectAsync(
-        InvokingContext context,
+        InjectionCall? context,
         InjectionTrace trace,
         CancellationToken cancellationToken)
     {
@@ -330,13 +376,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // this invocation, taken once here, before the host's resolver runs.
         // A gate that can reject nothing (no tool check, and no risk check below Critical) is no gate: it neither widens
         // retrieval nor checks a record.
-        var capabilityGate = _capabilityGate?.ForInvocation(context.AIContext.Tools) is { CanReject: true } active ? active : null;
+        var capabilityGate = _capabilityGate?.ForInvocation(context.Tools) is { CanReject: true } active ? active : null;
 
         RetrieveExperienceRequest? request;
         try
         {
             var resolveContext = new ExperienceInjectionContext(
-                context.AIContext.Messages as IReadOnlyList<ChatMessage> ?? context.AIContext.Messages?.ToArray() ?? [],
+                context.Messages as IReadOnlyList<ChatMessage> ?? context.Messages?.ToArray() ?? [],
                 context.Session,
                 context.Agent).WithDerivationSource(unfilteredRequest);
 
@@ -416,7 +462,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// session's lock.
     /// </summary>
     private async ValueTask<AIContext> InjectResolvedAsync(
-        InvokingContext context,
+        InjectionCall context,
         RetrieveExperienceRequest request,
         CapabilityGate? capabilityGate,
         InjectionTrace trace,
