@@ -6,6 +6,19 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.11
+
+This preview is about the first run. A development setup is now about five lines: `UseDevelopmentIdentity()` replaces
+a hand-built identity (and refuses outside Development, Test and Testing), the task ID defaults to the agent's name, and
+one `UseAgentExperience()` call wires both capture and injection. Built-in verifiers (`ExperienceVerifiers`) and
+classifiers (`ExperienceToolResultClassifiers`) let a run be verified from a tool's own outcome, such as an exit code or an
+HTTP status, without writing evidence by hand, and a host can now say that a tool call which returned actually failed
+(`ClassifyToolResult`), so lessons stop calling a failed approach `[returned]`. Borrowed lessons are gated before the
+record limit too. Two behaviour changes are labelled below: runs with no task ID set now file under the agent's name,
+and `UseAgentExperience` now injects as well as captures.
+
 ### Verification: built-in verifiers (story 21.2)
 
 - **`ExperienceVerifiers`** (new static class): ready-made `AgentExperienceOptions.Verify` callbacks, each returning
