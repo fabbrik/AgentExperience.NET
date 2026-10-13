@@ -6,7 +6,39 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Injection: gate borrowed lessons before the record limit (story 20.8)
+
+- **`ExperienceCandidate.GrantDisclosure`** (new init-only property, default `null`): the level of the grant
+  the candidate source's own predicate matched a borrowed record under, set only alongside `SharedByGrant`. The
+  PostgreSQL text search (both its own statement and the row-level-security function) and the vector index set it
+  from the permitting-grant column they already read for access rows; no migration, and the SQL function is unchanged.
+  The in-memory sources never share and leave it `null`. A consumer treats `null` on a shared candidate, or a value it
+  does not define, as `LessonOnly`.
+- **`RankedExperience.MatchedGrantDisclosure`** (new init-only property, default `null`): retrieval copies the
+  candidate's level onto it for shared records only; a record both channels found keeps the level that came with the
+  `SharedByGrant` it keeps (the text channel's candidate, when both found it). The injection re-read clears it when it
+  reports the record no longer shared. `RankedExperience.GrantDisclosure` keeps its meaning (`null` from retrieval,
+  filled by the pre-injection re-read), and rendering, the host decision and the audit trail still read only that.
+- Both new properties are declared in the record body, not as constructor or `Deconstruct` parameters, so the
+  constructors and `Deconstruct` methods 0.1.0-preview.10 shipped are unchanged and code compiled against it still
+  runs. Like every record property, they take part in record equality: two candidates or ranked records that differ
+  only in the level are no longer equal.
+- **The capability gate checks borrowed records before the limit.** With `ReceivingAgent` set, a borrowed record
+  matched under `LessonAndApproach` or `LessonApproachAndArguments` is now tool- and risk-checked on its ranked
+  candidate, like an owned one. Under `LessonOnly`, or with no or an unknown matched level, it still passes unprobed and
+  is decided on its re-read. A record gated before the limit is never re-read, so that omission is final: if its grant
+  was revoked and reissued as `LessonOnly` between the search and the re-read (a level cannot change in place), it is
+  still dropped, although the re-read would have injected it with the approach withheld.
+- **Behaviour change for hosts that share records and set a gate:** a borrowed record matched under an
+  approach-showing grant whose working tools the agent lacks no longer takes a slot; the next eligible record fills
+  it. It is no longer re-read, so there is no delivery (re-read) grant access row (the search-time row a PostgreSQL
+  search wrote stays), and it is omitted as
+  `ToolUnavailable` or `RiskClassExceeded` before the limit. Without a gate, or with only owned records, blocks,
+  omissions and outcomes are unchanged.
+- Tests close two seams 20.7 left untested: a gate that throws before the limit fails the invocation exactly as one
+  that throws on the re-read (`Failed`, the same failure reason), and, with a real `ChatClientAgent` and `UseRunTools`,
+  a tool added by an `AIContextProvider` registered before the experience provider is seen while one registered after
+  it is not.
 
 ## 0.1.0-preview.10
 

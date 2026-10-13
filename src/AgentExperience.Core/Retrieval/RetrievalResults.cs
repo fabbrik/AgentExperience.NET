@@ -162,7 +162,19 @@ public sealed record RankedExperience(
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
     ExperienceGrantDisclosure? GrantDisclosure = null,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null)
+{
+    /// <summary>
+    /// The level of the grant the candidate source's own predicate matched this record under, copied from
+    /// <see cref="ExperienceCandidate.GrantDisclosure"/> when <see cref="SharedByGrant"/> is <see langword="true"/>,
+    /// and <see langword="null"/> otherwise. Unlike <see cref="GrantDisclosure"/>, it is filled in by retrieval and
+    /// is what the grant said when the search ran, not what a delivery read found. It exists for decisions taken before
+    /// that read -- such as a capability gate applied before the record limit -- and nothing renders or audits from it.
+    /// A consumer treats <see langword="null"/> on a shared record, and any value it does not define, as
+    /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>.
+    /// </summary>
+    public ExperienceGrantDisclosure? MatchedGrantDisclosure { get; init; }
+}
 
 /// <summary>Why a candidate the search returned was not ranked.</summary>
 public enum RetrievalExclusionReason

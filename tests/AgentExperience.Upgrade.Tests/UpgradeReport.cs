@@ -40,7 +40,7 @@ internal sealed class UpgradeReport(string subject, int major)
         ["admission"] = "ConfidenceUpdate, 0.1.0-preview.2 (0018): not recorded before",
         ["disclosure"] = "ExperienceGrant, ExperienceGrantEvent and ExperienceGrantAccess, 0.1.0-preview.2 (0011)",
         ["approachArguments"] = "ExperienceGrant, 0.1.0-preview.2 (0017)",
-        ["grantDisclosure"] = "ExperienceRecordGetResult, 0.1.0-preview.2 (0011)",
+        ["grantDisclosure"] = "ExperienceRecordGetResult, 0.1.0-preview.2 (0011); ExperienceCandidate, unreleased (story 20.8)",
         ["grantApproachArguments"] = "ExperienceRecordGetResult, 0.1.0-preview.2 (0017)",
     };
 

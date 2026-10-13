@@ -33,7 +33,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <see cref="ExperienceInjectionOptions.ReceivingAgent"/> set, the
 /// capability gate drops each record whose working attempt (the one its <c>Worked:</c> line names) calls a tool the agent lacks or may not use
 /// -- on the ranked record before the record limit, so a gated record takes no slot, and again on the re-read record
-/// (a borrowed record, whose grant's disclosure level only the re-read reveals, is decided there); the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
+/// (a borrowed record is checked before the limit only when the level its grant was matched under shows the approach,
+/// and one gated there is never re-read; every other is decided on the re-read's level); the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> is
 /// asked about each survivor; and <see cref="HistoricalReferenceWriter"/> renders the rest inside the
 /// byte budget. Every record that falls out at any of those steps is reported with its reason.
 /// </para>
@@ -1011,10 +1012,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
             }
 
             // The capability gate (story 20.7), before the limit: a record whose approach this agent cannot, or must
-            // not, carry out takes no slot. Exactly the check the re-read record gets below, on the ranked one. A ranked
-            // candidate carries no grant disclosure level, so a borrowed one counts as withholding its approach and
-            // passes unprobed here; its re-read decides it. No detail.
-            if (gate is not null && Gated(gate, candidate.Record, candidate.SharedByGrant, candidate.GrantDisclosure) is { } gated)
+            // not, carry out takes no slot. Exactly the check the re-read record gets below, on the ranked one. A borrowed
+            // one is decided by the level its grant was matched under (story 20.8): under a level that shows the approach
+            // it is tool-checked here, and under LessonOnly, no level, or one this build does not define it counts as
+            // withholding its approach and passes unprobed. The re-read gate, on the level that read reports, stays
+            // authoritative. No detail.
+            if (gate is not null && Gated(gate, candidate.Record, candidate.SharedByGrant, candidate.MatchedGrantDisclosure) is { } gated)
             {
                 omittedHere.Add(new OmittedExperience(candidate.Record.ExperienceId, gated));
                 continue;
@@ -1285,6 +1288,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
                         ? result.GrantDisclosure
                         : ExperienceGrantDisclosure.LessonOnly
                     : null,
+
+                // The match-time level (story 20.8) stays only on a record the re-read still reports shared.
+                MatchedGrantDisclosure = result.SharedByGrant ? candidate.MatchedGrantDisclosure : null,
 
                 // The owner's argument allowlist travels only with the level that is consent to it, and only
                 // for a borrowed record: an owned record, or any other level, carries none whatever the store

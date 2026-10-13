@@ -2891,9 +2891,13 @@ internal sealed class RecordingChatClient : IChatClient
 {
     public List<ChatMessage>? LastMessages { get; private set; }
 
+    /// <summary>The options the last call received, so a test can see which tools reached the model.</summary>
+    public ChatOptions? LastOptions { get; private set; }
+
     public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         LastMessages = messages.ToList();
+        LastOptions = options;
         return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello, world")));
     }
 

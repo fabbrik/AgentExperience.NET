@@ -600,6 +600,32 @@ public class HybridRetrievalTests
         Assert.Equal(0.9, ranked.Components.Single(c => c.Kind == RankingComponentKind.Confidence).Value);
     }
 
+    [Fact]
+    public async Task The_merge_keeps_the_matched_grant_level_with_the_shared_flag_it_came_with()
+    {
+        // Story 20.8: only the relevance is merged, so the kept candidate's SharedByGrant and the level it was matched
+        // under stay together, even when the other channel scored higher under another level.
+        var shared = Record(Id(1), scope: RequestScope with { TeamId = "team-b" });
+
+        var result = await Service(
+                text: [new ExperienceCandidate(shared, 0.2, SharedByGrant: true) { GrantDisclosure = ExperienceGrantDisclosure.LessonOnly }],
+                vector: [new ExperienceCandidate(shared, 0.95, SharedByGrant: true) { GrantDisclosure = ExperienceGrantDisclosure.LessonAndApproach }])
+            .RetrieveAsync(Request());
+
+        var ranked = Assert.Single(result.Records);
+        Assert.True(ranked.SharedByGrant);
+        Assert.Equal(ExperienceGrantDisclosure.LessonOnly, ranked.MatchedGrantDisclosure);
+        Assert.Null(ranked.GrantDisclosure);
+        Assert.Equal(0.95, ranked.Components.Single(c => c.Kind == RankingComponentKind.Relevance).Value);
+
+        // Found by the vector channel alone, it carries that channel's level.
+        var vectorOnly = await Service(
+                text: [],
+                vector: [new ExperienceCandidate(shared, 0.95, SharedByGrant: true) { GrantDisclosure = ExperienceGrantDisclosure.LessonAndApproach }])
+            .RetrieveAsync(Request());
+        Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, Assert.Single(vectorOnly.Records).MatchedGrantDisclosure);
+    }
+
     // ---------------------------------------------------------------- the flag on every outcome
 
     [Fact]

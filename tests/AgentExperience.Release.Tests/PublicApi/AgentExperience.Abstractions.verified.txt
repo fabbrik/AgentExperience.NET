@@ -106,6 +106,7 @@
     public sealed class ExperienceCandidate : System.IEquatable<AgentExperience.Abstractions.ExperienceCandidate>
     {
         public ExperienceCandidate(AgentExperience.Abstractions.ExperienceRecord Record, double Relevance, bool SharedByGrant = false, System.Guid? PermittingGrantId = default) { }
+        public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
         public double Relevance { get; init; }

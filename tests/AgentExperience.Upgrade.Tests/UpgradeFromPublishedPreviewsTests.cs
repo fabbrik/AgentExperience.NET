@@ -823,8 +823,13 @@ internal sealed class Verification
     /// a record contains, no longer <c>ts_rank_cd</c>. Every candidate the preview returned contained every term (it
     /// required them all), so today it is 1; the candidates and their order must not change, because a full match is
     /// still ordered by the same <c>ts_rank_cd</c>, then by ID.
+    /// <para>
+    /// And documented (story 20.8): a borrowed candidate now carries the level of the grant it was matched under: the
+    /// level the manifest's grant was issued with, or <see cref="ExperienceGrantDisclosure.LessonOnly"/> for a grant
+    /// issued before <c>0011</c>, as a shared read's is.
+    /// </para>
     /// </summary>
-    private static JsonNode? AtFullCoverage(JsonNode? result)
+    private JsonNode? AtFullCoverage(JsonNode? result)
     {
         var copy = result?.DeepClone();
         if (copy?["candidates"] is JsonArray candidates)
@@ -832,10 +837,34 @@ internal sealed class Verification
             foreach (var candidate in candidates.OfType<JsonObject>())
             {
                 candidate["relevance"] = 1d;
+                if (candidate["sharedByGrant"]?.GetValue<bool>() == true && !candidate.ContainsKey("grantDisclosure"))
+                {
+                    candidate["grantDisclosure"] = MatchedLevel((string?)candidate["permittingGrantId"]);
+                }
             }
         }
 
         return copy;
+    }
+
+    /// <summary>
+    /// The level the manifest's grant <paramref name="grantId"/> was issued with, or
+    /// <see cref="ExperienceGrantDisclosure.LessonOnly"/> when that grant records none (issued before <c>0011</c>).
+    /// A grant the manifest does not list exactly once is a broken manifest, not a level to guess.
+    /// </summary>
+    private string MatchedLevel(string? grantId)
+    {
+        var wanted = Guid.TryParse(grantId, out var parsed) ? parsed : (Guid?)null;
+        var grants = OptionalItems("grants")
+            .Where(item => wanted is not null && Guid.TryParse((string?)item["grantId"], out var id) && id == wanted)
+            .ToList();
+        if (grants.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"A shared text-search candidate names permitting grant '{grantId ?? "(none)"}', which the manifest's grants list {grants.Count} times; expected exactly once.");
+        }
+
+        return (string?)grants[0]["grant"]?["disclosure"] ?? nameof(ExperienceGrantDisclosure.LessonOnly);
     }
 
     // ------------------------------------------------------------------ writes

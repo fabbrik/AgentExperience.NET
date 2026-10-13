@@ -36,8 +36,15 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// <see cref="AgentExperience.Core.Retrieval.RetrieveExperienceRequest.Limit"/> asks retrieval for at least
 /// <see cref="ExperienceInjectionLimits.MaxRecords"/> times <see cref="GatedRetrievalWindowMultiplier"/> records,
 /// capped by the retrieval policy's candidate limit, so there is something to backfill from. The record as the final
-/// eligibility re-read returns it is checked again. A borrowed record is decided only there, because a ranked
-/// candidate does not carry its grant's disclosure level: before the limit it counts as withholding its approach.
+/// eligibility re-read returns it is checked again. A borrowed record is checked before the limit by the level its grant
+/// was matched under when the candidate source reports one
+/// (<see cref="AgentExperience.Core.Retrieval.RankedExperience.MatchedGrantDisclosure"/>): under a level that shows the
+/// approach it is tool-checked there and, if gated, takes no slot and is never re-read. That omission is final: if the
+/// grant was revoked and reissued as <see cref="ExperienceGrantDisclosure.LessonOnly"/> between the search and the
+/// re-read (a level cannot change in place), the record is still dropped, although the re-read would have injected it
+/// with its approach withheld. Under <see cref="ExperienceGrantDisclosure.LessonOnly"/>, or when the source reports no
+/// level or one this build does not define (the in-memory sources never share; a third-party one may not say), it
+/// counts as withholding its approach, passes unprobed, and is decided on its re-read.
 /// The decision on the ranked revision is final: a record gated there stays out even if a newer revision would pass.
 /// A record that passes there but fails on its re-read leaves its slot empty; nothing backfills it. And a gated record
 /// is reported as <see cref="InjectionOmissionReason.ToolUnavailable"/> or

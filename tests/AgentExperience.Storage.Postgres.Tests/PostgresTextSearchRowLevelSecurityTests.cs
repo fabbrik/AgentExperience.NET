@@ -66,6 +66,11 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
 
         // Row-level security off: the store's own statement, as it always ran.
         Assert.False(await world.RoutesThroughFunctionAsync(tenant));
+
+        // Story 20.8: a shared candidate carries the level of the grant the statement matched it under, from the same
+        // column its access row records; an owned one carries none.
+        AssertMatchedLevels(await new PostgresExperienceCandidateSource(world.App).SearchAsync(Authorize(tenant), Query(recipient), CancellationToken.None));
+
         var off = new List<string>();
         foreach (var (authorization, query) in requests)
         {
@@ -90,8 +95,20 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
         var borrowed = Assert.Single(found.Candidates, c => c.Record.ExperienceId == shared);
         Assert.True(borrowed.SharedByGrant);
         Assert.Equal(grant, borrowed.PermittingGrantId);
+
+        // Story 20.8: through the function too.
+        AssertMatchedLevels(found);
         Assert.DoesNotContain(found.Candidates, c => c.Record.ExperienceId == unshared || c.Record.ExperienceId == expired
             || c.Record.ExperienceId == projectLevel || c.Record.ExperienceId == erased);
+
+        void AssertMatchedLevels(ExperienceCandidateSearchResult result)
+        {
+            Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+            Assert.Equal(ExperienceGrantDisclosure.LessonAndApproach, Assert.Single(result.Candidates, c => c.Record.ExperienceId == shared).GrantDisclosure);
+            Assert.Equal(ExperienceGrantDisclosure.LessonOnly, Assert.Single(result.Candidates, c => c.Record.ExperienceId == sharedModel).GrantDisclosure);
+            Assert.All(result.Candidates.Where(c => !c.SharedByGrant), c => Assert.Null(c.GrantDisclosure));
+            Assert.Equal(3, result.Candidates.Count(c => !c.SharedByGrant));
+        }
 
         // And off again: the route follows the privileges call, and the answers stay the same.
         await world.ApplyAsync(enable: false);
@@ -667,7 +684,7 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
         }
 
         /// <summary>
-        /// One audited search, as text: each candidate's ID, relevance, shared flag and permitting grant, in order, then the
+        /// One audited search, as text: each candidate's ID, relevance, shared flag, permitting grant and matched grant level, in order, then the
         /// access rows it appended (record, grant, disclosure), read back as the owner.
         /// </summary>
         public async Task<string> AnswerAsync(AuthorizationContext authorization, ExperienceCandidateQuery query)
@@ -681,7 +698,7 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
             Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
 
             var lines = result.Candidates
-                .Select(c => $"{c.Record.ExperienceId} {c.Relevance:R} {c.SharedByGrant} {c.PermittingGrantId}")
+                .Select(c => $"{c.Record.ExperienceId} {c.Relevance:R} {c.SharedByGrant} {c.PermittingGrantId} {c.GrantDisclosure}")
                 .ToList();
 
             await using var command = Owner.CreateCommand(

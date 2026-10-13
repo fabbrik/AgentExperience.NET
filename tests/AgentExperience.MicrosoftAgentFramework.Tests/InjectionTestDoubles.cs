@@ -168,6 +168,16 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
     /// </summary>
     public bool HonoursAuthorshipExclusion { get; set; }
 
+    /// <summary>
+    /// Whether <see cref="SearchAsync"/> reports the level of the grant it matched a shared record under, as the
+    /// PostgreSQL sources do (story 20.8). <see langword="false"/> models a source that says a record is shared but
+    /// not under which level.
+    /// </summary>
+    public bool SearchReportsGrantDisclosure { get; set; } = true;
+
+    /// <summary>A level <see cref="SearchAsync"/> wrongly attaches to every owned candidate, to model a source that says more than it should.</summary>
+    public ExperienceGrantDisclosure? LabelOwnedCandidates { get; set; }
+
     /// <summary>The last query <see cref="SearchAsync"/> received, so a test can assert what the provider asked for.</summary>
     public ExperienceCandidateQuery? LastQuery { get; private set; }
 
@@ -423,7 +433,13 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
                     && !(HonoursAuthorshipExclusion && query.ExcludeModelAuthored && Injection.HistoricalReferenceWriter.IsModelAuthored(candidate.Record.Reflection)))
                 .OrderByDescending(candidate => candidate.Relevance)
                 .Take(query.Limit)
-                .Select(candidate => candidate with { SharedByGrant = SharedByGrant(candidate.Record, query.Scope) })
+                .Select(candidate => SharedByGrant(candidate.Record, query.Scope)
+                    ? candidate with
+                    {
+                        SharedByGrant = true,
+                        GrantDisclosure = SearchReportsGrantDisclosure ? PermittingDisclosure(candidate.Record.ExperienceId, query.Scope) : null,
+                    }
+                    : candidate with { SharedByGrant = false, GrantDisclosure = LabelOwnedCandidates })
                 .ToList();
         }
 
