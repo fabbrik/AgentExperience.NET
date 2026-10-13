@@ -225,9 +225,10 @@ public static class HistoricalReferenceWriter
     public const string AttemptFailed = "failed";
 
     /// <summary>
-    /// What follows a tool call on a <c>Tried:</c> line, after a space, when the call recorded no error: the tool
-    /// returned rather than threw. It says nothing about whether the call achieved anything -- a tool that reports
-    /// failure in its result is marked this way too. A borrowed record's line carries no per-call marker.
+    /// What follows a tool call on a <c>Tried:</c> line, after a space, when the call recorded no error. A call records
+    /// an error when the tool threw, or when the host's <see cref="ExperienceCaptureOptions.ClassifyToolResult"/> named an
+    /// error class for the result it returned; any other call is marked this way, whether or not it achieved anything.
+    /// A borrowed record's line carries no per-call marker.
     /// </summary>
     public const string CallReturned = "[returned]";
 

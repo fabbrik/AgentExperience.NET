@@ -120,8 +120,9 @@ Sanitization is name-based: it cannot guarantee that every arbitrary secret hidi
 | `MaxAttemptsPerOpenRun` | 8 | The most attempts a run the adapter is holding open may accumulate before it is completed anyway and reported. Must be positive. Separate from the capture service's own `CaptureLimits.MaxAttemptsPerRun`; whichever is reached first ends the run. |
 | `Environment` | machine name + `RuntimeInformation` | Environment fingerprint recorded on every run. |
 | `CaptureToolCalls` | `true` | Registers function middleware. Requires a `ChatClientAgent`. |
+| `ClassifyToolResult` | none | Says that a tool call which *returned* failed: return an error class to record it as failed, or `null` to record it as returned. See [Tools that report failure in their result](#tools-that-report-failure-in-their-result). |
 | `FinalizationTimeout` | 5 s | Upper bound on the whole post-invocation step: appending the attempt, completing the run, and — when `FinalizationService` is set — finalizing it into a durable Experience Record. With finalization configured this bounds database round trips, not just in-memory capture, so 5 s may be too tight. Must be positive and at most `uint.MaxValue - 1` milliseconds. It uses its own token, never the caller's. |
-| `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, `Finalization` (turning the completed run into a durable Experience Record), and `RecordExposure` (recording which records the context provider delivered into the run). Exceptions it throws are swallowed. |
+| `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, `Finalization` (turning the completed run into a durable Experience Record), `RecordExposure` (recording which records the context provider delivered into the run), and `ToolResultClassification` (`ClassifyToolResult` threw or named an invalid class). Exceptions it throws are swallowed. |
 | `FinalizationService` | none | Core's `ExperienceFinalizationService`. When set, each successfully captured run is finalized into a durable Experience Record. Requires exactly one of `ResolveFinalizationAsync` and `ResolveFinalization`. |
 | `ResolveFinalizationAsync` | none | Builds the `FinalizeExperienceRequest` for one completed run, awaited with the `FinalizationTimeout`-bounded token (never the caller's), so it can run checks or read CI for the evidence. Return `null` to skip finalizing that run. The preferred form. A throw or a faulted task is reported through `OnCaptureFailure` exactly as a synchronous throw is. |
 | `ResolveFinalization` | none | The synchronous form of `ResolveFinalizationAsync`, unchanged. With `FinalizationService` set, exactly one of the two is required; setting both, or either without `FinalizationService`, throws `ArgumentException` at `UseExperienceCapture`. |
@@ -363,6 +364,8 @@ twice the completed-only figure above. Size the two counts so their sum fits you
     enumerator is disposed.
 - **Tool exceptions** are recorded, then rethrown unchanged. MAF then turns them into an error result for the model,
   and the run continues.
+- **A tool that returns is recorded as returned**, whatever its result says, unless `ClassifyToolResult` names an
+  error class for it (see [Tools that report failure in their result](#tools-that-report-failure-in-their-result)).
 - **Capture never changes what the caller sees.** The response, streaming updates, and exceptions are exactly what
   the agent would produce without capture. Capture does not wrap or re-execute tools, retry, or keep its own session
   store.
@@ -383,6 +386,65 @@ twice the completed-only figure above. Size the two counts so their sum fits you
   [Retries as attempts of one run](#retries-as-attempts-of-one-run)).
 - **Late tool calls.** A tool call that finishes after its run was finalized is not recorded. This can happen after an
   early stream break.
+
+## Tools that report failure in their result
+
+Only a tool that throws is recorded as failed. Many tools report failure in their return value instead: an exit code,
+`{"ok":false}`, an HTTP status in the body. Such a call is recorded as returned, so a later agent's `Tried:` line marks
+it `[returned]` and reads as if that approach worked (see [Injection](injection.md#what-each-attempt-tried-and-what-worked)).
+`ClassifyToolResult` lets the host say which returned results are failures.
+
+**Naming rule:** the class you return must be one token a `Tried:` line can show: a type-like name ending in `Error`
+or `Exception` (`LockHeldError`, `ExitCodeError`) or the `exit N` form (`exit 3`). Anything else is recorded as
+`ToolReportedError`. Surrounding white space is trimmed, but the class is case-sensitive and must be the exact
+normalized form: `exit 3`, not `Exit 3` or `exit=3`.
+
+```csharp
+var scope = new Scope("tenant-1", "app-1", "project-1");
+var options = new ExperienceCaptureOptions
+{
+    ResolveRun = context => new ExperienceRunDescriptor("triage-refund", scope, context.DerivedTaskText),
+
+    // The tool returns "exit=<code>". A non-zero code is a failure, named by its code: "exit 3".
+    ClassifyToolResult = context =>
+        context.ToolName == "run_refund_check"
+        && context.Result?.ToString()?.Trim() is { } text
+        && text.StartsWith("exit=", StringComparison.Ordinal)
+        && text != "exit=0"
+            ? "exit " + text["exit=".Length..].Trim()
+            : null,
+};
+```
+
+The classifier gets an `ExperienceToolResultContext`: the call's `ToolCallId` (which tells concurrent calls apart), the
+tool's registered `ToolName`, a read-only view of the captured `Arguments`, and the raw `Result` the tool returned,
+before it is converted to text (a `string`, a `JsonElement`, or any other object). It gets no other model text.
+The arguments are the raw ones, **before sanitization**, so secrets the model passed reach the classifier: never log or
+keep them. The dictionary is read-only, but `Result` and the argument values are the live objects the model works
+with: do not change them.
+
+- **`null`** records the call as returned, exactly as without a classifier.
+- **An error class** records the call as failed: its `Error` is the class and its `Result` is still the text the model
+  saw. The class then goes where a thrown exception's type name goes: the claims-v3 provenance signature, the call's
+  `[failed: exit 3]` marker on a later `Tried:` line, and the input of both the default and the model-backed reflector.
+- **Why the naming rule.** The class is stored, signed and shown to a later model, so it must be exactly the first
+  token the `Tried:` line's classifier would find in it, at most 40 characters: a capitalised word of letters and
+  digits ending in `Error` or `Exception`, or `exit N`. (`HTTP N`, `status N`, a POSIX errno name such as `ENOENT`, and
+  `Timeout` are tokens too.) Anything else (blank, `exit code 3`, `ExitCode3`, a sentence, a bracket) is recorded as
+  the fixed class `ExperienceCaptureOptions.ToolReportedErrorClass` (`"ToolReportedError"`, shown as
+  `[failed: ToolReportedError]`) and reported once per run through `OnCaptureFailure` at stage
+  `ToolResultClassification`, with a fixed reason that never quotes the returned text.
+- **A classifier that throws** leaves the call recorded as returned and is reported once per run through
+  `OnCaptureFailure` at stage `ToolResultClassification`: the failure's `Reason` names only the exception type, while
+  its `Exception` carries the exception object, as for the other host callbacks. Classifier problems have a stage of
+  their own, so they never hide a later `ToolCall` report of a call that could not be recorded.
+- **It runs inline.** It runs after the tool returned and before the result goes back to MAF and the model, so its own
+  time is added to every tool call: keep it fast. It is not counted in the call's recorded `Duration`. It never
+  replaces the result, and nothing it does makes the call throw. A tool that throws is recorded as before and the
+  classifier is not called, and neither is it for a call that finishes after its run was finalized (that call is not
+  recorded).
+- **Threads.** It runs on the tool-invocation thread and can run concurrently with itself when MAF invokes tools
+  concurrently, so keep it fast and free of shared mutable state.
 
 ## MAF caveats (1.22.0 and later 1.x)
 

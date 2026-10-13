@@ -110,6 +110,29 @@ internal static class ErrorClass
         return found.Count == 0 ? Unclassified : string.Join(Separator, found.Take(MaxTokens));
     }
 
+    /// <summary>
+    /// Whether <paramref name="value"/> is exactly one token: the first token <see cref="Of"/> finds in it is all of it,
+    /// in its normalized form (<c>exit 3</c>, not <c>Exit 3</c> or <c>exit code 3</c>), at most
+    /// <see cref="MaxTokenLength"/> characters. Such a value is its own class's first token, so a <c>Tried:</c> line's
+    /// call marker shows it unchanged.
+    /// </summary>
+    public static bool IsSingleToken(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > MaxTokenLength)
+        {
+            return false;
+        }
+
+        var errorClass = Of(value);
+        if (string.Equals(errorClass, Unclassified, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var end = errorClass.IndexOf(',', StringComparison.Ordinal);
+        return string.Equals(end < 0 ? errorClass : errorClass[..end], value, StringComparison.Ordinal);
+    }
+
     private static string? Token(Match match)
     {
         if (match.Groups["type"].Success)

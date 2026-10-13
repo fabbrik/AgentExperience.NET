@@ -50,11 +50,14 @@
         ToolCall = 3,
         Finalization = 4,
         RecordExposure = 5,
+        ToolResultClassification = 6,
     }
     public sealed class ExperienceCaptureOptions
     {
+        public const string ToolReportedErrorClass = "ToolReportedError";
         public ExperienceCaptureOptions() { }
         public bool CaptureToolCalls { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?>? ClassifyToolResult { get; set; }
         public AgentExperience.Abstractions.EnvironmentFingerprint Environment { get; set; }
         public AgentExperience.Core.Finalization.ExperienceFinalizationService? FinalizationService { get; set; }
         public System.TimeSpan FinalizationTimeout { get; set; }
@@ -117,6 +120,14 @@
         public const int FollowUpThreshold = 64;
         public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength = 512) { }
         public static string? Derive(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, int maxLength, int followUpThreshold) { }
+    }
+    public sealed class ExperienceToolResultContext
+    {
+        public ExperienceToolResultContext() { }
+        public required System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments { get; init; }
+        public required object? Result { get; init; }
+        public required System.Guid ToolCallId { get; init; }
+        public required string ToolName { get; init; }
     }
     public sealed class ExperienceVerification : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceVerification>
     {

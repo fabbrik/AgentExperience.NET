@@ -234,6 +234,14 @@ public enum ExperienceCaptureFailureStage
     /// refused as not exposed.
     /// </summary>
     RecordExposure,
+
+    /// <summary>
+    /// The host's <see cref="ExperienceCaptureOptions.ClassifyToolResult"/> threw (the call is recorded as returned) or
+    /// named a class that is not a single error-class token (the call is recorded as failed with
+    /// <see cref="ExperienceCaptureOptions.ToolReportedErrorClass"/>). A stage of its own, so a classifier problem never
+    /// hides a later <see cref="ToolCall"/> report of a tool call that was not recorded.
+    /// </summary>
+    ToolResultClassification,
 }
 
 /// <summary>
@@ -351,6 +359,62 @@ public sealed class ExperienceCaptureOptions
     /// <see langword="false"/> to capture run lifecycle only for any other <see cref="AIAgent"/>.
     /// </summary>
     public bool CaptureToolCalls { get; set; } = true;
+
+    /// <summary>
+    /// Optionally says that a tool call which <em>returned</em> failed: it gets the tool's name, its captured
+    /// arguments and the raw result, and returns <see langword="null"/> when the call is recorded as returned, or an
+    /// error class that is recorded as the call's <see cref="ToolCallRecord.Error"/>. The class must be one token a
+    /// <c>Tried:</c> line can show: a type-like name ending in <c>Error</c> or <c>Exception</c> (<c>LockHeldError</c>,
+    /// <c>ExitCodeError</c>) or the <c>exit N</c> form (<c>exit 3</c>); anything else is recorded as
+    /// <see cref="ToolReportedErrorClass"/> (<c>ToolReportedError</c>). Default <see langword="null"/>: only a tool that throws is recorded as
+    /// failed. Used only when <see cref="CaptureToolCalls"/> is on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Many tools report failure in their return value -- an exit code, <c>{"ok":false}</c>, an HTTP status in the
+    /// body. Without a classifier such a call is recorded as returned, and a later agent's <c>Tried:</c> line marks it
+    /// <c>[returned]</c>. With one, the call is recorded exactly like a call that failed: its error is the class, its
+    /// result is still the text the model saw, and the class reaches the provenance signature, the <c>Tried:</c>
+    /// marker (<c>[failed: &lt;class&gt;]</c>) and both reflectors' input the way a thrown exception's type name does.
+    /// </para>
+    /// <para>
+    /// The classifier runs only after the tool returned, and only for a call capture can still record; a tool that
+    /// throws is recorded as before and the classifier is not called. It runs inline, before the result is returned to
+    /// MAF and the model, so it adds its own time to every tool call: keep it fast. It never replaces the result, and
+    /// nothing it does makes the tool call throw. Its context's dictionary is read-only, but <c>Result</c> and the
+    /// argument values are the live objects the model works with, so it must not change them. The arguments are the
+    /// raw, unsanitized ones -- secrets the model passed reach the classifier -- so it must not log or keep them.
+    /// </para>
+    /// <para>
+    /// A classifier that throws leaves the call recorded as returned and is reported once per run through
+    /// <see cref="OnCaptureFailure"/> at <see cref="ExperienceCaptureFailureStage.ToolResultClassification"/>: the
+    /// failure's <c>Reason</c> names only the exception type, while its <c>Exception</c> carries the exception object,
+    /// as for the other host callbacks.
+    /// </para>
+    /// <para>
+    /// <b>The class must be one error-class token</b>, because it is stored, signed and rendered on <c>Tried:</c>
+    /// lines: exactly the first token the <c>Tried:</c> line's error classifier would find in it, at most 40
+    /// characters. Use a type-like name ending in <c>Error</c> or <c>Exception</c> (<c>LockHeldError</c>,
+    /// <c>ExitCodeError</c>) or <c>exit N</c> (<c>exit 3</c>); <c>HTTP N</c>, <c>status N</c>, a POSIX errno name
+    /// (<c>ENOENT</c>) and <c>Timeout</c> are tokens too. Surrounding white space is trimmed, but the class is
+    /// case-sensitive and must be the exact normalized form: <c>exit 3</c>, not <c>Exit 3</c> or <c>exit=3</c>.
+    /// Anything else -- blank, <c>exit code 3</c>, <c>ExitCode3</c>, a sentence, a bracket -- is recorded as
+    /// <see cref="ToolReportedErrorClass"/> (rendered <c>[failed: ToolReportedError]</c>) and reported once per run
+    /// through <see cref="OnCaptureFailure"/> at <see cref="ExperienceCaptureFailureStage.ToolResultClassification"/>,
+    /// with a fixed reason that never quotes the class.
+    /// </para>
+    /// <para>
+    /// <b>The thread contract.</b> It runs on the tool-invocation thread, inside MAF's function invocation, and can
+    /// run concurrently with itself when MAF invokes tools concurrently. Keep it fast and free of shared mutable state.
+    /// </para>
+    /// </remarks>
+    public Func<ExperienceToolResultContext, string?>? ClassifyToolResult { get; set; }
+
+    /// <summary>
+    /// The error class recorded for a returned tool call when <see cref="ClassifyToolResult"/> names a class that is not
+    /// a single error-class token. It is a token itself, so a <c>Tried:</c> line shows it: <c>[failed: ToolReportedError]</c>.
+    /// </summary>
+    public const string ToolReportedErrorClass = "ToolReportedError";
 
     /// <summary>
     /// The upper bound on the whole post-invocation step per run: append the attempt, complete the
