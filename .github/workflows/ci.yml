@@ -488,8 +488,8 @@ jobs:
   # The Go port (go/): two modules. The core (go/) implements the language-neutral contract (contract/) and requires no
   # module at all; the PostgreSQL store (go/postgres/, its own module) adds pgx, and its tests carry the JSON Schema check
   # and testcontainers-go. No Microsoft Agent Framework integration yet. For each module: go mod tidy must change
-  # nothing, gofmt, go vet, staticcheck and govulncheck (pinned releases, on the 1.25 leg, because a pinned analyzer
-  # cannot read the export data of a Go newer than it supports), then the unit and conformance tests with the race detector, on the lowest Go each module
+  # nothing, gofmt, go vet, staticcheck and govulncheck (pinned releases, on a 1.26 leg: staticcheck v0.8.1 needs
+  # Go 1.26 and cannot read the export data of a newer Go), then the unit and conformance tests with the race detector, on the lowest Go each module
   # declares (its go line: 1.24 for the core; 1.25 for the store, which pgx's fixed releases need) and the latest
   # stable. Then the PostgreSQL leg (the postgres build tag, race detector
   # on), which writes every finalize fixture through the Go store and reads it back row for row, runs every search
@@ -506,6 +506,8 @@ jobs:
           - go-version: '1.24.x'
             modules: '.'
           - go-version: '1.25.x'
+            modules: '. postgres'
+          - go-version: '1.26.x'
             modules: '. postgres'
           - go-version: stable
             modules: '. postgres'
@@ -564,7 +566,7 @@ jobs:
           done
 
       - name: staticcheck and govulncheck
-        if: ${{ !matrix.pg-major && matrix.go-version == '1.25.x' }}
+        if: ${{ !matrix.pg-major && matrix.go-version == '1.26.x' }}
         run: |
           set -euo pipefail
           go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
