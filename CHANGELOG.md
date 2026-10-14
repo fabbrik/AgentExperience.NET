@@ -6,6 +6,19 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.12
+
+This preview finishes the work on the first run. If the app already registers an embedding generator, retrieval
+becomes semantic on its own (`Embeddings = Auto`), with a minimum similarity so a task with no related lesson is not
+shown unrelated ones; the in-memory store gains a development vector index and PostgreSQL gains `.WithPostgresVectors()`.
+`AgentExperienceLessons` and `ExperienceLessonsHtml` show what was learned, why each lesson is or is not eligible, and
+the block an agent would be shown. The README now opens with a tested five-line setup, and a new page compares the
+library with MAF's own memory providers, including when it is the wrong choice. Four types that were public by
+accident are now internal (declared below, with migration notes). Behaviour changes are labelled: an app that already
+registers an embedding generator now sends task text and lesson summaries to it unless `Embeddings = Off`.
+
 ### Breaking: a smaller public surface before 1.0 (story 21.6)
 
 Every public type is a 1.0 compatibility promise. An audit of all 309 public types found four that were public only
