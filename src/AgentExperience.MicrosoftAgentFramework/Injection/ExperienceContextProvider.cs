@@ -234,6 +234,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <summary>The most UTF-8 bytes one block this provider injects may occupy.</summary>
     internal int MaxBlockBytes => _options.Limits.MaxBytes;
 
+    /// <summary>The clock the injection measures its bounds with.</summary>
+    internal TimeProvider TimeProvider => _options.TimeProvider;
+
     /// <summary>The confidence floor this provider's retrieval applies.</summary>
     internal double ConfidenceFloor => _retrieval.Policy.MinimumConfidence;
 
@@ -347,6 +350,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="messages">The request messages MAF filtered for the provider (external ones, by default).</param>
     /// <param name="unfiltered">The request messages before that filtering, for the derived task text.</param>
     /// <param name="tools">The tools the capability gate may treat as this invocation's, or <see langword="null"/>.</param>
+    /// <param name="historyRead">
+    /// Why the agent-level read of the replayed chat history joined nothing (<c>failed</c> or <c>timed_out</c>), for the
+    /// span's <see cref="InjectionDiagnostics.HistoryReadAttribute"/>; <see langword="null"/> when it did not fail.
+    /// </param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>The block's messages, or none.</returns>
     internal async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(
@@ -355,10 +362,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
         IEnumerable<ChatMessage> messages,
         IReadOnlyList<ChatMessage>? unfiltered,
         IEnumerable<AITool>? tools,
+        string? historyRead,
         CancellationToken cancellationToken)
     {
         _unfilteredRequest.Value = unfiltered;
         var trace = InjectionDiagnostics.Start();
+        InjectionDiagnostics.Tag(trace, InjectionDiagnostics.HistoryReadAttribute, historyRead);
         try
         {
             var injected = await InjectAsync(new InjectionCall(agent, session, messages, tools), trace, cancellationToken).ConfigureAwait(false);

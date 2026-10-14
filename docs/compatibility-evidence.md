@@ -154,21 +154,37 @@ Facts from MAF's own source that shaped the adapter, re-checked at tag `dotnet-1
   `InvokingContext` and `InvokedContext` constructors, exactly as at 1.20.0, and the same constructors in
   `ChatHistoryProvider.cs`. The adapter uses the AIContextProvider ones nowhere. Since story 21.7 it uses one
   `ChatHistoryProvider.InvokingContext` constructor, under the only `MAAI001` suppression in `src/`, in
-  `ExperienceMessageContextProvider`: the single-call wiring asks a `ChatClientAgent`'s history provider for the
-  history the agent replays, with the call and arguments the agent itself makes (`ChatClientAgent.LoadChatHistoryAsync`),
-  and a `ChatHistoryProvider` has no other public way to be asked. The constructor's signature is the same at 1.22.0
-  and 1.24.0, and a change to it fails the build rather than behaviour, on the probe's floor and newest legs alike.
+  `ExperienceMessageContextProvider`: for a history provider other than `InMemoryChatHistoryProvider` (which it reads
+  through the public `GetMessages`), the single-call wiring asks it for the history the agent replays, with the call
+  and arguments the agent itself makes (`ChatClientAgent.LoadChatHistoryAsync`); a `ChatHistoryProvider` has no other
+  public way to be asked. The same file reads `AgentRunOptions`/`ChatOptions` `ContinuationToken` and
+  `AllowBackgroundResponses`, `[Experimental]` under `MEAI001`, under targeted suppressions, only to mirror the agent's
+  own checks. The signatures are the same at 1.22.0 and 1.24.0, and a change to them fails the build rather than
+  behaviour, on the probe's floor and newest legs alike.
   The proofs carry no suppression (since story 5.1). The neighbouring surface is still settling, which is one reason
   the range stops at 2.0 rather than being a bare floor.
-- The single-call wiring (story 21.7) reproduces, from public members only, two rules `ChatClientAgent` applies before
-  it runs the context providers on its options: which history provider it reads (none under
+- The single-call wiring (story 21.7) reproduces, from public members only, the rules `ChatClientAgent`
+  (`PrepareSessionAndMessagesAsync`, `ResolveChatHistoryProvider`) applies before it runs the context providers on its
+  options: no providers for a continued background response; the runs it refuses (background without a session, a
+  session of another type, two conversation IDs, a passed history provider under `ThrowOnChatHistoryProviderConflict`
+  with a service-kept conversation, a state-key clash); which history provider it reads (none under
   `RequirePerServiceCallChatHistoryPersistence` or a conversation ID on the session or the chat options; else
-  `ChatClientAgent.ChatHistoryProvider`; a provider passed in the merged additional properties wins), and the tools it
-  hands them (the run's `ChatClientAgentRunOptions.ChatOptions.Tools`, then the agent's default tools). The run's
-  options come from `AIAgent.CurrentRunContext`, which `AIAgent.RunAsync` sets for the agent-level providers' run. The
-  rules are the same at 1.22.0 and 1.24.0 (`ChatClientAgent.cs` differs only in documentation). A MAF minor that
-  changes them changes what the explicit wiring sees and not what the single-call wiring sees; `SingleCallParityTests`
-  runs both wirings over the same scenarios and fails on any difference, on the probe's floor and newest legs.
+  `ChatClientAgent.ChatHistoryProvider`; a provider passed in the merged additional properties wins, run options
+  first, then the run's chat options, then the agent's); a session it starts when given none; and the tools it hands
+  them (the run's `ChatClientAgentRunOptions.ChatOptions.Tools`, then the agent's default tools). The run's options
+  come from `AIAgent.CurrentRunContext`, which `AIAgent.RunAsync` sets for the agent-level providers' run. The rules
+  are the same at 1.22.0 and 1.24.0 (`ChatClientAgent.cs` differs only in documentation). A MAF minor that changes
+  them changes what the explicit wiring sees and not what the single-call wiring sees. `SingleCallParityTests` runs
+  both wirings over these scenarios and fails on any difference in derived text, outcome, block or captured run: a
+  follow-up in a session, no session (with a history provider that needs none, too), a reducer before retrieval
+  that keeps the earlier turn, per-service-call persistence, a conversation ID on the session, on the agent's chat
+  options and on the run's, the passed-provider precedence, a continued background response, run-only tools on an
+  agent with and without default tools and with one name on both, and run middleware before and after
+  `UseAgentExperience`, streaming and not where it matters. The two refusals are checked for no read, not for parity;
+  a reducer that drops the earlier turn is pinned as the documented difference; an output filter on
+  `InMemoryChatHistoryProvider`, and middleware that replaces the run options, are not covered. Both probe legs run
+  the suite, but on a pull request the newest-MAF leg reports without blocking (above), so a parity break that a new
+  MAF minor brings turns `main` and the weekly run red, not the pull request.
 - Function-invocation middleware (`FunctionInvocationDelegatingAgent`) now works on a per-run clone of a
   `ChatClientAgentRunOptions`. At 1.20.0 it wrote its `ChatClientFactory` onto the caller's instance, so a reused
   instance stacked middleware layers and the adapter README told hosts not to reuse one. At 1.22.0 sequential reuse

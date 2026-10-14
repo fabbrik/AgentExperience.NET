@@ -534,8 +534,21 @@ public sealed class AgentExperienceFiveLineSetupTests
         /// <summary>Makes the next call throw, once.</summary>
         public bool ThrowNext { get; set; }
 
-        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-            System.Threading.Tasks.Task.FromResult(new ChatResponse(Answer(messages)));
+        /// <summary>The conversation ID every response carries, as a service that keeps the history would; none by default.</summary>
+        public string? ConversationId { get; set; }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var response = new ChatResponse(Answer(messages)) { ConversationId = ConversationId };
+#pragma warning disable MEAI001 // A background response, continued with its token, for the continuation tests.
+            if (options?.AllowBackgroundResponses == true && options.ContinuationToken is null)
+            {
+                response.ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1 });
+            }
+#pragma warning restore MEAI001
+
+            return System.Threading.Tasks.Task.FromResult(response);
+        }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -544,7 +557,7 @@ public sealed class AgentExperienceFiveLineSetupTests
         {
             var answer = Answer(messages);
             await System.Threading.Tasks.Task.Yield();
-            yield return new ChatResponseUpdate(ChatRole.Assistant, [.. answer.Contents]);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, [.. answer.Contents]) { ConversationId = ConversationId };
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;

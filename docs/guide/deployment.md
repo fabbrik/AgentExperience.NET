@@ -220,12 +220,25 @@ either way. The provider is resolved only when it is added, when the agent is bu
 replays, read the way the agent reads it (so a short follow-up is joined with an earlier turn's request), and the tools
 a run adds through `ChatClientAgentRunOptions` followed by the agent's default tools (so with
 `ReceivingAgentCapabilities.UseRunTools` a run-only tool counts). The derived task text and the block are the same,
-byte for byte. Two differences remain. The history is read once more per run than the agent alone reads it, so a
-history provider with a cost or a side effect on read (a remote store, a reducer that runs before retrieval) incurs it
-twice. And messages or tools that another context provider on the agent's options adds, or run options and sessions
-that middleware between the two replaces, are not seen. An inner agent that is not a `ChatClientAgent` offers the
-caller's messages only, and the tools it reports through `GetService<ChatOptions>()` (none otherwise). Where any of that
-matters, give the agent the provider on its options too:
+byte for byte. The agent's rules apply: no history is read under a conversation ID, with per-service-call persistence,
+when the agent would refuse the run (a history-provider conflict), or for a continued background response, which gets
+no injection at all, as on the options. With no session the agent starts one, and the read does the same. Differences
+remain:
+
+- The default `InMemoryChatHistoryProvider` is read without side effects, from the messages it stores. A reducer that
+  runs before retrieval is therefore not run a second time, and an output filter is not applied: the join reads the
+  history as stored, not the reduced or filtered view the model gets. The two differ only when the reducer or filter
+  drops the earlier turn the follow-up is joined to, which a reducer that keeps the latest messages does not.
+- Any other history provider is asked the way the agent asks it, so it is read once more per run, with whatever cost
+  or side effect a read has (a remote store, say). That read is bounded at 500 milliseconds and by the caller's
+  cancellation; a read that fails or times out joins nothing, adds no failure to the run, and sets
+  `agentexperience.history_read` on the `inject` span.
+- Messages or tools that another context provider on the agent's options adds, or run options and sessions that
+  middleware between the two replaces, are not seen.
+- An inner agent that is not a `ChatClientAgent` offers the caller's messages only, and the tools it reports through
+  `GetService<ChatOptions>()` (none otherwise).
+
+Where any of that matters, give the agent the provider on its options too:
 
 ```csharp
 AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions

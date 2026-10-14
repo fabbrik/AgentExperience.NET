@@ -32,9 +32,13 @@ public static class AgentExperienceAgentBuilderExtensions
     /// would hand it on its options: the chat history the agent replays (so a short follow-up is joined with an earlier
     /// turn's request), and the tools a run adds through its run options (with
     /// <see cref="ReceivingAgentCapabilities.UseRunTools"/> a run-only tool counts). The block is the one the provider
-    /// gives on the agent's options, byte for byte. The history is read once more per run than the agent alone reads it,
-    /// so a history provider with a cost or a side effect on read incurs it twice. Messages and tools another context
-    /// provider on the agent's options adds are not seen here; an inner agent that is not a
+    /// gives on the agent's options, byte for byte, read by the agent's own rules (no history under a conversation ID,
+    /// per-service-call persistence, or a continued background response, which gets no injection either). The agent's
+    /// <see cref="InMemoryChatHistoryProvider"/> is read without side effects, as stored: a reducer that runs before
+    /// retrieval is not run again, so if it would drop the earlier turn the join still reads it. Any other history
+    /// provider is asked as the agent asks it, once more per run, bounded at 500 milliseconds; a read that fails or times
+    /// out joins nothing and adds no failure to the run. Messages and tools another context provider on the agent's
+    /// options adds are not seen here; an inner agent that is not a
     /// <see cref="ChatClientAgent"/> offers the caller's messages only, and the tools it reports through
     /// <see cref="AIAgent.GetService"/> as <c>ChatOptions</c>. Giving the agent the provider on its options as well, as
     /// below, adds nothing here, and the agent still gets exactly one block:

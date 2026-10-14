@@ -80,6 +80,12 @@ internal static class InjectionDiagnostics
     /// </summary>
     internal const string RetractedCountAttribute = "agentexperience.retracted_count";
 
+    /// <summary>
+    /// Why the single-call wiring's read of the chat history a <c>ChatClientAgent</c> replays joined nothing:
+    /// <c>failed</c> or <c>timed_out</c>. Set only then; the injection goes on with the caller's messages alone.
+    /// </summary>
+    internal const string HistoryReadAttribute = "agentexperience.history_read";
+
     // ---------------------------------------------------------------------------------------------
     // Restated from Core. Every one of these is asserted equal to Core's own value by
     // AgentExperience.MicrosoftAgentFramework.Tests' diagnostics-agreement test.
