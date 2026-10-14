@@ -60,18 +60,43 @@ func ContextProviderOf(config *agent.Config) *ContextProvider {
 
 // Close waits for every injection record the provider started to end, or for ctx to be done, whichever is first,
 // and returns ctx's error in the second case. Each record is bounded by InjectionRecordTimeout, so a host shutting
-// down can call it with a context of a few seconds. The provider stays usable.
+// down can call it with a context of a few seconds. A store write that overran that bound was abandoned when its
+// record ended and is not awaited: it may still be running (AbandonedInjectionRecords counts them). Close may run
+// concurrently with invocations, and the provider stays usable; a record started after Close began may or may not
+// be awaited.
 func (p *ContextProvider) Close(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		p.recordings.Wait()
-		close(done)
-	}()
+	p.mu.Lock()
+	if p.running == 0 {
+		p.mu.Unlock()
+		return nil
+	}
+	idle := p.idle
+	p.mu.Unlock()
 	select {
-	case <-done:
+	case <-idle:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// beginRecording counts a record started.
+func (p *ContextProvider) beginRecording() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running == 0 {
+		p.idle = make(chan struct{})
+	}
+	p.running++
+}
+
+// endRecording counts a record ended, waking Close when none is left.
+func (p *ContextProvider) endRecording() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.running--
+	if p.running == 0 {
+		close(p.idle)
 	}
 }
 
@@ -92,9 +117,9 @@ func (p *ContextProvider) startRecording(ctx context.Context, identity *ae.Ident
 	// The invocation's values, never its cancellation: the invocation ends long before the record may.
 	base := context.WithoutCancel(ctx)
 	scoped := *identity
-	p.recordings.Add(1)
+	p.beginRecording()
 	go func() {
-		defer p.recordings.Done()
+		defer p.endRecording()
 		p.record(base, recorder, &scoped, ids, injectedAt)
 	}()
 }

@@ -119,8 +119,18 @@ DEFAULT_INJECTION_RECORD_TIMEOUT = 5.0
 """How long, in seconds, recording one injection may take by default, all chunks together: .NET's."""
 
 MAX_ABANDONED_INJECTION_RECORDS = 16
-"""How many injection records that outlived their timeout may still be running before another is not started:
-.NET's ``ExperienceInjectionLimits.MaxAbandonedReads`` default."""
+"""How many injection writes may run at once, abandoned ones (that outlived their timeout) included, before another is
+not started and is reported ``NotRecorded``: .NET's ``ExperienceInjectionLimits.MaxAbandonedReads`` default. Each runs
+on a daemon thread of its own, never the event loop's default executor, and nothing ever waits for one at exit."""
+
+
+@dataclass
+class _Write:
+    """One injection write's state, shared with its thread under the provider's lock."""
+
+    finished: bool = False
+    abandoned: bool = False
+
 
 CANCELLED_ERROR = "CancelledError"
 """The error recorded for an invocation or a tool call that was cancelled."""
@@ -606,6 +616,7 @@ class ExperienceContextProvider(ContextProvider):
         self.settings = settings
         self._recordings: set[asyncio.Task[None]] = set()
         self._abandoned_records = 0
+        self._running_writes = 0
         self._abandoned_lock = threading.Lock()
 
     async def wait_for_injection_records(self) -> None:
@@ -644,10 +655,11 @@ class ExperienceContextProvider(ContextProvider):
         injected_at: Instant,
     ) -> None:
         """
-        The background record: the IDs in chunks of at most 200, each a call on a worker thread, all within
-        ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot be stopped): it is counted
-        until it ends, and while :data:`MAX_ABANDONED_INJECTION_RECORDS` are still running no new one starts. Never
-        raises, except the task's own cancellation, which is reported first.
+        The background record: the IDs in chunks of at most 200, each a call on a worker thread of the provider's own,
+        all within ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot be stopped): it
+        is counted until it ends. At most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes run at once, so writes that
+        hang can never take more threads than that, and never the event loop's default executor, which the search and
+        capture use. Never raises, except the task's own cancellation, which is reported first.
         """
         settings = self.settings
         outcome: InjectionRecordOutcome = "Recorded"
@@ -656,23 +668,25 @@ class ExperienceContextProvider(ContextProvider):
         deadline = loop.time() + settings.injection_record_timeout
         try:
             for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS):
-                if self.abandoned_injection_records >= MAX_ABANDONED_INJECTION_RECORDS:
-                    outcome = "NotRecorded"
-                    break
                 left = deadline - loop.time()
                 if left <= 0:
                     raise TimeoutError("The injection record ran out of time.")
                 chunk = list(ids[start : start + MAX_RECORD_INJECTION_IDS])
-                write = loop.run_in_executor(
-                    None,
+                write = self._start_write(
+                    loop,
                     functools.partial(
                         recorder.record_injection, identity.authorization, identity.scope, chunk, injected_at
                     ),
                 )
+                if write is None:
+                    outcome = "NotRecorded"
+                    error = RuntimeError("Too many earlier injection records are still running against the store.")
+                    break
+                future, state = write
                 try:
-                    await asyncio.wait_for(asyncio.shield(write), left)
+                    await asyncio.wait_for(asyncio.shield(future), left)
                 except (asyncio.TimeoutError, asyncio.CancelledError):
-                    self._abandon(write)
+                    self._abandon(state)
                     raise
         except (asyncio.TimeoutError, TimeoutError) as ex:
             outcome, error = "OutcomeUnknown", ex
@@ -683,22 +697,56 @@ class ExperienceContextProvider(ContextProvider):
             outcome, error = "NotRecorded", ex
         settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
 
-    def _abandon(self, write: asyncio.Future[None]) -> None:
-        """Counts a write that outlived its bound until it ends, and observes its exception then."""
-        if write.done():
-            if not write.cancelled():
-                write.exception()
-            return
+    def _start_write(
+        self, loop: asyncio.AbstractEventLoop, write: Callable[[], None]
+    ) -> tuple[asyncio.Future[None], _Write] | None:
+        """
+        Runs ``write`` on a daemon thread of its own, or answers ``None`` when :data:`MAX_ABANDONED_INJECTION_RECORDS`
+        writes are already running. The thread settles the returned future on ``loop`` (if it is still open) and keeps
+        its own count, so a write that outlives the loop, or the interpreter's shutdown, is never waited for.
+        """
         with self._abandoned_lock:
-            self._abandoned_records += 1
+            if self._running_writes >= MAX_ABANDONED_INJECTION_RECORDS:
+                return None
+            self._running_writes += 1
+        state = _Write()
+        future: asyncio.Future[None] = loop.create_future()
 
-        def ended(done: asyncio.Future[None]) -> None:
-            with self._abandoned_lock:
-                self._abandoned_records -= 1
-            if not done.cancelled():
-                done.exception()
+        def settle(failure: BaseException | None) -> None:
+            if future.done():
+                return
+            if failure is None:
+                future.set_result(None)
+            else:
+                future.set_exception(failure)
 
-        write.add_done_callback(ended)
+        def run() -> None:
+            failure: BaseException | None = None
+            try:
+                write()
+            except BaseException as ex:  # reported, never raised in a thread
+                failure = ex
+            finally:
+                with self._abandoned_lock:
+                    self._running_writes -= 1
+                    state.finished = True
+                    if state.abandoned:
+                        self._abandoned_records -= 1
+            try:
+                loop.call_soon_threadsafe(settle, failure)
+            except RuntimeError:
+                pass  # the loop has closed: nobody awaits this write any more
+
+        threading.Thread(target=run, name="agentexperience-injection-record", daemon=True).start()
+        future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        return future, state
+
+    def _abandon(self, state: _Write) -> None:
+        """Counts a write that outlived its bound until its thread ends."""
+        with self._abandoned_lock:
+            if not state.finished and not state.abandoned:
+                state.abandoned = True
+                self._abandoned_records += 1
 
     async def before_run(
         self,

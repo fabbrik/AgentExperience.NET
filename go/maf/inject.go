@@ -25,9 +25,13 @@ import (
 // Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a goroutine;
 // Close awaits the ones still running.
 type ContextProvider struct {
-	settings   *settings
-	recordings sync.WaitGroup
-	abandoned  atomic.Int64
+	settings *settings
+	// mu guards running and idle: the records started and not yet ended, and a channel closed when that count
+	// reaches zero (a fresh one each time it leaves zero), so Close may run concurrently with invocations.
+	mu        sync.Mutex
+	running   int
+	idle      chan struct{}
+	abandoned atomic.Int64
 }
 
 var _ agent.ContextProvider = (*ContextProvider)(nil)

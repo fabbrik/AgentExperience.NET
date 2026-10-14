@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -283,5 +284,110 @@ func TestTheInMemoryStoreRecordsOnlyItsOwnScopeClampsAndSaturates(t *testing.T) 
 	record3(earlier)
 	if got := h.store.Injections()[record.ExperienceID].InjectionCount; got != ae.MaxInjectionCount {
 		t.Fatalf("count %d", got)
+	}
+}
+
+// hungRecorder counts its calls and blocks each until gate closes, ignoring its context.
+type hungRecorder struct {
+	*inmemory.Store
+	gate  chan struct{}
+	calls *atomic.Int64
+}
+
+func (h hungRecorder) RecordInjection(context.Context, ae.AuthorizationBounds, ae.Scope, []ae.UUID, ae.Instant) error {
+	h.calls.Add(1)
+	<-h.gate
+	return nil
+}
+
+func TestOnceTheAbandonedCapIsReachedARecordIsNotRecordedWithoutCallingTheStore(t *testing.T) {
+	h, recorded := newHost(t), &recordings{}
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	defer release()
+	var calls atomic.Int64
+	options := h.options(Options{Store: hungRecorder{Store: h.store, gate: gate, calls: &calls},
+		InjectionRecordTimeout: 10 * time.Millisecond})
+	options.OnInjectionRecorded = recorded.add
+	provider, err := NewContextProvider(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := ae.Identity{Principal: "svc", Scope: testScope}
+	for range MaxAbandonedInjectionRecords {
+		provider.startRecording(context.Background(), &identity, []ae.UUID{ae.NewRandomUUID()}, ae.Now())
+	}
+	if err := provider.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.AbandonedInjectionRecords() != MaxAbandonedInjectionRecords || calls.Load() != MaxAbandonedInjectionRecords {
+		t.Fatalf("%d abandoned, %d calls", provider.AbandonedInjectionRecords(), calls.Load())
+	}
+
+	provider.startRecording(context.Background(), &identity, []ae.UUID{ae.NewRandomUUID()}, ae.Now())
+	if err := provider.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != MaxAbandonedInjectionRecords {
+		t.Fatalf("the store was called %d times", calls.Load())
+	}
+	results := recorded.all()
+	last := results[len(results)-1]
+	if len(results) != MaxAbandonedInjectionRecords+1 || last.Outcome != InjectionNotRecorded ||
+		!errors.Is(last.Err, errTooManyAbandoned) {
+		t.Fatalf("results %+v", results)
+	}
+
+	release()
+	deadline := time.Now().Add(10 * time.Second)
+	for provider.AbandonedInjectionRecords() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if provider.AbandonedInjectionRecords() != 0 {
+		t.Fatal("the abandoned writes are still counted after they ended")
+	}
+}
+
+// Close runs concurrently with invocations that start records (run with -race).
+func TestCloseRunsConcurrentlyWithInvocations(t *testing.T) {
+	h, recorded := newHost(t), &recordings{}
+	a, config := learning(t, h, h.store, recorded, 0)
+	runText(t, a, ticket)
+	provider := ContextProviderOf(config)
+	identity := ae.Identity{Principal: "svc", Scope: testScope}
+	lesson := h.finalized[0].Record.ExperienceID
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				provider.startRecording(context.Background(), &identity, []ae.UUID{lesson}, ae.Now())
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 25 {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := provider.Close(ctx); err != nil {
+					t.Error(err)
+				}
+				cancel()
+			}
+		}()
+	}
+	runText(t, a, nextTicket) // a real invocation, recording, meanwhile
+	wg.Wait()
+	closeRecordings(t, config)
+	results := recorded.all()
+	if len(results) != 8*25+1 {
+		t.Fatalf("%d results", len(results))
+	}
+	for _, result := range results {
+		if result.Outcome != InjectionRecorded {
+			t.Fatalf("result %+v", result)
+		}
 	}
 }

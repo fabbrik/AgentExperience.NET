@@ -924,15 +924,24 @@ def test_a_record_that_fails_is_reported_not_recorded_and_the_block_is_still_inj
 
 def test_a_slow_record_never_delays_the_invocation_and_is_abandoned_as_outcome_unknown() -> None:
     import threading
+    import time
 
     gate = threading.Event()
     entered = threading.Event()
+    events: list[tuple[str, float]] = []
+    events_lock = threading.Lock()
+
+    def mark(name: str) -> None:
+        with events_lock:
+            events.append((name, time.monotonic()))
 
     class Slow(InMemoryExperienceStore):
         def record_injection(self, bounds: Any, scope: Any, experience_ids: Any, injected_at: Any) -> None:
+            mark("record started")
             entered.set()
-            gate.wait(10)
+            assert gate.wait(10)
             super().record_injection(bounds, scope, experience_ids, injected_at)
+            mark("record ended")
 
     store = Slow()
     recorded: list[InjectionRecordResult] = []
@@ -941,14 +950,14 @@ def test_a_slow_record_never_delays_the_invocation_and_is_abandoned_as_outcome_u
     async def scenario() -> None:
         await agent.run(TICKET)
         response = await agent.run(NEXT_TICKET)
-        # The invocation returned while the record was still blocked.
+        mark("invocation returned")
         assert response.text == "done"
-        assert not gate.is_set()
         provider = _provider(agent)
         await provider.wait_for_injection_records()
         assert entered.is_set()
         assert [item.outcome for item in recorded] == ["OutcomeUnknown"]
         assert provider.abandoned_injection_records == 1
+        mark("gate opened")
         gate.set()
         for _ in range(500):
             if provider.abandoned_injection_records == 0:
@@ -958,8 +967,64 @@ def test_a_slow_record_never_delays_the_invocation_and_is_abandoned_as_outcome_u
 
     run(scenario())
     assert host.injection_failures == []
+    # The invocation returned before the store's write could end: the write ended only after the gate opened, which
+    # happened after the invocation had returned and the record had been abandoned.
+    order = [name for name, _ in sorted(events, key=lambda event: event[1])]
+    assert order.index("invocation returned") < order.index("gate opened") < order.index("record ended")
     # The abandoned write still committed once it was let go.
     assert [summary.injection_count for summary in store.injections().values()] == [1]
+
+
+def test_once_the_cap_of_running_writes_is_reached_a_record_is_not_recorded_without_calling_the_store() -> None:
+    import threading
+
+    from agentexperience import Instant
+    from agentexperience.maf import MAX_ABANDONED_INJECTION_RECORDS
+
+    gate = threading.Event()
+    calls: list[int] = []
+
+    class Hung(InMemoryExperienceStore):
+        def record_injection(self, bounds: Any, scope: Any, experience_ids: Any, injected_at: Any) -> None:
+            calls.append(len(experience_ids))
+            gate.wait(10)
+
+    recorded: list[InjectionRecordResult] = []
+    settings = ExperienceSettings(
+        store=Hung(),
+        identity=development_identity(application="tests"),
+        on_injection_recorded=recorded.append,
+        injection_record_timeout=0.02,
+    )
+    provider = ExperienceContextProvider(settings)
+    identity = development_identity(application="tests")
+
+    async def scenario() -> None:
+        for _ in range(MAX_ABANDONED_INJECTION_RECORDS):
+            provider._start_recording(identity, (uuid.uuid4(),), Instant.now())
+        await provider.wait_for_injection_records()
+        assert provider.abandoned_injection_records == MAX_ABANDONED_INJECTION_RECORDS
+        assert len(calls) == MAX_ABANDONED_INJECTION_RECORDS
+
+        provider._start_recording(identity, (uuid.uuid4(),), Instant.now())
+        await provider.wait_for_injection_records()
+        assert len(calls) == MAX_ABANDONED_INJECTION_RECORDS  # the store was not called
+        last = recorded[-1]
+        assert last.outcome == "NotRecorded"
+        assert isinstance(last.exception, RuntimeError) and "still running" in str(last.exception)
+
+        gate.set()
+        for _ in range(500):
+            if provider.abandoned_injection_records == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert provider.abandoned_injection_records == 0
+
+    try:
+        run(scenario())
+    finally:
+        gate.set()
+    assert [item.outcome for item in recorded] == ["OutcomeUnknown"] * MAX_ABANDONED_INJECTION_RECORDS + ["NotRecorded"]
 
 
 def test_more_ids_than_the_store_takes_are_recorded_in_chunks_of_200() -> None:
