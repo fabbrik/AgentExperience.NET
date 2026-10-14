@@ -57,6 +57,9 @@
          DependencyBoundaryTests. -->
     <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <!-- Story 21.8: the 20.8 end-to-end gate test drives the MAF injection provider over the real candidate source. The
+         src-side boundary (no MAF in the adapter) is still asserted by DependencyBoundaryTests. -->
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
     <!-- Story 11.1: the store conformance suite, which Conformance/ subclasses over this project's fixture. -->
     <ProjectReference Include="..\AgentExperience.Storage.Conformance\AgentExperience.Storage.Conformance.csproj" />
   </ItemGroup>

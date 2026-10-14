@@ -403,6 +403,20 @@
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public AgentExperience.Abstractions.ExperienceIndexOutcome Outcome { get; init; }
     }
+    public sealed class ExperienceInjectionRecordResult : System.IEquatable<AgentExperience.Abstractions.ExperienceInjectionRecordResult>
+    {
+        public ExperienceInjectionRecordResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public bool Tracked { get; init; }
+        public static AgentExperience.Abstractions.ExperienceInjectionRecordResult NotTracked { get; }
+    }
+    public sealed class ExperienceInjectionSummary : System.IEquatable<AgentExperience.Abstractions.ExperienceInjectionSummary>
+    {
+        public ExperienceInjectionSummary(System.DateTimeOffset LastInjectedAt, long Count) { }
+        public long Count { get; init; }
+        public System.DateTimeOffset LastInjectedAt { get; init; }
+    }
     public readonly struct ExperienceKeyLookup : System.IEquatable<AgentExperience.Abstractions.ExperienceKeyLookup>
     {
         public ExperienceKeyLookup(AgentExperience.Abstractions.ExperienceKeyStatus Status, AgentExperience.Abstractions.ExperienceDataKey? Key) { }
@@ -563,6 +577,7 @@
     {
         public ExperienceRecordQueryResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceRecord> Records, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Collections.Generic.IReadOnlyDictionary<System.Guid, AgentExperience.Abstractions.ExperienceInjectionSummary>? Injections { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceRecord> Records { get; init; }
     }
@@ -813,6 +828,7 @@
     }
     public interface IExperienceRecordStore
     {
+        bool TracksInjections { get; }
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken);
@@ -821,6 +837,8 @@
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordHistoryResult> GetHistoryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordHistoryQuery query, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryWithInjectionsAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceInjectionRecordResult> RecordInjectionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, System.DateTimeOffset injectedAt, System.Threading.CancellationToken cancellationToken);
     }
     public interface IExperienceReuseFeedbackStore
     {

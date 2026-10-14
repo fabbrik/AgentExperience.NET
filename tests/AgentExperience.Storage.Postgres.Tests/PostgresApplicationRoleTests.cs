@@ -47,6 +47,7 @@ public sealed class PostgresApplicationRoleTests
         "reuse_feedback",
         "reuse_feedback_exposures",
         "experience_grant_access",
+        "experience_injections",
     ];
 
     private static readonly string[] PurgeSignatures =
@@ -108,6 +109,8 @@ public sealed class PostgresApplicationRoleTests
             [
                 "experience_grants.revocation_reason",
                 "experience_grants.revoked_at",
+                "experience_injections.injection_count",
+                "experience_injections.last_injected_at",
                 "experience_records.contradictions",
                 "experience_records.reuse_confidence",
                 "experience_records.revision",

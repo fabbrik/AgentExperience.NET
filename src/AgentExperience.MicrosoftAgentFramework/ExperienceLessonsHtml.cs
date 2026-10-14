@@ -23,6 +23,16 @@ public static class ExperienceLessonsHtml
     /// <summary>What a page with no lessons says.</summary>
     public const string NoLessons = "No lessons yet.";
 
+    /// <summary>The note a page whose store tracks injections carries: only .NET agents record them for now.</summary>
+    public const string DotNetOnlyNote =
+        "\"Last injected\" counts injections by .NET agents only: a lesson injected only by a Python or Go agent shows \"never\".";
+
+    /// <summary>A lesson's "last injected" value when it was never injected in this scope.</summary>
+    public const string Never = "never";
+
+    /// <summary>A lesson's "last injected" value when the store does not track injections, so whether it was is not known.</summary>
+    public const string NotTracked = "not tracked";
+
     private const string Style = """
         :root{color-scheme:light dark;--bg:#ffffff;--fg:#1b1f24;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--banner:#fff8c5;--banner-line:#d4a72c;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e}
         @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--banner:#2e2a14;--banner-line:#9e7a1d;--ok:#3fb950;--warn:#d29922;--bad:#f85149}}
@@ -84,9 +94,14 @@ public static class ExperienceLessonsHtml
             }
 
             html.Append("</p>\n");
+            if (page.InjectionsTracked)
+            {
+                html.Append("<p class=\"muted\">").Append(Encode(DotNetOnlyNote)).Append("</p>\n");
+            }
+
             foreach (var lesson in lessons)
             {
-                Lesson(html, lesson);
+                Lesson(html, lesson, page.InjectionsTracked);
             }
         }
 
@@ -100,7 +115,7 @@ public static class ExperienceLessonsHtml
         return html.ToString();
     }
 
-    private static void Lesson(StringBuilder html, ExperienceLesson lesson)
+    private static void Lesson(StringBuilder html, ExperienceLesson lesson, bool injectionsTracked)
     {
         html.Append("<section class=\"lesson\">\n<h2>").Append(Encode(lesson.TaskId)).Append("</h2>\n");
 
@@ -118,6 +133,7 @@ public static class ExperienceLessonsHtml
             .Append("<span>confidence ").Append(Encode(Number(lesson.Confidence))).Append("</span>")
             .Append("<span>stored ").Append(Encode(Time(lesson.CreatedAt))).Append("</span>")
             .Append("<span>last activity ").Append(Encode(Time(lesson.UpdatedAt))).Append("</span>")
+            .Append("<span>last injected ").Append(Encode(LastInjected(lesson, injectionsTracked))).Append("</span>")
             .Append("<span>experience <code>").Append(Encode(lesson.ExperienceId.ToString("D", CultureInfo.InvariantCulture))).Append("</code></span>")
             .Append("</div>\n");
 
@@ -182,6 +198,18 @@ public static class ExperienceLessonsHtml
         }
 
         return text.ToString();
+    }
+
+    /// <summary>The "last injected" value: the instant and count, "never", or "not tracked" when the store cannot say.</summary>
+    private static string LastInjected(ExperienceLesson lesson, bool injectionsTracked)
+    {
+        if (lesson.LastInjectedAt is { } at)
+        {
+            return Time(at) + " (" + lesson.InjectionCount.ToString(CultureInfo.InvariantCulture)
+                + (lesson.InjectionCount == 1 ? " time)" : " times)");
+        }
+
+        return injectionsTracked ? Never : NotTracked;
     }
 
     private static string Number(double value) =>

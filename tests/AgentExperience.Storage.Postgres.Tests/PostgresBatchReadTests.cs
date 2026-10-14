@@ -278,6 +278,58 @@ public sealed class PostgresBatchReadTests(PostgresFixture fixture)
     private static int CountOf(string text, string fragment) =>
         (text.Length - text.Replace(fragment, string.Empty, StringComparison.Ordinal).Length) / fragment.Length;
 
+    // ---------------------------------------------------------------- the lessons view's read (story 21.8)
+
+    [Fact]
+    public async Task A_page_of_many_injected_records_and_their_injections_is_one_command()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var store = new PostgresExperienceRecordStore(fixture.DataSource);
+        var ids = new List<Guid>();
+        for (var i = 0; i < 40; i++)
+        {
+            ids.Add(await SeedAsync(store, scope));
+        }
+
+        Assert.Equal(
+            ExperienceStoreOutcome.Committed,
+            (await store.RecordInjectionAsync(Authorize(tenant), scope, ids, DateTimeOffset.UtcNow, CancellationToken.None)).Outcome);
+
+        var (page, commands) = await CountCommandsAsync(() => store.QueryWithInjectionsAsync(
+            Authorize(tenant), new ExperienceRecordQuery(scope, Limit: ExperienceRecordQuery.MaxLimit), CancellationToken.None));
+
+        Assert.Equal(40, page.Records.Count);
+        Assert.Equal(40, page.Injections!.Count);
+        Assert.Equal(1, commands);
+    }
+
+    [Fact]
+    public async Task An_injection_instant_ahead_of_the_database_clock_is_clamped_and_the_count_saturates()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var store = new PostgresExperienceRecordStore(fixture.DataSource);
+        var id = await SeedAsync(store, scope);
+
+        var before = DateTimeOffset.UtcNow.AddSeconds(-5);
+        await store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow.AddDays(365), CancellationToken.None);
+        var clamped = (await store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(scope), CancellationToken.None)).Injections![id];
+        Assert.InRange(clamped.LastInjectedAt, before, DateTimeOffset.UtcNow.AddSeconds(5));
+        Assert.Equal(1, clamped.Count);
+
+        await using (var command = fixture.OwnerDataSource.CreateCommand(
+            "UPDATE agent_experience.experience_injections SET injection_count = 9223372036854775807 WHERE experience_id = @id"))
+        {
+            command.Parameters.Add(new NpgsqlParameter<Guid>("id", id));
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        await store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow, CancellationToken.None);
+        var saturated = (await store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(scope), CancellationToken.None)).Injections![id];
+        Assert.Equal(long.MaxValue, saturated.Count);
+    }
+
     // ---------------------------------------------------------------- the mixed world
 
     /// <summary>

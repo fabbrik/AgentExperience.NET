@@ -271,14 +271,42 @@ each lesson, newest first, it gives:
   not: whether retrieval would currently consider it, setting the task aside. The codes are `Status` (quarantined,
   retired and so on), `BelowConfidenceFloor`, `ModelAuthored` and `ContentUnconfirmed` (when the provider excludes
   model-authored lessons), `Expired` (older than the policy's maximum age), `OverByteBudget` (its block alone does not
-  fit the provider's byte budget) and `Unrenderable` (the record could not be rendered; the rest are still listed).
+  fit the provider's byte budget) and `Unrenderable` (the record could not be rendered; the rest are still listed);
+- `LastInjectedAt` and `InjectionCount`, a field on each lesson: when an agent in that scope was last shown the
+  lesson, and how many injected blocks delivered it. It has three states: an instant; never (`null` and 0 while the
+  page's `InjectionsTracked` is `true`); and not tracked (`InjectionsTracked` is `false`: a store that does not track
+  injections, or a PostgreSQL schema whose application role has not been granted `0026`'s table yet), which the HTML
+  shows as "not tracked" rather than "never". **Only .NET agents record injections for now**: the Python and Go ports
+  do not write it yet, so in a mixed fleet "never" can mean "injected only by a Python or Go agent". The page says so.
 
 `ExperienceLessonsQuery` narrows it: `Statuses`, `Limit` (the store's bounds, 1 to 500, default 50) and
 `IncludeIneligible` (default `true`). The page's `HasMore` says whether more lessons match than it shows (or may: the
-store answers at most 500 records per call). It reads through `IExperienceRecordStore.QueryAsync` under the identity's
-own authorization and scope, the boundary retrieval reads within, so lessons another scope lends through a sharing grant
+store answers at most 500 records per call). It reads through `IExperienceRecordStore.QueryWithInjectionsAsync` (the
+page and each record's last injection in one bounded read; in PostgreSQL one statement) under the identity's own
+authorization and scope, the boundary retrieval reads within, so lessons another scope lends through a sharing grant
 are not listed; a record the store answers from another scope is left out and counted in `OutOfScopeDropped`. It never
 writes. A store answer other than `Found` (`Denied`, say) is an empty page carrying that outcome, not an exception.
+
+**Where "last injected" comes from.** The context provider records it after it hands a block over, in the
+background, so the model is called without waiting: it calls `IExperienceRecordStore.RecordInjectionAsync` with the
+records the block delivered (one upsert in PostgreSQL, into `0026`'s `experience_injections`), bounded by a timeout of a
+few seconds of its own, and abandons a store that ignores cancellation. It never throws and never delays or fails the
+invocation; the outcome is the `record_injection` operation in [telemetry](../telemetry.md) (`Recorded`, `NotTracked`,
+`NotRecorded`, or `OutcomeUnknown` for a timeout or cancellation, which may have landed). It can therefore lag an
+injection by a moment. The store counts only records live in exactly the injecting scope, clamps the instant to its own
+clock and saturates the count, so a lesson another scope borrows through a sharing grant and injects there is counted in
+neither scope; its owner sees those deliveries in the grant access log instead.
+
+A store opts in with `IExperienceRecordStore.TracksInjections`, and must override that, `RecordInjectionAsync` and
+`QueryWithInjectionsAsync` together, or none of them (a decorator must forward all three): the defaults record nothing
+and read as not tracked, and the store conformance suite fails a store that overrides only some
+(`RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent`). The in-memory and PostgreSQL stores track them.
+
+After migrating to `0026`, re-run `ApplyApplicationRolePrivilegesAsync` (it also runs before the migration: the table is
+granted once it exists). Until then the application role cannot reach the table: injections report `NotRecorded`, the
+view reads as not tracked, and the store reports it once through `PostgresExperienceRecordStore.OnInjectionTrackingUnavailable`.
+In a fleet that also runs a Python or Go port, run the .NET privileges call **after** the contract's
+`sql/application-role-privileges.sql`, whose `REVOKE ALL` removes the injection table's grants.
 
 `ExperienceLessonsHtml.Render(page)` returns one self-contained HTML document: inline CSS, no script, no external
 request, light and dark mode, a "development view" banner and the scope. Every value drawn from a record is
@@ -707,6 +735,7 @@ then grants exactly this:
 | `experience_records` | `SELECT`, `INSERT`, and `UPDATE` on `status`, `revision`, `updated_at`, `reuse_confidence`, `supporting_validations`, `contradictions` only |
 | `experience_grants` | `SELECT`, `INSERT`, and `UPDATE` on `revoked_at`, `revocation_reason` only |
 | `lifecycle_events`, `experience_grant_events`, `confidence_evidence`, `reuse_feedback`, `reuse_feedback_exposures`, `experience_grant_access` | `SELECT`, `INSERT` |
+| `experience_injections` (`0026`, when it exists) | `SELECT`, `INSERT`, and `UPDATE` on `last_injected_at`, `injection_count` only — the injection upsert; never its record ID or scope columns, and no `DELETE` (erasure removes a row through `0026`'s trigger, as the owner) |
 | `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
@@ -816,8 +845,8 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    `ALTER POLICY … USING (true)`) is put back before anything is enabled;
 3. runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` on every table the application role reads or writes by scope:
    `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
-   `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`, and
-   `experience_embeddings` when the vectors package created it;
+   `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`,
+   `experience_injections`, and `experience_embeddings` when the vectors package created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
    permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
    volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; the text search function exactly

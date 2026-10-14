@@ -13,6 +13,70 @@ public sealed class InMemoryStoreBehaviourTests
 
     private readonly InMemoryExperienceRecordStore _store = new();
 
+    // ---------------------------------------------------------------- injections (story 21.8)
+
+    [Fact]
+    public async Task An_injection_instant_ahead_of_the_store_clock_is_clamped_to_it_and_the_count_saturates()
+    {
+        var now = new DateTimeOffset(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
+        var store = new InMemoryExperienceRecordStore(new FixedClock(now));
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var record = Record(scope, ExperienceStatus.Validated);
+        await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+
+        await store.RecordInjectionAsync(Authorize(tenant), scope, [record.ExperienceId], now.AddDays(30), CancellationToken.None);
+        Assert.Equal(new ExperienceInjectionSummary(now, 1), store.Injections[record.ExperienceId]);
+
+        store.Injections[record.ExperienceId] = new ExperienceInjectionSummary(now.AddHours(-1), long.MaxValue);
+        await store.RecordInjectionAsync(Authorize(tenant), scope, [record.ExperienceId], now.AddMinutes(-1), CancellationToken.None);
+        Assert.Equal(new ExperienceInjectionSummary(now.AddMinutes(-1), long.MaxValue), store.Injections[record.ExperienceId]);
+    }
+
+    [Fact]
+    public void The_consistency_check_fails_a_decorator_that_overrides_only_some_injection_members()
+    {
+        AgentExperience.Storage.Conformance.RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent(_store);
+        AgentExperience.Storage.Conformance.RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent(new Decorator(_store));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AgentExperience.Storage.Conformance.RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent(new PartialDecorator(_store)));
+    }
+
+    /// <summary>Forwards everything except the three injection members: reads as not tracking, consistently.</summary>
+    private class Decorator(IExperienceRecordStore inner) : IExperienceRecordStore
+    {
+        protected IExperienceRecordStore Inner => inner;
+
+        public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken) =>
+            inner.CreateAsync(authorization, record, cancellationToken);
+
+        public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+            inner.GetAsync(authorization, scope, experienceId, cancellationToken);
+
+        public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+            inner.QueryAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AuthorizationContext authorization, Scope scope, LifecycleEvent lifecycleEvent, CancellationToken cancellationToken) =>
+            inner.CommitLifecycleEventAsync(authorization, scope, lifecycleEvent, cancellationToken);
+
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
+            inner.GetHistoryAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
+            inner.CheckSupersessionAsync(authorization, scope, experienceId, replacementExperienceId, cancellationToken);
+    }
+
+    /// <summary>Forwards the injection read but neither the write nor the capability: the mistake the check exists for.</summary>
+    private sealed class PartialDecorator(IExperienceRecordStore inner) : Decorator(inner), IExperienceRecordStore
+    {
+        public Task<ExperienceRecordQueryResult> QueryWithInjectionsAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+            Inner.QueryWithInjectionsAsync(authorization, query, cancellationToken);
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
     // ---------------------------------------------------------------- search
 
     [Fact]

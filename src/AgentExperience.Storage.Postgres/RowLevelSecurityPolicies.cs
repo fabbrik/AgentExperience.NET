@@ -2,10 +2,11 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// The canonical row-level security policies: every <c>rls_*</c> policy <c>0019</c> creates on this
-/// package's tables and the vectors package's <c>0020</c> creates on <c>experience_embeddings</c>, as the exact DDL
-/// those scripts contain. The privileges call re-runs this DDL, under the migrator's lock, every time it enables row-level
-/// security, so a policy altered or dropped by hand since the migration is put back before anything is enabled; and
-/// <c>OfflineStoreTests</c> holds the two scripts equal to it, so the migrations and this list cannot drift.
+/// package's tables, <c>0026</c> on <c>experience_injections</c>, and the vectors package's <c>0020</c> creates on
+/// <c>experience_embeddings</c>, as the exact DDL those scripts contain. The privileges call re-runs this DDL, under
+/// the migrator's lock, every time it enables row-level security, so a policy altered or dropped by hand since the
+/// migration is put back before anything is enabled; and
+/// <c>OfflineStoreTests</c> holds the scripts equal to it, so the migrations and this list cannot drift.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -329,6 +330,24 @@ $body$;
         // name a record the store does not hold, and a record outside the bounds is, to these policies, exactly as
         // invisible as one that does not exist, so no policy can tell the two apart (see docs/guide/deployment.md).
         policies.Add(new("reuse_feedback_exposures", "rls_reuse_feedback_exposures_insert", "INSERT", null, submission));
+
+        // Story 21.8 (0026): a record's injection row, in its own scope only, and written only for a live record with
+        // that ID in exactly those scope columns. A grant never admits one.
+        var injectedRecord =
+            "EXISTS (\n" +
+            "            SELECT 1 FROM agent_experience.experience_records r\n" +
+            "            WHERE r.experience_id = experience_injections.experience_id\n" +
+            "              AND r.tenant_id = experience_injections.tenant_id\n" +
+            "              AND r.application_id = experience_injections.application_id\n" +
+            "              AND r.project_id = experience_injections.project_id\n" +
+            "              AND r.team_id IS NOT DISTINCT FROM experience_injections.team_id\n" +
+            "              AND r.agent_id IS NOT DISTINCT FROM experience_injections.agent_id\n" +
+            "              AND r.user_id IS NOT DISTINCT FROM experience_injections.user_id\n" +
+            "              AND r.deleted_at IS NULL)";
+        var injectionWrite = $"{scope}\n        AND {injectedRecord}";
+        policies.Add(new(ApplicationRolePrivileges.InjectionsTable, "rls_injections_select", "SELECT", scope, null));
+        policies.Add(new(ApplicationRolePrivileges.InjectionsTable, "rls_injections_insert", "INSERT", null, injectionWrite));
+        policies.Add(new(ApplicationRolePrivileges.InjectionsTable, "rls_injections_update", "UPDATE", scope, injectionWrite));
 
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_select", "SELECT", Readable(), null));
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_insert", "INSERT", null, scope));

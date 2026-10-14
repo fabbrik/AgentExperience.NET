@@ -772,6 +772,24 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         }
     }
 
+    /// <summary>Story 21.8: whether this fake claims to track injections. <see langword="false"/>, the port's default, unless a test sets it.</summary>
+    public bool TracksInjections { get; set; }
+
+    /// <summary>
+    /// Story 21.8: what <see cref="RecordInjectionAsync"/> does, when set; otherwise it answers as the port's default
+    /// implementation (nothing recorded, not tracked).
+    /// </summary>
+    public Func<AuthorizationContext, Scope, IReadOnlyList<Guid>, DateTimeOffset, CancellationToken, Task<ExperienceInjectionRecordResult>>? OnRecordInjection { get; set; }
+
+    public Task<ExperienceInjectionRecordResult> RecordInjectionAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        DateTimeOffset injectedAt,
+        CancellationToken cancellationToken) =>
+        OnRecordInjection?.Invoke(authorization, scope, experienceIds, injectedAt, cancellationToken)
+            ?? Task.FromResult(ExperienceInjectionRecordResult.NotTracked);
+
     public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Injection must not read history.");
 

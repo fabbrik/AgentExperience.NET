@@ -12,9 +12,10 @@ namespace AgentExperience.MicrosoftAgentFramework;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It reads through <see cref="IExperienceRecordStore.QueryAsync"/> under the caller's own authorization and in the
-/// caller's own scope: the same boundary retrieval reads within. Lessons another scope lends through a sharing grant
-/// are not listed. It never writes.
+/// It reads through <see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/> -- the page, and when each lesson was
+/// last injected, in one bounded store read -- under the caller's own authorization and in the caller's own scope: the
+/// same boundary retrieval reads within. Lessons another scope lends through a sharing grant are not listed. It never
+/// writes.
 /// </para>
 /// <para>
 /// The scope comes from the <see cref="ExperienceIdentity"/> passed in, which in a web host must come from the host's own
@@ -40,6 +41,9 @@ public sealed class AgentExperienceLessons
         _clock = clock;
         _registration = registration;
     }
+
+    /// <summary>The context provider whose writer and options render the blocks. For tests.</summary>
+    internal ExperienceContextProvider Provider => _provider;
 
     /// <summary>
     /// Lists the lessons in <paramref name="identity"/>'s scope, newest first.
@@ -83,7 +87,8 @@ public sealed class AgentExperienceLessons
         // One record past the limit tells "exactly the limit" from "more exist". Leaving ineligible lessons out may skip
         // any number of records, so then as many as the store answers are read.
         var probe = query.IncludeIneligible ? Math.Min(query.Limit + 1, ExperienceRecordQuery.MaxLimit) : ExperienceRecordQuery.MaxLimit;
-        var result = await _store.QueryAsync(
+        // Story 21.8: the page and each record's last injection in one bounded read, never one read per lesson.
+        var result = await _store.QueryWithInjectionsAsync(
             identity.Authorization,
             new ExperienceRecordQuery(identity.Scope, query.Statuses?.ToArray(), probe),
             cancellationToken).ConfigureAwait(false);
@@ -95,6 +100,9 @@ public sealed class AgentExperienceLessons
         }
 
         var records = result.Records ?? [];
+        // Tracked only when the store says so on both sides: a decorator that forwards the read but not the capability
+        // (or the reverse) reads as not tracked rather than as "never".
+        var injections = _store.TracksInjections ? result.Injections : null;
         var lessons = new List<ExperienceLesson>(Math.Min(records.Count, query.Limit));
         var outOfScope = 0;
         var hasMore = false;
@@ -114,6 +122,11 @@ public sealed class AgentExperienceLessons
             }
 
             var lesson = Describe(record);
+            if (injections is not null && injections.TryGetValue(record.ExperienceId, out var injected) && injected is not null)
+            {
+                lesson = lesson with { LastInjectedAt = injected.LastInjectedAt, InjectionCount = injected.Count };
+            }
+
             if (!lesson.IsEligible && !query.IncludeIneligible)
             {
                 continue;
@@ -135,6 +148,7 @@ public sealed class AgentExperienceLessons
         {
             HasMore = hasMore,
             OutOfScopeDropped = outOfScope,
+            InjectionsTracked = injections is not null,
         };
     }
 
@@ -269,6 +283,16 @@ public sealed record ExperienceLessonsPage(
 
     /// <summary>How many records the store answered from outside the caller's scope, which were left out.</summary>
     public int OutOfScopeDropped { get; init; }
+
+    /// <summary>
+    /// Whether the store tracks injections (<see cref="IExperienceRecordStore.TracksInjections"/>, and its
+    /// <see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/> read them), so that a lesson's
+    /// <see cref="ExperienceLesson.LastInjectedAt"/> of <see langword="null"/> means "never injected by a .NET agent".
+    /// When <see langword="false"/> -- a store that does not track them, or a PostgreSQL schema whose application role
+    /// has not been granted <c>0026</c>'s table yet -- it means "not known". Only the .NET adapter records injections
+    /// for now: a lesson injected only by a Python or Go agent reads as never injected.
+    /// </summary>
+    public bool InjectionsTracked { get; init; }
 }
 
 /// <summary>One stored lesson, as the lessons view shows it.</summary>
@@ -310,6 +334,19 @@ public sealed record ExperienceLesson(
 
     /// <summary>The block an agent in this scope would be shown for it (see the primary constructor's parameter doc).</summary>
     public string BlockText { get; init; } = BlockText ?? throw new ArgumentNullException(nameof(BlockText));
+
+    /// <summary>
+    /// When an agent in this scope was last shown this lesson: the latest injected block that delivered it, by the
+    /// injecting provider's clock (clamped to the store's). One of three states: an instant; <see langword="null"/>
+    /// with the page's <see cref="ExperienceLessonsPage.InjectionsTracked"/> set, meaning never injected by a .NET agent
+    /// (the Python and Go ports do not record injections yet); or <see langword="null"/> with it unset, meaning not
+    /// known. Only injections in this scope count; another scope injecting it through a sharing grant does not. It is
+    /// recorded in the background after the block is handed over, so it can lag an injection by a moment.
+    /// </summary>
+    public DateTimeOffset? LastInjectedAt { get; init; }
+
+    /// <summary>How many injected blocks delivered this lesson in this scope; 0 when never (or not tracked).</summary>
+    public long InjectionCount { get; init; }
 }
 
 /// <summary>Why retrieval would not currently use a lesson.</summary>

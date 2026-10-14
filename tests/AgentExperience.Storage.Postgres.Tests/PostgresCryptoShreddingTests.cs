@@ -34,6 +34,45 @@ public sealed class PostgresCryptoShreddingTests
         _fixture = fixture;
     }
 
+    // ------------------------------------------------------------------ injections (story 21.8)
+
+    [Fact]
+    public async Task A_record_erased_by_its_key_is_never_recorded_as_injected_and_an_encrypted_erasure_removes_the_row()
+    {
+        var keys = new Keys();
+        var store = keys.Store(_fixture.DataSource);
+        var plaintext = new PostgresExperienceRecordStore(_fixture.DataSource, encryption: ExperienceEncryption.ForcePlaintext);
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var erasedByKey = Minimal(scope);
+        var erased = Minimal(scope);
+        var beforeUpgrade = Minimal(scope);
+        await store.CreateAsync(auth, erasedByKey, CancellationToken.None);
+        await store.CreateAsync(auth, erased, CancellationToken.None);
+        await plaintext.CreateAsync(auth, beforeUpgrade, CancellationToken.None);
+        const string Count = "SELECT count(*) FROM agent_experience.experience_injections WHERE experience_id = @id";
+
+        // Its key destroyed with no tombstone yet (a delete whose commit failed): erased, so never recorded. A row from
+        // before encryption, which has no key at all, still is.
+        await keys.KeyStore.DestroyKeyAsync(new(erasedByKey.ExperienceId, scope), CancellationToken.None);
+        var recorded = await store.RecordInjectionAsync(
+            auth, scope, [erasedByKey.ExperienceId, erased.ExperienceId, beforeUpgrade.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, recorded.Outcome);
+        Assert.Equal(0L, await ScalarAsync<long>(Count, erasedByKey.ExperienceId));
+        Assert.Equal(1L, await ScalarAsync<long>(Count, erased.ExperienceId));
+        Assert.Equal(1L, await ScalarAsync<long>(Count, beforeUpgrade.ExperienceId));
+
+        // The encrypted erasure destroys the key and tombstones the row, and the tombstone takes the injection row.
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await store.DeleteAsync(auth, scope, erased.ExperienceId, CancellationToken.None)).Outcome);
+        Assert.Equal(0L, await ScalarAsync<long>(Count, erased.ExperienceId));
+
+        // And the view reads neither.
+        var page = await store.QueryWithInjectionsAsync(auth, new ExperienceRecordQuery(scope), CancellationToken.None);
+        Assert.Equal([beforeUpgrade.ExperienceId], page.Records.Select(r => r.ExperienceId));
+        Assert.Equal([beforeUpgrade.ExperienceId], page.Injections!.Keys);
+    }
+
     // ------------------------------------------------------------------ what is stored
 
     [Fact]

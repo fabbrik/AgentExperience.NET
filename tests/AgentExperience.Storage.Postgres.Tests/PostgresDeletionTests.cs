@@ -71,6 +71,12 @@ public sealed class PostgresDeletionTests
         Assert.Equal(1, await CountAsync("experience_grant_access", record.ExperienceId));
         var feedbackId = Assert.Single(await FeedbackIdsAsync(record.ExperienceId));
 
+        // Story 21.8: when it was last injected, a row of its own.
+        Assert.Equal(
+            ExperienceStoreOutcome.Committed,
+            (await _store.RecordInjectionAsync(auth, owner, [record.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None)).Outcome);
+        Assert.Equal(1, await CountAsync("experience_injections", record.ExperienceId));
+
         var deleted = await _store.DeleteAsync(auth, owner, record.ExperienceId, CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Deleted, deleted.Outcome);
@@ -83,6 +89,11 @@ public sealed class PostgresDeletionTests
         Assert.Equal(0, await CountGrantEventsAsync(record.ExperienceId));
         Assert.Equal(0, await CountAsync("experience_grants", record.ExperienceId));
         Assert.Equal(0, await CountAsync("lifecycle_events", record.ExperienceId));
+        Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
+
+        // An injection recorded against the tombstone afterwards writes nothing: it is not a live record.
+        await _store.RecordInjectionAsync(auth, owner, [record.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None);
+        Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
 
         // ...except the access trail, which is retained on purpose: it names a grant and a principal,
         // carries no payload, and is the answer to "who read this before it was deleted". It has to stay
@@ -769,6 +780,130 @@ public sealed class PostgresDeletionTests
         var stored = await ReadTombstoneAsync(record.ExperienceId);
         Assert.Null(stored.DeletedAt);
         Assert.Equal(mine.TeamId, stored.TeamId);
+    }
+
+    // ------------------------------------------------------------------ injections (story 21.8)
+
+    [Fact]
+    public async Task An_injection_recorded_while_a_record_is_being_erased_waits_and_records_nothing()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+
+        // The purge holds the record FOR UPDATE; the upsert's FOR KEY SHARE waits for it, then re-reads a tombstone.
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await purging.BeginTransactionAsync();
+        await PurgeInAsync(purging, transaction, record.ExperienceId, tenant, scope.TeamId);
+
+        var recording = _store.RecordInjectionAsync(auth, scope, [record.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, ExperienceRecordSql.RecordKeyShareLock, recording);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await recording).Outcome);
+        Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task An_erasure_started_while_an_injection_is_being_recorded_waits_and_then_removes_its_row()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+
+        // The upsert, uncommitted: it holds the record FOR KEY SHARE and its new row.
+        await using var recording = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await recording.BeginTransactionAsync();
+        await ExperienceSessionContext.DeclareAsync(recording, transaction, auth, CancellationToken.None);
+        await using (var upsert = new NpgsqlCommand(PostgresExperienceRecordStore.RecordInjectionSql, recording, transaction))
+        {
+            upsert.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", [record.ExperienceId]));
+            upsert.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("injected_at", DateTimeOffset.UtcNow));
+            ExperienceRecordParameters.AddScopeParameters(upsert.Parameters, scope);
+            Assert.Equal(1, await upsert.ExecuteNonQueryAsync());
+        }
+
+        // The erasure's FOR UPDATE waits for it; once it commits, the tombstone's trigger deletes the row.
+        var erasing = _store.DeleteAsync(auth, scope, record.ExperienceId, CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, recording, "purge_experience_record", erasing);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await erasing).Outcome);
+        Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task Concurrent_injection_records_and_erasures_over_the_same_records_never_deadlock()
+    {
+        // The upsert locks a record before its injection row, in ID order; the purge locks its one record before that
+        // record's injection row. So no transaction can wait for a record while holding another's injection row, and no
+        // interleaving deadlocks. Run hard enough that a lock-order mistake would show up as a 40P01.
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        for (var round = 0; round < 8; round++)
+        {
+            var ids = new List<Guid>();
+            for (var i = 0; i < 6; i++)
+            {
+                ids.Add((await ValidatedAsync(auth, scope)).ExperienceId);
+            }
+
+            var random = new Random(round);
+            var work = new List<Task>();
+            for (var writer = 0; writer < 6; writer++)
+            {
+                var named = ids.OrderBy(_ => random.Next()).Take(4).ToArray();
+                work.Add(Task.Run(() => _store.RecordInjectionAsync(auth, scope, named, DateTimeOffset.UtcNow, CancellationToken.None)));
+            }
+
+            var erased = new[] { ids[1], ids[4] };
+            work.AddRange(erased.Select(id => Task.Run(() => _store.DeleteAsync(auth, scope, id, CancellationToken.None))));
+            await Task.WhenAll(work);
+
+            foreach (var id in erased)
+            {
+                Assert.Equal(0, await CountAsync("experience_injections", id));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task A_record_row_removed_by_hand_takes_its_injection_row_with_it()
+    {
+        // No supported path removes a record row (0010's guard refuses it). An owner who disables that guard and
+        // deletes one anyway still loses its injection row, through the foreign key's cascade. Rolled back.
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+        await _store.RecordInjectionAsync(auth, scope, [record.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None);
+        Assert.Equal(1, await CountAsync("experience_injections", record.ExperienceId));
+
+        await using var connection = await _fixture.SuperuserDataSource.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        foreach (var sql in new[]
+        {
+            "ALTER TABLE agent_experience.experience_records DISABLE TRIGGER experience_records_no_delete",
+            "DELETE FROM agent_experience.experience_records WHERE experience_id = @id",
+        })
+        {
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            command.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await using (var count = new NpgsqlCommand(
+            "SELECT count(*) FROM agent_experience.experience_injections WHERE experience_id = @id", connection, transaction))
+        {
+            count.Parameters.Add(new NpgsqlParameter<Guid>("id", record.ExperienceId));
+            Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
+        }
+
+        await transaction.RollbackAsync();
+        Assert.Equal(1, await CountAsync("experience_injections", record.ExperienceId));
     }
 
     // ------------------------------------------------------------------ concurrency

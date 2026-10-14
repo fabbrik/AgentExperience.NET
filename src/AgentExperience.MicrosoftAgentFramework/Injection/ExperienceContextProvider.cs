@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Diagnostics;
 using Microsoft.Agents.AI;
@@ -177,6 +178,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> no new read is started.
     /// </summary>
     private int _abandonedReads;
+
+    /// <summary>The background injection records still running, so a test can wait for them.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Task, byte> _recordings = new();
+
+    private int _abandonedRecords;
 
     /// <summary>
     /// Creates a provider over Core's retrieval service, the record store its final eligibility check
@@ -762,8 +768,189 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
         RecordExposures(context.Agent, delivered);
 
+        // Story 21.8: when each delivered record was injected, for the lessons view. Started last, in the background,
+        // so the block is handed over and the model called without waiting for the store.
+        if (injectedRecords)
+        {
+            StartRecordingInjection(request, payload.ExperienceIds);
+        }
+
         return injected;
     }
+
+    /// <summary>
+    /// Starts recording, in the background, that <paramref name="experienceIds"/> were injected now in the request's
+    /// scope, for the lessons view's "last injected". Never throws and never waits: the block is handed over and the
+    /// model called whatever the store does. The outcome is reported through this assembly's diagnostics as the
+    /// <c>record_injection</c> operation: <c>Recorded</c>, <c>NotTracked</c> (the store does not track injections),
+    /// <c>NotRecorded</c> (it refused or failed), or <c>OutcomeUnknown</c> (it timed out or was cancelled).
+    /// </summary>
+    private void StartRecordingInjection(RetrieveExperienceRequest request, IReadOnlyList<Guid> experienceIds)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            if (!_store.TracksInjections)
+            {
+                InjectionDiagnostics.InjectionRecorded(InjectionDiagnostics.NotTrackedOutcome, started, errorClass: null);
+                return;
+            }
+
+            var injectedAt = _options.TimeProvider.GetUtcNow();
+            var ids = experienceIds.ToArray();
+            var authorization = request.Authorization;
+            var scope = request.Scope;
+            var work = Task.Run(() => RecordInjectionAsync(authorization, scope, ids, injectedAt, started), CancellationToken.None);
+            _recordings.TryAdd(work, 0);
+            _ = work.ContinueWith(
+                done => _recordings.TryRemove(done, out _),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+        catch (Exception)
+        {
+            // A store whose capability throws, or a scheduler that refuses the work: telemetry only.
+            InjectionDiagnostics.InjectionRecorded(InjectionDiagnostics.NotRecordedOutcome, started, ExperienceOperationErrorClass.Unexpected);
+        }
+    }
+
+    /// <summary>
+    /// The background record: the IDs in chunks of at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>, all
+    /// within <see cref="InjectionRecordTimeout"/> on the provider's clock. Each write is awaited with a timeout rather
+    /// than trusted to honour its token: a store that ignores cancellation is abandoned, counted against
+    /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> like an abandoned eligibility read, and its fault
+    /// observed once it ends. Never throws.
+    /// </summary>
+    private async Task RecordInjectionAsync(AuthorizationContext authorization, Scope scope, Guid[] ids, DateTimeOffset injectedAt, long started)
+    {
+        var outcome = InjectionDiagnostics.RecordedOutcome;
+        ExperienceOperationErrorClass? errorClass = null;
+        try
+        {
+            var clock = _options.TimeProvider;
+            var since = clock.GetTimestamp();
+            var chunkSize = Math.Clamp(InjectionRecordChunkSize, 1, ExperienceRecordGetManyResult.MaxCount);
+            for (var offset = 0; offset < ids.Length; offset += chunkSize)
+            {
+                if (Volatile.Read(ref _abandonedRecords) >= _options.Limits.MaxAbandonedReads)
+                {
+                    // Too many earlier writes are still running against the store: another would only add to them.
+                    outcome = InjectionDiagnostics.NotRecordedOutcome;
+                    errorClass = ExperienceOperationErrorClass.Timeout;
+                    break;
+                }
+
+                var left = InjectionRecordTimeout - clock.GetElapsedTime(since);
+                if (left <= TimeSpan.Zero)
+                {
+                    throw new TimeoutException("The injection record ran out of time.");
+                }
+
+                var chunk = ids[offset..Math.Min(ids.Length, offset + chunkSize)];
+                var source = new CancellationTokenSource();
+                var write = Task.Run(() => _store.RecordInjectionAsync(authorization, scope, chunk, injectedAt, source.Token), CancellationToken.None);
+                ExperienceInjectionRecordResult? recorded;
+                var abandoned = false;
+                try
+                {
+                    recorded = await write.WaitAsync(left, clock).ConfigureAwait(false);
+                }
+                catch (TimeoutException) when (!write.IsCompleted)
+                {
+                    abandoned = true;
+                    AbandonRecord(write, source);
+                    throw;
+                }
+                finally
+                {
+                    if (!abandoned)
+                    {
+                        source.Dispose();
+                    }
+                }
+
+                if (recorded is not { Outcome: ExperienceStoreOutcome.Committed })
+                {
+                    outcome = InjectionDiagnostics.NotRecordedOutcome;
+                    break;
+                }
+
+                if (!recorded.Tracked)
+                {
+                    outcome = InjectionDiagnostics.NotTrackedOutcome;
+                    break;
+                }
+            }
+        }
+        catch (TimeoutException)
+        {
+            outcome = InjectionDiagnostics.OutcomeUnknownOutcome;
+            errorClass = ExperienceOperationErrorClass.Timeout;
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = InjectionDiagnostics.OutcomeUnknownOutcome;
+            errorClass = ExperienceOperationErrorClass.Cancelled;
+        }
+        catch (Exception ex)
+        {
+            outcome = InjectionDiagnostics.NotRecordedOutcome;
+            errorClass = ex is ExperienceStoreException ? ExperienceOperationErrorClass.Infrastructure : ExperienceOperationErrorClass.Unexpected;
+        }
+
+        InjectionDiagnostics.InjectionRecorded(outcome, started, errorClass);
+    }
+
+    /// <summary>
+    /// Hands an injection write that overran its bound off to run itself down: counts it, cancels its token off the
+    /// recording's own path, and once it and the cancellation have ended, observes its fault, stops counting it and
+    /// disposes the token source. The same hand-off as <see cref="Abandon"/>.
+    /// </summary>
+    private void AbandonRecord(Task write, CancellationTokenSource source)
+    {
+        Interlocked.Increment(ref _abandonedRecords);
+        var cancelling = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await source.CancelAsync().ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // A throwing cancellation callback changes nothing about the report.
+                }
+            },
+            CancellationToken.None);
+
+        _ = Task.WhenAll(write, cancelling).ContinueWith(
+            completed =>
+            {
+                _ = completed.Exception;
+                _ = write.Exception;
+                source.Dispose();
+                Interlocked.Decrement(ref _abandonedRecords);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>How long one background injection record may take, all chunks together; a few seconds by default.</summary>
+    internal TimeSpan InjectionRecordTimeout { get; set; } = DefaultInjectionRecordTimeout;
+
+    /// <summary>How many IDs one write names: the store's maximum, <see cref="ExperienceRecordGetManyResult.MaxCount"/>. Lower only in tests.</summary>
+    internal int InjectionRecordChunkSize { get; set; } = ExperienceRecordGetManyResult.MaxCount;
+
+    /// <summary>The default <see cref="InjectionRecordTimeout"/>.</summary>
+    internal static readonly TimeSpan DefaultInjectionRecordTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>Completes once every background injection record started so far has ended. For tests.</summary>
+    internal Task InjectionRecordsSettledAsync() => Task.WhenAll(_recordings.Keys);
+
+    /// <summary>How many abandoned injection writes are still running against the store. For tests.</summary>
+    internal int AbandonedInjectionRecords => Volatile.Read(ref _abandonedRecords);
 
     /// <summary>
     /// Records <paramref name="exposures"/> on the run this invocation is captured as, when it is captured by

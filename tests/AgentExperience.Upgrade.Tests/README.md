@@ -123,12 +123,13 @@ the documented behaviour instead:
 | A record from any published preview | no `ProvenanceSignature`: signing is opt-in and did not exist. With signing on, its run vouches for nothing unless its ID is listed in `TrustUnsignedRecordIds` | [Signing provenance](../../docs/guide/confidence.md#signing-provenance) |
 | `0.1.0-preview.1` confidence evidence | no recorded admission (`null`), counted as unrecorded | [`0018`](../../docs/guide/postgres-schema.md#0018-evidence-admission) |
 | New evidence naming a run that vouches for nothing | refused (`Unverified`) by today's default, verifying lifecycle service: `HostWrittenRun` for a `0.1.0-preview.1` run, `NotExposed` for a `0.1.0-preview.2` run exposed to nothing. The documented opt-out, `IndependenceVerification.TrustHostSuppliedIdentifiers`, admits it, labelled `HostTrusted` | CHANGELOG `0.1.0-preview.2`, Upgrade step 5 and Breaking changes |
+| A record from any published preview | never injected: `0026` starts empty, so the lessons view says "never" until the record is next injected (and "not tracked" until the privileges call is re-run) | [`0026`](../../docs/guide/postgres-schema.md#0026-when-each-record-was-last-injected) |
 | The `0.1.0-preview.1` roles | ownership moves to a new owner role; the preview's role becomes the application role and owns nothing | [Upgrading an existing single-role database](../../docs/guide/deployment.md#upgrading-an-existing-single-role-database) |
 
 The comparison enforces the same list from the other side: a member today's API returns that the preview's did not
 fails unless it is one of these, new by design, each listed with its reason in `UpgradeReport.NewByDesign`:
 `closedRoundId`, `origin`, `exposedTo`, `provenanceSignature`, `authorship`, `assessmentId`, `admission`,
-`disclosure`, `approachArguments`, `grantDisclosure` and `grantApproachArguments`. Everything else must read back
+`disclosure`, `approachArguments`, `grantDisclosure`, `grantApproachArguments` and `injections`. Everything else must read back
 identical.
 
 ## Running it
