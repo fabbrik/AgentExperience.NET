@@ -6,17 +6,18 @@
     },
     {
       "experienceId": "0000005a-0000-4000-8000-000000000008",
-      "relevance": 0.8
+      "relevance": 0.800000011920929
     },
     {
       "experienceId": "0000005a-0000-4000-8000-000000000002",
-      "relevance": 0.6
+      "relevance": 0.6000000238418579
     },
     {
       "experienceId": "0000005a-0000-4000-8000-000000000003",
-      "relevance": 0.6
+      "relevance": 0.6000000238418579
     }
   ],
+  "truncated": false,
   "ranked": [
     {
       "experienceId": "0000005a-0000-4000-8000-000000000008",

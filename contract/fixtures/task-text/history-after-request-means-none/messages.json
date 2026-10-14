@@ -5,7 +5,7 @@
   "messages": [
     {
       "role": "user",
-      "source": "External",
+      "source": null,
       "contents": [
         {
           "type": "text",

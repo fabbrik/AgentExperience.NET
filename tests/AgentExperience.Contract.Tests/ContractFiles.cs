@@ -9,14 +9,26 @@ namespace AgentExperience.Contract.Tests;
 /// </summary>
 /// <remarks>
 /// <b>It never updates itself.</b> Set <c>AGENTEXPERIENCE_CONTRACT_FIXTURES_UPDATE=1</c> to rewrite the fixtures from the
-/// current library, then read the diff and commit it on purpose. A fixture whose content changes is a change to the
-/// contract: bump <see cref="ContractVersion"/> (and the version named in <c>contract/README.md</c>) in the same change,
-/// or the lock check fails (see <see cref="FixtureLock"/>).
+/// current library, then read the diff and commit it on purpose. Any change to a contract file is a new contract version:
+/// see <see cref="ContractLock"/>.
 /// </remarks>
 internal static class ContractFiles
 {
-    /// <summary>The contract version the checked-in fixtures describe. Bumped whenever a fixture changes meaning.</summary>
-    public const string ContractVersion = "contract-v1";
+    /// <summary>
+    /// The contract version, <c>major.minor</c>. A change that only adds cases bumps the minor version; a change to
+    /// anything already published (a fixture, the schema, the SQL, the README) bumps the major version.
+    /// </summary>
+    public const string ContractVersion = "1.0";
+
+    /// <summary>
+    /// The SHA-256 of <c>contract/lock.json</c> for every published version. This, not <c>lock.json</c>, is the authority:
+    /// the update switch rewrites <c>lock.json</c> but never this source file, so a changed contract file can only be
+    /// accepted by bumping <see cref="ContractVersion"/> and adding its digest here, by hand, in review.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> LockDigests { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["1.0"] = "cd0864cee6fc7fbfe2693adf53f95727e0f9ccf02dfca99c287a9eb8fc31f3a1",
+    };
 
     /// <summary>The environment variable that rewrites the fixtures instead of only comparing against them.</summary>
     public const string UpdateVariable = "AGENTEXPERIENCE_CONTRACT_FIXTURES_UPDATE";
@@ -73,10 +85,11 @@ internal static class ContractFiles
     }
 
     /// <summary>
-    /// The case directories under <c>fixtures/<paramref name="family"/></c> that no case defines: reported as drift, or deleted
-    /// when <see cref="Updating"/>.
+    /// Every directory and file under <c>fixtures/<paramref name="family"/></c> that no case defines: a case directory no
+    /// case names, a file in a case directory other than <paramref name="caseFiles"/>, or a file in the family directory
+    /// other than <paramref name="familyFiles"/>. Reported as drift, or deleted when <see cref="Updating"/>.
     /// </summary>
-    public static void VerifyNoStrayCases(string family, IEnumerable<string> caseNames, List<string> drift)
+    public static void VerifyNoStray(string family, IEnumerable<string> caseNames, IReadOnlyCollection<string> caseFiles, List<string> drift, params string[] familyFiles)
     {
         var directory = Path.Combine(Fixtures, family);
         if (!Directory.Exists(directory))
@@ -84,16 +97,42 @@ internal static class ContractFiles
             return;
         }
 
-        var expected = caseNames.ToHashSet(StringComparer.Ordinal);
-        foreach (var stray in Directory.EnumerateDirectories(directory).Select(Path.GetFileName).Where(name => !expected.Contains(name!)))
+        void Stray(string path, bool isDirectory)
         {
             if (Updating)
             {
-                Directory.Delete(Path.Combine(directory, stray!), recursive: true);
+                if (isDirectory)
+                {
+                    Directory.Delete(path, recursive: true);
+                }
+                else
+                {
+                    File.Delete(path);
+                }
             }
             else
             {
-                drift.Add($"fixtures/{family}/{stray}: no case defines it.");
+                drift.Add($"{Path.GetRelativePath(Root, path).Replace('\\', '/')}: no case defines it.");
+            }
+        }
+
+        var expected = caseNames.ToHashSet(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(directory).Where(file => !familyFiles.Contains(Path.GetFileName(file))))
+        {
+            Stray(file, isDirectory: false);
+        }
+
+        foreach (var caseDirectory in Directory.EnumerateDirectories(directory))
+        {
+            if (!expected.Contains(Path.GetFileName(caseDirectory)))
+            {
+                Stray(caseDirectory, isDirectory: true);
+                continue;
+            }
+
+            foreach (var entry in Directory.EnumerateFileSystemEntries(caseDirectory).Where(entry => !caseFiles.Contains(Path.GetFileName(entry))))
+            {
+                Stray(entry, Directory.Exists(entry));
             }
         }
     }

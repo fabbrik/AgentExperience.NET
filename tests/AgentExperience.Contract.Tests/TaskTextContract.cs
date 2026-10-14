@@ -10,11 +10,11 @@ internal sealed record MessagePartInput(string Type, string? Text = null);
 
 /// <summary>
 /// One message of an invocation, in conversation order. <see cref="Source"/> is where the agent framework says the
-/// message came from: <c>External</c> (new input; also what a message with no source counts as), <c>ChatHistory</c>
-/// (replayed history), <c>AIContextProvider</c>, or any other name. <see cref="HistoricalReferenceStamp"/> marks a
-/// message that carries an injected block.
+/// message came from: <see langword="null"/> when it says nothing (which counts as <c>External</c>), <c>External</c>
+/// (new input), <c>ChatHistory</c> (replayed history), <c>AIContextProvider</c>, or any other name.
+/// <see cref="HistoricalReferenceStamp"/> marks a message that carries an injected block.
 /// </summary>
-internal sealed record MessageInput(string Role, string Source, IReadOnlyList<MessagePartInput> Contents, bool HistoricalReferenceStamp = false);
+internal sealed record MessageInput(string Role, string? Source, IReadOnlyList<MessagePartInput> Contents, bool HistoricalReferenceStamp = false);
 
 /// <summary><c>messages.json</c> of a task-text case.</summary>
 internal sealed record TaskTextInput(string Description, int MaxLength, int FollowUpThreshold, IReadOnlyList<MessageInput> Messages);
@@ -92,6 +92,16 @@ internal static class TaskTextContract
         ("image-only-latest-is-null", new TaskTextInput(
             "When the new input has no text, the result is null: an older message is never taken for the request.",
             Max, Threshold, [Message("user", "ChatHistory", "Earlier request with text"), new MessageInput("user", "External", [new("image")])])),
+        ("explicit-external-source", new TaskTextInput(
+            "A message the framework stamps External explicitly counts exactly as one with no source.",
+            Max, Threshold, [Message("user", "External", "Deploy service X to prod"), Message("user", "External", "and retry")])),
+        ("custom-source-ignored", new TaskTextInput(
+            "A message from any other source (here a custom one) is never the latest request, nor the previous message.",
+            Max, Threshold,
+            [User("Deploy service X to prod"), Message("user", "CustomPipeline", "a custom source's message"), User("and retry")])),
+        ("latest-exactly-512", new TaskTextInput(
+            "A latest request of exactly 512 code units is kept whole and stands alone.",
+            Max, Threshold, [User("Earlier"), User(new string('c', 512))])),
         ("threshold-off", new TaskTextInput(
             "A follow-up threshold of 0 turns the join off.",
             Max, 0, [User("Deploy service X to prod"), User("and retry")])),
@@ -114,14 +124,15 @@ internal static class TaskTextContract
 
         return input.Source switch
         {
-            "External" => message,
+            null => message,
+            "External" => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.External, "contract"),
             "ChatHistory" => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "contract"),
             "AIContextProvider" => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, "contract"),
             var other => message.WithAgentRequestMessageSource(new AgentRequestMessageSourceType(other), "contract"),
         };
     }
 
-    private static MessageInput User(string text) => Message("user", "External", text);
+    private static MessageInput User(string text) => Message("user", null, text);
 
-    private static MessageInput Message(string role, string source, string text) => new(role, source, [new("text", text)]);
+    private static MessageInput Message(string role, string? source, string text) => new(role, source, [new("text", text)]);
 }

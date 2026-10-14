@@ -59,14 +59,32 @@ internal static class FinalizeContract
         ("allowlisted-argument-values", AllowlistedArgumentValues()),
         ("sanitization-redacts-secret-field", SanitizationRedactsSecretField()),
         ("non-ascii-and-overlong-text", NonAsciiAndOverlongText()),
+        ("unknown-no-closed-round", UnknownNoClosedRound()),
+        ("unknown-round-for-another-revision", UnknownRoundForAnotherRevision()),
+        ("unknown-check-without-evidence-and-any-kind", UnknownCheckWithoutEvidence()),
+        ("three-failed-attempts-team-and-user-scope", ThreeFailedAttempts()),
+        ("rejected-attempts", RejectedAttempts()),
+        ("capture-caps", CaptureCaps()),
+        ("exposures-and-correlation-id", ExposuresAndCorrelationId()),
     ];
+
+    /// <summary>The files of one finalize case.</summary>
+    public static IReadOnlyCollection<string> Files { get; } = ["input.json", "expected-capture.json", "expected-record.json", "expected-event.json"];
 
     /// <summary>
     /// Runs one case through the library: capture (which sanitizes), then finalization with the deterministic reflector,
     /// committed through the in-memory store. Returns the stored record and its initial lifecycle event, both as the
     /// contract writes them.
     /// </summary>
-    public static async Task<(JsonObject Record, JsonObject Event)> RunAsync(FinalizeInput input)
+    public static async Task<(JsonObject Record, JsonObject Event)> RunAsync(FinalizeInput input) =>
+        await RunWithCaptureAsync(input) is var (record, lifecycleEvent, _) ? (record, lifecycleEvent) : default;
+
+    /// <summary>
+    /// As <see cref="RunAsync"/>, also returning <c>expected-capture.json</c>: what capture answered for each attempt,
+    /// in input order, and for the run's exposures. An attempt capture refuses is not stored, and the attempts it keeps
+    /// are numbered from 0 in the order they were recorded.
+    /// </summary>
+    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture)> RunWithCaptureAsync(FinalizeInput input)
     {
         var sanitization = input.Options.AllowedArgumentNames is { } names
             ? AgentExperienceDefaults.SanitizationAllowing([.. names])
@@ -74,8 +92,16 @@ internal static class FinalizeContract
         var capture = new InMemoryExperienceCaptureService(new DefaultSanitizer(sanitization), AgentExperienceDefaults.CaptureLimits);
 
         var run = input.Run;
-        var started = capture.StartRun(run.RunId, run.TaskId, run.TaskDescription, run.Scope, run.Environment, run.Provenance, run.StartedAt);
+        // A run starts exposed to nothing; the records it was shown are recorded through capture as they are delivered.
+        var started = capture.StartRun(run.RunId, run.TaskId, run.TaskDescription, run.Scope, run.Environment, run.Provenance with { ExposedTo = [] }, run.StartedAt);
         Assert.Equal(StartRunOutcome.Started, started.Outcome);
+        var captureOutcomes = new JsonObject();
+        if (run.Provenance.ExposedTo.Count > 0)
+        {
+            captureOutcomes["exposure"] = capture.RecordExposure(run.RunId, run.Provenance.ExposedTo).Outcome.ToString();
+        }
+
+        var attemptOutcomes = new JsonArray();
 
         foreach (var attempt in run.Attempts.OrderBy(attempt => attempt.SequenceNumber))
         {
@@ -89,8 +115,10 @@ internal static class FinalizeContract
                         call.ToolCallId, call.ToolName, call.Arguments, call.StartedAt, call.Duration, call.Result, call.Error))],
                     attempt.Result,
                     attempt.Error));
-            Assert.True(appended.Outcome == AppendAttemptOutcome.Recorded, $"Attempt {attempt.SequenceNumber} was not appended: {appended.Outcome}.");
+            attemptOutcomes.Add(appended.Outcome.ToString());
         }
+
+        captureOutcomes["attempts"] = attemptOutcomes;
 
         var completed = await capture.CompleteRunAsync(
             run.RunId,
@@ -131,7 +159,7 @@ internal static class FinalizeContract
             ["applied_revision"] = result.Revision,
         };
 
-        return (ContractJson.ToStored(record), lifecycleEvent);
+        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes);
     }
 
     // ---- Cases -------------------------------------------------------------------------------------------------------
@@ -294,6 +322,168 @@ internal static class FinalizeContract
             Verified(run, t.AddSeconds(30), ("refund-issued", "integration-test", CheckResult.Pass)));
     }
 
+    private static FinalizeInput UnknownNoClosedRound()
+    {
+        var run = Fixed.Id(0xf7, 0);
+        var t = Fixed.T0.AddHours(6);
+        return new FinalizeInput(
+            "No verification round was closed: the outcome is Unknown with no evidence examined, so the record is Quarantined. " +
+            "With no round, the payload has no closedRoundId but still carries origin Finalized.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "refund-stuck-pending", "Refund ticket 47 is stuck in pending", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1),
+                [
+                    Call(run, 0, 0, "run_refund_check", t.AddSeconds(1), new(), result: "refund issued"),
+                ],
+                result: "Done."),
+            ]),
+            Fixed.Id(0xf7, 0xe0),
+            Verified(run, t.AddSeconds(30), ("refund-issued", "integration-test", CheckResult.Pass)) with { ClosedRound = null });
+    }
+
+    private static FinalizeInput UnknownRoundForAnotherRevision()
+    {
+        var run = Fixed.Id(0xf8, 0);
+        var t = Fixed.T0.AddHours(7);
+        return new FinalizeInput(
+            "The closed round is for another artifact revision than the current one: stale verification, Unknown, Quarantined. " +
+            "The passing evidence is never examined.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "refund-stuck-pending", "Refund ticket 48 is stuck in pending", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1),
+                [
+                    Call(run, 0, 0, "run_refund_check", t.AddSeconds(1), new(), result: "refund issued"),
+                ],
+                result: "Done."),
+            ]),
+            Fixed.Id(0xf8, 0xe0),
+            Verified(run, t.AddSeconds(30), ("refund-issued", "integration-test", CheckResult.Pass)) with { CurrentArtifactRevision = "rev-2" });
+    }
+
+    private static FinalizeInput UnknownCheckWithoutEvidence()
+    {
+        var run = Fixed.Id(0xf9, 0);
+        var t = Fixed.T0.AddHours(8);
+        var verification = Verified(run, t.AddSeconds(30), ("refund-issued", "*", CheckResult.Pass));
+        return new FinalizeInput(
+            "Two required checks: one declared with the any-kind \"*\", met by evidence of kind manual-review; one with no " +
+            "evidence at all. The missing check makes the outcome Unknown (completion score 0.5), so the record is Quarantined.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "refund-stuck-pending", "Refund ticket 49 is stuck in pending", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1),
+                [
+                    Call(run, 0, 0, "run_refund_check", t.AddSeconds(1), new(), result: "refund issued"),
+                ],
+                result: "Done."),
+            ]),
+            Fixed.Id(0xf9, 0xe0),
+            verification with
+            {
+                RequiredChecks = [.. verification.RequiredChecks, new RequiredCheckInput("ledger-balanced", "integration-test")],
+                Evidence = [.. verification.Evidence.Select(evidence => evidence with { Kind = "manual-review" })],
+            });
+    }
+
+    private static FinalizeInput ThreeFailedAttempts()
+    {
+        var run = Fixed.Id(0xfa, 0);
+        var t = Fixed.T0.AddHours(9);
+        return new FinalizeInput(
+            "Three failed attempts before one that worked: the lesson counts them and names the last one's class. The scope " +
+            "sets every optional field (team and user too), each of which takes part in the derived IDs.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "deploy-service", "Deploy service X to prod", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "run_deploy", t.AddSeconds(1), new(), result: null, error: "HTTP/1.1 503 Service Unavailable")], error: "HTTP/1.1 503 Service Unavailable"),
+                Attempt(run, 1, t.AddSeconds(5), [Call(run, 1, 0, "run_deploy", t.AddSeconds(5), new(), result: null, error: "process exited with code 2")], error: "process exited with code 2"),
+                Attempt(run, 2, t.AddSeconds(9), [Call(run, 2, 0, "run_deploy", t.AddSeconds(9), new(), result: null, error: "ETIMEDOUT")], error: "ETIMEDOUT: the deploy timed out"),
+                Attempt(run, 3, t.AddSeconds(13), [Call(run, 3, 0, "run_deploy", t.AddSeconds(13), new(), result: "ok")], result: "Deployed."),
+            ]) with { Scope = Fixed.Scope with { TeamId = "payments", UserId = "user-17" } },
+            Fixed.Id(0xfa, 0xe0),
+            Verified(run, t.AddSeconds(30), ("service-healthy", "smoke-test", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput RejectedAttempts()
+    {
+        var run = Fixed.Id(0xfb, 0);
+        var t = Fixed.T0.AddHours(10);
+        var wide = new Dictionary<string, object?>();
+        for (var index = 0; index < 51; index++)
+        {
+            wide[$"f{index}"] = index;
+        }
+
+        var deep = new Dictionary<string, object?> { ["a"] = new Dictionary<string, object?> { ["a"] = new Dictionary<string, object?> { ["a"] = new Dictionary<string, object?> { ["a"] = new Dictionary<string, object?> { ["a"] = "deep" } } } } };
+        return new FinalizeInput(
+            "Capture refuses a whole attempt whose arguments are nested deeper than 4 levels, hold more than 50 fields, or use a " +
+            "field name containing \".\": nothing of it is stored (see expected-capture.json), and the attempts it keeps are " +
+            "numbered from 0 in the order they were recorded.",
+            new FinalizeOptions(AllowedArgumentNames: ["a", .. wide.Keys]),
+            Run(run, "search-refunds", "Find refunds over 100 EUR this week", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "search_refunds", t.AddSeconds(1), deep, result: "too deep")], result: "rejected"),
+                Attempt(run, 1, t.AddSeconds(2), [Call(run, 1, 0, "search_refunds", t.AddSeconds(2), wide, result: "too wide")], result: "rejected"),
+                Attempt(run, 2, t.AddSeconds(3), [Call(run, 2, 0, "search_refunds", t.AddSeconds(3), new() { ["a.b"] = "x" }, result: "bad name")], result: "rejected"),
+                Attempt(run, 3, t.AddSeconds(4), [Call(run, 3, 0, "search_refunds", t.AddSeconds(4), new() { ["a"] = "amount > 100" }, result: "3 rows")], result: "3 refunds found."),
+            ]),
+            Fixed.Id(0xfb, 0xe0),
+            Verified(run, t.AddSeconds(30), ("results-returned", "assertion", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput CaptureCaps()
+    {
+        var run = Fixed.Id(0xfc, 0);
+        var t = Fixed.T0.AddHours(11);
+        var attempts = new List<Attempt>();
+        for (var index = 0; index < 11; index++)
+        {
+            var calls = new List<ToolCallRecord>();
+            var count = index == 9 ? 52 : 1;
+            for (var call = 0; call < count; call++)
+            {
+                calls.Add(Call(run, index, call, "fetch_page", t.AddSeconds(index), new(), result: "ok"));
+            }
+
+            attempts.Add(index < 9
+                ? Attempt(run, index, t.AddSeconds(index), calls, error: "System.TimeoutException: page timed out")
+                : Attempt(run, index, t.AddSeconds(index), calls, result: "Exported."));
+        }
+
+        return new FinalizeInput(
+            "A run keeps at most 10 attempts, and an attempt at most 50 tool calls: the 52-call tenth attempt keeps its first 50, " +
+            "and an eleventh attempt is refused with CapacityExceeded.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "export-catalog", "Export the whole catalog", t, attempts),
+            Fixed.Id(0xfc, 0xe0),
+            Verified(run, t.AddSeconds(30), ("export-complete", "integration-test", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput ExposuresAndCorrelationId()
+    {
+        var run = Fixed.Id(0xfd, 0);
+        var t = Fixed.T0.AddHours(12);
+        return new FinalizeInput(
+            "A run that was shown two stored records and carries a host correlation ID: the provenance keeps both. The " +
+            "exposures are recorded through capture (a run starts exposed to nothing), not passed in at the start.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "refund-stuck-pending", "Refund ticket 50 is stuck in pending", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "run_refund_check", t.AddSeconds(1), new(), result: "refund issued")], result: "Refund issued."),
+            ]) with
+            {
+                Provenance = Fixed.Provenance(t) with
+                {
+                    CorrelationId = "trace-7f3a",
+                    ExposedTo = [new RunExposure(Fixed.Id(0x5a, 1), 1), new RunExposure(Fixed.Id(0x5a, 8), 3)],
+                },
+            },
+            Fixed.Id(0xfd, 0xe0),
+            Verified(run, t.AddSeconds(30), ("refund-issued", "integration-test", CheckResult.Pass)));
+    }
+
     // ---- Builders ----------------------------------------------------------------------------------------------------
 
     private static ExperienceRun Run(Guid runId, string taskId, string? description, DateTimeOffset startedAt, IReadOnlyList<Attempt> attempts) => new(
@@ -327,7 +517,7 @@ internal static class FinalizeContract
         Dictionary<string, object?> arguments,
         string? result,
         string? error = null) => new(
-            SubId(runId, 0xc00 + (attempt * 0x10) + sequence),
+            SubId(runId, 0xc000 + (attempt * 0x100) + sequence),
             sequence,
             toolName,
             arguments,

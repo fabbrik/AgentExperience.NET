@@ -1,0 +1,23 @@
+{
+  "description": "55 matching records, a statement limit of 51 (the candidate limit, 50, plus one): the statement returns 51 rows, ranking keeps the first 50 in the statement's order, drops the 51st and reports the result truncated, and only then scores and orders them.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys for tenant 9",
+  "statuses": [
+    "Validated",
+    "Reinforced"
+  ],
+  "minConfidence": 0.5,
+  "limit": 51,
+  "excludeModelAuthored": false,
+  "withGrants": false,
+  "minimumMatchedTerms": 3,
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {}
+}

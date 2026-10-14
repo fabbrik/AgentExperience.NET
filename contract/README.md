@@ -4,8 +4,10 @@ Microsoft Agent Framework ships in .NET, Python and Go. This directory states wh
 of .NET, so that a port in another language writes records the .NET library reads, renders the same block from them,
 and derives the same task text. A lesson learned in one language can then help an agent in another.
 
-**Version: `contract-v1`.** It describes records at `payload_version` 1, the current one. The version changes whenever
-a fixture changes meaning; a new fixture can be added under the same version.
+**Version: `1.0`.** It describes records at `payload_version` 1, the current one. The version is `major.minor`: a
+change that only adds cases bumps the minor version, and a change to anything already published (a fixture, the
+schema, the SQL or this page) bumps the major version. A port states the contract it passes as "contract 1.N": it
+passes every fixture of that version, and with it every earlier 1.x fixture.
 
 The contract is this page, the record schema, the two SQL statements, and the fixtures. The fixtures are generated from
 the .NET implementation and checked against it on every build (`tests/AgentExperience.Contract.Tests`), so they cannot
@@ -14,7 +16,7 @@ drift from it. Where this page and a fixture disagree, the fixture is right; whe
 
 ## What is in scope, and what is not
 
-In scope for `contract-v1`:
+In scope for contract 1.x:
 
 - **The stored record:** the columns of `agent_experience.experience_records` and its `payload` column, how a captured
   run plus a verification becomes one, and the IDs it is stored under.
@@ -23,13 +25,18 @@ In scope for `contract-v1`:
 - **Text retrieval:** the SQL a port issues, and how its results are ranked.
 - **The error class:** how a captured error is reduced to the short class a lesson and a block show.
 
-Out of scope, and not to be written or changed by a `contract-v1` port:
+Out of scope, and not to be written or changed by a contract 1.x port:
 
 - **Grants.** A port reads its own scope only (`p_with_grants => false`) and never writes `experience_grants`.
 - **Crypto-shredding.** A port reads and writes plaintext rows only (`payload_version` 1). A sealed row
   (`payload_version` 2) is not readable without the .NET key store; skip it.
 - **Provenance signing.** A port writes no `provenanceSignature`, and must not change one it reads.
 - **Vectors.** A port uses text retrieval only.
+- **The lifecycle after finalization.** Reuse evidence, confidence updates, reinforcement, contest, supersession,
+  revocation, deletion and retention stay .NET-only: a port finalizes, injects and searches, and never moves a stored
+  record's status, counters or revision.
+- **The other derived IDs.** Only the record, initial event and reflection IDs below are in scope; the reuse-evidence
+  IDs (tags 4 and 5) belong to the lifecycle above.
 - **Hosting.** Dependency injection, middleware wiring and how the block is placed in a conversation (the .NET adapter
   sends it as one user-role message by default) are each framework's own.
 
@@ -46,12 +53,12 @@ contract/
   sql/declare-bounds.sql             the bounds every transaction declares first
   sql/search-experience-text.sql     the text search
   fixtures/
-    finalize/<case>/                 input.json -> expected-record.json, expected-event.json
+    finalize/<case>/                 input.json -> expected-capture.json, expected-record.json, expected-event.json
     inject/<case>/                   records.json + options.json -> expected-block.txt
     task-text/<case>/                messages.json -> expected.json
     search/<case>/                   seed.json + query.json -> expected.json (needs PostgreSQL)
     error-class/cases.json           error -> class
-    <family>/lock.json               the contract version and a SHA-256 per fixture file
+  lock.json                          the contract version and a SHA-256 of every other file here
 ```
 
 Every file is UTF-8 without a byte-order mark, with LF line endings. JSON is indented by two spaces; every invisible
@@ -64,20 +71,24 @@ character outside the Basic Multilingual Plane may be written as an escaped surr
 For each fixture, the port reads the inputs, runs its own implementation, and compares its output with the expected
 file:
 
-- **finalize:** run capture and finalization on `input.json`, and compare the stored record with
-  `expected-record.json` and the initial lifecycle event with `expected-event.json`. Every record must also validate
-  against the schema.
+- **finalize:** run capture and finalization on `input.json`, and compare what capture answered for each attempt with
+  `expected-capture.json`, the stored record with `expected-record.json`, and the initial lifecycle event with
+  `expected-event.json`. Every record must also validate against the schema.
 - **inject:** read each record in `records.json` (the stored form, plus the ranking retrieval gave it), render with
   `options.json`, and compare the block with `expected-block.txt`.
 - **task-text:** derive the task text from `messages.json` and compare it with `expected.json` (`null` when nothing
   qualifies).
 - **search:** against a database the .NET migrator applied, insert `seed.json`, run the two statements with
-  `query.json`, and compare the returned order with `expected.json`'s `rows`; rank the rows and compare with `ranked`.
+  `query.json`, and compare the returned rows with `expected.json`'s `rows`; apply the ranking below and compare with
+  `truncated` and `ranked`.
 - **error-class:** reduce each `error` and compare with its `class`.
 
-A port that passes every fixture of a version supports that version. A record a port wrote must also read back through
-the .NET library: `tests/AgentExperience.Contract.Tests` reads every record in the fixtures through the PostgreSQL
-adapter's own reader and writes it back unchanged.
+A port that passes every fixture of a version supports that version. What the .NET side checks of every stored record
+in the fixtures (each finalize `expected-record.json`, each record in an inject `records.json`, each search
+`seed.json`), in `tests/AgentExperience.Contract.Tests`: it validates against the schema; it is inserted into
+PostgreSQL as a port inserts it (below, as the application role with row-level security on) and read back through the
+PostgreSQL record store's own `GetAsync`, and the record read back, written in the stored form again, is the fixture
+exactly. A record a port writes in this form therefore reads back through the .NET library.
 
 ## The stored record
 
@@ -98,7 +109,7 @@ and the lesson; a trigger sets `reflection_model_authored` from the payload; `de
 | Value | Form |
 | --- | --- |
 | UUID | lower-case, hyphenated (`000000f1-0000-4000-8000-000000000000`) |
-| Instant | ISO 8601 in UTC with the offset `+00:00`, up to seven fractional digits, trailing zeros dropped (`2026-03-02T09:00:30+00:00`). The columns are `timestamptz`, which keeps whole microseconds: truncate, never round. |
+| Instant | ISO 8601 in UTC with the offset `+00:00` (never `Z`), trailing zeros of the fraction dropped (`2026-03-02T09:00:30+00:00`). Payload instants keep up to seven fractional digits; the `created_at` and `updated_at` columns are `timestamptz`, which keeps whole microseconds, so at most six: truncate, never round. |
 | Duration | `[-][d.]hh:mm:ss[.fffffff]`, the .NET constant `TimeSpan` format (`00:00:03.5000000`) |
 | Enum | the member name, exactly as written (`Validated`, `Verified`, `Pass`); never a number |
 | Number | a JSON number. `reuse_confidence` is a double: a validated record's is `2/3`, `0.6666666666666666` |
@@ -107,13 +118,21 @@ and the lesson; a trigger sets `reflection_model_authored` from the payload; `de
 | Other payload members | always written, `null` when empty |
 | Tool-call arguments | the sanitized arguments as a JSON object of any JSON values; a redacted secret is `""` |
 
-`jsonb` does not keep member order or whitespace, so a reader must not depend on either.
+A reader must not depend on member order or whitespace: `jsonb` keeps neither.
 
-**IDs.** A finalized record's IDs are derived, so a retry re-derives them:
+**What the schema also holds.** The default capture limits (at most 10 attempts, 50 tool calls per attempt, 50 argument
+fields with names of at most 100 code units and no `.`, `[` or `]`, results and errors of at most 4,000) and the status
+rules: a `Quarantined` record has a null reflection, `reuse_confidence` 0 and `supporting_validations` 0; a `Validated`
+or `Reinforced` one has a reflection; `revision` is at least 1; `closedRoundId` appears only with `origin` (which can
+appear alone, for a run finalized with no closed round). The schema counts string lengths in code points, the contract
+in UTF-16 code units, so its length bounds are necessary rather than sufficient.
+
+**IDs.** A finalized record's IDs are derived, so a retry re-derives them. They are UUIDv8 (RFC 9562's custom
+version): version nibble 8, RFC 4122 variant.
 
 - `experience_id` = derive(run ID, tag `1`, scope); the initial event's `event_id` = derive(run ID, tag `2`, scope);
   the reflection's `reflectionId` = derive(run ID, tag `3`, no scope).
-- derive: SHA-256 over the 16 bytes of the namespace UUID `0b6a8a3f-1c2d-4f5e-9a70-3d1c9f2b8e41`, then the 16 bytes of
+- To derive one, take SHA-256 over the 16 bytes of the namespace UUID `0b6a8a3f-1c2d-4f5e-9a70-3d1c9f2b8e41`, then the 16 bytes of
   the run ID (both in RFC 4122 byte order, as the UUID is written), then the tag byte, then, with a scope, each of
   `tenant_id, application_id, project_id, team_id, agent_id, user_id` in that order: a null field is the single byte
   `0x00`; a present one is `0x01`, its UTF-8 length as a 4-byte big-endian integer, and its UTF-8 bytes. Take the first
@@ -140,9 +159,16 @@ order:
      which allowlists nothing, so no argument value is kept.
    - Every other field is omitted.
    - A payload deeper than 4 levels, with more than 50 fields, a value over 1,000,000 code units, a field name over 100
-     code units, or a field name containing `.`, `[` or `]` is rejected whole, and the attempt is not recorded.
+     code units, or a field name containing `.`, `[` or `]` is refused whole: capture answers `SanitizationRejected`
+     and nothing of that attempt is stored.
    - A result or error over 4,000 code units after sanitization is replaced by
-     `[truncated: value exceeded the configured limit]`. A run keeps at most 10 attempts of at most 50 tool calls.
+     `[truncated: value exceeded the configured limit]`.
+   - An attempt's tool calls beyond the 50th are dropped. A run keeps at most 10 attempts: a later one is refused with
+     `CapacityExceeded`.
+   - The attempts capture keeps are numbered from 0 in the order they were recorded, whatever the host numbered them;
+     `expected-capture.json` lists capture's answer for each input attempt, in input order.
+   - The records a run was shown (`provenance.exposedTo`) are recorded through capture as they are delivered; a run
+     starts exposed to nothing.
    - Tool names, the task description and the environment are not sanitized.
 
    Reference: [`DefaultSanitizer.cs`](../src/AgentExperience.Core/Sanitization/DefaultSanitizer.cs),
@@ -159,8 +185,9 @@ order:
    [`VerificationAggregator.cs`](../src/AgentExperience.Core/Verification/VerificationAggregator.cs).
 
 3. **The deterministic reflector writes the lesson**, template version `1.1.0`, producer
-   `AgentExperience.DefaultExperienceReflector/1.1.0`, and only for a `Verified` run. The lesson is
-   `"{Verified|Did not verify|Unverified} after {n} attempt(s)."`, then `" Failed: attempt {k} — {class}."` per failed
+   `AgentExperience.DefaultExperienceReflector/1.1.0`, and only for a `Verified` run: an unverified run is stored
+   without a reflection, so a stored lesson always opens `"Verified after {n} attempt(s)."` (the reflector's other
+   openings, `Did not verify` and `Unverified`, never reach a stored record). Then `" Failed: attempt {k} — {class}."` per failed
    attempt (or `" Failed: {count} attempts; last: attempt {k} — {class}."` for more than two), then
    `" Worked: attempt {m}."` when the final attempt of a verified run has no error, then `" Checks: [{ids}]."`. No tool
    name, argument value or error text beyond its class ever reaches the lesson. The approach lists quote captured text
@@ -220,20 +247,32 @@ parameters (`@name`; translate to your driver's placeholder syntax):
 | Parameter | Value |
 | --- | --- |
 | `tenant_id` ... `user_id` | the reader's scope; optional fields `NULL` |
-| `task_text` | the task text, at most 4,096 code units |
+| `task_text` | the task text, non-blank, at most 4,096 UTF-16 code units. Longer text is refused, not cut: .NET retrieval rejects it and the invocation gets no block. Derive it with a maximum length of at most 4,096 (512 by default), which cuts without splitting a surrogate pair. |
 | `statuses` | `text[]`: `{Validated,Reinforced}` |
 | `min_confidence` | `0.5` |
 | `limit` | `51` (the candidate limit, 50, plus one to detect truncation) |
 | `exclude_model_authored` | `false` by default; `true` leaves out records whose reflection a model wrote |
-| `with_grants` | `false` in `contract-v1` |
+| `with_grants` | `false` in contract 1.x |
 | `minimum_matched_terms` | `3` |
 
 The columns come back in this order: the eighteen record columns, then `relevance` (`real`), `shared_by_grant`,
-`permitting_grant_id`, `permitting_grant_disclosure`. Rows arrive ranked: by `relevance` (the share of the query's
-terms the row contains), then by text rank, then by `experience_id`. Read them in the order returned. Read `relevance`
-as a 32-bit float and widen it to a double (`0.6` is `0.6000000238418579`).
+`permitting_grant_id`, `permitting_grant_disclosure`. Rows arrive in the statement's order: by `relevance` (the share of
+the query's terms the row contains), then by text rank, then by `experience_id`. Read them in the order returned.
+`relevance` is a 32-bit float: widen it to a double without rounding through decimal text (`0.6` becomes
+`0.6000000238418579`). `expected.json` holds the widened double, which is also the value ranking uses.
 
-**Ranking.** Each row is then scored with the default weights, components in this order:
+**From rows to ranked records**, in this order:
+
+1. **Safety checks**, over the first 50 rows (the candidate limit): a row whose scope is not exactly the requested
+   scope, or an `experience_id` that appears twice, fails the whole result. Nothing is returned, not even the rows
+   that were fine.
+2. **Truncation.** Keep the first 50 rows in the statement's order. When the statement returned 51, drop the 51st and
+   report the result truncated (`expected.json`'s `truncated`).
+3. **Filtering.** Leave out a row whose status is not `Validated` or `Reinforced`, and, when model-authored lessons are
+   excluded, one whose reflection a model wrote. (The statement has already applied both; this is defence in depth.)
+4. **Scoring and ordering**, below.
+
+**Ranking.** Each kept row is scored with the default weights, components in this order:
 
 | Component | Value | Weight |
 | --- | --- | --- |
@@ -244,7 +283,7 @@ as a 32-bit float and widen it to a double (`0.6` is `0.6000000238418579`).
 | `EnvironmentCompatibility` | the share of preferred environment attributes the record's metadata matches exactly; 1 with none preferred | 0.10 |
 
 The score is the sum of value × weight, added in that order. Records are ordered by score, descending, ties by
-`experience_id` as text, ascending, ordinal; then cut to the candidate limit. Compare scores to 1e-9. Reference:
+`experience_id` as text, ascending, ordinal. Compare scores to 1e-9. Reference:
 [`ExperienceRetrievalService.cs`](../src/AgentExperience.Core/Retrieval/ExperienceRetrievalService.cs).
 
 ## The error class
@@ -258,6 +297,15 @@ class's first token. Reference: [`ErrorClass.Shared.cs`](../src/Shared/ErrorClas
 ## Changing the contract
 
 `tests/AgentExperience.Contract.Tests` regenerates every fixture from the library and fails on any difference. To
-accept a change on purpose, run it with `AGENTEXPERIENCE_CONTRACT_FIXTURES_UPDATE=1` (the search family needs Docker),
-read the diff, and commit it. A fixture file locked under the current version may not change: when one would, bump the
-version in this page and in `ContractFiles.ContractVersion`, and regenerate.
+accept a change on purpose:
+
+1. Bump the version on this page and in `ContractFiles.ContractVersion`: the minor version when the change only adds
+   files (new cases), the major version when any file already locked changed or went away.
+2. Run the tests with `AGENTEXPERIENCE_CONTRACT_FIXTURES_UPDATE=1` (the search family and the round trip need Docker).
+   It rewrites the fixtures, checks the kind of bump against the previous `lock.json`, and writes the new one.
+3. Add the digest it reports to `ContractFiles.LockDigests`, read the diff, and commit it.
+
+`lock.json` holds a SHA-256 of every file here, and `ContractFiles.LockDigests` (test source, which the update switch
+never rewrites) holds the SHA-256 of `lock.json` for each published version. The test fails when any file differs from
+the lock or the lock from its published digest, so neither regenerating nor editing `lock.json` by hand can change a
+published version: only a new version, reviewed, can.

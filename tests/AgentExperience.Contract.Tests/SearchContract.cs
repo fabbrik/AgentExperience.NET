@@ -22,14 +22,20 @@ internal sealed record SearchQuery(
     DateTimeOffset Now,
     IReadOnlyDictionary<string, string> PreferredEnvironment);
 
-/// <summary>One row the text search returned, in its order.</summary>
-internal sealed record SearchRow(Guid ExperienceId, float Relevance);
+/// <summary>
+/// One row the text search returned, in its order. <see cref="Relevance"/> is the <c>real</c> column widened to a double
+/// (<c>0.6</c> is <c>0.6000000238418579</c>), exactly the value ranking uses.
+/// </summary>
+internal sealed record SearchRow(Guid ExperienceId, double Relevance);
 
 /// <summary>One record as ranking ordered it, with its score and components.</summary>
 internal sealed record RankedRow(Guid ExperienceId, double Score, IReadOnlyList<RankingComponentInput> Components);
 
-/// <summary><c>expected.json</c> of a search case.</summary>
-internal sealed record SearchExpected(IReadOnlyList<SearchRow> Rows, IReadOnlyList<RankedRow> Ranked);
+/// <summary>
+/// <c>expected.json</c> of a search case: every row the statement returned (up to the limit, one more than the candidate
+/// limit), whether ranking found more rows than the candidate limit (<see cref="Truncated"/>), and the ranked order.
+/// </summary>
+internal sealed record SearchExpected(IReadOnlyList<SearchRow> Rows, bool Truncated, IReadOnlyList<RankedRow> Ranked);
 
 /// <summary>A search case: the records seeded (as stored) and the query.</summary>
 internal sealed record SearchCase(IReadOnlyList<ExperienceRecord> Seed, SearchQuery Query);
@@ -50,7 +56,28 @@ internal static class SearchContract
         ("model-authored-excluded", ModelAuthoredExcluded()),
         ("recency-status-and-environment", RecencyStatusAndEnvironment()),
         ("query-syntax-is-plain-words", QuerySyntaxIsPlainWords()),
+        ("more-than-the-candidate-limit", MoreThanTheCandidateLimit()),
     ];
+
+    private static SearchCase MoreThanTheCandidateLimit()
+    {
+        const int f = 0x5e;
+        var seed = new List<ExperienceRecord>();
+        for (var n = 1; n <= 55; n++)
+        {
+            // Coverage falls in steps, so the SQL order is fixed; confidence rises against it, so ranking reorders.
+            var summary = n <= 20 ? "Rotate the signing keys for tenant 9" : n <= 40 ? "Rotate the signing keys" : "Rotate keys and signing certificates";
+            seed.Add(Seed(f, n, "rotate-keys", summary, "Verified after 1 attempt.", confidence: 0.5 + (n / 200d)));
+        }
+
+        return new SearchCase(
+            seed,
+            Query(
+                "55 matching records, a statement limit of 51 (the candidate limit, 50, plus one): the statement returns 51 rows, " +
+                "ranking keeps the first 50 in the statement's order, drops the 51st and reports the result truncated, and only " +
+                "then scores and orders them.",
+                "rotate the signing keys for tenant 9"));
+    }
 
     private static SearchCase CoverageFiltersAndRanking()
     {

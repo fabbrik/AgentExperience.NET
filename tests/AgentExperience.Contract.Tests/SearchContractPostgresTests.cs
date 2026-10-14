@@ -17,7 +17,8 @@ namespace AgentExperience.Contract.Tests;
 /// <c>contract/sql/</c>, and the rows must come back in the checked-in order. The .NET candidate source must agree with
 /// them, and Core's ranking over it must give the checked-in ranked order.
 /// </summary>
-public sealed class SearchContractPostgresTests(ContractPostgresDatabase database) : IClassFixture<ContractPostgresDatabase>
+[Collection(ContractPostgresCollection.Name)]
+public sealed class SearchContractPostgresTests(ContractPostgresDatabase database)
 {
     [Fact]
     public async Task Every_search_fixture_is_what_the_migrated_schema_returns()
@@ -40,7 +41,7 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
             }
 
             var rows = await SearchAsync(application, query);
-            var ranked = await RankAsync(application, query);
+            var (ranked, truncated) = await RankAsync(application, query);
 
             // The .NET candidate source runs the same function under row-level security: it must agree with the contract's statement.
             var candidates = await new PostgresExperienceCandidateSource(application).SearchAsync(
@@ -54,16 +55,19 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
             Assert.Equal(ExperienceStoreOutcome.Found, candidates.Outcome);
             Assert.Equal(rows.Select(row => row.ExperienceId), candidates.Candidates.Select(candidate => candidate.Record.ExperienceId));
 
-            ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(new SearchExpected(rows, ranked)), drift);
+            ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(new SearchExpected(rows, truncated, ranked)), drift);
         }
 
-        ContractFiles.VerifyNoStrayCases(SearchContract.Family, SearchContract.Cases.Select(entry => entry.Name), drift);
-        FixtureLock.Verify(SearchContract.Family, drift);
+        ContractFiles.VerifyNoStray(SearchContract.Family, SearchContract.Cases.Select(entry => entry.Name), ["seed.json", "query.json", "expected.json"], drift);
+        if (ContractFiles.Updating)
+        {
+            ContractLock.Relock(drift);
+        }
         ContractFiles.AssertNoDrift(drift);
     }
 
     /// <summary>Inserts one stored record as a port writes it: the eighteen record columns, under declared bounds.</summary>
-    private static async Task InsertAsync(NpgsqlDataSource application, JsonNode stored)
+    internal static async Task InsertAsync(NpgsqlDataSource application, JsonNode stored)
     {
         var columns = stored["columns"]!.AsObject();
         await using var connection = await application.OpenConnectionAsync();
@@ -136,6 +140,7 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
             while (await reader.ReadAsync())
             {
                 rows.Add(new SearchRow(reader.GetGuid(0), reader.GetFloat(18)));
+
             }
         }
 
@@ -144,7 +149,7 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
     }
 
     /// <summary>Core's ranking over the .NET candidate source, at the case's clock, with the default policy and weights.</summary>
-    private static async Task<IReadOnlyList<RankedRow>> RankAsync(NpgsqlDataSource application, SearchQuery query)
+    private static async Task<(IReadOnlyList<RankedRow> Ranked, bool Truncated)> RankAsync(NpgsqlDataSource application, SearchQuery query)
     {
         var retrieval = new ExperienceRetrievalService(
             new PostgresExperienceCandidateSource(application),
@@ -160,10 +165,11 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
             CancellationToken.None);
         Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
 
-        return [.. result.Records.Select(ranked => new RankedRow(
-            ranked.Record.ExperienceId,
-            ranked.Score,
-            [.. ranked.Components.Select(component => new RankingComponentInput(component.Kind, component.Value, component.Weight))]))];
+        IReadOnlyList<RankedRow> ranked = [.. result.Records.Select(entry => new RankedRow(
+            entry.Record.ExperienceId,
+            entry.Score,
+            [.. entry.Components.Select(component => new RankingComponentInput(component.Kind, component.Value, component.Weight))]))];
+        return (ranked, result.Truncated);
     }
 
     private static async Task DeclareAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Scope bounds)
@@ -184,12 +190,19 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
     private static DateTimeOffset Instant(JsonNode value) =>
         DateTimeOffset.Parse(value.GetValue<string>(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
 
-    private static AuthorizationContext Authorization(Scope scope) =>
+    internal static AuthorizationContext Authorization(Scope scope) =>
         new(scope.TenantId, "contract-principal", [], Fixed.T0, scope.ApplicationId, scope.ProjectId, scope.TeamId, scope.AgentId, scope.UserId);
 }
 
+/// <summary>The one PostgreSQL container every contract test that needs one shares.</summary>
+[CollectionDefinition(Name)]
+public sealed class ContractPostgresCollection : ICollectionFixture<ContractPostgresDatabase>
+{
+    public const string Name = "Contract PostgreSQL";
+}
+
 /// <summary>
-/// One stock PostgreSQL container for the search family, with an owner role that runs the migrator and an application
+/// One stock PostgreSQL container for the search family and the stored-record round trip, with an owner role that runs the migrator and an application
 /// role the privileges call grants, row-level security on.
 /// </summary>
 public sealed class ContractPostgresDatabase : IAsyncLifetime
@@ -221,12 +234,15 @@ public sealed class ContractPostgresDatabase : IAsyncLifetime
         Assert.True(name.Length <= 63 && name.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '_'), name);
         await ExecuteAsync(_container!.GetConnectionString(), $"CREATE DATABASE {name} OWNER {Owner}");
 
-        var owner = Source(name, Owner);
-        await ExperienceSchemaMigrator.MigrateAsync(owner, CancellationToken.None);
-        await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
-            owner,
-            new ExperienceApplicationRoleOptions(Application) { EnableRowLevelSecurity = true },
-            CancellationToken.None);
+        // Disposed at once: every case gets a database, and pooled owner connections would exhaust the server's slots.
+        await using (var owner = NpgsqlDataSource.Create(ConnectionString(name, Owner)))
+        {
+            await ExperienceSchemaMigrator.MigrateAsync(owner, CancellationToken.None);
+            await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
+                owner,
+                new ExperienceApplicationRoleOptions(Application) { EnableRowLevelSecurity = true },
+                CancellationToken.None);
+        }
 
         return Source(name, Application);
     }
@@ -246,15 +262,18 @@ public sealed class ContractPostgresDatabase : IAsyncLifetime
 
     private NpgsqlDataSource Source(string database, string role)
     {
-        var source = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(_container!.GetConnectionString())
+        var source = NpgsqlDataSource.Create(ConnectionString(database, role));
+        _sources.Add(source);
+        return source;
+    }
+
+    private string ConnectionString(string database, string role) =>
+        new NpgsqlConnectionStringBuilder(_container!.GetConnectionString())
         {
             Database = database,
             Username = role,
             Password = Password,
-        }.ConnectionString);
-        _sources.Add(source);
-        return source;
-    }
+        }.ConnectionString;
 
     private static async Task ExecuteAsync(string connectionString, string sql)
     {

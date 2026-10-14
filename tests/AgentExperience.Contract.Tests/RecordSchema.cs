@@ -14,8 +14,9 @@ internal static class RecordSchema
         JsonSchema.FromText(ContractFiles.Read("schema/experience-record.v1.json") ?? throw new InvalidOperationException("The record schema is missing.")));
 
     /// <summary>
-    /// Checks one stored record: it validates against the schema, and reading it the way the PostgreSQL adapter reads a
-    /// row and writing it back gives exactly the same JSON.
+    /// Checks one stored record: it validates against the schema, and reading it through the PostgreSQL adapter's payload
+    /// mapping and writing it back gives exactly the same JSON. (Reading real rows through the store is the PostgreSQL
+    /// round-trip test's job.)
     /// </summary>
     public static void Check(string where, JsonNode stored, List<string> problems)
     {
@@ -28,12 +29,25 @@ internal static class RecordSchema
                 .SelectMany(detail => detail.Errors!.Select(error => $"{detail.InstanceLocation}: {error.Value}"))
                 .Take(10);
             problems.Add($"{where}: does not validate against experience-record.v1.json: {string.Join("; ", errors)}");
+
+            // A record the schema refuses is not handed to the reader: whatever it throws would only hide this.
+            return;
         }
 
-        var roundTripped = ContractJson.ToStored(ContractJson.FromStored(stored));
+        JsonNode roundTripped;
+        try
+        {
+            roundTripped = ContractJson.ToStored(ContractJson.FromStored(stored));
+        }
+        catch (Exception ex)
+        {
+            problems.Add($"{where}: the adapter's payload mapping cannot read it: {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
         if (!JsonNode.DeepEquals(roundTripped, stored))
         {
-            problems.Add($"{where}: does not survive the adapter's read and write unchanged.\n    was: {stored.ToJsonString()}\n    now: {roundTripped.ToJsonString()}");
+            problems.Add($"{where}: does not survive the adapter's payload mapping unchanged.\n    was: {stored.ToJsonString()}\n    now: {roundTripped.ToJsonString()}");
         }
     }
 }

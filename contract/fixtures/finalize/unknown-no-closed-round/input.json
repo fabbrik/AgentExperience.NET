@@ -1,0 +1,86 @@
+{
+  "description": "No verification round was closed: the outcome is Unknown with no evidence examined, so the record is Quarantined. With no round, the payload has no closedRoundId but still carries origin Finalized.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "000000f7-0000-4000-8000-000000000000",
+    "taskId": "refund-stuck-pending",
+    "taskDescription": "Refund ticket 47 is stuck in pending",
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": null,
+      "agentId": "refund-agent",
+      "userId": null
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T15:00:00+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [
+      {
+        "attemptId": "000000f7-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T15:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000f7-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T15:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "refund issued",
+            "error": null
+          }
+        ],
+        "result": "Done.",
+        "error": null
+      }
+    ],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-02T15:00:00+00:00",
+    "endedAt": "2026-03-02T15:00:20+00:00"
+  },
+  "completionEventId": "000000f7-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": null,
+    "requiredChecks": [
+      {
+        "checkId": "refund-issued",
+        "expectedKind": "integration-test"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "000000f7-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "refund-issued",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T15:00:25+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-02T15:00:30+00:00"
+  }
+}

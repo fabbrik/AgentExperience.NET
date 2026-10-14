@@ -12,7 +12,7 @@ namespace AgentExperience.Contract.Tests;
 /// <remarks>
 /// Each family's case definitions write its inputs; the runner then reads the inputs back <em>from disk</em>, runs them
 /// through the library, and compares what comes out with the checked-in expected files. Set
-/// <c>AGENTEXPERIENCE_CONTRACT_FIXTURES_UPDATE=1</c> to rewrite them instead. the PostgreSQL contract test does the
+/// <c>AGENTEXPERIENCE_CONTRACT_FIXTURES_UPDATE=1</c> to rewrite them instead. The PostgreSQL contract test does the
 /// same for the search family against PostgreSQL.
 /// </remarks>
 public sealed partial class ContractFixtureTests
@@ -27,7 +27,8 @@ public sealed partial class ContractFixtureTests
             ContractFiles.Verify($"{directory}/input.json", ContractJson.Write(definition), drift);
 
             var input = ContractJson.Read<FinalizeInput>(ContractFiles.Read($"{directory}/input.json") ?? ContractJson.Write(definition));
-            var (record, lifecycleEvent) = await FinalizeContract.RunAsync(input);
+            var (record, lifecycleEvent, capture) = await FinalizeContract.RunWithCaptureAsync(input);
+            ContractFiles.Verify($"{directory}/expected-capture.json", ContractJson.Write(capture), drift);
             ContractFiles.Verify($"{directory}/expected-record.json", ContractJson.Write(record), drift);
             ContractFiles.Verify($"{directory}/expected-event.json", ContractJson.Write(lifecycleEvent), drift);
 
@@ -37,8 +38,8 @@ public sealed partial class ContractFixtureTests
             }
         }
 
-        ContractFiles.VerifyNoStrayCases(FinalizeContract.Family, FinalizeContract.Cases.Select(entry => entry.Name), drift);
-        FixtureLock.Verify(FinalizeContract.Family, drift);
+        ContractFiles.VerifyNoStray(FinalizeContract.Family, FinalizeContract.Cases.Select(entry => entry.Name), FinalizeContract.Files, drift);
+        Relock(drift);
         ContractFiles.AssertNoDrift(drift);
     }
 
@@ -65,8 +66,8 @@ public sealed partial class ContractFixtureTests
             ContractFiles.Verify($"{directory}/expected-block.txt", InjectContract.Render(records, options), drift);
         }
 
-        ContractFiles.VerifyNoStrayCases(InjectContract.Family, cases.Select(entry => entry.Name), drift);
-        FixtureLock.Verify(InjectContract.Family, drift);
+        ContractFiles.VerifyNoStray(InjectContract.Family, cases.Select(entry => entry.Name), ["records.json", "options.json", "expected-block.txt"], drift);
+        Relock(drift);
         ContractFiles.AssertNoDrift(drift);
     }
 
@@ -83,8 +84,8 @@ public sealed partial class ContractFixtureTests
             ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(new TaskTextExpected(TaskTextContract.Derive(input))), drift);
         }
 
-        ContractFiles.VerifyNoStrayCases(TaskTextContract.Family, TaskTextContract.Cases.Select(entry => entry.Name), drift);
-        FixtureLock.Verify(TaskTextContract.Family, drift);
+        ContractFiles.VerifyNoStray(TaskTextContract.Family, TaskTextContract.Cases.Select(entry => entry.Name), ["messages.json", "expected.json"], drift);
+        Relock(drift);
         ContractFiles.AssertNoDrift(drift);
     }
 
@@ -108,7 +109,8 @@ public sealed partial class ContractFixtureTests
             }
         }
 
-        FixtureLock.Verify(ErrorClassContract.Family, drift);
+        ContractFiles.VerifyNoStray(ErrorClassContract.Family, [], [], drift, "cases.json");
+        Relock(drift);
         ContractFiles.AssertNoDrift(drift);
     }
 
@@ -132,15 +134,41 @@ public sealed partial class ContractFixtureTests
     }
 
     [Fact]
+    public void The_contract_lock_is_the_published_one_and_covers_every_contract_file()
+    {
+        if (ContractFiles.Updating)
+        {
+            // Regenerating: write the lock once every family has written its files (each family relocks too).
+            var owed = new List<string>();
+            ContractLock.Relock(owed);
+            ContractFiles.AssertNoDrift(owed);
+            return;
+        }
+
+        var drift = new List<string>();
+        ContractLock.Verify(drift);
+        ContractFiles.AssertNoDrift(drift);
+    }
+
+    /// <summary>In update mode, relocks after this family's writes; otherwise the lock test alone checks it.</summary>
+    internal static void Relock(List<string> drift)
+    {
+        if (ContractFiles.Updating)
+        {
+            ContractLock.Relock(drift);
+        }
+    }
+
+    [Fact]
     public void The_bounds_declaration_is_the_one_the_adapter_runs()
     {
-        Assert.Equal(ExperienceSessionContext.DeclareSql + "\n", ContractFiles.Read("sql/declare-bounds.sql"));
+        Assert.Equal(ExperienceSessionContext.DeclareSql, Statement(ContractFiles.Read("sql/declare-bounds.sql")!));
     }
 
     [Fact]
     public void The_search_statement_names_every_argument_and_column_of_the_function_in_order()
     {
-        var sql = ContractFiles.Read("sql/search-experience-text.sql")!;
+        var sql = Statement(ContractFiles.Read("sql/search-experience-text.sql")!);
 
         var arguments = TextSearchFunction.Arguments.Split(", ").Select(argument => argument.Split(' ')[0]).ToList();
         Assert.Equal(arguments, NamedArgument().Matches(sql).Select(match => match.Groups[1].Value).ToList());
@@ -158,7 +186,7 @@ public sealed partial class ContractFixtureTests
     public void The_readme_names_the_version_the_fixtures_are_locked_under()
     {
         var readme = ContractFiles.Read("README.md")!;
-        Assert.Contains($"`{ContractFiles.ContractVersion}`", readme, StringComparison.Ordinal);
+        Assert.Contains($"**Version: `{ContractFiles.ContractVersion}`.**", readme, StringComparison.Ordinal);
         Assert.Contains($"`payload_version` {ExperiencePayload.CurrentVersion}", readme, StringComparison.Ordinal);
     }
 
@@ -192,6 +220,10 @@ public sealed partial class ContractFixtureTests
 
         Assert.True(problems.Count == 0, string.Join("\n", problems));
     }
+
+    /// <summary>A SQL file's statement: its leading <c>--</c> comment lines removed, and the trailing line break.</summary>
+    internal static string Statement(string sql) =>
+        string.Join('\n', sql.Split('\n').SkipWhile(line => line.StartsWith("--", StringComparison.Ordinal))).TrimEnd('\n');
 
     [GeneratedRegex(@"(p_\w+) => @\w+")]
     private static partial Regex NamedArgument();

@@ -1,0 +1,40 @@
+{
+  "description": "A message from any other source (here a custom one) is never the latest request, nor the previous message.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "Deploy service X to prod"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "CustomPipeline",
+      "contents": [
+        {
+          "type": "text",
+          "text": "a custom source's message"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "and retry"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

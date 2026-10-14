@@ -37,6 +37,11 @@ internal static class ErrorClassContract
         "something went wrong",
         "ECONNRESET, then EPIPE on retry",
         new string('x', 8_200) + " System.TimeoutException after the scanned prefix",
+        "Abcdefghijklmnopqrstuvwxyz12345Exception: exactly forty characters",
+        "Abcdefghijklmnopqrstuvwxyz123456Exception: forty-one characters",
+        "TimeoutException, then TimeoutException again, then exit 4",
+        "status 503",
+        new string('y', 8_180) + " TimeoutException straddles the scanned prefix",
     ];
 
     public static IReadOnlyList<ErrorClassCase> Run() => [.. Errors.Select(error => new ErrorClassCase(error, ErrorClass.Of(error)))];

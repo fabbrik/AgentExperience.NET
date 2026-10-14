@@ -30,7 +30,7 @@
             "duration": "00:00:03.5000000",
             "toolCalls": [
               {
-                "toolCallId": "000000f1-0000-4000-8000-000000000c00",
+                "toolCallId": "000000f1-0000-4000-8000-00000000c000",
                 "sequenceNumber": 0,
                 "toolName": "run_refund_check",
                 "arguments": {},
@@ -50,7 +50,7 @@
             "duration": "00:00:03.5000000",
             "toolCalls": [
               {
-                "toolCallId": "000000f1-0000-4000-8000-000000000c10",
+                "toolCallId": "000000f1-0000-4000-8000-00000000c100",
                 "sequenceNumber": 0,
                 "toolName": "run_refund_check",
                 "arguments": {},
@@ -193,7 +193,7 @@
             "duration": "00:00:03.5000000",
             "toolCalls": [
               {
-                "toolCallId": "000000f4-0000-4000-8000-000000000c00",
+                "toolCallId": "000000f4-0000-4000-8000-00000000c000",
                 "sequenceNumber": 0,
                 "toolName": "run_refund_check",
                 "arguments": {
@@ -337,7 +337,7 @@
             "duration": "00:00:03.5000000",
             "toolCalls": [
               {
-                "toolCallId": "000000f3-0000-4000-8000-000000000c00",
+                "toolCallId": "000000f3-0000-4000-8000-00000000c000",
                 "sequenceNumber": 0,
                 "toolName": "run_deploy",
                 "arguments": {},
@@ -347,7 +347,7 @@
                 "error": "exit 3"
               },
               {
-                "toolCallId": "000000f3-0000-4000-8000-000000000c01",
+                "toolCallId": "000000f3-0000-4000-8000-00000000c001",
                 "sequenceNumber": 1,
                 "toolName": "run_deploy",
                 "arguments": {},
