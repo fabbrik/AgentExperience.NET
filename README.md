@@ -253,6 +253,13 @@ pip install "agentexperience[maf]"
 go get github.com/fabbrik/AgentExperience.NET/go/maf@latest
 ```
 
+Each has the same one-minute demo as the .NET quick start, with no key and no network:
+
+```bash
+cd python && uv run python samples/quickstart.py
+cd go/maf && go run ./examples/quickstart
+```
+
 ## Documentation
 
 | Page | |
