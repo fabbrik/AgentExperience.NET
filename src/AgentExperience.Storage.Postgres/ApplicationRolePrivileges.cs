@@ -17,8 +17,8 @@ internal static class ApplicationRolePrivileges
 
     /// <summary>
     /// <c>0026</c>'s table: when each record was last injected. Optional, so the privileges call still succeeds on a
-    /// schema not yet migrated to <c>0026</c> (and grants it once it is). .NET-only, like the lifecycle after
-    /// finalization: a contract 1.x port never reads or writes it, so it is out of the contract's privileges file, which
+    /// schema not yet migrated to <c>0026</c> (and grants it once it is). Contract ports write it too, from contract 1.4:
+    /// its grants are the contract's <c>sql/application-role-privileges-1.4.sql</c>, applied after the 1.0 file, which
     /// leaves out optional tables.
     /// </summary>
     internal const string InjectionsTable = "experience_injections";

@@ -23,10 +23,6 @@ public static class ExperienceLessonsHtml
     /// <summary>What a page with no lessons says.</summary>
     public const string NoLessons = "No lessons yet.";
 
-    /// <summary>The note a page whose store tracks injections carries: only .NET agents record them for now.</summary>
-    public const string DotNetOnlyNote =
-        "\"Last injected\" counts injections by .NET agents only: a lesson injected only by a Python or Go agent shows \"never\".";
-
     /// <summary>A lesson's "last injected" value when it was never injected in this scope.</summary>
     public const string Never = "never";
 
@@ -94,11 +90,6 @@ public static class ExperienceLessonsHtml
             }
 
             html.Append("</p>\n");
-            if (page.InjectionsTracked)
-            {
-                html.Append("<p class=\"muted\">").Append(Encode(DotNetOnlyNote)).Append("</p>\n");
-            }
-
             foreach (var lesson in lessons)
             {
                 Lesson(html, lesson, page.InjectionsTracked);

@@ -11,6 +11,15 @@
           "JsonPointer.Net": "7.0.2"
         }
       },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "Direct",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "lXyK2O5GoYvfxW8eCFcD16JFbcoSTM1sJkAM0UHS1jZyl9NYMW64Tqm6OQFT0IDBjZi+xHt95/Zg+nxZhGFhZg==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.12"
+        }
+      },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
         "requested": "[17.14.1, )",
@@ -459,7 +468,7 @@
       "agentexperience.core": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.12, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.14, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }
@@ -467,7 +476,7 @@
       "agentexperience.microsoftagentframework": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Core": "[0.1.0-preview.12, )",
+          "AgentExperience.Core": "[0.1.0-preview.14, )",
           "Microsoft.Agents.AI": "[1.22.0, 2.0.0)",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
@@ -475,7 +484,7 @@
       "agentexperience.storage.inmemory": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.12, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.14, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
@@ -483,7 +492,7 @@
       "agentexperience.storage.postgres": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.12, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.14, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
           "Npgsql": "[10.0.3, )",
           "dbup-core": "[6.1.1, )",

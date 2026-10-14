@@ -15,7 +15,7 @@ import (
 )
 
 func TestTheEmbeddedSQLIsTheContractSQL(t *testing.T) {
-	for _, name := range []string{DeclareBoundsSQL, SearchSQL} {
+	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL} {
 		embedded, err := ContractSQL(name)
 		if err != nil {
 			t.Fatal(err)
@@ -51,6 +51,14 @@ func TestThePlaceholdersOfTheContractSQLAreItsParameters(t *testing.T) {
 	}
 	if !strings.Contains(statement.SQL, "p_minimum_matched_terms => $13)") {
 		t.Fatalf("the search was not numbered:\n%s", statement.SQL)
+	}
+
+	record, _ := ContractSQL(RecordInjectionSQL)
+	statement = ToDriverPlaceholders(record)
+	want = []string{"injected_at", "experience_ids", "tenant_id", "application_id", "project_id", "team_id",
+		"agent_id", "user_id"}
+	if !reflect.DeepEqual(statement.Names, want) {
+		t.Fatalf("record-injection.sql parameters: %v", statement.Names)
 	}
 }
 

@@ -234,6 +234,51 @@ public sealed partial class ContractFixtureTests
         }
     }
 
+    [Fact]
+    public void The_injection_record_statement_is_the_one_the_store_runs()
+    {
+        // Contract 1.4: the upsert the .NET store runs is the contract file's statement, line for line.
+        Assert.Equal(PostgresExperienceRecordStore.RecordInjectionSql, Statement(ContractFiles.Read("sql/record-injection.sql")!));
+    }
+
+    [Fact]
+    public void The_1_0_and_1_4_privileges_files_together_are_what_the_migrator_grants_on_a_schema_with_the_injection_table()
+    {
+        // On a schema migrated to 0026 or later: every non-optional table and the injection table exist, and none has
+        // row-level security yet. The 1.0 file, then the 1.4 file, is the .NET call's grants, each mode in turn; grants
+        // commute, so the set is compared, and neither side may repeat a statement.
+        const string role = ":\"application_role\"";
+        var tables = ApplicationRolePrivileges.Tables
+            .Where(table => !table.Optional || table.Name == ApplicationRolePrivileges.InjectionsTable)
+            .Select(table => table.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var fresh = tables.ToDictionary(
+            table => table,
+            _ => new ApplicationRolePrivileges.RowSecurityState(Enabled: false, Forced: false, Policies: []),
+            StringComparer.Ordinal);
+        var (always, rowLevelSecurity) = PrivilegeStatements(ContractFiles.Read("sql/application-role-privileges.sql")!);
+        var (always14, rowLevelSecurity14) = PrivilegeStatements(ContractFiles.Read("sql/application-role-privileges-1.4.sql")!);
+        Assert.NotEmpty(always14);
+        Assert.NotEmpty(rowLevelSecurity14);
+        Assert.All(
+            [.. always14, .. rowLevelSecurity14],
+            statement => Assert.Contains("agent_experience.experience_injections", statement, StringComparison.Ordinal));
+
+        foreach (var enable in new[] { false, true })
+        {
+            var options = new ExperienceApplicationRoleOptions("contract_app") { EnableRowLevelSecurity = enable };
+            List<string> expected =
+            [
+                .. ApplicationRolePrivileges.Statements(role, tables, options),
+                .. ApplicationRolePrivileges.RowLevelSecurityStatements(fresh, tables, enable),
+            ];
+            List<string> contract = enable ? [.. always, .. rowLevelSecurity, .. always14, .. rowLevelSecurity14] : [.. always, .. always14];
+            Assert.Equal(expected.Count, expected.Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(contract.Count, contract.Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(expected.Order(StringComparer.Ordinal), contract.Order(StringComparer.Ordinal));
+        }
+    }
+
     /// <summary>
     /// <c>sql/application-role-privileges.sql</c>'s statements: those under <c>-- mode: always</c>, and those under
     /// <c>-- mode: row-level-security</c>. Each is one line ending in <c>;</c>, returned without it; other comment lines are skipped.

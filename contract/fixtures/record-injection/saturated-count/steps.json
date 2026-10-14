@@ -1,0 +1,22 @@
+{
+  "description": "The count saturates at the bigint maximum: a row already there stays there, one below it reaches it, and the instant still moves forward.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000063-0000-4000-8000-000000000001",
+          "00000063-0000-4000-8000-000000000002"
+        ],
+        "injectedAt": "2026-03-02T10:00:00+00:00"
+      }
+    }
+  ]
+}

@@ -6,8 +6,8 @@
 // The schema is never reimplemented here. Each test database is migrated by running the .NET migrator's own scripts
 // (src/AgentExperience.Storage.Postgres/Migrations/*.sql) in name order, one transaction per script, as the owner
 // role, which is what ExperienceSchemaMigrator.MigrateAsync does. The application role's privileges are the
-// contract's sql/application-role-privileges.sql, both modes (row-level security on, what a contract 1.x port runs
-// against).
+// contract's sql/application-role-privileges.sql then, from contract 1.4, sql/application-role-privileges-1.4.sql (the
+// injection table's), both modes (row-level security on, what a contract 1.x port runs against).
 //
 // The server comes from PGHOST (with PGPORT, PGUSER, PGPASSWORD: a superuser connection) when set, else from a
 // Testcontainers postgres container (AGENTEXPERIENCE_POSTGRES_MAJOR, default 16). With neither, the tests skip, unless
@@ -225,14 +225,27 @@ func prepareRoles(ctx context.Context, admin Server) error {
 
 var roleName = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
-// ApplicationRolePrivileges are the statements of sql/application-role-privileges.sql for role (a plain
-// identifier): those under "-- mode: always", then those under "-- mode: row-level-security".
+// The contract's privileges files: 1.0's, and 1.4's for the injection table.
+const (
+	PrivilegesFile   = "application-role-privileges.sql"
+	Privileges14File = "application-role-privileges-1.4.sql"
+)
+
+// ApplicationRolePrivileges are the statements of the contract's two privileges files for role (a plain
+// identifier), the 1.0 file then the 1.4 file: what the .NET privileges call grants.
 func ApplicationRolePrivileges(t *testing.T, role string) []string {
+	t.Helper()
+	return append(PrivilegesOf(t, role, PrivilegesFile), PrivilegesOf(t, role, Privileges14File)...)
+}
+
+// PrivilegesOf are the statements of one contract privileges file (under contract/sql/) for role (a plain
+// identifier): those under "-- mode: always", then those under "-- mode: row-level-security".
+func PrivilegesOf(t *testing.T, role, file string) []string {
 	t.Helper()
 	if !roleName.MatchString(role) {
 		t.Fatalf("%q is not a plain identifier", role)
 	}
-	data, err := os.ReadFile(filepath.Join(ct.Contract, "sql", "application-role-privileges.sql"))
+	data, err := os.ReadFile(filepath.Join(ct.Contract, "sql", file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +288,13 @@ func DatabaseName(label string) string {
 // dropped when the test ends (after the stores that use it close). Give each module's labels their own prefix: a
 // server may be shared.
 func CreateDatabase(t *testing.T, admin Server, label string) string {
+	t.Helper()
+	return CreateDatabaseWith(t, admin, label, ApplicationRolePrivileges(t, ApplicationRole))
+}
+
+// CreateDatabaseWith is CreateDatabase with the application role given exactly privileges: PrivilegesOf the 1.0 file
+// alone, say, for a schema whose role was never granted the injection table.
+func CreateDatabaseWith(t *testing.T, admin Server, label string, privileges []string) string {
 	t.Helper()
 	ctx := context.Background()
 	name := DatabaseName(label)
@@ -328,7 +348,7 @@ func CreateDatabase(t *testing.T, admin Server, label string) string {
 		}
 	}
 	err = pgx.BeginFunc(ctx, owner, func(tx pgx.Tx) error {
-		for _, statement := range ApplicationRolePrivileges(t, ApplicationRole) {
+		for _, statement := range privileges {
 			if _, err := tx.Exec(ctx, statement); err != nil {
 				return fmt.Errorf("%s: %w", statement, err)
 			}

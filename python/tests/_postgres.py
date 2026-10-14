@@ -5,10 +5,11 @@ The schema is never reimplemented here. Each test database is migrated by runnin
 (``src/AgentExperience.Storage.Postgres/Migrations/*.sql``) in name order, one transaction per script, as the owner
 role, which is what ``ExperienceSchemaMigrator.MigrateAsync`` does through DbUp (with variable substitution off).
 
-The application role's privileges are the contract's ``sql/application-role-privileges.sql``: the statements
+The application role's privileges are the contract's ``sql/application-role-privileges.sql`` then, from contract 1.4,
+``sql/application-role-privileges-1.4.sql`` (the injection table's): together the statements
 ``ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync`` runs on a freshly migrated schema, which a .NET test
-keeps identical to that method's. Both of its modes are applied (``EnableRowLevelSecurity = true``, what a contract
-1.x port runs against), with the role's name in place of its ``:"application_role"`` placeholder.
+keeps identical to that method's. Both of their modes are applied (``EnableRowLevelSecurity = true``, what a contract
+1.x port runs against), with the role's name in place of the ``:"application_role"`` placeholder.
 
 The server comes from ``PGHOST`` (with ``PGPORT``, ``PGUSER``, ``PGPASSWORD``: a superuser connection, libpq's own
 variables) when set, else from a Testcontainers ``postgres`` container (``AGENTEXPERIENCE_POSTGRES_MAJOR``, default 16).
@@ -22,6 +23,7 @@ import os
 import re
 from collections.abc import Generator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from _contract import CONTRACT, MIGRATIONS
@@ -32,18 +34,22 @@ PASSWORD = "contract-role-password"
 SCHEMA = "agent_experience"
 
 PRIVILEGES_SQL = CONTRACT / "sql" / "application-role-privileges.sql"
+PRIVILEGES_1_4_SQL = CONTRACT / "sql" / "application-role-privileges-1.4.sql"
 _ROLE_PLACEHOLDER = ':"application_role"'
 
 
-def application_role_privileges(role: str, *, row_level_security: bool = True) -> list[str]:
+def application_role_privileges(
+    role: str, *, row_level_security: bool = True, path: Path = PRIVILEGES_SQL
+) -> list[str]:
     """
-    The statements of ``sql/application-role-privileges.sql`` for ``role`` (a plain identifier): those under
-    ``-- mode: always``, then, with ``row_level_security``, those under ``-- mode: row-level-security``.
+    The statements of a contract privileges file (``sql/application-role-privileges.sql`` by default) for ``role`` (a
+    plain identifier): those under ``-- mode: always``, then, with ``row_level_security``, those under
+    ``-- mode: row-level-security``.
     """
     assert re.fullmatch(r"[a-z_][a-z0-9_]*", role), role
     modes: dict[str, list[str]] = {"always": [], "row-level-security": []}
     current: list[str] | None = None
-    for line in PRIVILEGES_SQL.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if re.match(r"--\s*mode\b", line, re.IGNORECASE):
             mode = line.removeprefix("-- mode: ")
             if not line.startswith("-- mode: ") or mode not in modes:
@@ -61,7 +67,13 @@ def application_role_privileges(role: str, *, row_level_security: bool = True) -
     return modes["always"] + (modes["row-level-security"] if row_level_security else [])
 
 
-APPLICATION_ROLE_PRIVILEGES = application_role_privileges(APPLICATION)
+APPLICATION_ROLE_PRIVILEGES_1_0 = application_role_privileges(APPLICATION)
+"""Contract 1.0's grants alone: the injection table is not granted."""
+
+APPLICATION_ROLE_PRIVILEGES = APPLICATION_ROLE_PRIVILEGES_1_0 + application_role_privileges(
+    APPLICATION, path=PRIVILEGES_1_4_SQL
+)
+"""The 1.0 file, then the 1.4 file: what the .NET privileges call grants."""
 
 
 @dataclass(frozen=True)
@@ -155,8 +167,9 @@ def database_name(label: str) -> str:
     return f"py_{prefix}_{digest}"
 
 
-def create_database(admin: Server, label: str) -> str:
-    """A fresh database, migrated by the .NET scripts and with the application role's privileges; its name."""
+def create_database(admin: Server, label: str, *, privileges: list[str] | None = None) -> str:
+    """A fresh database, migrated by the .NET scripts and with the application role's privileges (both contract
+    files unless ``privileges`` says otherwise); its name."""
     import psycopg
     from psycopg import sql
 
@@ -172,7 +185,7 @@ def create_database(admin: Server, label: str) -> str:
             with owner.transaction():
                 owner.execute(script.read_text(encoding="utf-8").encode("utf-8"))
         with owner.transaction():
-            for statement in APPLICATION_ROLE_PRIVILEGES:
+            for statement in APPLICATION_ROLE_PRIVILEGES if privileges is None else privileges:
                 owner.execute(statement.encode("utf-8"))
     return name
 

@@ -6,7 +6,9 @@ package maf
 //
 //   - Go writes, .NET reads: the Go agent writes its two runs through the Go PostgreSQL store, and they read back
 //     exactly as testdata/cross-language/go-agent-records.json, the file the .NET contract tests'
-//     GoAgentRecordsPostgresRoundTripTests read back through the .NET store unchanged.
+//     GoAgentRecordsPostgresRoundTripTests read back through the .NET store unchanged. The raw rows, the injection the
+//     second run recorded included (contract 1.4), are testdata/cross-language/go-agent-rows.json: the .NET test
+//     reads the injection through the .NET lessons view and compares every column with what the .NET store records.
 //   - .NET writes, Go reads: the records the .NET library finalized for the contract's finalize fixtures (generated
 //     from .NET and checked against it on every build) are written into PostgreSQL as stored, and a Go agent on
 //     their scope is injected with the one its task matches. No .NET process runs at test time: the fixtures are the
@@ -50,6 +52,8 @@ var (
 	eventColumns  = []string{"event_id", "experience_id", "tenant_id", "application_id", "project_id", "team_id",
 		"agent_id", "user_id", "prior_status", "current_status", "reason", "producer", "occurred_at", "recorded_at",
 		"expected_revision", "applied_revision", "actor"}
+	injectionColumns = []string{"experience_id", "tenant_id", "application_id", "project_id", "team_id", "agent_id",
+		"user_id", "last_injected_at", "injection_count"}
 )
 
 // rawRows are the rows of a table in scope, every given column in PostgreSQL's text form (NULL as nil), read as the
@@ -128,6 +132,8 @@ func TestTheGoAgentWritesToPostgreSQLWhatTheDotNetStoreReads(t *testing.T) {
 			"source_run_id")},
 		ae.Member{Key: "lifecycle_events", Value: rawRows(t, admin, database, "lifecycle_events", eventColumns,
 			"occurred_at, event_id")},
+		ae.Member{Key: "experience_injections", Value: rawRows(t, admin, database, "experience_injections",
+			injectionColumns, "experience_id")},
 	)
 	written := goldenText(t, rows)
 	if os.Getenv(updateVariable) == "1" {
@@ -145,14 +151,19 @@ func TestTheGoAgentWritesToPostgreSQLWhatTheDotNetStoreReads(t *testing.T) {
 			ct.Difference(expected, ct.AsWritten(rows), "$", ct.Options{}), updateVariable)
 	}
 	var decoded struct {
-		Records []map[string]*string `json:"experience_records"`
-		Events  []map[string]*string `json:"lifecycle_events"`
+		Records    []map[string]*string `json:"experience_records"`
+		Events     []map[string]*string `json:"lifecycle_events"`
+		Injections []map[string]*string `json:"experience_injections"`
 	}
 	if err := json.Unmarshal(written, &decoded); err != nil {
 		t.Fatal(err)
 	}
 	if len(decoded.Records) != len(finalized) || len(decoded.Events) != len(finalized) {
 		t.Fatalf("%d records and %d events for %d runs", len(decoded.Records), len(decoded.Events), len(finalized))
+	}
+	// The second run's block delivered the first run's lesson: one injection row, for it.
+	if len(decoded.Injections) != 1 || *decoded.Injections[0]["experience_id"] != finalized[0].Record.ExperienceID.String() {
+		t.Fatalf("injections %v", decoded.Injections)
 	}
 
 	expected := readGolden(t)
@@ -196,7 +207,8 @@ func dotnetRecords(t *testing.T) []ae.ExperienceRecord {
 func TestALessonTheDotNetLibraryFinalizedIsInjectedIntoTheGoAgent(t *testing.T) {
 	admin := pgtest.Require(t)
 	ctx := context.Background()
-	store := newStore(t, admin, createDatabase(t, admin, "dotnet_lessons"))
+	database := createDatabase(t, admin, "dotnet_lessons")
+	store := newStore(t, admin, database)
 	seeded := dotnetRecords(t)
 	for i := range seeded {
 		if err := store.InsertRecord(ctx, ae.BoundsOf(seeded[i].Scope), &seeded[i]); err != nil {
@@ -219,18 +231,32 @@ func TestALessonTheDotNetLibraryFinalizedIsInjectedIntoTheGoAgent(t *testing.T) 
 		t.Fatal("the fixtures no longer hold the records this test reads")
 	}
 
-	wire := func(scope ae.Scope) (*host, *scripted, *agent.Agent) {
+	wire := func(scope ae.Scope) (*host, *scripted, *agent.Agent, *agent.Config) {
 		h, model := &host{}, newScripted(0)
-		config := agent.Config{Name: "refund-agent"}
-		if err := UseAgentExperience(&config, h.options(Options{Store: store,
+		config := &agent.Config{Name: "refund-agent"}
+		if err := UseAgentExperience(config, h.options(Options{Store: store,
 			Identity: ae.Identity{Principal: "go-principal", Scope: scope}})); err != nil {
 			t.Fatal(err)
 		}
-		return h, model, newAgent(model, config)
+		return h, model, newAgent(model, *config), config
 	}
 
-	h, model, a := wire(scope)
+	h, model, a, config := wire(scope)
 	runText(t, a, "Deploy service X to prod")
+
+	// The Go agent recorded that it injected the .NET lesson, in the lesson's own scope.
+	closeRecordings(t, config)
+	conn, err := pgx.Connect(ctx, admin.Admin(database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var injected string
+	var count int64
+	if err := conn.QueryRow(ctx, "SELECT experience_id::text, injection_count FROM agent_experience.experience_injections").
+		Scan(&injected, &count); err != nil || injected != deploy.ExperienceID.String() || count != 1 {
+		t.Fatalf("the injection row is %s x%d (%v)", injected, count, err)
+	}
 	if len(h.injectionFailures) != 0 || len(h.injections) != 1 || len(h.injections[0].ExperienceIDs) != 1 ||
 		h.injections[0].ExperienceIDs[0] != deploy.ExperienceID {
 		t.Fatalf("injections %+v, failures %+v", h.injections, h.injectionFailures)
@@ -259,7 +285,7 @@ func TestALessonTheDotNetLibraryFinalizedIsInjectedIntoTheGoAgent(t *testing.T) 
 	// Another agent's scope, on the same database, sees none of them.
 	other := scope
 	other.AgentID = ae.Ptr("other-agent")
-	h2, model2, a2 := wire(other)
+	h2, model2, a2, _ := wire(other)
 	runText(t, a2, "Deploy service X to prod")
 	runText(t, a2, "Refund ticket 43 is stuck in pending")
 	if len(h2.injections) != 0 || len(model2.blocks()) != 0 || len(h2.injectionFailures) != 0 {

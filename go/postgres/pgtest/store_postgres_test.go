@@ -10,8 +10,8 @@ package pgtest_test
 // The schema is never reimplemented here. Each test database is migrated by running the .NET migrator's own scripts
 // (src/AgentExperience.Storage.Postgres/Migrations/*.sql) in name order, one transaction per script, as the owner
 // role, which is what ExperienceSchemaMigrator.MigrateAsync does. The application role's privileges are the
-// contract's sql/application-role-privileges.sql, both modes (row-level security on, what a contract 1.x port runs
-// against).
+// contract's sql/application-role-privileges.sql then sql/application-role-privileges-1.4.sql, both modes (row-level
+// security on, what a contract 1.x port runs against).
 //
 // The server comes from PGHOST (with PGPORT, PGUSER, PGPASSWORD: a superuser connection) when set, else from a
 // Testcontainers postgres container (AGENTEXPERIENCE_POSTGRES_MAJOR, default 16). With neither, the tests skip, unless

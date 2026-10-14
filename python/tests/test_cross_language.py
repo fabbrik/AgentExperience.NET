@@ -10,7 +10,9 @@ Story 22.3's cross-language proof, read from the raw rows since story 22.8.
   must be the records file), check each initial lifecycle event, and compare every column with what the .NET store
   writes for the same record (``PythonAgentRecordsPostgresRoundTripTests``). So a Python writer that encodes a column
   differently from .NET fails there, even when the Python reader undoes it. Set
-  ``AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`` to rewrite the files on purpose, then read the diff.
+  ``AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`` to rewrite the files on purpose, then read the diff. Since contract 1.4
+  the rows include ``experience_injections``, the injection the second run recorded: the .NET test reads it through
+  the .NET lessons view and compares every column with what the .NET store records for the same injection.
 - **.NET writes, Python reads.** The records the .NET library finalized (the contract's finalize fixtures, generated
   from .NET and checked against it on every build) are written into PostgreSQL as stored, and a Python agent on the
   same scope is injected with them. No .NET process runs at test time: the fixtures are the .NET-written records.
@@ -53,8 +55,10 @@ from agentexperience.inmemory import ExperienceStore, InMemoryExperienceStore
 from agentexperience.maf import (
     HISTORICAL_REFERENCE_KEY,
     CaptureFailure,
+    ExperienceContextProvider,
     ExperienceIdentity,
     InjectionFailure,
+    InjectionRecordResult,
     InjectionResult,
     exit_code,
     tool_succeeded,
@@ -83,6 +87,17 @@ EVENT_COLUMNS = (
     "expected_revision",
     "applied_revision",
     "actor",
+)
+INJECTION_COLUMNS = (
+    "experience_id",
+    "tenant_id",
+    "application_id",
+    "project_id",
+    "team_id",
+    "agent_id",
+    "user_id",
+    "last_injected_at",
+    "injection_count",
 )
 UPDATE_VARIABLE = "AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE"
 SCOPE = Scope("contract-tenant", "contract-app", "contract-project", agent_id="python-agent")
@@ -113,10 +128,21 @@ def fixed_ids() -> Callable[[], uuid.UUID]:
     return new_id
 
 
+async def run_settled(agent: Any, text: str) -> Any:
+    """Runs the agent, then waits for the injection it recorded in the background, on the same event loop."""
+    response = await agent.run(text)
+    for provider in agent.context_providers:
+        if isinstance(provider, ExperienceContextProvider):
+            await provider.wait_for_injection_records()
+    return response
+
+
 def run_python_agent(store: ExperienceStore) -> tuple[list[Any], ScriptedClient, list[Any]]:
-    """Two runs of a Python agent, deterministic: the first fails a test run once, the second is shown the lesson."""
+    """Two runs of a Python agent, deterministic: the first fails a test run once, the second is shown the lesson,
+    which is recorded as injected."""
     finalized: list[Any] = []
     problems: list[CaptureFailure | InjectionFailure] = []
+    recorded: list[InjectionRecordResult] = []
     exits = iter(["exit=3", "exit=0", "exit=3", "exit=0"])
 
     def run_tests(suite: str) -> str:
@@ -134,15 +160,19 @@ def run_python_agent(store: ExperienceStore) -> tuple[list[Any], ScriptedClient,
         on_capture_failure=problems.append,
         on_injection_failure=problems.append,
         on_finalized=finalized.append,
+        on_injection_recorded=recorded.append,
         clock=fixed_clock(),
         new_id=fixed_ids(),
     )
     # The package version is recorded in each run's provenance; pinned here so the checked-in records do not change
     # with every version bump (on either side: the .NET test reads this same file).
     with patch.object(agentexperience.maf, "__version__", GOLDEN_SOURCE_VERSION):
-        run(agent.run(TICKET))
-        run(agent.run(NEXT_TICKET))
+        run(run_settled(agent, TICKET))
+        run(run_settled(agent, NEXT_TICKET))
     assert problems == []
+    assert [(item.outcome, item.experience_ids) for item in recorded] == [
+        ("Recorded", (finalized[0].record.experience_id,))
+    ]
     return finalized, client, [to_stored(item.record) for item in finalized]
 
 
@@ -151,7 +181,13 @@ def _golden_text(records: Any) -> str:
 
 
 def test_the_python_agent_writes_exactly_the_checked_in_records() -> None:
-    finalized, client, stored = run_python_agent(InMemoryExperienceStore())
+    store = InMemoryExperienceStore()
+    finalized, client, stored = run_python_agent(store)
+
+    # The second run's block delivered the first run's lesson: recorded once, at the instant the block was built.
+    (first_id,) = store.injections()
+    assert first_id == finalized[0].record.experience_id
+    assert store.injections()[first_id].injection_count == 1
 
     assert [item.record.status for item in finalized] == ["Validated", "Validated"]
     assert [len(item.record.provenance.exposed_to) for item in finalized] == [0, 1]
@@ -230,7 +266,11 @@ def test_the_python_agent_writes_to_postgresql_what_the_dotnet_store_reads(pg_se
         "lifecycle_events": _raw_rows(
             pg_server, database, "lifecycle_events", EVENT_COLUMNS, ("occurred_at", "event_id")
         ),
+        "experience_injections": _raw_rows(
+            pg_server, database, "experience_injections", INJECTION_COLUMNS, ("experience_id",)
+        ),
     }
+    assert [row["experience_id"] for row in rows["experience_injections"]] == [str(finalized[0].record.experience_id)]
     assert len(rows["experience_records"]) == len(rows["lifecycle_events"]) == len(finalized)
     if os.environ.get(UPDATE_VARIABLE) == "1":
         ROWS_GOLDEN.write_text(_golden_text(rows), encoding="utf-8")
@@ -261,7 +301,8 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
 
     from agentexperience.postgres import PostgresExperienceStore
 
-    store = PostgresExperienceStore(application_conninfo(pg_server, create_database(pg_server, "dotnet_lessons")))
+    database = create_database(pg_server, "dotnet_lessons")
+    store = PostgresExperienceStore(application_conninfo(pg_server, database))
     seeded = _dotnet_records()
     for stored in seeded:
         record = from_stored(stored)
@@ -271,6 +312,7 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
     deploy = next(s for s in seeded if s["columns"]["task_id"] == "deploy-service" and s["columns"]["team_id"] is None)
     injections: list[InjectionResult] = []
     problems: list[InjectionFailure] = []
+    recorded: list[InjectionRecordResult] = []
     client = ScriptedClient(calls=0)
     agent = use_agent_experience(
         Agent(client=client, name="refund-agent"),
@@ -278,9 +320,20 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
         identity=ExperienceIdentity("python-principal", scope),
         on_injected=injections.append,
         on_injection_failure=problems.append,
+        on_injection_recorded=recorded.append,
     )
 
-    run(agent.run("Deploy service X to prod"))
+    run(run_settled(agent, "Deploy service X to prod"))
+
+    # The Python agent recorded that it injected the .NET lesson, in the lesson's own scope.
+    assert [item.outcome for item in recorded] == ["Recorded"]
+    import psycopg
+
+    with psycopg.connect(pg_server.conninfo(database)) as connection:
+        rows = connection.execute(
+            "SELECT experience_id::text, agent_id, injection_count FROM agent_experience.experience_injections"
+        ).fetchall()
+    assert rows == [(deploy["columns"]["experience_id"], "refund-agent", 1)]
 
     assert problems == []
     assert [str(experience_id) for experience_id in injections[0].experience_ids] == [

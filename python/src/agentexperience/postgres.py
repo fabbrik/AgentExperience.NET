@@ -1,11 +1,13 @@
 """
 The PostgreSQL store (the ``postgres`` extra): writes finalized records and their initial event, reads records back,
-and runs the contract's text search, all as the application role inside a transaction that first declared its bounds.
+runs the contract's text search, and records injections, all as the application role inside a transaction that first
+declared its bounds.
 
 It runs against a schema the .NET migrator applied (``ExperienceSchemaMigrator.MigrateAsync``, then
-``ApplyApplicationRolePrivilegesAsync`` with row-level security on) and never creates or alters a schema object. The
-two statements are the contract's SQL files, shipped as package data and run as written: only their ``@name``
-placeholders are spelled the way the driver spells them.
+``ApplyApplicationRolePrivilegesAsync`` with row-level security on, or the contract's two privileges files) and never
+creates or alters a schema object. The bounds, the search and the injection record are the contract's SQL files,
+shipped as package data and run as written: only their ``@name`` placeholders are spelled the way the driver spells
+them.
 """
 
 from __future__ import annotations
@@ -13,13 +15,15 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from ._text import is_null_or_whitespace
+from .encoding import Instant
 from .finalize import FinalizedExperience
+from .inmemory import AuthorizationDenied, injection_ids, permits
 from .records import COLUMN_NAMES, PAYLOAD_VERSION, ExperienceRecord, Scope, from_columns, to_payload
 from .search import AuthorizationBounds, SearchParameters, SearchRow, widen_real
 
@@ -34,7 +38,7 @@ _PLACEHOLDER = re.compile(r"@([A-Za-z_][A-Za-z0-9_]*)")
 
 def contract_sql(name: str) -> str:
     """One of the contract's SQL files, as the package ships it (``declare-bounds.sql``,
-    ``search-experience-text.sql``)."""
+    ``search-experience-text.sql``, ``record-injection.sql``)."""
     return resources.files("agentexperience").joinpath("sql").joinpath(name).read_text(encoding="utf-8")
 
 
@@ -116,6 +120,7 @@ _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 DECLARE_BOUNDS_SQL = "declare-bounds.sql"
 SEARCH_SQL = "search-experience-text.sql"
+RECORD_INJECTION_SQL = "record-injection.sql"
 
 _INSERT_RECORD = (
     f"INSERT INTO {TABLE} ({', '.join(COLUMN_NAMES)}) VALUES ({', '.join(f'%({name})s' for name in COLUMN_NAMES)})"
@@ -171,6 +176,7 @@ class PostgresExperienceStore:
             self._connect = connect
         self._declare = to_driver_placeholders(contract_sql(DECLARE_BOUNDS_SQL))
         self._search = to_driver_placeholders(contract_sql(SEARCH_SQL))
+        self._record_injection = to_driver_placeholders(contract_sql(RECORD_INJECTION_SQL))
 
     @contextmanager
     def _transaction(self, bounds: AuthorizationBounds) -> Iterator[psycopg.Cursor[Any]]:
@@ -281,6 +287,45 @@ class PostgresExperienceStore:
                 )
             )
         return result
+
+    def record_injection(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        experience_ids: Sequence[uuid.UUID],
+        injected_at: Instant,
+    ) -> None:
+        """
+        Records that ``experience_ids`` were injected in ``scope`` at ``injected_at``: runs ``sql/record-injection.sql``
+        (contract 1.4) once, in one transaction that declared ``bounds``. Only a record live in exactly ``scope``
+        gets a row (one borrowed through a grant, or in another scope, is skipped by the statement); the instant is
+        truncated to whole microseconds and clamped to the database clock. Raises
+        :class:`~agentexperience.inmemory.AuthorizationDenied` when ``bounds`` do not permit ``scope``, ``ValueError``
+        for more than 200 IDs or a nil one, and the driver's
+        error otherwise (``insufficient_privilege`` until the role holds the grants of
+        ``sql/application-role-privileges-1.4.sql``). The agent integration calls it in the background, fail-open.
+        """
+        ids = injection_ids(experience_ids)
+        if not isinstance(injected_at, Instant):
+            raise TypeError("injected_at must be an Instant.")
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        if not ids:
+            return
+        with self._transaction(bounds) as cursor:
+            cursor.execute(
+                self._record_injection,
+                {
+                    "experience_ids": ids,
+                    "injected_at": injected_at.to_datetime(),
+                    "tenant_id": scope.tenant_id,
+                    "application_id": scope.application_id,
+                    "project_id": scope.project_id,
+                    "team_id": scope.team_id,
+                    "agent_id": scope.agent_id,
+                    "user_id": scope.user_id,
+                },
+            )
 
 
 def _record_parameters(record: ExperienceRecord) -> dict[str, Any]:

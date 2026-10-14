@@ -276,8 +276,8 @@ each lesson, newest first, it gives:
   lesson, and how many injected blocks delivered it. It has three states: an instant; never (`null` and 0 while the
   page's `InjectionsTracked` is `true`); and not tracked (`InjectionsTracked` is `false`: a store that does not track
   injections, or a PostgreSQL schema whose application role has not been granted `0026`'s table yet), which the HTML
-  shows as "not tracked" rather than "never". **Only .NET agents record injections for now**: the Python and Go ports
-  do not write it yet, so in a mixed fleet "never" can mean "injected only by a Python or Go agent". The page says so.
+  shows as "not tracked" rather than "never". .NET, Python and Go agents all record their injections (the ports from
+  [contract 1.4](../../contract/README-1.4.md)), so in a mixed fleet "never" means no agent in the scope was shown it.
 
 `ExperienceLessonsQuery` narrows it: `Statuses`, `Limit` (the store's bounds, 1 to 500, default 50) and
 `IncludeIneligible` (default `true`). The page's `HasMore` says whether more lessons match than it shows (or may: the
@@ -305,8 +305,11 @@ and read as not tracked, and the store conformance suite fails a store that over
 After migrating to `0026`, re-run `ApplyApplicationRolePrivilegesAsync` (it also runs before the migration: the table is
 granted once it exists). Until then the application role cannot reach the table: injections report `NotRecorded`, the
 view reads as not tracked, and the store reports it once through `PostgresExperienceRecordStore.OnInjectionTrackingUnavailable`.
-In a fleet that also runs a Python or Go port, run the .NET privileges call **after** the contract's
-`sql/application-role-privileges.sql`, whose `REVOKE ALL` removes the injection table's grants.
+In a fleet that also runs a Python or Go port, the application role's privileges are either the .NET call, or the
+contract's two files in this order: `sql/application-role-privileges.sql`, then `sql/application-role-privileges-1.4.sql`
+(the injection table's grants, which the first file's `REVOKE ALL` removes). Together the two files are exactly what the
+.NET call grants, so the .NET call may also run after them. With the 1.0 file alone, every agent still injects, and
+each injection is reported `NotRecorded`.
 
 `ExperienceLessonsHtml.Render(page)` returns one self-contained HTML document: inline CSS, no script, no external
 request, light and dark mode, a "development view" banner and the scope. Every value drawn from a record is

@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.3, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.3. It is published to PyPI as `agentexperience`, the distribution and import name, with every
+**Status: alpha, contract 1.4, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.4. It is published to PyPI as `agentexperience`, the distribution and import name, with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agentexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -64,6 +64,12 @@ prints each run and the block. Its output is checked in as
   `additional_properties["AgentExperience.HistoricalReference"] = True` (`message_role="system"` sends it as a system
   message). An agent that already holds an `ExperienceContextProvider` gets no second one; `inject=False` captures
   without injecting.
+- **Injection tracking** (contract 1.4). Once a block is handed over, a store with `record_injection` (the PostgreSQL
+  and in-memory stores) is told which records it delivered, so the .NET lessons view shows when each lesson was last
+  injected, by a Python agent too. It runs in a background task on the event loop, bounded by
+  `injection_record_timeout` (5 seconds, .NET's), and never delays or fails the invocation; `on_injection_recorded`
+  reports how it ended (`Recorded`, `NotTracked`, `NotRecorded` or `OutcomeUnknown`, as .NET's `record_injection`
+  operation). `await provider.wait_for_injection_records()` awaits the ones still running, for a host shutting down.
 - **The task text, and where history sits.** Capture records the task text of the invocation's own input, as .NET's
   agent-level capture does. Injection derives it from the messages the provider sees: the new input, plus the
   replayed history of a history provider that runs *before* it. The provider is appended to the agent's
@@ -79,7 +85,8 @@ prints each run and the block. Its output is checked in as
   `FinalizationTimeout`), on its own clock: past it the work is abandoned and reported, so a cancellation is never held
   up longer than that.
 - **Nothing raises into the agent.** A store, identity, classifier or verifier failure means no block or no stored
-  record, reported through `on_capture_failure` or `on_injection_failure` (the reason never quotes record content).
+  record, reported through `on_capture_failure` or `on_injection_failure` (the reason never quotes record content);
+  a failed injection record is reported through `on_injection_recorded`.
   Only the invocation's own cancellation and the tool's own exceptions propagate, unchanged.
 
 **Verifiers** (`agentexperience.verifiers`, re-exported by `agentexperience.maf`) have the semantics of .NET's
@@ -113,10 +120,13 @@ which shares lessons with .NET agents on the same database.
 - **The task text.** `derive_task_text` derives the text retrieval searches with from an invocation's messages.
 - **The error class.** `error_class` reduces a captured error to its short class.
 - **PostgreSQL** (the `postgres` extra, psycopg 3). `PostgresExperienceStore` writes a finalized record and its
-  initial event as the application role, reads records back, and runs the contract's text search. It ships the
-  contract's SQL files and runs them as written. `rank` applies the contract's safety checks, truncation and ranking
-  to the rows the search returns. The store needs a schema the .NET migrator applied, with row-level security on; it
-  never creates or alters a schema object.
+  initial event as the application role, reads records back, runs the contract's text search, and records injections
+  (`record_injection`, contract 1.4). It ships the contract's SQL files and runs them as written. `rank` applies the
+  contract's safety checks, truncation and ranking to the rows the search returns. The store needs a schema the .NET
+  migrator applied, with row-level security on; it never creates or alters a schema object. The application role's
+  privileges are the .NET privileges call's, or the contract's two files, in this order:
+  `sql/application-role-privileges.sql`, then `sql/application-role-privileges-1.4.sql` (without the second, every
+  injection is still made and its record is reported `NotRecorded`).
 
 It does nothing outside contract 1.x: no grants, crypto-shredding, provenance signing or vectors, and no lifecycle
 after finalization (reuse evidence, reinforcement, contest, revocation). It writes no logs at all, so no record
@@ -270,8 +280,9 @@ runs the sample (`AGENTEXPERIENCE_QUICKSTART_GOLDEN_UPDATE=1` rewrites its expec
   The .NET contract tests' `PythonAgentRecordsPostgresRoundTripTests` insert those raw rows into a schema the .NET
   migrator applied, each value cast from its text by PostgreSQL, read every record back through the .NET PostgreSQL
   store (it must be `python-agent-records.json`), check each initial event is the one .NET finalization derives,
-  compare every column with what the .NET store writes for the same record, and find the Python agent's lessons
-  through the .NET retrieval. So a column the Python store wrote in its own encoding fails there, even when the
+  compare every column with what the .NET store writes for the same record, read the injection the second run
+  recorded through the .NET lessons view and compare its row with what the .NET store records for it, and find the
+  Python agent's lessons through the .NET retrieval. So a column the Python store wrote in its own encoding fails there, even when the
   Python reader undoes it. `AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1` rewrites both files on purpose (the rows in the
   PostgreSQL leg).
 - *.NET writes, Python reads.* The records the .NET library finalized for the contract's finalize fixtures (generated
@@ -280,11 +291,12 @@ runs the sample (`AGENTEXPERIENCE_QUICKSTART_GOLDEN_UPDATE=1` rewrites its expec
   records.
 
 The PostgreSQL tests (`tests/test_postgres.py` and the cross-language tests, marker `postgres`) write each finalize fixture through the store and
-read it back row for row, and run every search fixture, then rank. Each test database is migrated with the .NET
+read it back row for row, run every search fixture, then rank, and run every record-injection fixture. Each test database is migrated with the .NET
 migrator's own scripts from
 [`src/AgentExperience.Storage.Postgres/Migrations`](https://github.com/fabbrik/AgentExperience.NET/tree/main/src/AgentExperience.Storage.Postgres/Migrations), in order;
 the application role's privileges are the contract's
-[`sql/application-role-privileges.sql`](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/sql/application-role-privileges.sql), which a .NET test keeps
+[`sql/application-role-privileges.sql`](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/sql/application-role-privileges.sql) then
+[`sql/application-role-privileges-1.4.sql`](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/sql/application-role-privileges-1.4.sql), which a .NET test keeps
 identical to the statements the .NET migrator runs. The server is a Testcontainers `postgres` container (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or
 the server libpq's `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` name (a superuser). With neither, they are skipped.
 On a Mac with Rancher Desktop or Colima, Testcontainers may need:

@@ -6,6 +6,33 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Contract 1.4: the Python and Go ports record injections (story 22.9)
+
+- **Contract 1.4** (add-only: every earlier file is unchanged; [what 1.4 adds](contract/README-1.4.md)) publishes the
+  statement the .NET store runs to record an injected block, `contract/sql/record-injection.sql` (live records in
+  exactly the injecting scope only, `FOR KEY SHARE` in ID order, the instant clamped to `clock_timestamp()` and only
+  moved forward, the count saturating), and the application role's grants on `agent_experience.experience_injections`,
+  `contract/sql/application-role-privileges-1.4.sql`, applied after the 1.0 file. The .NET store's statement is that
+  file's, line for line, and a contract test keeps the .NET privileges call equal to the 1.0 and 1.4 files together.
+  A new PostgreSQL fixture family, `record-injection`, generated from .NET, pins repeats, earlier instants, the scope,
+  the clamp, saturation and erasure; the .NET store and the contract statement run as written must both leave it.
+- **The Python and Go ports record their injections**, so a lesson only a Python or Go agent uses no longer reads
+  "never" in the .NET lessons view. Each PostgreSQL store gains the record call (Python `record_injection`, Go
+  `RecordInjection`), running the embedded contract statement; each in-memory store tracks injections too. Each MAF
+  integration records after the block is handed over, in the background (Python: a task on the event loop,
+  `wait_for_injection_records()`; Go: a goroutine, `ContextProviderOf(&config).Close(ctx)`), chunked at 200 IDs,
+  bounded by `injection_record_timeout` / `InjectionRecordTimeout` (5 seconds), fail-open, and reported as `Recorded`,
+  `NotTracked`, `NotRecorded` or `OutcomeUnknown` through `on_injection_recorded` / `OnInjectionRecorded`. Both ports
+  list 1.0 to 1.4 as supported.
+- **The cross-language proof covers injections.** The Python and Go agents' rows files now include the injection
+  their second run recorded; the .NET contract tests insert it, read it through the .NET lessons view, and compare
+  every column with what the .NET store records for the same injection.
+- **The lessons page drops its ".NET agents only" note**: `ExperienceLessonsHtml.DotNetOnlyNote`, unreleased since
+  21.8, is removed.
+- **Privileges order.** In a mixed fleet, apply the 1.0 then the 1.4 contract privileges files, or the .NET call
+  ([deployment](docs/guide/deployment.md#seeing-what-it-learned)). With the 1.0 file alone every agent still injects,
+  and each injection is reported `NotRecorded`.
+
 ### Changed: the single-call wiring sees the chat history and a run's own tools
 
 - **`UseAgentExperience` alone now injects over a `ChatClientAgent` exactly as the provider on the agent's options
@@ -52,9 +79,8 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `ExperienceLessonsPage.InjectionsTracked`. The field has three states: when an agent in the scope was last shown the
   lesson (and how many injected blocks delivered it); never; or not tracked, when the store cannot say.
   `ExperienceLessonsHtml` shows it on every lesson ("last injected 2026-10-14 09:30:00 UTC (3 times)", "never", "not
-  tracked"). A lesson never injected is the first thing to look at: a dead lesson, or a retrieval miss. **Only .NET
-  agents record injections for now**; the Python and Go ports do not yet, so in a mixed fleet "never" can mean "injected
-  only by a Python or Go agent", and the page says so.
+  tracked"). A lesson never injected is the first thing to look at: a dead lesson, or a retrieval miss. The Python
+  and Go ports record their injections too, since contract 1.4 (above).
 - **Where it comes from.** No stored fact answered it reliably: a run's record names what it was exposed to only when
   the run was captured and finalized, inside a payload that is sealed in encrypted mode, and reuse feedback names
   exposures only when a host submits it. So the context provider now records it, **after the block is handed over, in
@@ -75,9 +101,8 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   record in exactly its scope. The application role gets `SELECT`, `INSERT` and `UPDATE` on the two moving columns,
   once the table exists. **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**: until then injections report
   `NotRecorded`, the view reads as not tracked (reported once through the new
-  `PostgresExperienceRecordStore.OnInjectionTrackingUnavailable`), and nothing else changes. The table is .NET-only,
-  so the contract (still 1.3) and its privileges file are unchanged; in a mixed fleet, run the .NET privileges call
-  after the contract's privileges file, whose `REVOKE ALL` removes the injection table's grants.
+  `PostgresExperienceRecordStore.OnInjectionTrackingUnavailable`), and nothing else changes. Contract 1.4 (above)
+  publishes the table's statement and grants for the ports.
 - **The 20.8 capability gate, end to end on PostgreSQL**: a new test runs the provider over the real candidate source
   and record store with grant auditing on. A borrowed record whose grant shows the approach and whose tool the agent
   lacks takes no slot, the reader's own record backfills it, and the only access row is the search's.

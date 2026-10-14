@@ -42,6 +42,19 @@ type AuthorizationBounds struct {
 	UserID        *string
 }
 
+// Permits reports whether the bounds permit scope: the tenant always, and every bounded field exactly.
+func (b AuthorizationBounds) Permits(scope Scope) bool {
+	bound := func(bound, value *string) bool {
+		return bound == nil || (value != nil && *bound == *value)
+	}
+	return b.TenantID == scope.TenantID &&
+		bound(b.ApplicationID, &scope.ApplicationID) &&
+		bound(b.ProjectID, &scope.ProjectID) &&
+		bound(b.TeamID, scope.TeamID) &&
+		bound(b.AgentID, scope.AgentID) &&
+		bound(b.UserID, scope.UserID)
+}
+
 // BoundsOf are bounds equal to a scope: its unset optional fields are left unbounded.
 func BoundsOf(scope Scope) AuthorizationBounds {
 	return AuthorizationBounds{

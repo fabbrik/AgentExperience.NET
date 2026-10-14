@@ -29,6 +29,7 @@ from agentexperience.maf import (
     ExperienceIdentity,
     ExperienceSettings,
     InjectionFailure,
+    InjectionRecordResult,
     InjectionResult,
     InMemoryExperienceStore,
     Verification,
@@ -830,3 +831,205 @@ def test_a_session_request_carries_exactly_one_block_whatever_the_history_provid
         # No block before the first lesson; afterwards exactly one per request, never a stale replayed one.
         assert counts[:3] == [0, 0, 0], history_first
         assert all(count == 1 for count in counts[3:]), (history_first, counts)
+
+
+# ---- Contract 1.4: recording what a block delivered ---------------------------------------------------------------
+
+
+def _provider(agent: Agent) -> ExperienceContextProvider:
+    (provider,) = [item for item in agent.context_providers if isinstance(item, ExperienceContextProvider)]
+    return provider
+
+
+def _learning_agent(store: Any, recorded: list[InjectionRecordResult], **options: Any) -> tuple[Host, Agent, Any]:
+    """An agent whose first run stores a lesson the second run is shown."""
+    host = Host()
+    client = ScriptedClient()
+    agent = host.wire(
+        agent_with(client, tool(exits("exit=3", "exit=0"), name="run_tests")),
+        store=store,
+        verify=tool_succeeded("run_tests"),
+        classify_tool_result=exit_code("run_tests"),
+        on_injection_recorded=recorded.append,
+        **options,
+    )
+    return host, agent, client
+
+
+def test_the_records_a_block_delivered_are_recorded_as_injected_in_the_background() -> None:
+    store = InMemoryExperienceStore()
+    recorded: list[InjectionRecordResult] = []
+    host, agent, _ = _learning_agent(store, recorded)
+
+    async def both() -> None:
+        await agent.run(TICKET)
+        await agent.run(NEXT_TICKET)
+        await _provider(agent).wait_for_injection_records()
+
+    run(both())
+
+    first = host.finalized[0].record
+    assert [(item.outcome, item.experience_ids, item.exception) for item in recorded] == [
+        ("Recorded", (first.experience_id,), None)
+    ]
+    (summary,) = store.injections().values()
+    assert summary.injection_count == 1
+    assert store.injections() == {first.experience_id: summary}
+
+
+def test_a_store_that_does_not_record_injections_is_reported_not_tracked() -> None:
+    class SearchOnly:
+        def __init__(self) -> None:
+            self.inner = InMemoryExperienceStore()
+
+        def insert_finalized(self, bounds: Any, finalized: Any, *, actor: str) -> None:
+            self.inner.insert_finalized(bounds, finalized, actor=actor)
+
+        def search(self, bounds: Any, parameters: Any) -> Any:
+            return self.inner.search(bounds, parameters)
+
+    recorded: list[InjectionRecordResult] = []
+    host, agent, client = _learning_agent(SearchOnly(), recorded)
+    run(agent.run(TICKET))
+    run(agent.run(NEXT_TICKET))
+
+    assert len(client.blocks()) >= 1
+    assert [item.outcome for item in recorded] == ["NotTracked"]
+    assert host.injection_failures == []
+
+
+def test_a_record_that_fails_is_reported_not_recorded_and_the_block_is_still_injected() -> None:
+    class Ungranted(InMemoryExperienceStore):
+        def record_injection(self, bounds: Any, scope: Any, experience_ids: Any, injected_at: Any) -> None:
+            raise PermissionError("permission denied for table experience_injections")
+
+    recorded: list[InjectionRecordResult] = []
+    host, agent, client = _learning_agent(Ungranted(), recorded)
+
+    async def both() -> Any:
+        await agent.run(TICKET)
+        response = await agent.run(NEXT_TICKET)
+        await _provider(agent).wait_for_injection_records()
+        return response
+
+    response = run(both())
+
+    assert response.text == "done"
+    assert len(client.blocks()) >= 1
+    assert host.injection_failures == []
+    (result,) = recorded
+    assert result.outcome == "NotRecorded"
+    assert isinstance(result.exception, PermissionError)
+
+
+def test_a_slow_record_never_delays_the_invocation_and_is_abandoned_as_outcome_unknown() -> None:
+    import threading
+
+    gate = threading.Event()
+    entered = threading.Event()
+
+    class Slow(InMemoryExperienceStore):
+        def record_injection(self, bounds: Any, scope: Any, experience_ids: Any, injected_at: Any) -> None:
+            entered.set()
+            gate.wait(10)
+            super().record_injection(bounds, scope, experience_ids, injected_at)
+
+    store = Slow()
+    recorded: list[InjectionRecordResult] = []
+    host, agent, _ = _learning_agent(store, recorded, injection_record_timeout=0.05)
+
+    async def scenario() -> None:
+        await agent.run(TICKET)
+        response = await agent.run(NEXT_TICKET)
+        # The invocation returned while the record was still blocked.
+        assert response.text == "done"
+        assert not gate.is_set()
+        provider = _provider(agent)
+        await provider.wait_for_injection_records()
+        assert entered.is_set()
+        assert [item.outcome for item in recorded] == ["OutcomeUnknown"]
+        assert provider.abandoned_injection_records == 1
+        gate.set()
+        for _ in range(500):
+            if provider.abandoned_injection_records == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert provider.abandoned_injection_records == 0
+
+    run(scenario())
+    assert host.injection_failures == []
+    # The abandoned write still committed once it was let go.
+    assert [summary.injection_count for summary in store.injections().values()] == [1]
+
+
+def test_more_ids_than_the_store_takes_are_recorded_in_chunks_of_200() -> None:
+    from agentexperience import Instant
+
+    calls: list[int] = []
+
+    class Counting(InMemoryExperienceStore):
+        def record_injection(self, bounds: Any, scope: Any, experience_ids: Any, injected_at: Any) -> None:
+            calls.append(len(experience_ids))
+
+    recorded: list[InjectionRecordResult] = []
+    settings = ExperienceSettings(
+        store=Counting(), identity=development_identity(application="tests"), on_injection_recorded=recorded.append
+    )
+    provider = ExperienceContextProvider(settings)
+    identity = development_identity(application="tests")
+    ids = tuple(uuid.uuid4() for _ in range(450))
+
+    async def record() -> None:
+        provider._start_recording(identity, ids, Instant.now())
+        await provider.wait_for_injection_records()
+
+    run(record())
+    assert calls == [200, 200, 50]
+    assert [item.outcome for item in recorded] == ["Recorded"]
+
+
+def test_settings_refuse_an_injection_record_timeout_that_is_not_positive() -> None:
+    with pytest.raises(ValueError, match="injection_record_timeout"):
+        ExperienceSettings(
+            store=InMemoryExperienceStore(),
+            identity=development_identity(application="tests"),
+            injection_record_timeout=0,
+        )
+
+
+def test_the_in_memory_store_records_only_its_own_scope_clamps_and_saturates() -> None:
+    from dataclasses import replace
+
+    from agentexperience import AuthorizationBounds, Duration, Instant
+    from agentexperience.inmemory import MAX_INJECTION_COUNT, AuthorizationDenied, InjectionSummary
+
+    now = Instant.parse("2026-03-02T12:00:00+00:00")
+    host = Host()
+    client = ScriptedClient()
+    store = InMemoryExperienceStore(clock=lambda: now)
+    agent = host.wire(
+        agent_with(client, tool(exits("exit=3", "exit=0"), name="run_tests")),
+        store=store,
+        verify=tool_succeeded("run_tests"),
+    )
+    run(agent.run(TICKET))
+    record = host.finalized[0].record
+    bounds = AuthorizationBounds.of(record.scope)
+    earlier = Instant.parse("2026-03-02T10:00:00.1234567+00:00")
+
+    store.record_injection(bounds, record.scope, [record.experience_id, uuid.uuid4()], earlier)
+    assert store.injections() == {record.experience_id: InjectionSummary(earlier.truncate_to_microseconds(), 1)}
+    store.record_injection(bounds, record.scope, [record.experience_id], now.add(Duration.from_seconds(3600)))
+    assert store.injections()[record.experience_id] == InjectionSummary(now, 2)
+    store.record_injection(bounds, record.scope, [record.experience_id], earlier)
+    assert store.injections()[record.experience_id] == InjectionSummary(now, 3)
+
+    other = replace(record.scope, agent_id="someone-else")
+    store.record_injection(AuthorizationBounds.of(other), other, [record.experience_id], earlier)
+    assert store.injections()[record.experience_id].injection_count == 3
+    with pytest.raises(AuthorizationDenied):
+        store.record_injection(bounds, replace(record.scope, tenant_id="other-tenant"), [record.experience_id], earlier)
+
+    store._injections[record.experience_id] = InjectionSummary(now, MAX_INJECTION_COUNT)
+    store.record_injection(bounds, record.scope, [record.experience_id], earlier)
+    assert store.injections()[record.experience_id].injection_count == MAX_INJECTION_COUNT

@@ -1,11 +1,12 @@
 // Package postgres is the PostgreSQL store: it writes finalized records and their initial event, reads records
-// back, and runs the contract's text search, all as the application role inside a transaction that first declared
-// its bounds.
+// back, runs the contract's text search, and records injections, all as the application role inside a transaction
+// that first declared its bounds.
 //
 // It runs against a schema the .NET migrator applied (ExperienceSchemaMigrator.MigrateAsync, then
-// ApplyApplicationRolePrivilegesAsync with row-level security on) and never creates or alters a schema object. The
-// two statements are the contract's SQL files, embedded and run as written: only their @name placeholders are
-// spelled the way the driver spells them ($1, $2, ...).
+// ApplyApplicationRolePrivilegesAsync with row-level security on, or the contract's two privileges files) and never
+// creates or alters a schema object. The bounds, the search and the injection record are the contract's SQL files,
+// embedded and run as written: only their @name placeholders are spelled the way the driver spells them ($1, $2,
+// ...).
 package postgres
 
 import (
@@ -26,8 +27,9 @@ import (
 
 // The contract's SQL files, as this package embeds them.
 const (
-	DeclareBoundsSQL = "declare-bounds.sql"
-	SearchSQL        = "search-experience-text.sql"
+	DeclareBoundsSQL   = "declare-bounds.sql"
+	SearchSQL          = "search-experience-text.sql"
+	RecordInjectionSQL = "record-injection.sql"
 )
 
 const (
@@ -35,11 +37,11 @@ const (
 	eventsTable  = "agent_experience.lifecycle_events"
 )
 
-//go:embed sql/declare-bounds.sql sql/search-experience-text.sql
+//go:embed sql/declare-bounds.sql sql/search-experience-text.sql sql/record-injection.sql
 var contractFiles embed.FS
 
-// ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL). A test
-// keeps the embedded copies identical to contract/sql/.
+// ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
+// RecordInjectionSQL). A test keeps the embedded copies identical to contract/sql/.
 func ContractSQL(name string) (string, error) {
 	data, err := contractFiles.ReadFile("sql/" + name)
 	if err != nil {
@@ -221,6 +223,7 @@ type Store struct {
 	pool    *pgxpool.Pool // set when the store made the pool itself (Open), and closes it
 	declare Statement
 	search  Statement
+	record  Statement
 }
 
 // NewStore is a store that runs its transactions on db, which the host controls (and closes).
@@ -236,7 +239,12 @@ func NewStore(db Beginner) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{db: db, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search)}, nil
+	record, err := ContractSQL(RecordInjectionSQL)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db: db, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
+		record: ToDriverPlaceholders(record)}, nil
 }
 
 // Open is a store on a new connection pool for a connection string (as the application role). Close it with Close.
@@ -468,6 +476,50 @@ func (s *Store) Search(ctx context.Context, bounds ae.AuthorizationBounds, param
 	})
 	return result, err
 }
+
+// RecordInjection records that experienceIDs were injected in scope at injectedAt: it runs sql/record-injection.sql
+// (contract 1.4) once, in one transaction that declared bounds. Only a record live in exactly scope gets a row (one
+// borrowed through a grant, or in another scope, is skipped by the statement); the instant is truncated to whole
+// microseconds and clamped to the database clock. It refuses more than agentexperience.MaxRecordInjectionIDs IDs or
+// a nil one, and a scope outside the bounds (agentexperience.ErrAuthorizationDenied); otherwise a failure is the
+// driver's (insufficient_privilege, 42501, until the role holds the grants of
+// sql/application-role-privileges-1.4.sql). The agent integration calls it in the background, fail-open.
+func (s *Store) RecordInjection(ctx context.Context, bounds ae.AuthorizationBounds, scope ae.Scope,
+	experienceIDs []ae.UUID, injectedAt ae.Instant) error {
+	ids, err := ae.InjectionIDs(experienceIDs)
+	if err != nil {
+		return err
+	}
+	if !bounds.Permits(scope) {
+		return ae.ErrAuthorizationDenied
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	values := make([][16]byte, len(ids))
+	for i, id := range ids {
+		values[i] = [16]byte(id)
+	}
+	args, err := s.record.Args(map[string]any{
+		"experience_ids": values,
+		"injected_at":    injectedAt.TruncateToMicroseconds().Time(),
+		"tenant_id":      scope.TenantID,
+		"application_id": scope.ApplicationID,
+		"project_id":     scope.ProjectID,
+		"team_id":        scope.TeamID,
+		"agent_id":       scope.AgentID,
+		"user_id":        scope.UserID,
+	})
+	if err != nil {
+		return err
+	}
+	return s.transaction(ctx, bounds, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, s.record.SQL, args...)
+		return err
+	})
+}
+
+var _ ae.InjectionRecorder = (*Store)(nil)
 
 // recordRow is the eighteen record columns as the driver reads them.
 type recordRow struct {

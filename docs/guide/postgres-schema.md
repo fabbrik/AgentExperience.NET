@@ -743,9 +743,10 @@ as the store's own statement now does (see [How the text channel matches](retrie
   bounds, and, for a write, a live record with that ID in exactly those scope columns. A grant never admits one.
 - The application role gets `SELECT`, `INSERT` and `UPDATE` on the two moving columns, once the table exists (the
   privileges call still runs before this migration). **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**;
-  until then injections are reported as not recorded and the lessons view reads as not tracked. The table is .NET-only:
-  it is not in the contract's privileges file, a contract 1.x port never reads or writes it, and in a mixed fleet the
-  .NET privileges call must run after that file, whose `REVOKE ALL` removes the grants.
+  until then injections are reported as not recorded and the lessons view reads as not tracked. From contract 1.4 the
+  Python and Go ports write it too, with the contract's `sql/record-injection.sql`, the statement the .NET store runs.
+  Its grants are the contract's `sql/application-role-privileges-1.4.sql`, applied after the 1.0 file (whose
+  `REVOKE ALL` removes them): in a mixed fleet, apply the 1.0 then the 1.4 contract privileges, or the .NET call.
 - No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
@@ -762,6 +763,7 @@ what each one now means. None of them changes what a script does; they are comme
 | `0008` | The aggregations the reuse baseline needs (by run, by trial label, by scope) will come with their own indexes | The reuse baseline measured reuse through in-memory port doubles, not SQL over this ledger, so no aggregation query and no index was added. Add one with the first query that needs it |
 | `0006`, `0010`, `0012` | The guards do not bind the tables' owner, "which the application role is because it created them"; the purge path is "an auditability mechanism, not a privilege boundary"; an application role that is not the migrating role must be granted `EXECUTE` by hand | The two-role deployment is now the supported one: the application role owns nothing and holds no `DELETE` on any ledger, so neither the owner's escape hatch nor a hand-set marker is available to it, and `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` when the host opts in. The owner and superusers remain unbound. See [Deploying with two roles](deployment.md#deploying-with-two-roles) |
 | `0010` | "Backups, replicas, WAL and logical-replication streams … are host-owned and out of reach of this schema", and the dead tuple "STILL CARRIES THE ERASED TEXT" | Still exactly true in plaintext mode. In encrypted mode every one of those copies holds only ciphertext whose key the erasure destroyed; what stays readable is the derived search data. See [Crypto-shredding](crypto-shredding.md) |
+| `0026` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges file, so in a mixed fleet the .NET privileges call must run after that file | Contract 1.4 brought it into the contract: the ports record their injections with `sql/record-injection.sql`, and `sql/application-role-privileges-1.4.sql` grants the table after the 1.0 file. Apply the 1.0 then the 1.4 file, or the .NET call |
 | `0009` | Retention of the grant access log is deferred to a roadmap item, to be done with `0006`'s runbook | Erasing a record deliberately **keeps** access rows — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](deletion-and-retention.md#retention-for-the-grant-access-log) |
 
 ## Data semantics

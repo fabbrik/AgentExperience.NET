@@ -2196,3 +2196,7 @@ Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview sin
 ### Story 22.8: Port Hardening
 
 **Acceptance Criteria:** **Given** the follow-ups the port reviews deferred **When** contract 1.3 is published **Then** .NET-generated fixtures pin the truncation of instants to whole microseconds (and a tombstoned row if the search format allows), Python and Go pass them, .NET reads the raw rows the Python store wrote as it does for Go's, `mypy --strict` covers the Python tests in CI, and the timing-sensitive capture test is deterministic under a 200-run stress loop.
+
+### Story 22.9: Contract 1.4, Ports Record Injections
+
+**Acceptance Criteria:** **Given** Python and Go agents injecting against a PostgreSQL store shared with .NET **When** contract 1.4 is published **Then** the injection-recording upsert the .NET store runs and the injection table's application-role grants are contract SQL files (add-only, the grants applied after the 1.0 file), .NET-generated record-injection fixtures pin the scope, the clock clamp, saturation and erasure, each port's PostgreSQL store runs the statement verbatim and each MAF integration records after the block is handed over (background, bounded, fail-open), `experience_injections` holds the rows .NET writes for the same injections and the .NET lessons view reads them, the lessons page drops its ".NET agents only" note, and all three languages pass, PostgreSQL legs included.

@@ -1,0 +1,40 @@
+{
+  "description": "Only a record live in exactly the injecting scope gets a row: not one of another agent, not one in a narrower scope the bounds can see, not an ID with no record, and not a record named from another scope.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000061-0000-4000-8000-000000000001",
+          "00000061-0000-4000-8000-000000000002",
+          "00000061-0000-4000-8000-000000000003",
+          "00000061-0000-4000-8000-000000000009"
+        ],
+        "injectedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000061-0000-4000-8000-000000000001"
+        ],
+        "injectedAt": "2026-03-02T11:00:00+00:00"
+      }
+    }
+  ]
+}

@@ -1,9 +1,9 @@
 """
 An in-memory store for development and tests: no PostgreSQL. It keeps only what the contract needs (insert a finalized
-record, read one back, and text search), honouring scope and the authorization bounds the way the PostgreSQL store's
-row-level security does. Its text search is the .NET in-memory store's: Unicode-normalized, case-folded words, English
-stopwords dropped from a query, and a record matching at least the minimum number of query terms (fewer for a shorter
-query). Nothing survives the process.
+record, read one back, text search, and when each record was last injected), honouring scope and the authorization
+bounds the way the PostgreSQL store's row-level security does. Its text search is the .NET in-memory store's:
+Unicode-normalized, case-folded words, English stopwords dropped from a query, and a record matching at least the
+minimum number of query terms (fewer for a shorter query). Nothing survives the process.
 """
 
 from __future__ import annotations
@@ -11,10 +11,11 @@ from __future__ import annotations
 import threading
 import unicodedata
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
+from .encoding import Instant
 from .finalize import FinalizedExperience, InitialLifecycleEvent
 from .records import ExperienceRecord, Scope
 from .reflector import is_model_authored
@@ -45,6 +46,51 @@ class ExperienceStore(Protocol):
     def insert_finalized(self, bounds: AuthorizationBounds, finalized: FinalizedExperience, *, actor: str) -> None: ...
 
     def search(self, bounds: AuthorizationBounds, parameters: SearchParameters) -> list[SearchRow]: ...
+
+
+@runtime_checkable
+class InjectionRecorder(Protocol):
+    """
+    A store that records when each record was injected (contract 1.4), for the .NET lessons view's "last injected".
+    Optional: the agent integration records an injection only through a store that has this method, and reports
+    ``NotTracked`` for one that does not.
+    """
+
+    def record_injection(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        experience_ids: Sequence[uuid.UUID],
+        injected_at: Instant,
+    ) -> None: ...
+
+
+MAX_RECORD_INJECTION_IDS = 200
+"""The most records one :meth:`InjectionRecorder.record_injection` call names: the .NET store's limit
+(``ExperienceRecordGetManyResult.MaxCount``). The agent integration splits a longer list into chunks."""
+
+MAX_INJECTION_COUNT = 2**63 - 1
+"""The count an injection row saturates at: PostgreSQL's ``bigint`` maximum."""
+
+
+def injection_ids(experience_ids: Sequence[uuid.UUID]) -> list[uuid.UUID]:
+    """The distinct IDs to record, in order; ``ValueError`` for more than :data:`MAX_RECORD_INJECTION_IDS` IDs or a
+    nil one."""
+    ids = list(experience_ids)
+    if len(ids) > MAX_RECORD_INJECTION_IDS:
+        raise ValueError(f"An injection record names at most {MAX_RECORD_INJECTION_IDS} records.")
+    for experience_id in ids:
+        if not isinstance(experience_id, uuid.UUID) or experience_id.int == 0:
+            raise ValueError("Every injected record's ID must be a non-nil UUID.")
+    return list(dict.fromkeys(ids))
+
+
+@dataclass(frozen=True)
+class InjectionSummary:
+    """When a record was last injected in its own scope, and how many injected blocks delivered it."""
+
+    last_injected_at: Instant
+    injection_count: int
 
 
 class AuthorizationDenied(PermissionError):
@@ -122,12 +168,15 @@ def _index(record: ExperienceRecord) -> _Indexed:
 
 
 class InMemoryExperienceStore:
-    """Records in memory, for development and tests. Thread-safe."""
+    """Records in memory, for development and tests. Thread-safe. ``clock`` is the store's own clock, which an
+    injection's instant is clamped to, as PostgreSQL clamps it to its own."""
 
-    def __init__(self, records: Iterable[ExperienceRecord] = ()) -> None:
+    def __init__(self, records: Iterable[ExperienceRecord] = (), *, clock: Callable[[], Instant] = Instant.now) -> None:
         self._lock = threading.Lock()
+        self._clock = clock
         self._records: dict[uuid.UUID, _Indexed] = {}
         self._events: dict[uuid.UUID, tuple[InitialLifecycleEvent, str]] = {}
+        self._injections: dict[uuid.UUID, InjectionSummary] = {}
         for record in records:
             if record.experience_id in self._records:
                 raise ValueError("Two records share one experience ID.")
@@ -159,6 +208,45 @@ class InMemoryExperienceStore:
         """Every record held, for inspection in tests."""
         with self._lock:
             return [indexed.record for indexed in self._records.values()]
+
+    def record_injection(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        experience_ids: Sequence[uuid.UUID],
+        injected_at: Instant,
+    ) -> None:
+        """
+        Records that ``experience_ids`` were injected in ``scope`` at ``injected_at``, as ``sql/record-injection.sql``
+        does: only a record held in exactly ``scope`` counts, the instant (truncated to whole microseconds) is clamped
+        to the store's clock and only moves forward, and the count rises by one and saturates. Raises
+        :class:`AuthorizationDenied` outside the bounds, and ``ValueError`` for more than
+        :data:`MAX_RECORD_INJECTION_IDS` IDs or a nil one.
+        """
+        ids = injection_ids(experience_ids)
+        if not isinstance(injected_at, Instant):
+            raise TypeError("injected_at must be an Instant.")
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        at = min(injected_at.truncate_to_microseconds(), self._clock().truncate_to_microseconds())
+        with self._lock:
+            for experience_id in ids:
+                indexed = self._records.get(experience_id)
+                if indexed is None or indexed.record.scope != scope:
+                    continue
+                current = self._injections.get(experience_id)
+                self._injections[experience_id] = (
+                    InjectionSummary(at, 1)
+                    if current is None
+                    else InjectionSummary(
+                        max(current.last_injected_at, at), min(current.injection_count + 1, MAX_INJECTION_COUNT)
+                    )
+                )
+
+    def injections(self) -> dict[uuid.UUID, InjectionSummary]:
+        """When each record was last injected and how often, for inspection in tests."""
+        with self._lock:
+            return dict(self._injections)
 
     def search(self, bounds: AuthorizationBounds, parameters: SearchParameters) -> list[SearchRow]:
         """The text search: records in exactly the requested scope, of an eligible status and confidence, matching

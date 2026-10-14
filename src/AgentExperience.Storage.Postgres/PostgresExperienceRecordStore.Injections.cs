@@ -42,15 +42,17 @@ public sealed partial class PostgresExperienceRecordStore
     /// ID order, the pattern of every adapter write that checks a record: the purge locks its record <c>FOR UPDATE</c>
     /// first, so an erasure racing the write either waits for it and then deletes its row through <c>0026</c>'s trigger,
     /// or runs first and leaves a tombstone this statement no longer selects. <c>0026</c>'s header explains why no
-    /// deadlock is possible.
+    /// deadlock is possible. It is <c>contract/sql/record-injection.sql</c> (contract 1.4), line for line, which the
+    /// Python and Go ports run as written; a contract test keeps the two identical.
     /// </summary>
     internal const string RecordInjectionSql =
         $"INSERT INTO {InjectionsTable} AS i (experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
-        "last_injected_at, injection_count) " +
+        "last_injected_at, injection_count)\n" +
         "SELECT r.experience_id, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id, " +
-        "LEAST(@injected_at, pg_catalog.clock_timestamp()), 1 " +
-        $"FROM {Table} r WHERE r.experience_id = ANY(@experience_ids) AND {RecordScopePredicate} AND {RecordLivePredicate} " +
-        $"ORDER BY r.experience_id {RecordKeyShareLock} " +
+        "LEAST(@injected_at, pg_catalog.clock_timestamp()), 1\n" +
+        $"FROM {Table} r\n" +
+        $"WHERE r.experience_id = ANY(@experience_ids) AND {RecordScopePredicate} AND {RecordLivePredicate}\n" +
+        $"ORDER BY r.experience_id {RecordKeyShareLock}\n" +
         "ON CONFLICT (experience_id) DO UPDATE SET " +
         "last_injected_at = GREATEST(i.last_injected_at, EXCLUDED.last_injected_at), " +
         "injection_count = CASE WHEN i.injection_count = 9223372036854775807 THEN i.injection_count ELSE i.injection_count + 1 END";
