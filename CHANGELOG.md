@@ -6,6 +6,35 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added: a Go core that passes the contract (story 22.5)
+
+- **[`go/`](go/README.md)**, a Go core (`github.com/fabbrik/AgentExperience.NET/go`, package `agentexperience`, both
+  provisional until the project is named) that passes every fixture of [contract](contract/README.md) 1.2, and a
+  PostgreSQL store in its own module (`.../go/postgres`). Both are pre-release and untagged. The Agent Framework
+  integration comes next.
+  - **The core requires no module at all** and needs Go 1.24 or later. It captures and sanitizes a run (refusing a
+    number a double cannot hold finitely, as contract 1.2 requires), finalizes it with the verification rule, the
+    deterministic reflector and the initial lifecycle event, derives the IDs, and writes and reads the stored record.
+    It also renders the injected block, derives the task text, classifies errors, and builds the search parameters
+    and the ranking. Tool-call argument numbers are kept exactly as written (`json.Number`), never decoded into a
+    `float64`, and every instant is range-checked as .NET's `DateTimeOffset` is.
+  - **.NET parity by construction:** lengths and cuts in UTF-16 code units, .NET's whitespace, word characters and
+    ordinal ignore-case (Go's regexp `\s` and `\b`, `strings.EqualFold` and `(?i)` differ), .NET's number formats,
+    and invalid UTF-8 (a lone surrogate, to .NET) dropped from the task text. The error class is .NET's regular
+    expression run by a small backtracking matcher that reuses its memory, because Go's RE2 has no Unicode `\b`.
+  - **The store** (pgx v5, Go 1.25 or later) runs on a connection source the host controls (a `*pgxpool.Pool`, a
+    connection or a transaction; `Open` builds a pool from a connection string). It writes a finalized record and its
+    own initial event as the application role, reads records back in exactly their scope (`ErrSealed` for a sealed
+    one), and runs the contract's SQL files as written, embedded from a copy a test keeps identical to
+    `contract/sql/`.
+  - **Tests:** `go test ./...` in the core runs every fixture family; the store's module validates every record against
+    the schema (its ECMA-262 `\s` translated for Go's RE2). With `-tags postgres`, the PostgreSQL leg migrates each
+    database with the .NET scripts, writes every finalize fixture through the Go store and reads it back row for row,
+    runs every search fixture, and uses the store from many goroutines at once.
+- **CI:** a `go` job checks that `go mod tidy` changes nothing, then runs gofmt, go vet, staticcheck, govulncheck and
+  the tests with the race detector. The core runs on Go 1.24, both modules on 1.25 and the latest stable, plus
+  PostgreSQL 16 and 18 legs that fail rather than skip. It is in CONTRIBUTING's merge-gate list.
+
 ### Fixed: capture refuses non-finite numbers (contract 1.2)
 
 - **Behaviour change.** `DefaultSanitizer` now rejects, fail-closed, an allowlisted tool-call argument that is a

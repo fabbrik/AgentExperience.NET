@@ -484,3 +484,114 @@ jobs:
           AGENTEXPERIENCE_POSTGRES_MAJOR: ${{ matrix.pg-major }}
           AGENTEXPERIENCE_REQUIRE_POSTGRES: '1'
         run: uv run pytest -m postgres
+
+  # The Go port (go/): two modules. The core (go/) implements the language-neutral contract (contract/) and requires no
+  # module at all; the PostgreSQL store (go/postgres/, its own module) adds pgx, and its tests carry the JSON Schema check
+  # and testcontainers-go. No Microsoft Agent Framework integration yet. For each module: go mod tidy must change
+  # nothing, gofmt, go vet, staticcheck and govulncheck (pinned releases, on a 1.26 leg: staticcheck v0.8.1 needs
+  # Go 1.26 and cannot read the export data of a newer Go), then the unit and conformance tests with the race detector, on the lowest Go each module
+  # declares (its go line: 1.24 for the core; 1.25 for the store, which pgx's fixed releases need) and the latest
+  # stable. Then the PostgreSQL leg (the postgres build tag, race detector
+  # on), which writes every finalize fixture through the Go store and reads it back row for row, runs every search
+  # fixture, and uses the store from many goroutines at once, on the oldest and newest majors the contract tests cover.
+  # The leg sets AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips without Docker, and
+  # AGENTEXPERIENCE_POSTGRES_MAJOR, which the tests assert the server reports. testcontainers-go prepends the
+  # workflow's TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX as a path, so it needs no slash.
+  go:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - go-version: '1.24.x'
+            modules: '.'
+          - go-version: '1.25.x'
+            modules: '. postgres'
+          - go-version: '1.26.x'
+            modules: '. postgres'
+          - go-version: stable
+            modules: '. postgres'
+          - go-version: stable
+            modules: postgres
+            pg-major: 16
+          - go-version: stable
+            modules: postgres
+            pg-major: 18
+    name: go (${{ matrix.go-version }}${{ matrix.pg-major && format(', PostgreSQL {0}', matrix.pg-major) || '' }})
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          # Resolve to the newest patch release, not a cached manifest's older one: govulncheck reports
+          # standard-library fixes, which arrive as patch releases.
+          check-latest: true
+          cache-dependency-path: go/postgres/go.sum
+
+      - name: The modules' dependencies are tidy and verified
+        run: |
+          set -euo pipefail
+          for module in ${{ matrix.modules }}; do
+            (
+              cd "$module"
+              go mod verify
+              saved="$RUNNER_TEMP/$(basename "$PWD")"
+              mkdir -p "$saved"
+              cp go.mod "$saved/"
+              if [ -f go.sum ]; then cp go.sum "$saved/"; fi
+              go mod tidy
+              diff -u "$saved/go.mod" go.mod
+              if [ -f go.sum ] || [ -f "$saved/go.sum" ]; then diff -u "$saved/go.sum" go.sum; fi
+            )
+          done
+          # The core requires no module at all.
+          if grep -q require go.mod; then echo "::error::go/go.mod requires a module"; exit 1; fi
+
+      - name: gofmt (no file may need formatting)
+        if: ${{ !matrix.pg-major }}
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          test -z "$unformatted" || { echo "::error::gofmt would reformat: $unformatted"; exit 1; }
+
+      - name: go vet
+        if: ${{ !matrix.pg-major }}
+        run: |
+          set -euo pipefail
+          for module in ${{ matrix.modules }}; do
+            (cd "$module" && go vet ./... && go vet -tags postgres ./...)
+          done
+
+      - name: staticcheck and govulncheck
+        if: ${{ !matrix.pg-major && matrix.go-version == '1.26.x' }}
+        run: |
+          set -euo pipefail
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          cd postgres
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags postgres ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -tags postgres ./...
+
+      - name: Unit and conformance tests (race detector on)
+        if: ${{ !matrix.pg-major }}
+        run: |
+          set -euo pipefail
+          for module in ${{ matrix.modules }}; do
+            (cd "$module" && go test -race ./...)
+          done
+
+      - name: PostgreSQL ${{ matrix.pg-major }} conformance tests (race detector on)
+        if: ${{ matrix.pg-major }}
+        working-directory: go/postgres
+        env:
+          AGENTEXPERIENCE_POSTGRES_MAJOR: ${{ matrix.pg-major }}
+          AGENTEXPERIENCE_REQUIRE_POSTGRES: '1'
+        run: go test -race -tags postgres ./...

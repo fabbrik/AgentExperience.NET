@@ -116,11 +116,12 @@ _sdlc/                                      product brief, PRD, architecture, ep
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages (`feat:`, `fix:`, `docs:`, `chore:`).
 - Make sure `dotnet build` and `dotnet test` pass locally. CI (`.github/workflows/ci.yml`) runs on every pull request:
   `build-and-test`, `pack` (with package verification), the `postgres` matrix (15 to 18, plaintext and
-  crypto-shredding), the MAF floor (`maf-compatibility (pinned)`) and the Python port's `python` matrix (CPython 3.10 to
+  crypto-shredding), the MAF floor (`maf-compatibility (pinned)`), the Python port's `python` matrix (CPython 3.10 to
   3.14, plus its PostgreSQL 16 and 18 legs; [python/README.md](python/README.md#running-the-tests) says how to run it
-  locally) must pass. The newest-MAF leg and the
-  `floating-dependencies` probe also run, but on a pull request they only report; they gate pushes to `main` and the
-  weekly schedule.
+  locally) and the Go port's `go` matrix (the core on Go 1.24, both modules on 1.25 and the latest stable, plus
+  PostgreSQL 16 and 18 legs; [go/README.md](go/README.md#running-the-tests) says how to run it locally) must pass.
+  The newest-MAF leg and the `floating-dependencies` probe also run, but on a pull request they only report; they gate
+  pushes to `main` and the weekly schedule.
 - **Changing a public API is a reviewed diff.** `tests/AgentExperience.Release.Tests` holds an approval baseline of all
   six packages' public surface, and any change fails it. If the change is deliberate, regenerate the baseline with
   `AGENTEXPERIENCE_ACCEPT_API_CHANGES=true dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~PublicApi"`
