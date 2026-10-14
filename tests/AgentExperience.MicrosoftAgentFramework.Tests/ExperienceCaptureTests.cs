@@ -1697,7 +1697,13 @@ public class ExperienceCaptureTests
             .Build();
         var registry = OpenRunsOf(captureLifetime);
 
-        await agent.RunAsync("attempt-1");
+        var wait = TimeSpan.FromSeconds(10);
+        await agent.RunAsync("attempt-1").WaitAsync(wait);
+
+        // Every timeout the first invocation armed is spent (its finalization finished, so WaitAsync disposed its
+        // timer): any live timeout from here on is one the close armed.
+        await Eventually(() => clock.Timeouts.All(timer => timer.Disposed));
+        var armedByTheInvocation = clock.Timeouts.Count;
         harness.Service.HangHonoringToken = true;
 
         // The abandoned completion observes its cancellation and then stays in flight until the close that
@@ -1705,27 +1711,29 @@ public class ExperienceCaptureTests
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         harness.Service.HoldAfterCancellation = hold;
         var completions = harness.Service.CompleteCalls;
-        var armed = clock.Timeouts.Count;
 
         Assert.Single(clock.Bounds).Fire();
         Assert.Equal(1, registry.ClosesStarted);
         var settled = registry.BackgroundWorkSettledAsync();
-        var releasing = Task.Run(async () =>
-        {
-            await Eventually(() => registry.Count == 0);
-            hold.SetResult();
-        });
 
-        // The close arms exactly one timeout of its own; firing it is what makes the close overrun.
-        await Eventually(() => clock.Timeouts.Count > armed);
-        Assert.Equal(armed + 1, clock.Timeouts.Count);
-        clock.Timeouts[armed].Fire();
+        // The close arms exactly one timeout of its own, the only live one; firing it is what makes the close overrun.
+        await Eventually(() => clock.Timeouts.Any(timer => !timer.Disposed));
+        var closeTimeout = Assert.Single(clock.Timeouts, timer => !timer.Disposed);
+        Assert.Equal(armedByTheInvocation + 1, clock.Timeouts.Count);
+        closeTimeout.Fire();
 
-        await settled.WaitAsync(TimeSpan.FromSeconds(10));
+        // Released only once the close's token was cancelled and observed (HangCancelled), and the close has
+        // forgotten the run and is itself no longer tracked: the abandoned completion is then the only work left.
+        await harness.Service.HangCancelled.Task.WaitAsync(wait);
+        await Eventually(() => registry.Count == 0 && registry.BackgroundWorkCount <= 1);
+        Assert.False(settled.IsCompleted, "The settle returned while the abandoned completion was still held.");
+        Assert.False(harness.Service.HangFinished.Task.IsCompleted);
+        hold.SetResult();
+
+        await settled.WaitAsync(wait);
 
         // The settle covered the abandoned completion itself, not only the close: it had finished.
         Assert.True(harness.Service.HangFinished.Task.IsCompleted);
-        await releasing;
         Assert.Equal(completions + 1, harness.Service.CompleteCalls);
         Assert.Single(harness.Failures, failure => failure.Reason.Contains("did not finish within", StringComparison.Ordinal));
         Assert.Equal(0, registry.Count);

@@ -352,11 +352,11 @@ def _encode(kind: str, value: Any) -> str:
         return capture.run.task_id
     if kind == "experience-id":
         scope = value["scopeUtf16"]
-        tenant, application, project, team, agent, user = (
+        # Passed through as the fixture gives them, a null included: Scope's own checks decide, as before.
+        fields: list[Any] = [
             _utf16(scope[name]) for name in ("tenantId", "applicationId", "projectId", "teamId", "agentId", "userId")
-        )
-        assert tenant is not None and application is not None and project is not None
-        return str(experience_id_for(uuid.UUID(value["runId"]), Scope(tenant, application, project, team, agent, user)))
+        ]
+        return str(experience_id_for(uuid.UUID(value["runId"]), Scope(*fields)))
     raise AssertionError(f"Unknown encoding kind {kind!r}.")
 
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Finalization;
@@ -17,13 +18,15 @@ namespace AgentExperience.Contract.Tests;
 /// in beside a records file (what the port's reader reads them as). Here:
 /// <list type="number">
 /// <item>The raw rows are inserted as they are, each value cast from its text by PostgreSQL (no .NET encoding in
-/// between), as the application role under declared bounds.</item>
+/// between), as the application role under declared bounds. A column the port does not write is left to the
+/// database, as the port's store leaves it.</item>
 /// <item>The .NET PostgreSQL record store must read every record back as the records file holds it.</item>
 /// <item>Each initial lifecycle event must be the one .NET finalization derives for its record.</item>
-/// <item>The .NET store then writes each record it read, and its initial event, the way finalization does (created
-/// as a Candidate, then the initial transition), into a database of its own; every column the port wrote must be
-/// exactly what .NET wrote there. A port that encodes a column differently from .NET but reads it back symmetrically
-/// passes its own tests, and fails here, naming the column.</item>
+/// <item>The .NET store then writes each record of the records file, and its initial event, the way finalization
+/// does (created as a Candidate, then the initial transition), into a database of its own. Every column of both
+/// tables -- not only the ones the port writes -- must then hold the same text in the port's row as in .NET's: a
+/// port that encodes a column differently from .NET but reads it back symmetrically, or that leaves a column to the
+/// database where .NET writes it, passes its own tests and fails here, naming the column.</item>
 /// <item>Optionally, .NET retrieval must find every record for a similar task.</item>
 /// </list>
 /// Test-only: the files are not part of the contract, so they live with the port's tests, outside <c>contract/</c>
@@ -47,13 +50,15 @@ internal static class PortAgentRowsPostgres
         Assert.True(File.Exists(recordsPath), $"{recordsPath} is missing.");
         var rows = JsonNode.Parse(await File.ReadAllTextAsync(rowsPath))!.AsObject();
         var expected = JsonNode.Parse(await File.ReadAllTextAsync(recordsPath))!.AsArray();
-        var recordRows = rows[RecordsTable]!.AsArray().Select(row => row!.AsObject()).ToList();
-        var eventRows = rows[EventsTable]!.AsArray().Select(row => row!.AsObject()).ToList();
+        var problems = new List<string>();
+        var recordRows = RowsOf(rows, RecordsTable, "experience_id", problems);
+        var eventRows = RowsOf(rows, EventsTable, "event_id", problems);
+        Assert.True(problems.Count == 0, string.Join("\n", problems));
         Assert.NotEmpty(recordRows);
         Assert.Equal(expected.Count, recordRows.Count);
         Assert.Equal(recordRows.Count, eventRows.Count);
 
-        var application = await database.CreateAsync(label + "_rows");
+        await using var application = await database.CreateAsync(label + "_rows");
         foreach (var row in recordRows)
         {
             await InsertRawAsync(application, RecordsTable, row);
@@ -64,7 +69,6 @@ internal static class PortAgentRowsPostgres
             await InsertRawAsync(application, EventsTable, row);
         }
 
-        var problems = new List<string>();
         var store = new PostgresExperienceRecordStore(application);
         var records = new List<ExperienceRecord>();
         foreach (var stored in expected)
@@ -91,43 +95,45 @@ internal static class PortAgentRowsPostgres
         foreach (var record in records)
         {
             var eventId = ExperienceFinalizationService.InitialEventIdFor(record.SourceRunId, record.Scope);
-            var initial = eventRows.SingleOrDefault(row => Guid.Parse(row["event_id"]!.GetValue<string>()) == eventId);
-            if (initial is null)
+            var matching = eventRows.Where(row => IdOf(row, "event_id") == eventId).ToList();
+            if (matching.Count != 1)
             {
-                problems.Add($"{record.ExperienceId}: no initial event with the derived ID {eventId}.");
+                problems.Add($"{record.ExperienceId}: {matching.Count} lifecycle events have the derived initial event ID {eventId}, not 1.");
                 continue;
             }
 
-            if (Guid.Parse(initial["experience_id"]!.GetValue<string>()) != record.ExperienceId
+            var initial = matching[0];
+            if (IdOf(initial, "experience_id") != record.ExperienceId
                 || record.ExperienceId != ExperienceFinalizationService.ExperienceIdFor(record.SourceRunId, record.Scope)
-                || initial["current_status"]!.GetValue<string>() != record.Status.ToString()
-                || initial["prior_status"]!.GetValue<string>() != nameof(ExperienceStatus.Candidate)
-                || initial["expected_revision"]!.GetValue<string>() != "0"
-                || long.Parse(initial["applied_revision"]!.GetValue<string>(), CultureInfo.InvariantCulture) != record.Revision)
+                || Text(initial, "current_status") != record.Status.ToString()
+                || Text(initial, "prior_status") != nameof(ExperienceStatus.Candidate)
+                || Text(initial, "expected_revision") != "0"
+                || Text(initial, "applied_revision") != record.Revision.ToString(CultureInfo.InvariantCulture))
             {
                 problems.Add($"{record.ExperienceId}: the initial event is not the record's own: {initial.ToJsonString()}");
             }
         }
 
         // What .NET writes for the same records -- the records the port's own reader reads its rows as, so a column the
-        // port writes in its own encoding and reads back symmetrically still differs here: every column the port wrote
-        // must be the text .NET writes.
-        var twin = await database.CreateAsync(label + "_dotnet");
+        // port writes in its own encoding and reads back symmetrically still differs here -- column for column, over
+        // every column of both tables.
+        await using var twin = await database.CreateAsync(label + "_dotnet");
+        var recordColumns = await ColumnsAsync(twin, RecordsTable);
+        var eventColumns = await ColumnsAsync(twin, EventsTable);
         foreach (var stored in expected)
         {
             var record = ContractJson.FromStored(stored!);
-            var portRecord = recordRows.SingleOrDefault(row => Guid.Parse(row["experience_id"]!.GetValue<string>()) == record.ExperienceId);
-            var portEvent = eventRows.SingleOrDefault(row => Guid.Parse(row["experience_id"]!.GetValue<string>()) == record.ExperienceId);
-            if (portRecord is null || portEvent is null)
+            var portRecords = recordRows.Where(row => IdOf(row, "experience_id") == record.ExperienceId).ToList();
+            var portEvents = eventRows.Where(row => IdOf(row, "experience_id") == record.ExperienceId).ToList();
+            if (portRecords.Count != 1 || portEvents.Count != 1)
             {
-                problems.Add($"{record.ExperienceId}: the port wrote no row or no initial event for it.");
+                problems.Add($"{record.ExperienceId}: the port wrote {portRecords.Count} record rows and {portEvents.Count} lifecycle events for it, not 1 of each.");
                 continue;
             }
 
-            await WriteAsDotNetAsync(twin, record, portEvent["actor"]?.GetValue<string>(), problems);
-            Compare(RecordsTable, record.ExperienceId, portRecord, await ReadRawAsync(twin, RecordsTable, record.Scope, "experience_id", record.ExperienceId, portRecord), problems);
-            var eventId = Guid.Parse(portEvent["event_id"]!.GetValue<string>());
-            Compare(EventsTable, eventId, portEvent, await ReadRawAsync(twin, EventsTable, record.Scope, "event_id", eventId, portEvent), problems);
+            await WriteAsDotNetAsync(twin, record, Text(portEvents[0], "actor"), problems);
+            await CompareAsync(RecordsTable, recordColumns, "experience_id", record.ExperienceId, record.Scope, portRecords[0], application, twin, problems);
+            await CompareAsync(EventsTable, eventColumns, "event_id", IdOf(portEvents[0], "event_id"), record.Scope, portEvents[0], application, twin, problems);
         }
 
         // And the other way round: .NET's retrieval finds the port's lessons for a similar task.
@@ -152,6 +158,52 @@ internal static class PortAgentRowsPostgres
 
         Assert.True(problems.Count == 0, string.Join("\n", problems));
     }
+
+    /// <summary>
+    /// The rows of one table in the rows file. Every value must be a JSON string (PostgreSQL's text form) or null, and
+    /// the key column a UUID; anything else is a named problem, never an exception.
+    /// </summary>
+    private static List<JsonObject> RowsOf(JsonObject rows, string table, string key, List<string> problems)
+    {
+        if (rows[table] is not JsonArray array)
+        {
+            problems.Add($"rows file: {table} is not an array.");
+            return [];
+        }
+
+        var result = new List<JsonObject>();
+        for (var i = 0; i < array.Count; i++)
+        {
+            if (array[i] is not JsonObject row)
+            {
+                problems.Add($"rows file: {table}[{i}] is not an object.");
+                continue;
+            }
+
+            foreach (var (column, value) in row)
+            {
+                if (value is not null && value.GetValueKind() != JsonValueKind.String)
+                {
+                    problems.Add($"rows file: {table}[{i}].{column} is {value.GetValueKind()}, not text or null.");
+                }
+            }
+
+            if (row[key] is not JsonValue id || !id.TryGetValue<string>(out var text) || !Guid.TryParse(text, out _))
+            {
+                problems.Add($"rows file: {table}[{i}].{key} is not a UUID.");
+            }
+
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    /// <summary>A validated row's value as text, or <see langword="null"/>.</summary>
+    private static string? Text(JsonObject row, string column) => row[column]?.GetValue<string>();
+
+    /// <summary>A validated row's UUID column.</summary>
+    private static Guid IdOf(JsonObject row, string column) => Guid.TryParse(Text(row, column), out var id) ? id : Guid.Empty;
 
     /// <summary>
     /// Writes <paramref name="record"/> through the .NET store as finalization does: created as a Candidate at
@@ -196,26 +248,66 @@ internal static class PortAgentRowsPostgres
         }
     }
 
-    /// <summary>Each column the port wrote, against the text .NET wrote for it; a difference names the table, the row and the column.</summary>
-    private static void Compare(string table, Guid id, JsonObject port, JsonObject? dotnet, List<string> problems)
+    /// <summary>
+    /// Every column of the table, the port's row against .NET's. A column in the rows file is the port's value as it
+    /// wrote it; any other column is what the database left in the port's row. A difference names the table, the row
+    /// and the column.
+    /// </summary>
+    private static async Task CompareAsync(
+        string table,
+        IReadOnlyList<string> columns,
+        string key,
+        Guid id,
+        Scope scope,
+        JsonObject portFile,
+        NpgsqlDataSource application,
+        NpgsqlDataSource twin,
+        List<string> problems)
     {
-        if (dotnet is null)
+        foreach (var column in portFile.Select(member => member.Key).Where(column => !columns.Contains(column)))
         {
-            problems.Add($"{table} {id}: .NET wrote no such row.");
+            problems.Add($"{table} {id}: the rows file names a column {column} the table does not have.");
+        }
+
+        var port = await ReadRawAsync(application, table, scope, key, id, columns);
+        var dotnet = await ReadRawAsync(twin, table, scope, key, id, columns);
+        if (port is null || dotnet is null)
+        {
+            problems.Add($"{table} {id}: {(port is null ? "the port's row" : ".NET's row")} is missing.");
             return;
         }
 
-        foreach (var (column, value) in port)
+        foreach (var column in columns)
         {
-            var portText = value?.GetValue<string>();
-            var dotnetText = dotnet[column]?.GetValue<string>();
+            var written = portFile.ContainsKey(column);
+            var portText = written ? Text(portFile, column) : port[column];
+            var dotnetText = dotnet[column];
             if (!string.Equals(portText, dotnetText, StringComparison.Ordinal))
             {
-                problems.Add($"{table}.{column} of {id}: the port wrote {Show(portText)}, .NET writes {Show(dotnetText)}.");
+                problems.Add(written
+                    ? $"{table}.{column} of {id}: the port wrote {Show(portText)}, .NET writes {Show(dotnetText)}."
+                    : $"{table}.{column} of {id}: the port does not write it (the database left {Show(portText)}), .NET writes {Show(dotnetText)}.");
             }
         }
 
         static string Show(string? text) => text is null ? "NULL" : $"'{text}'";
+    }
+
+    /// <summary>The table's columns, in their order, without dropped or system columns.</summary>
+    private static async Task<IReadOnlyList<string>> ColumnsAsync(NpgsqlDataSource source, string table)
+    {
+        await using var command = source.CreateCommand(
+            "SELECT attname FROM pg_attribute WHERE attrelid = ('agent_experience.' || @table)::regclass " +
+            "AND attnum > 0 AND NOT attisdropped ORDER BY attnum");
+        command.Parameters.Add(new("table", NpgsqlDbType.Text) { Value = table });
+        var columns = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(0));
+        }
+
+        return columns;
     }
 
     /// <summary>The path of the first place two JSON values differ, with both values there.</summary>
@@ -249,17 +341,18 @@ internal static class PortAgentRowsPostgres
     }
 
     /// <summary>
-    /// One row, the columns <paramref name="shape"/> names, each in PostgreSQL's text form in UTC (as a port's test reads
-    /// them), read as the application role under bounds declared for <paramref name="scope"/>.
+    /// One row, every one of <paramref name="columns"/> in PostgreSQL's text form in UTC (as a port's test reads them),
+    /// read as the application role under bounds declared for <paramref name="scope"/>; <see langword="null"/> when
+    /// there is no such row.
     /// </summary>
-    private static async Task<JsonObject?> ReadRawAsync(NpgsqlDataSource application, string table, Scope scope, string key, Guid id, JsonObject shape)
+    private static async Task<Dictionary<string, string?>?> ReadRawAsync(
+        NpgsqlDataSource application, string table, Scope scope, string key, Guid id, IReadOnlyList<string> columns)
     {
         await using var connection = await application.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         await PrepareAsync(connection, transaction, scope);
-        var names = shape.Select(member => member.Key).ToList();
         await using var select = new NpgsqlCommand(
-            $"SELECT {string.Join(", ", names.Select(name => $"{name}::text"))} FROM agent_experience.{table} WHERE {key} = @id",
+            $"SELECT {string.Join(", ", columns.Select(name => $"\"{name}\"::text"))} FROM agent_experience.{table} WHERE {key} = @id",
             connection,
             transaction);
         select.Parameters.Add(new("id", NpgsqlDbType.Uuid) { Value = id });
@@ -269,10 +362,10 @@ internal static class PortAgentRowsPostgres
             return null;
         }
 
-        var row = new JsonObject();
-        for (var i = 0; i < names.Count; i++)
+        var row = new Dictionary<string, string?>(StringComparer.Ordinal);
+        for (var i = 0; i < columns.Count; i++)
         {
-            row[names[i]] = reader.IsDBNull(i) ? null : reader.GetString(i);
+            row[columns[i]] = reader.IsDBNull(i) ? null : reader.GetString(i);
         }
 
         return row;
@@ -312,7 +405,7 @@ internal static class PortAgentRowsPostgres
             transaction);
         for (var i = 0; i < names.Count; i++)
         {
-            insert.Parameters.Add(new($"p{i}", NpgsqlDbType.Text) { Value = (object?)row[names[i]]?.GetValue<string>() ?? DBNull.Value });
+            insert.Parameters.Add(new($"p{i}", NpgsqlDbType.Text) { Value = (object?)Text(row, names[i]) ?? DBNull.Value });
         }
 
         await insert.ExecuteNonQueryAsync();

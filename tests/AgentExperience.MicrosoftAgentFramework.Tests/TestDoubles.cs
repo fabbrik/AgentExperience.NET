@@ -435,9 +435,12 @@ internal sealed class ManualBoundTimeProvider : TimeProvider
     }
 
     /// <summary>
-    /// When set, every other timer (a finalization timeout, the invocation's or a bound close's) is manual as well:
-    /// it is listed in <see cref="Timeouts"/>, in the order it was armed, and fires only when the test fires it. A
-    /// finalization then never overruns its timeout because a loaded machine ran it slowly.
+    /// When set, every timer whose state is not an <see cref="OpenRun"/> -- not only finalization timeouts (the
+    /// invocation's and a bound close's), but any timer anything creates through this provider -- is manual as well:
+    /// it is listed in <see cref="Timeouts"/>, in the order it was armed, fires only when the test fires it, and is
+    /// marked disposed when its owner disposes it. A finalization then never overruns its timeout because a loaded
+    /// machine ran it slowly. A manual timer fires once per <see cref="ManualBoundTimer.Fire"/>, so a periodic timer
+    /// is refused rather than silently made one-shot.
     /// </summary>
     public bool ManualTimeouts { get; init; }
 
@@ -460,6 +463,11 @@ internal sealed class ManualBoundTimeProvider : TimeProvider
             if (!ManualTimeouts)
             {
                 return System.CreateTimer(callback, state, dueTime, period);
+            }
+
+            if (period != Timeout.InfiniteTimeSpan)
+            {
+                throw new NotSupportedException($"A manual timeout fires once; a periodic timer ({period}) is not supported.");
             }
 
             var timeout = new ManualBoundTimer(callback, state, dueTime);

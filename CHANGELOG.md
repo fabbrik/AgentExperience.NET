@@ -37,15 +37,20 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   checks the rows its store wrote, every column in PostgreSQL's text form, against
   `python/tests/cross-language/python-agent-rows.json`, and the .NET contract tests insert those rows as they are,
   read them back through the .NET store, check each initial lifecycle event, and compare every column with what the
-  .NET store writes for the same record. A Python writer that encodes a column differently from .NET now fails
-  there, naming the column, even when the Python reader undoes it. The Go proof runs through the same .NET harness
-  and gains the same column comparison.
+  .NET store writes for the same record, over every column of both tables. A Python writer that encodes a column
+  differently from .NET, or leaves to the database a column .NET writes, now fails there, naming the column, even
+  when the Python reader undoes it. The Go proof runs through the same .NET harness and gains the same comparison.
+  Both agents' clocks now carry 100-ns ticks below the microsecond, so every instant in those rows goes through
+  truncation in each language. Python and Go each gain a test of their store's default `recorded_at` (now, in UTC,
+  in whole microseconds).
 - **The Python tests are type-checked**: `mypy --strict` covers `python/tests` as well as `src`, locally and in CI.
 - **A timing-sensitive .NET test is deterministic.**
   `ExperienceCaptureTests.Background_work_settles_only_after_a_timed_out_close_abandoned_completion_has_finished`
   failed once in CI: under load, the first invocation's own finalization could overrun the test's real 100 ms
   timeout and complete the run a second time. Its timeouts are now manual and fire only when the test fires them.
-  Test-only; no library code changed.
+- The only library change: two private helpers of Core's `ExperienceFinalizationService` (the initial event's target
+  status and reason) became internal, so the contract tests derive the initial event as finalization does. No public
+  API or behaviour changed.
 
 ## 0.1.0-preview.13
 

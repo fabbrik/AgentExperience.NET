@@ -89,7 +89,7 @@ SCOPE = Scope("contract-tenant", "contract-app", "contract-project", agent_id="p
 IDENTITY = ExperienceIdentity("python-principal", SCOPE)
 ENVIRONMENT = EnvironmentFingerprint("python-host", "CPython 3", "linux", "1.0.0", {"region": "eu-west"})
 GOLDEN_SOURCE_VERSION = "0.0.0+cross-language"
-START = Instant.parse("2026-03-02T09:00:00+00:00")
+START = Instant.parse("2026-03-02T09:00:00.1234567+00:00")
 
 
 def fixed_clock() -> Callable[[], Instant]:
