@@ -679,7 +679,7 @@ public sealed class ExperienceRetrievalService
         return result.Outcome switch
         {
             ExperienceVectorSearchOutcome.Found when result.Candidates is not null =>
-                VectorOutcome.Succeeded(result.Candidates),
+                VectorOutcome.Succeeded(AboveFloor(result.Candidates)),
             ExperienceVectorSearchOutcome.Found => VectorOutcome.FellBack(new VectorChannelFallback(
                 TextOnlyReason.VectorSearchFailed,
                 "The embedding index reported matches but returned no candidate list.",
@@ -935,27 +935,53 @@ public sealed class ExperienceRetrievalService
                 return new RetrievalFailure($"The {channel} returned the same record more than once.", Exception: null);
             }
 
-            if (positions.TryGetValue(record.ExperienceId, out var existing))
-            {
-                // Only the relevance is merged, never the record: the two channels read the record at
-                // different instants, and adopting the other snapshot would let the expiry, status, and
-                // environment checks below be decided on the staler of the two. Nor the sharing: the candidate
-                // kept is the one from the channel absorbed first (text, then vector), and its SharedByGrant and the grant
-                // level matched with it stay together.
-                var kept = merged[existing];
-                if (Normalize(candidate.Relevance) > Normalize(kept.Relevance))
-                {
-                    merged[existing] = kept with { Relevance = candidate.Relevance };
-                }
-
-                continue;
-            }
-
-            positions[record.ExperienceId] = merged.Count;
-            merged.Add(candidate);
+            Fold(merged, positions, candidate);
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The merge rule, for one already-checked candidate: a record not seen yet is appended; a record the other channel
+    /// already contributed keeps its place and its snapshot, and takes the higher of the two normalized relevances.
+    /// </summary>
+    private static void Fold(List<ExperienceCandidate> merged, Dictionary<Guid, int> positions, ExperienceCandidate candidate)
+    {
+        var id = candidate.Record.ExperienceId;
+        if (positions.TryGetValue(id, out var existing))
+        {
+            // Only the relevance is merged, never the record: the two channels read the record at
+            // different instants, and adopting the other snapshot would let the expiry, status, and
+            // environment checks below be decided on the staler of the two. Nor the sharing: the candidate
+            // kept is the one from the channel absorbed first (text, then vector), and its SharedByGrant and the grant
+            // level matched with it stay together.
+            var kept = merged[existing];
+            if (Normalize(candidate.Relevance) > Normalize(kept.Relevance))
+            {
+                merged[existing] = kept with { Relevance = candidate.Relevance };
+            }
+
+            return;
+        }
+
+        positions[id] = merged.Count;
+        merged.Add(candidate);
+    }
+
+    /// <summary>
+    /// The two channels' candidates merged by exactly the rule retrieval applies (<see cref="Fold"/>), text first, with
+    /// none of retrieval's checks: for the retrieval benchmark, which measures the merged channels without ranking.
+    /// </summary>
+    internal static List<ExperienceCandidate> MergeChannels(IReadOnlyList<ExperienceCandidate> text, IReadOnlyList<ExperienceCandidate> vector)
+    {
+        var merged = new List<ExperienceCandidate>(text.Count + vector.Count);
+        var positions = new Dictionary<Guid, int>();
+        foreach (var candidate in text.Concat(vector))
+        {
+            Fold(merged, positions, candidate);
+        }
+
+        return merged;
     }
 
     /// <summary>
@@ -1071,6 +1097,15 @@ public sealed class ExperienceRetrievalService
     /// Clamps a component into [0, 1]. A NaN is scored 0: left alone it would poison every comparison
     /// against the record and make the ordering non-total.
     /// </summary>
+    /// <summary>
+    /// The vector candidates at or above <see cref="RetrievalPolicy.MinimumVectorRelevance"/>, in their order; all of
+    /// them when the policy sets no floor. A candidate whose relevance is not a number is below any floor.
+    /// </summary>
+    private IReadOnlyList<ExperienceCandidate> AboveFloor(IReadOnlyList<ExperienceCandidate> candidates) =>
+        _policy.MinimumVectorRelevance is { } floor
+            ? [.. candidates.Where(candidate => candidate is null || candidate.Relevance >= floor)]
+            : candidates;
+
     private static double Normalize(double value) => double.IsNaN(value) ? 0d : Math.Clamp(value, 0d, 1d);
 
     /// <summary>Whether every component is a real number. A NaN or an infinity makes every distance computed against the vector meaningless.</summary>

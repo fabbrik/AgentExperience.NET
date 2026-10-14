@@ -29,3 +29,16 @@ public sealed class InMemoryReuseFeedbackStoreConformanceTests : ReuseFeedbackSt
 {
     protected override IExperienceReuseFeedbackStore CreateStore() => new InMemoryExperienceReuseFeedbackStore();
 }
+
+/// <summary>
+/// Story 21.3: <see cref="InMemoryExperienceEmbeddingIndex"/> passes the embedding-index conformance suite, over the very
+/// <see cref="InMemoryExperienceRecordStore"/> the suite seeds through. The PostgreSQL index passes the same suite.
+/// </summary>
+public sealed class InMemoryEmbeddingIndexConformanceTests : EmbeddingIndexConformanceTests
+{
+    private readonly InMemoryExperienceRecordStore _records = new();
+
+    protected override IExperienceRecordStore CreateRecordStore() => _records;
+
+    protected override IExperienceEmbeddingIndex CreateEmbeddingIndex() => new InMemoryExperienceEmbeddingIndex(_records);
+}

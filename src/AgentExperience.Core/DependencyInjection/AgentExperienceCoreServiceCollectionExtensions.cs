@@ -91,7 +91,19 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     public static IServiceCollection AddAgentExperienceCore(
         this IServiceCollection services,
         SanitizationOptions sanitizationOptions,
-        CaptureLimits captureLimits)
+        CaptureLimits captureLimits) =>
+        services.AddAgentExperienceCoreWithIndexing(sanitizationOptions, captureLimits, indexing: null);
+
+    /// <summary>
+    /// <see cref="AddAgentExperienceCore"/>, with
+    /// <paramref name="indexing"/> supplying the indexing service when the container has none: for the one-call setup,
+    /// which decides it per container and so never registers a service that would resolve to nothing.
+    /// </summary>
+    internal static IServiceCollection AddAgentExperienceCoreWithIndexing(
+        this IServiceCollection services,
+        SanitizationOptions sanitizationOptions,
+        CaptureLimits captureLimits,
+        Func<IServiceProvider, ExperienceIndexingService?>? indexing)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(sanitizationOptions);
@@ -114,7 +126,7 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         // is resolved the same way; without one, the heuristic scores evidence.
         services.TryAddSingleton(provider => new ExperienceLifecycleService(
             provider.GetRequiredService<IExperienceRecordStore>(),
-            provider.GetService<ExperienceIndexingService>(),
+            IndexingFrom(provider, indexing),
             provider.GetService<ExperienceIndependenceOptions>() ?? new ExperienceIndependenceOptions(),
             provider.GetRequiredService<IExperienceCaptureService>(),
             deindexingTimeout: null,
@@ -130,7 +142,7 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<IExperienceReflector>(),
             provider.GetRequiredService<IExperienceRecordStore>(),
             provider.GetRequiredService<ExperienceLifecycleService>(),
-            provider.GetService<ExperienceIndexingService>(),
+            IndexingFrom(provider, indexing),
             indexingTimeout: null,
             provenanceSigning: null,
             provider.GetRequiredService<ISanitizer>(),
@@ -138,6 +150,10 @@ public static class AgentExperienceCoreServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>The registered indexing service, else the one <paramref name="indexing"/> supplies, else none (text-only).</summary>
+    private static ExperienceIndexingService? IndexingFrom(IServiceProvider provider, Func<IServiceProvider, ExperienceIndexingService?>? indexing) =>
+        provider.GetService<ExperienceIndexingService>() ?? indexing?.Invoke(provider);
 
     /// <summary>
     /// The registered provenance signing options, directly or through an explicitly registered
@@ -271,7 +287,20 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     public static IServiceCollection AddAgentExperienceRetrieval(
         this IServiceCollection services,
         RetrievalPolicy? policy = null,
-        RankingWeights? weights = null)
+        RankingWeights? weights = null) =>
+        services.AddAgentExperienceRetrievalWithVectorChannel(policy, weights, vectorChannel: null);
+
+    /// <summary>
+    /// <see cref="AddAgentExperienceRetrieval"/>, with
+    /// <paramref name="vectorChannel"/> deciding the vector channel instead of the registered index and generator: for
+    /// the one-call setup, which decides it per container (and may set a floor), and so never registers a generator that
+    /// would resolve to nothing.
+    /// </summary>
+    internal static IServiceCollection AddAgentExperienceRetrievalWithVectorChannel(
+        this IServiceCollection services,
+        RetrievalPolicy? policy,
+        RankingWeights? weights,
+        Func<IServiceProvider, RetrievalVectorChannel>? vectorChannel)
     {
         ArgumentNullException.ThrowIfNull(services);
 
@@ -292,17 +321,33 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         // IEnvironmentCompatibilityScorer is resolved the same way; without one, the default
         // attribute-match scorer grades the environment component. A ConfidenceDecayPolicy is
         // resolved the same way; without one, confidence does not decay.
-        services.TryAddSingleton(provider => new ExperienceRetrievalService(
-            provider.GetRequiredService<IExperienceCandidateSource>(),
-            effectivePolicy,
-            effectiveWeights,
-            provider.GetRequiredService<TimeProvider>(),
-            provider.GetService<IExperienceEmbeddingIndex>(),
-            provider.GetService<IExperienceEmbeddingGenerator>(),
-            provider.GetService<IEnvironmentCompatibilityScorer>(),
-            provider.GetService<ConfidenceDecayPolicy>(),
-            ProvenanceSigningFrom(provider, services)));
+        services.TryAddSingleton(provider =>
+        {
+            var channel = vectorChannel?.Invoke(provider) ?? new RetrievalVectorChannel(
+                provider.GetService<IExperienceEmbeddingIndex>(),
+                provider.GetService<IExperienceEmbeddingGenerator>(),
+                MinimumRelevance: null);
+            return new ExperienceRetrievalService(
+                provider.GetRequiredService<IExperienceCandidateSource>(),
+                channel.MinimumRelevance is { } floor ? effectivePolicy with { MinimumVectorRelevance = floor } : effectivePolicy,
+                effectiveWeights,
+                provider.GetRequiredService<TimeProvider>(),
+                channel.Index,
+                channel.Generator,
+                provider.GetService<IEnvironmentCompatibilityScorer>(),
+                provider.GetService<ConfidenceDecayPolicy>(),
+                ProvenanceSigningFrom(provider, services));
+        });
 
         return services;
     }
 }
+
+/// <summary>
+/// The vector channel a retrieval service is built with: both halves, or neither (text-only), and an optional floor on
+/// vector relevance (<see cref="RetrievalPolicy.MinimumVectorRelevance"/>).
+/// </summary>
+internal sealed record RetrievalVectorChannel(
+    IExperienceEmbeddingIndex? Index,
+    IExperienceEmbeddingGenerator? Generator,
+    double? MinimumRelevance);

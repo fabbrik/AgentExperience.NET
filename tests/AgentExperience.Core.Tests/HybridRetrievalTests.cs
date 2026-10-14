@@ -81,6 +81,37 @@ public class HybridRetrievalTests
         Assert.Equal(0.95, Relevance(vectorWins));
     }
 
+    // ---------------------------------------------------------------- the vector relevance floor
+
+    [Fact]
+    public async Task A_minimum_vector_relevance_drops_weaker_vector_candidates_but_never_a_text_one()
+    {
+        var weakVectorOnly = Record(Id(1));
+        var strongVectorOnly = Record(Id(2));
+        var textFound = Record(Id(3));
+        var policy = RetrievalPolicy.Default with { MinimumVectorRelevance = 0.75 };
+
+        var result = await Service(
+            text: [Candidate(textFound, 0.2)],
+            vector: [Candidate(weakVectorOnly, 0.7), Candidate(strongVectorOnly, 0.8), Candidate(textFound, 0.1)],
+            policy: policy).RetrieveAsync(Request());
+
+        Assert.Equal(RetrievalOutcome.Completed, result.Outcome);
+        Assert.Null(result.VectorFallback);
+        Assert.Equal([Id(2), Id(3)], result.Records.Select(r => r.Record.ExperienceId).Order());
+    }
+
+    [Fact]
+    public async Task Without_a_floor_every_vector_candidate_is_kept_and_the_floor_is_validated()
+    {
+        Assert.Null(RetrievalPolicy.Default.MinimumVectorRelevance);
+        var result = await Service(text: [], vector: [Candidate(Record(Id(1)), 0.01)]).RetrieveAsync(Request());
+        Assert.Single(result.Records);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MinimumVectorRelevance = 1.5 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalPolicy.Default with { MinimumVectorRelevance = double.NaN });
+    }
+
     // ---------------------------------------------------------------- matrix: shared eligibility
 
     [Theory]

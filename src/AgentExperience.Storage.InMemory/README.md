@@ -89,7 +89,10 @@ in PostgreSQL, a record's `CreatedAt` and `UpdatedAt`, a lifecycle event's `Occu
   two stores.
 - **No grants.** Sharing grants and the grant access log are not provided: every read behaves as if no grant
   exists, so a record is readable only in its own exact scope.
-- **No embedding index**, so no hybrid (vector) retrieval.
+- **An exact, in-memory embedding index, through the one-call setup only.** `UseInMemoryStorageForDevelopment()`
+  registers one (exact cosine search, the PostgreSQL index's conditional-write and filter rules), used when the
+  container also has a `Microsoft.Extensions.AI` embedding generator. `AddAgentExperienceInMemoryStorageForDevelopment`
+  alone registers none.
 - **No deletion, retention or encryption.**
 - **No durability.** Restarting the process empties every store.
 

@@ -1,7 +1,20 @@
 using AgentExperience.Abstractions;
 using Microsoft.Extensions.AI;
 
+// Shared source (story 21.3): the one adapter from a Microsoft.Extensions.AI embedding generator to the library's own
+// IExperienceEmbeddingGenerator. AgentExperience.Storage.Postgres.Vectors ships it as a public type; the MAF adapter
+// compiles the same file as an internal type, so the one-call setup can use a registered IEmbeddingGenerator without a
+// second copy of its model, dimension and width rules. Each project defines exactly one of the constants below, which
+// selects the namespace and the visibility.
+#if AGENTEXPERIENCE_VECTORS && AGENTEXPERIENCE_MAF
+#error Define exactly one of AGENTEXPERIENCE_VECTORS and AGENTEXPERIENCE_MAF.
+#elif AGENTEXPERIENCE_VECTORS
 namespace AgentExperience.Storage.Postgres.Vectors;
+#elif AGENTEXPERIENCE_MAF
+namespace AgentExperience.MicrosoftAgentFramework;
+#else
+#error Define AGENTEXPERIENCE_VECTORS or AGENTEXPERIENCE_MAF to select the namespace of the shared embedding adapter.
+#endif
 
 /// <summary>
 /// Adapts a <c>Microsoft.Extensions.AI</c> <see cref="IEmbeddingGenerator{TInput,TEmbedding}"/> to
@@ -27,7 +40,12 @@ namespace AgentExperience.Storage.Postgres.Vectors;
 /// as a retryable provider failure, exactly like a timeout.
 /// </para>
 /// </remarks>
-public sealed class AiExperienceEmbeddingGenerator : IExperienceEmbeddingGenerator
+#if AGENTEXPERIENCE_VECTORS
+public
+#else
+internal
+#endif
+sealed class AiExperienceEmbeddingGenerator : IExperienceEmbeddingGenerator
 {
     private readonly IEmbeddingGenerator<string, Embedding<float>> _generator;
     private readonly EmbeddingGenerationOptions _options;
@@ -53,30 +71,8 @@ public sealed class AiExperienceEmbeddingGenerator : IExperienceEmbeddingGenerat
         var metadata = generator.GetService<EmbeddingGeneratorMetadata>();
 
         var effectiveModelId = modelId ?? metadata?.DefaultModelId;
-        if (string.IsNullOrWhiteSpace(effectiveModelId))
-        {
-            throw new ArgumentException(
-                "The embedding model ID must be supplied, or reported by the generator's EmbeddingGeneratorMetadata: " +
-                "it is part of every stored embedding's content hash and decides which vectors are comparable.",
-                nameof(modelId));
-        }
-
-        if (effectiveModelId.Length > ExperienceEmbeddingDescriptor.MaxModelIdLength)
-        {
-            throw new ArgumentException(
-                $"The embedding model ID must be at most {ExperienceEmbeddingDescriptor.MaxModelIdLength} characters.",
-                nameof(modelId));
-        }
-
         var effectiveDimension = dimension ?? metadata?.DefaultModelDimensions;
-        if (effectiveDimension is not (>= 1 and <= ExperienceEmbeddingDescriptor.MaxDimension))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(dimension),
-                effectiveDimension,
-                "The embedding dimension must be supplied, or reported by the generator's EmbeddingGeneratorMetadata, " +
-                $"and must be between 1 and {ExperienceEmbeddingDescriptor.MaxDimension}.");
-        }
+        CheckIdentity(effectiveModelId, effectiveDimension);
 
         // An override that contradicts what the generator actually runs is the one failure the
         // descriptor exists to prevent: vectors would be stamped with a model ID the provider never
@@ -98,8 +94,8 @@ public sealed class AiExperienceEmbeddingGenerator : IExperienceEmbeddingGenerat
                 $"The generator reports {reportedDimension} dimensions, but {effectiveDimension} was supplied.");
         }
 
-        ModelId = effectiveModelId;
-        Dimension = effectiveDimension.Value;
+        ModelId = effectiveModelId!;
+        Dimension = effectiveDimension!.Value;
 
         // The resolved model and dimension are what the provider is actually asked for, not merely what
         // the stored descriptor claims -- otherwise a request would silently run on the provider's own
@@ -185,6 +181,40 @@ public sealed class AiExperienceEmbeddingGenerator : IExperienceEmbeddingGenerat
         }
 
         return vectors;
+    }
+
+    /// <summary>
+    /// The rule every embedding generator's identity must meet before a vector is stamped with it: a model ID that is not
+    /// blank and at most <see cref="ExperienceEmbeddingDescriptor.MaxModelIdLength"/> characters, and a dimension from 1
+    /// to <see cref="ExperienceEmbeddingDescriptor.MaxDimension"/>. Also applied to a generator a host registered itself.
+    /// </summary>
+    /// <exception cref="ArgumentException">The model ID is missing, blank or too long.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The dimension is missing or out of range.</exception>
+    internal static void CheckIdentity(string? modelId, int? dimension)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            throw new ArgumentException(
+                "The embedding model ID must be supplied, or reported by the generator's EmbeddingGeneratorMetadata: " +
+                "it is part of every stored embedding's content hash and decides which vectors are comparable.",
+                nameof(modelId));
+        }
+
+        if (modelId.Length > ExperienceEmbeddingDescriptor.MaxModelIdLength)
+        {
+            throw new ArgumentException(
+                $"The embedding model ID must be at most {ExperienceEmbeddingDescriptor.MaxModelIdLength} characters.",
+                nameof(modelId));
+        }
+
+        if (dimension is not (>= 1 and <= ExperienceEmbeddingDescriptor.MaxDimension))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(dimension),
+                dimension,
+                "The embedding dimension must be supplied, or reported by the generator's EmbeddingGeneratorMetadata, " +
+                $"and must be between 1 and {ExperienceEmbeddingDescriptor.MaxDimension}.");
+        }
     }
 
     private ReadOnlyMemory<float> CheckWidth(ReadOnlyMemory<float> vector) =>

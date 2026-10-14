@@ -242,6 +242,14 @@ public enum ExperienceCaptureFailureStage
     /// hides a later <see cref="ToolCall"/> report of a tool call that was not recorded.
     /// </summary>
     ToolResultClassification,
+
+    /// <summary>
+    /// The one-call setup found an embedding generator it cannot use for semantic retrieval -- the storage has no
+    /// embedding index (PostgreSQL without <c>.WithPostgresVectors()</c>), or the generator reports no model ID or
+    /// dimension -- so retrieval stays text-only. Reported once per container, with no run ID, when the first agent is
+    /// built with <c>UseAgentExperience</c>. See <c>AgentExperienceOptions.Embeddings</c>.
+    /// </summary>
+    Embeddings,
 }
 
 /// <summary>

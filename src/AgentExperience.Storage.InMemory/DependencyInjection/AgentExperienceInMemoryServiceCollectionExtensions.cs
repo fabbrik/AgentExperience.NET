@@ -39,8 +39,8 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
     /// are already in force.
     /// </para>
     /// <para>
-    /// Sharing grants, the grant access log, the embedding index, deletion, retention and encryption are not
-    /// provided.
+    /// Sharing grants, the grant access log, deletion, retention and encryption are not provided. Neither is an embedding
+    /// index here: the one-call setup's <c>UseInMemoryStorageForDevelopment()</c> adds one.
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add to.</param>
@@ -109,6 +109,29 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="InMemoryExperienceEmbeddingIndex"/> over the registered <see cref="InMemoryExperienceRecordStore"/>
+    /// as the singleton <see cref="IExperienceEmbeddingIndex"/>, behind the same environment guard as the stores, unless an
+    /// index is already registered. For the one-call setup's <c>UseInMemoryStorageForDevelopment</c> only, after
+    /// <see cref="AddAgentExperienceInMemoryStorageForDevelopment"/>: an index alone changes nothing until an embedding
+    /// generator is registered too, which the one-call setup does when the host has one.
+    /// </summary>
+    internal static void AddInMemoryEmbeddingIndex(IServiceCollection services)
+    {
+        // A keyed descriptor throws from ImplementationInstance, so keyed services (a keyed chat client, say) are skipped.
+        var registration = services
+            .Where(descriptor => !descriptor.IsKeyedService)
+            .Select(descriptor => descriptor.ImplementationInstance)
+            .OfType<InMemoryStorageRegistration>()
+            .Single();
+
+        services.TryAddSingleton<IExperienceEmbeddingIndex>(provider =>
+        {
+            registration.Check(provider);
+            return new InMemoryExperienceEmbeddingIndex(provider.GetRequiredService<InMemoryExperienceRecordStore>());
+        });
     }
 }
 

@@ -4,7 +4,7 @@ using AgentExperience.Abstractions;
 // AgentExperience.Abstractions. Both AgentExperience.Storage.Postgres and AgentExperience.Storage.InMemory link this
 // file, so the two stores refuse exactly the same requests. Each project defines exactly one of the constants below,
 // which puts the validator in that project's own namespace. Keep this file free of every type only one store has:
-// the PostgreSQL-only rules (erasure, retention, sealing, grants, the vector index) are in that project's
+// the PostgreSQL-only rules (erasure, retention, sealing, grants) are in that project's
 // ExperienceRecordValidator.cs. Where a comment below says "the database", it is the PostgreSQL store's schema,
 // which states the same rule again as a CHECK.
 #if AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_INMEMORY
@@ -1170,6 +1170,211 @@ internal static partial class ExperienceRecordValidator
         if (!Enum.IsDefined(value))
         {
             errors.Add(new(path, "is not a defined value."));
+        }
+    }
+
+    /// <summary>
+    /// Validates a conditional index write: the scope the record must lie in, the record ID, the
+    /// descriptor that makes the write conditional, and the vector itself. The vector's length is
+    /// checked against the descriptor's dimension here, so the two can never be stored disagreeing.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateIndexWrite(ExperienceIndexWrite write)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScope(write.Scope, "Scope", errors);
+
+        if (write.ExperienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        if (write.Descriptor is null)
+        {
+            errors.Add(new("Descriptor", Required));
+            return errors;
+        }
+
+        ValidateDescriptor(write.Descriptor, "Descriptor", errors);
+        ValidateVector(write.Vector, "Vector", errors);
+
+        if (write.Descriptor.Dimension > 0 && write.Vector.Length != write.Descriptor.Dimension)
+        {
+            errors.Add(new("Vector", "must hold exactly Descriptor.Dimension components."));
+        }
+
+        return errors;
+    }
+
+    /// <summary>Validates a vector removal: the scope the embedding must lie in, and the record it belongs to.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateIndexRemove(Scope scope, Guid experienceId)
+    {
+        var errors = new List<StoreValidationError>();
+
+        if (experienceId == Guid.Empty)
+        {
+            errors.Add(new("ExperienceId", "must not be an empty GUID."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>Validates a scoped index scan: the scope, the model whose descriptors to report, the optional ID filter, and the bound.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateIndexScan(ExperienceIndexScan scan)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScope(scan.Scope, "Scope", errors);
+        RequireNotBlank(scan.ModelId, "ModelId", errors);
+
+        if (scan.ModelId is { Length: > ExperienceEmbeddingDescriptor.MaxModelIdLength })
+        {
+            errors.Add(new("ModelId", $"must be at most {ExperienceEmbeddingDescriptor.MaxModelIdLength} characters."));
+        }
+
+        if (scan.EligibleStatuses is null)
+        {
+            errors.Add(new("EligibleStatuses", Required));
+        }
+        else if (scan.EligibleStatuses.Count == 0)
+        {
+            errors.Add(new("EligibleStatuses", "must contain at least one status."));
+        }
+        else
+        {
+            for (var i = 0; i < scan.EligibleStatuses.Count; i++)
+            {
+                RequireDefined(scan.EligibleStatuses[i], $"EligibleStatuses[{i}]", errors);
+            }
+        }
+
+        RequireUnitInterval(scan.MinimumConfidence, "MinimumConfidence", errors);
+
+        if (scan.StartAfterId == Guid.Empty)
+        {
+            errors.Add(new("StartAfterId", "must be null or a non-empty GUID."));
+        }
+
+        if (scan.ExperienceIds is not null)
+        {
+            if (scan.ExperienceIds.Count == 0)
+            {
+                errors.Add(new("ExperienceIds", "must contain at least one identifier when supplied."));
+            }
+            else if (scan.ExperienceIds.Count > ExperienceIndexScan.MaxLimit)
+            {
+                errors.Add(new("ExperienceIds", $"must hold at most {ExperienceIndexScan.MaxLimit} identifiers."));
+            }
+            else
+            {
+                for (var i = 0; i < scan.ExperienceIds.Count; i++)
+                {
+                    if (scan.ExperienceIds[i] == Guid.Empty)
+                    {
+                        errors.Add(new($"ExperienceIds[{i}]", "must not be an empty GUID."));
+                    }
+                }
+            }
+        }
+
+        if (scan.Limit is < ExperienceIndexScan.MinLimit or > ExperienceIndexScan.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ExperienceIndexScan.MinLimit} and {ExperienceIndexScan.MaxLimit}."));
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a scoped vector search. The field paths and the bounds deliberately mirror
+    /// <see cref="ValidateCandidateQuery"/>, so both retrieval channels reject the same requests for
+    /// the same reasons.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateVectorQuery(ExperienceVectorQuery query)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScope(query.Scope, "Scope", errors);
+        RequireNotBlank(query.ModelId, "ModelId", errors);
+
+        if (query.ModelId is { Length: > ExperienceEmbeddingDescriptor.MaxModelIdLength })
+        {
+            errors.Add(new("ModelId", $"must be at most {ExperienceEmbeddingDescriptor.MaxModelIdLength} characters."));
+        }
+
+        ValidateVector(query.Vector, "Vector", errors);
+
+        if (query.EligibleStatuses is null)
+        {
+            errors.Add(new("EligibleStatuses", Required));
+        }
+        else if (query.EligibleStatuses.Count == 0)
+        {
+            errors.Add(new("EligibleStatuses", "must contain at least one status."));
+        }
+        else
+        {
+            for (var i = 0; i < query.EligibleStatuses.Count; i++)
+            {
+                RequireDefined(query.EligibleStatuses[i], $"EligibleStatuses[{i}]", errors);
+            }
+        }
+
+        RequireUnitInterval(query.MinimumConfidence, "MinimumConfidence", errors);
+
+        if (query.Limit is < ExperienceCandidateQuery.MinLimit or > ExperienceCandidateQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ExperienceCandidateQuery.MinLimit} and {ExperienceCandidateQuery.MaxLimit}."));
+        }
+
+        return errors;
+    }
+
+    private static void ValidateDescriptor(ExperienceEmbeddingDescriptor descriptor, string path, List<StoreValidationError> errors)
+    {
+        RequireNotBlank(descriptor.ModelId, $"{path}.ModelId", errors);
+        if (descriptor.ModelId is { Length: > ExperienceEmbeddingDescriptor.MaxModelIdLength })
+        {
+            errors.Add(new($"{path}.ModelId", $"must be at most {ExperienceEmbeddingDescriptor.MaxModelIdLength} characters."));
+        }
+
+        if (descriptor.Dimension is < 1 or > ExperienceEmbeddingDescriptor.MaxDimension)
+        {
+            errors.Add(new($"{path}.Dimension", $"must be between 1 and {ExperienceEmbeddingDescriptor.MaxDimension}."));
+        }
+
+        RequireNotBlank(descriptor.ContentHash, $"{path}.ContentHash", errors);
+
+        if (descriptor.SourceRevision < 0)
+        {
+            errors.Add(new($"{path}.SourceRevision", "must not be negative."));
+        }
+    }
+
+    /// <summary>
+    /// A vector must be non-empty, within the dimension ceiling, and entirely finite. A NaN or an
+    /// infinity would be accepted by pgvector's input parser in some forms and then poison every
+    /// distance computed against it, so it is rejected before any database access.
+    /// </summary>
+    private static void ValidateVector(ReadOnlyMemory<float> vector, string path, List<StoreValidationError> errors)
+    {
+        if (vector.Length == 0)
+        {
+            errors.Add(new(path, "must hold at least one component."));
+            return;
+        }
+
+        if (vector.Length > ExperienceEmbeddingDescriptor.MaxDimension)
+        {
+            errors.Add(new(path, $"must hold at most {ExperienceEmbeddingDescriptor.MaxDimension} components."));
+            return;
+        }
+
+        foreach (var component in vector.Span)
+        {
+            if (!float.IsFinite(component))
+            {
+                errors.Add(new(path, "must hold only finite components."));
+                return;
+            }
         }
     }
 }

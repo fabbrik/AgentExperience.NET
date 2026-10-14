@@ -8,10 +8,93 @@ provider, and only for records a search could actually return; at retrieval, the
 too. Writes are conditional on the record's revision, so a late write can never
 overwrite newer state or bring back a deleted record.
 
-Packages: `AgentExperience.Core` (`ExperienceIndexingService`) and `AgentExperience.Storage.Postgres.Vectors` (the
-pgvector index). Leave both out and everything still works, text-only.
+Packages: `AgentExperience.Core` (`ExperienceIndexingService`), and an embedding index: the in-memory one built into
+`AgentExperience.Storage.InMemory` (development and tests), or `AgentExperience.Storage.Postgres.Vectors` (pgvector).
+Leave the generator out and everything still works, text-only.
 
 ## Setting it up
+
+### With the one-call setup
+
+Register any `Microsoft.Extensions.AI` `IEmbeddingGenerator<string, Embedding<float>>` in the container, before or
+after `AddAgentExperience`. The setup picks it up when it is first used: it embeds each lesson finalization stores, and
+retrieval matches the task text by meaning as well as by words. Nothing else changes, and a container with no
+generator is text-only exactly as before.
+
+```csharp
+services.AddEmbeddingGenerator(embeddingGenerator);   // or services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(...)
+services.AddAgentExperience(options => { /* identity and Verify as usual */ })
+    .UseInMemoryStorageForDevelopment();               // has an in-memory index (exact cosine search) built in
+```
+
+With PostgreSQL, add `.WithPostgresVectors()` (package `AgentExperience.Storage.Postgres.Vectors`) after `UsePostgres`,
+and apply the vector schema as shown below; `UsePostgres` alone stays text-only, because the base package takes no
+vector dependency:
+
+```csharp
+services.AddAgentExperience(options => { /* ... */ })
+    .UsePostgres(connectionString)
+    .WithPostgresVectors();
+```
+
+What to know:
+
+- **The generator must say what it is.** Every stored vector is stamped with the model ID and dimension, read from the
+  generator's `EmbeddingGeneratorMetadata` (`DefaultModelId`, `DefaultModelDimensions`). OpenAI's reports the model but
+  not the width unless you pass it: `embeddingClient.AsIEmbeddingGenerator(1536)` (`Microsoft.Extensions.AI.OpenAI`).
+  Without a dimension it stays text-only and the setup reports why, once. An `IExperienceEmbeddingGenerator` you
+  register yourself is checked by the same rule. In a container with several generators, or keyed ones, pick one with
+  `options.EmbeddingGeneratorKey`.
+- **What is sent.** Of a stored record, only its sanitized summary (task ID, task summary, lesson), and only for records a
+  search could return; at retrieval, the task text. A container that already had a generator starts sending these when
+  it moves to this release: set `options.Embeddings = AgentExperienceEmbeddings.Off` to keep it text-only.
+- **A similarity floor.** A lesson the vector channel finds counts only when its cosine similarity to the task text is
+  at least `options.MinimumSemanticSimilarity` (0.5 by default; `-1` turns it off). Real models score unrelated texts
+  well above zero, so without a floor a task with nothing related would still be shown the nearest lessons. A lesson the
+  words found is kept whatever its similarity.
+- **Failures never fail a run.** A generator that throws or times out makes that one retrieval text-only, flagged on
+  the injection result (`VectorFallback`, reason `ProviderUnavailable`), and that one record unindexed, reported on the
+  finalization result (`Indexing`, `ProviderFailed`). A missing vector schema behaves the same way (`VectorSearchFailed`).
+- **A generator the setup cannot use is reported once per container.** With no embedding index (PostgreSQL without
+  `.WithPostgresVectors()`), a generator that reports no model ID or dimension, or a generator or index whose resolution
+  throws, retrieval stays text-only and the setup calls `OnCaptureFailure` once, at stage `Embeddings`, when an agent is
+  built. A resolution that threw is tried again for the next agent built.
+- **`AgentExperienceOptions.Embeddings`** is `Auto` (the default, as above), `Off` (text-only whatever is registered,
+  a host's own `IExperienceEmbeddingGenerator` included) or `Required` (building an agent throws
+  `InvalidOperationException` unless semantic retrieval is on).
+- An `IExperienceEmbeddingGenerator` you register (before or after `AddAgentExperience`) is used instead of adapting
+  the `Microsoft.Extensions.AI` one; an `ExperienceIndexingService` or `IExperienceEmbeddingIndex` you register first is
+  kept.
+
+**Re-indexing with the one-call setup.** Only records committed while semantic retrieval is on are embedded. Records
+stored before it was turned on, or while the provider was down, get a vector from a re-index pass over the container's
+own index and generator:
+
+```csharp
+using AgentExperience.Core.Indexing;
+using AgentExperience.Core.Retrieval;
+using AgentExperience.Storage.Postgres.Vectors;   // AiExperienceEmbeddingGenerator
+
+var indexing = new ExperienceIndexingService(
+    provider.GetRequiredService<IExperienceEmbeddingIndex>(),
+    new AiExperienceEmbeddingGenerator(provider.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>()),
+    provider.GetService<RetrievalPolicy>());
+
+Guid? after = null;
+do
+{
+    var pass = await indexing.ReindexAsync(authorization, new ReindexExperienceRequest(scope, StartAfterId: after));
+    after = pass.LastExaminedId;
+}
+while (after is not null);
+```
+
+Unchanged records are skipped without a provider call, so running it again is cheap. **A model change** makes every
+stored vector incomparable: retrieval reports `ModelMismatch` on each result and answers from text alone until a pass
+like this one has embedded the scope with the new model.
+See [Re-indexing](#re-indexing) below for what a pass does.
+
+### With the explicit wiring
 
 ```csharp
 using AgentExperience.Core.DependencyInjection;

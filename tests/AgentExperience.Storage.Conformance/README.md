@@ -1,6 +1,6 @@
 # Store conformance suite
 
-What any implementation of the core storage ports must do, written as tests. The library holds three abstract xUnit
+What any implementation of the core storage ports must do, written as tests. The library holds four abstract xUnit
 classes. A test project that implements the ports subclasses each one and supplies its store through a factory
 method; its own runner then discovers and runs the inherited tests. The library itself is not a test project, is
 never packed, and depends only on `AgentExperience.Abstractions` and xUnit's assertion and core packages.
@@ -10,6 +10,7 @@ never packed, and depends only on `AgentExperience.Abstractions` and xUnit's ass
 | `RecordStoreConformanceTests` | `IExperienceRecordStore` | `CreateStore()` |
 | `CandidateSourceConformanceTests` | `IExperienceCandidateSource` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateCandidateSource()` |
 | `ReuseFeedbackStoreConformanceTests` | `IExperienceReuseFeedbackStore` | `CreateStore()` |
+| `EmbeddingIndexConformanceTests` | `IExperienceEmbeddingIndex` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateEmbeddingIndex()` |
 
 Every test observes the ports only, with no SQL and no knowledge of how a store is built. Each test works in a
 tenant of its own, so a store shared by all tests (one database, one container) still keeps them independent.
@@ -107,6 +108,26 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - A colliding ID from a tenant the caller has no authority over is `Conflict`, and no stored content comes back.
 - A non-finite measure, a blank measure kind, a benefit with no attribution, and the same record named twice in
   the exposures are `Invalid`.
+
+**Embedding index**
+
+- A write is conditional: it is `Written` only while the record exists in exactly the write's scope at exactly the
+  descriptor's source revision. A record that moved is `Stale` with its current revision; one that is missing or in
+  another scope is `Missing`; neither changes anything.
+- A scan lists, in ascending ID order and paged by its cursor, only the records a search could return (the scope, the
+  statuses, the confidence floor, an optional ID list), each with its summary and the descriptor stored for it.
+- A search applies the exact scope, the statuses, the confidence floor and, when asked, the model-authored exclusion,
+  before the limit; it compares only vectors of the query's model and width, nearest first, with a relevance in
+  [0, 1]. A scope whose embeddings are all of another model is `ModelMismatch`, of another width `DimensionMismatch`,
+  and a scope with none an empty `Found`.
+- A scope holding comparable and incomparable vectors is `Found`, with the comparable ones only. A scope whose only
+  comparable vectors are model-authored, searched with the exclusion, is an empty `Found`, not a mismatch. A rewrite at
+  the same revision under a new model replaces the vector, so the old model's search becomes `ModelMismatch`.
+- Removal takes the vector out of every search; repeating it, or naming another scope, is `NotIndexed`.
+- An already-cancelled token on any call surfaces as an `OperationCanceledException` and changes nothing.
+- Exact relevance values and how ties are broken are not part of the contract.
+
+The PostgreSQL index and the in-memory one (`InMemoryExperienceEmbeddingIndex`) both pass it.
 
 ## Deliberately excluded
 

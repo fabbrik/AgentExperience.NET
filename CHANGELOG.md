@@ -6,7 +6,59 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Retrieval: semantic retrieval when the app already has embeddings (story 21.3)
+
+- **Behaviour change: the one-call setup now uses a registered embedding generator.** When the container has a
+  `Microsoft.Extensions.AI` `IEmbeddingGenerator<string, Embedding<float>>` (registered before or after
+  `AddAgentExperience`; resolved when the setup is first used, per container), the setup adapts it, embeds each committed
+  record's sanitized summary at finalization, and makes retrieval hybrid. An app that already registers a generator
+  therefore starts sending task texts and lesson summaries to it on upgrade; **`options.Embeddings = Off` is the
+  opt-out.** **With no generator, nothing changes**: retrieval is text-only and every golden is unchanged. The generator
+  must report its model ID and dimension (`EmbeddingGeneratorMetadata`; OpenAI's needs `AsIEmbeddingGenerator(1536)`). A
+  generator that throws or times out makes only that retrieval text-only (`VectorFallback`, `ProviderUnavailable`) and
+  that record unindexed (`Indexing`, `ProviderFailed`); no run fails. Records stored earlier, or under another model
+  (`ModelMismatch`), match by meaning only after a re-index pass (snippet in the indexing guide).
+  - A host's own `IExperienceEmbeddingGenerator` (unkeyed, registered before or after) is used instead of the adapter,
+    after the same model ID and dimension check; a host that registered one and an index beside `AddAgentExperience`,
+    without `AddAgentExperienceIndexing`, now also gets indexing at finalization. A host's `ExperienceIndexingService`
+    or `IExperienceEmbeddingIndex` registered first is kept. The setup registers no service that resolves to null.
+- **`AgentExperienceOptions.Embeddings`** (new) and the new enum **`AgentExperienceEmbeddings`**: `Auto` (the default),
+  `Off` (text-only whatever is registered, a host's own generator included) or `Required` (building an agent with
+  `UseAgentExperience`, or resolving the context provider, throws `InvalidOperationException`, with the cause as the
+  inner exception, without a usable generator and an embedding index).
+- **`AgentExperienceOptions.MinimumSemanticSimilarity`** (new, default `0.5`): the cosine similarity a vector match
+  needs, so an unrelated lesson is not injected just for being the nearest; `-1` turns it off. A text match is kept
+  whatever its similarity. It maps to the new **`RetrievalPolicy.MinimumVectorRelevance`** (Core; relevance
+  `(1 + cosine) / 2`), which defaults to no floor, so explicit wiring is unchanged.
+- **`AgentExperienceOptions.EmbeddingGeneratorKey`** (new): use a keyed generator. Keyed registrations are otherwise
+  ignored.
+- **`ExperienceCaptureFailureStage.Embeddings`** (new value): under `Auto`, a generator the setup cannot use (the storage
+  has no embedding index, the generator reports no model ID or dimension, or resolving the generator or the index threw)
+  leaves retrieval text-only and is reported once per container through `OnCaptureFailure`, with no run ID, when an
+  agent is built. A resolution that threw is tried again for the next agent built. (No `ILogger` is used: the MAF
+  adapter's dependency boundary forbids `Microsoft.Extensions.Logging`.)
+- **In-memory embedding index.** `UseInMemoryStorageForDevelopment()` now also registers an internal in-memory
+  `IExperienceEmbeddingIndex` (exact cosine search, the PostgreSQL index's scope, eligibility and conditional-write
+  rules, the same development-only guard). It takes no new package dependency, and on its own changes nothing: it is
+  used only with a generator. `AddAgentExperienceInMemoryStorageForDevelopment` alone still registers none.
+- **`.WithPostgresVectors()`** (new, `AgentExperience.Storage.Postgres.Vectors`): registers the pgvector index on the data
+  source `UsePostgres` registered. `UsePostgres` alone stays text-only, because `AgentExperience.Storage.Postgres` takes
+  no vector dependency; with a generator and no `.WithPostgresVectors()`, the setup reports it once (stage
+  `Embeddings`). The vector schema is still applied explicitly; without it, retrieval falls back to text, flagged
+  `VectorSearchFailed`, as before.
+- The vector index's request validation now lives in the shared validator both stores compile, so the in-memory and
+  PostgreSQL indexes refuse exactly the same requests; `AiExperienceEmbeddingGenerator` is shared source too, compiled
+  internal into the MAF adapter. Neither changes a public signature.
+- Tests: a new embedding-index conformance suite, passed by both indexes (PostgreSQL in plaintext, encrypted and
+  row-level security modes); matrix tests of the one-call setup over both storages, with a deterministic test generator
+  whose numbers are never reported as quality.
+- Benchmark: the retrieval benchmark has an opt-in hybrid column (text vs text plus vectors, in memory, merged by Core's
+  own merge rule, with the setup's default floor), run only when
+  `AGENTEXPERIENCE_RETRIEVALQUALITY_EMBEDDINGS` names a provider (`openai`, any OpenAI-compatible endpoint, or `azure`);
+  otherwise it says it was skipped. CI needs no key, and the checked-in goldens are text-only and unchanged. No
+  improvement figure is claimed until a run against a real embedding model is committed.
+- Docs: a "Semantic retrieval" section in the README, the one-call path first in the
+  [indexing guide](docs/guide/indexing.md#with-the-one-call-setup), and the deployment guide.
 
 ## 0.1.0-preview.11
 

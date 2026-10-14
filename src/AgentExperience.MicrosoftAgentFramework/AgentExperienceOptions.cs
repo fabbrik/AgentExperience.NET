@@ -381,6 +381,72 @@ public sealed class AgentExperienceOptions
     /// </summary>
     public bool ContradictOnFailure { get; set; }
 
+    /// <summary>
+    /// Whether retrieval also matches by meaning, through the <c>Microsoft.Extensions.AI</c>
+    /// <c>IEmbeddingGenerator&lt;string, Embedding&lt;float&gt;&gt;</c> the container has. Defaults to
+    /// <see cref="AgentExperienceEmbeddings.Auto"/>: semantic retrieval when there is one, text-only when there is not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When it is in use, each stored lesson's sanitized summary (its task ID, task summary and lesson, nothing else) is
+    /// embedded once it is committed, and each task text is embedded at retrieval; a lesson then matches when either its
+    /// words or its meaning do. The generator is resolved from the container when the setup is first used, so it may be
+    /// registered before or after <c>AddAgentExperience</c>. It must report its model ID and dimension
+    /// (<c>EmbeddingGeneratorMetadata</c>), because every stored vector is stamped with both. The storage must have an
+    /// embedding index: <c>UseInMemoryStorageForDevelopment()</c> has one; PostgreSQL needs <c>.WithPostgresVectors()</c>
+    /// (package <c>AgentExperience.Storage.Postgres.Vectors</c>) and its vector schema.
+    /// </para>
+    /// <para>
+    /// A vector match counts only at or above <see cref="MinimumSemanticSimilarity"/>. A generator that throws or times
+    /// out never fails a run: that retrieval answers from the text channel alone and says
+    /// so (<see cref="ExperienceInjectionResult.VectorFallback"/>), and that lesson's indexing reports the failure on the
+    /// finalization result. Under <see cref="AgentExperienceEmbeddings.Auto"/>, a generator the setup cannot use (no
+    /// embedding index in the storage, or no model ID or dimension) leaves retrieval text-only and is reported once,
+    /// through <see cref="ExperienceCaptureOptions.OnCaptureFailure"/> at stage
+    /// <see cref="ExperienceCaptureFailureStage.Embeddings"/>, when the first agent is built with <c>UseAgentExperience</c>.
+    /// </para>
+    /// <para>
+    /// An <c>IExperienceEmbeddingGenerator</c> the host registered itself (unkeyed) is used as it is, after the same model
+    /// ID and dimension check; an <c>ExperienceIndexingService</c> or <c>IExperienceEmbeddingIndex</c> registered first is
+    /// kept. <see cref="EmbeddingGeneratorKey"/> picks a keyed generator instead. Each container decides for itself.
+    /// </para>
+    /// <para>
+    /// <b>Re-indexing.</b> Only records committed while semantic retrieval is on are embedded. To embed records stored
+    /// before (or while the provider was down), run a pass over the container's own index and generator:
+    /// <c>new ExperienceIndexingService(provider.GetRequiredService&lt;IExperienceEmbeddingIndex&gt;(), new AiExperienceEmbeddingGenerator(generator), provider.GetService&lt;RetrievalPolicy&gt;()).ReindexAsync(authorization, new ReindexExperienceRequest(scope))</c>
+    /// (<c>AiExperienceEmbeddingGenerator</c> is in <c>AgentExperience.Storage.Postgres.Vectors</c>), repeating it from the
+    /// result's <c>LastExaminedId</c> until that is <see langword="null"/>. Unchanged records are skipped without a provider call.
+    /// Vectors are stamped with the model ID, so after a model change every stored vector is incomparable: retrieval
+    /// reports <c>ModelMismatch</c> and answers from text alone until a re-index pass has embedded the scope again.
+    /// </para>
+    /// <para>
+    /// <b>Behaviour change.</b> A container that already had a generator starts sending task texts and lesson summaries to
+    /// it when this setup is upgraded; set this to <see cref="AgentExperienceEmbeddings.Off"/> to keep it from doing so.
+    /// </para>
+    /// </remarks>
+    public AgentExperienceEmbeddings Embeddings { get; set; } = AgentExperienceEmbeddings.Auto;
+
+    /// <summary>
+    /// The smallest cosine similarity, in [-1, 1], between a task text and a lesson for the lesson to be a candidate
+    /// through the vector channel. Defaults to <see cref="DefaultMinimumSemanticSimilarity"/>. A lesson the words found is
+    /// kept whatever its similarity. Without a floor, the vector channel would return the nearest lessons however
+    /// unrelated (real models score unrelated pairs well above zero), so a task with nothing relevant would still be shown
+    /// some. Raise it for a stricter match; <c>-1</c> turns the floor off.
+    /// </summary>
+    public double MinimumSemanticSimilarity { get; set; } = DefaultMinimumSemanticSimilarity;
+
+    /// <summary>The default <see cref="MinimumSemanticSimilarity"/>: 0.5.</summary>
+    public const double DefaultMinimumSemanticSimilarity = 0.5;
+
+    /// <summary>
+    /// The service key of the <c>IEmbeddingGenerator&lt;string, Embedding&lt;float&gt;&gt;</c> to use, for a container that
+    /// registers its generators keyed (<c>AddKeyedEmbeddingGenerator</c>) or holds more than one.
+    /// <see langword="null"/> (the default) uses the unkeyed registration. When set, a host's own unkeyed
+    /// <c>IExperienceEmbeddingGenerator</c> is not used, and a key that names no generator is reported like any other
+    /// unusable generator.
+    /// </summary>
+    public object? EmbeddingGeneratorKey { get; set; }
+
     /// <summary>Throws when the options cannot work.</summary>
     internal void Validate()
     {
@@ -421,7 +487,41 @@ public sealed class AgentExperienceOptions
                 nameof(ContradictOnFailure));
         }
 
+        if (!Enum.IsDefined(Embeddings))
+        {
+            throw new ArgumentOutOfRangeException(nameof(Embeddings), Embeddings, $"{nameof(AgentExperienceOptions)}.{nameof(Embeddings)} is not a defined {nameof(AgentExperienceEmbeddings)}.");
+        }
+
+        if (!double.IsFinite(MinimumSemanticSimilarity) || MinimumSemanticSimilarity is < -1d or > 1d)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MinimumSemanticSimilarity), MinimumSemanticSimilarity, $"{nameof(AgentExperienceOptions)}.{nameof(MinimumSemanticSimilarity)} must be a cosine similarity between -1 and 1.");
+        }
+
         ArgumentNullException.ThrowIfNull(Sanitization, nameof(Sanitization));
         ArgumentNullException.ThrowIfNull(CaptureLimits, nameof(CaptureLimits));
     }
+}
+
+/// <summary>
+/// Whether the one-call setup retrieves by meaning as well as by words. See <see cref="AgentExperienceOptions.Embeddings"/>.
+/// </summary>
+public enum AgentExperienceEmbeddings
+{
+    /// <summary>
+    /// The default. Semantic retrieval when the container has a <c>Microsoft.Extensions.AI</c> embedding generator and the
+    /// storage an embedding index; text-only, exactly as without this option, when there is no generator. A generator that
+    /// cannot be used is reported once and retrieval stays text-only.
+    /// </summary>
+    Auto,
+
+    /// <summary>Text-only, whatever generator the container has. The setup registers nothing for embeddings.</summary>
+    Off,
+
+    /// <summary>
+    /// Semantic retrieval, or nothing: building an agent with <c>UseAgentExperience</c>, or resolving the context provider,
+    /// throws <see cref="InvalidOperationException"/> when there is no generator, it cannot be used, or the storage has no
+    /// embedding index. A generator that fails on one call still only makes that call text-only.
+    /// </summary>
+    Required,
 }

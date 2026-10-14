@@ -37,6 +37,41 @@ internal static class RetrievalQualityRun
         IExperienceCandidateSource source,
         CancellationToken cancellationToken = default)
     {
+        var (authorization, queryScope) = await SeedAsync(corpus, store, cancellationToken);
+
+        var byExperienceId = corpus.Records.ToDictionary(r => r.ExperienceId, r => r.Id);
+        var outcomes = new List<QueryOutcome>();
+        foreach (var query in corpus.Queries)
+        {
+            var result = await source.SearchAsync(
+                authorization,
+                new ExperienceCandidateQuery(queryScope, query.Text, ExperienceStatuses.EligibleForReuse, MinimumConfidence, Limit),
+                cancellationToken);
+            if (result.Outcome != ExperienceStoreOutcome.Found)
+            {
+                throw new InvalidOperationException(
+                    $"Query {query.Id} returned {result.Outcome}: {string.Join("; ", result.Errors.Select(e => $"{e.Path}: {e.Message}"))}");
+            }
+
+            outcomes.Add(new QueryOutcome(
+                query,
+                [.. result.Candidates.Select(c => byExperienceId.TryGetValue(c.Record.ExperienceId, out var id)
+                    ? id
+                    : throw new InvalidOperationException($"Query {query.Id} returned {c.Record.ExperienceId}, which is not a corpus record."))]));
+        }
+
+        return new RetrievalQualityResult(adapter, corpus, outcomes);
+    }
+
+    /// <summary>
+    /// Seeds <paramref name="corpus"/> into a fresh tenant of <paramref name="store"/>: query-scope records into the scope
+    /// every query searches, the rest into a sibling project. Returns the authorization and the query scope.
+    /// </summary>
+    public static async Task<(AuthorizationContext Authorization, Scope QueryScope)> SeedAsync(
+        RetrievalCorpus corpus,
+        IExperienceRecordStore store,
+        CancellationToken cancellationToken = default)
+    {
         var tenant = ConformanceData.NewTenant();
         var authorization = ConformanceData.Authorize(tenant);
         var queryScope = ConformanceData.Scope(tenant);
@@ -62,27 +97,6 @@ internal static class RetrievalQualityRun
             }
         }
 
-        var byExperienceId = corpus.Records.ToDictionary(r => r.ExperienceId, r => r.Id);
-        var outcomes = new List<QueryOutcome>();
-        foreach (var query in corpus.Queries)
-        {
-            var result = await source.SearchAsync(
-                authorization,
-                new ExperienceCandidateQuery(queryScope, query.Text, ExperienceStatuses.EligibleForReuse, MinimumConfidence, Limit),
-                cancellationToken);
-            if (result.Outcome != ExperienceStoreOutcome.Found)
-            {
-                throw new InvalidOperationException(
-                    $"Query {query.Id} returned {result.Outcome}: {string.Join("; ", result.Errors.Select(e => $"{e.Path}: {e.Message}"))}");
-            }
-
-            outcomes.Add(new QueryOutcome(
-                query,
-                [.. result.Candidates.Select(c => byExperienceId.TryGetValue(c.Record.ExperienceId, out var id)
-                    ? id
-                    : throw new InvalidOperationException($"Query {query.Id} returned {c.Record.ExperienceId}, which is not a corpus record."))]));
-        }
-
-        return new RetrievalQualityResult(adapter, corpus, outcomes);
+        return (authorization, queryScope);
     }
 }

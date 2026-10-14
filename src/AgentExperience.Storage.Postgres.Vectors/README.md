@@ -26,6 +26,25 @@ text-only host never takes a vector or model-provider dependency.
 
 ## Setting it up
 
+With the one-call setup (`AgentExperience.MicrosoftAgentFramework`), add `.WithPostgresVectors()` after `UsePostgres`
+and register any `Microsoft.Extensions.AI` `IEmbeddingGenerator<string, Embedding<float>>` that reports its model ID
+and dimension; the setup embeds each stored lesson and retrieves by meaning as well as by words. Apply the vector
+schema as below.
+
+```csharp
+// OpenAI's generator reports its width only when given it (Microsoft.Extensions.AI.OpenAI):
+services.AddEmbeddingGenerator(openAIClient.GetEmbeddingClient("text-embedding-3-small").AsIEmbeddingGenerator(1536));
+services.AddAgentExperience(options => { /* identity and Verify */ })
+    .UsePostgres(appConnectionString)
+    .WithPostgresVectors();
+```
+
+A generator that reports no dimension (or no model ID) is not used: retrieval stays text-only and the setup reports it
+once, through `OnCaptureFailure`. Records stored before, or under another model, need a re-index pass (the indexing
+guide has the snippet); until then they match by their words only.
+
+With the explicit wiring:
+
 ```csharp
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Storage.Postgres.DependencyInjection;

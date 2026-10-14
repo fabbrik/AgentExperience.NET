@@ -25,6 +25,8 @@
     <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
     <!-- Waits until a statement is really parked on a lock, instead of sleeping (story 19.3). -->
     <Compile Include="..\Shared\PostgresLockWait.cs" Link="Shared\PostgresLockWait.cs" />
+    <!-- Story 21.3: a deterministic embedding generator, for the one-call setup's semantic retrieval wiring. -->
+    <Compile Include="..\Shared\ConceptEmbeddingGenerator.cs" Link="Shared\ConceptEmbeddingGenerator.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,6 +41,10 @@
     <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres.Vectors\AgentExperience.Storage.Postgres.Vectors.csproj" />
+    <!-- The one-call setup's .WithPostgresVectors() path, end to end, and the embedding-index conformance suite the
+         in-memory index passes too. -->
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <ProjectReference Include="..\AgentExperience.Storage.Conformance\AgentExperience.Storage.Conformance.csproj" />
   </ItemGroup>
 
 </Project>

@@ -16,6 +16,11 @@
          PostgreSQL golden only. Text search needs nothing pgvector provides, so the stock image is enough. Same pin as
          AgentExperience.Sample.EndToEnd.Tests. -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="[4.15.0]" />
+    <!-- The opt-in hybrid column's real embedding provider (any OpenAI-compatible endpoint, or Azure OpenAI's v1
+         endpoint), exact-pinned like the live experiment's and only in a test project: src/ never takes a provider
+         package. 10.10.0 depends on Microsoft.Extensions.AI.Abstractions 10.10.0, the shipping floor. It is used only
+         when AGENTEXPERIENCE_RETRIEVALQUALITY_EMBEDDINGS names a provider; the default run makes no network call. -->
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="[10.10.0]" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +28,8 @@
          made from, and the PostgreSQL major this run starts (story 6.3). -->
     <Compile Include="..\AgentExperience.Storage.Conformance\ConformanceData.cs" Link="Shared\ConformanceData.cs" />
     <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+    <!-- The deterministic generator the offline hybrid test runs the plumbing with; never a quality measure. -->
+    <Compile Include="..\Shared\ConceptEmbeddingGenerator.cs" Link="Shared\ConceptEmbeddingGenerator.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +40,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <!-- The hybrid column merges the channels with Core's own merge rule (internal, visible to this project). -->
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+    <!-- The hybrid column adapts a Microsoft.Extensions.AI generator with the package's own public adapter. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres.Vectors\AgentExperience.Storage.Postgres.Vectors.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -24,6 +24,12 @@ public static class AgentExperienceServiceCollectionExtensions
     /// <see cref="ExperienceContextProvider"/>, each with <c>TryAdd</c>, so a service the host registered first is kept.
     /// </para>
     /// <para>
+    /// When the container has a <c>Microsoft.Extensions.AI</c> <c>IEmbeddingGenerator&lt;string, Embedding&lt;float&gt;&gt;</c>,
+    /// registered before or after this call, retrieval is also semantic: the generator, adapted, embeds each task text, and
+    /// finalization embeds each committed record. Without one, retrieval is text-only, as before. See
+    /// <see cref="AgentExperienceOptions.Embeddings"/>.
+    /// </para>
+    /// <para>
     /// The storage is chosen on the returned builder. Without one, building an agent with <c>UseAgentExperience</c> or
     /// resolving the context provider throws <see cref="InvalidOperationException"/> naming the choices. PostgreSQL
     /// migrations stay an explicit step for the database owner role; nothing here migrates a schema.
@@ -82,9 +88,18 @@ public static class AgentExperienceServiceCollectionExtensions
             services.TryAddSingleton(clock);
         }
 
-        services.AddAgentExperienceCore(options.Sanitization, options.CaptureLimits);
+        // One decision about embeddings per container. Core is handed its indexing service and vector channel through
+        // its own constructors, so nothing registered here ever resolves to null.
+        services.AddSingleton(provider => new AgentExperienceEmbeddingsRuntime(options, provider));
+        services.AddAgentExperienceCoreWithIndexing(
+            options.Sanitization,
+            options.CaptureLimits,
+            provider => provider.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Indexing());
         ApplyFinalizationOptions(services, options);
-        services.AddAgentExperienceRetrieval();
+        services.AddAgentExperienceRetrievalWithVectorChannel(
+            policy: null,
+            weights: null,
+            provider => provider.GetRequiredService<AgentExperienceEmbeddingsRuntime>().VectorChannel());
         services.TryAddSingleton(provider => AgentExperienceRegistration.From(provider).CreateContextProvider(provider));
         services.TryAddSingleton<AgentExperienceLifetimes>();
 

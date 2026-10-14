@@ -15,9 +15,17 @@ public static class AgentExperienceInMemoryBuilderExtensions
     /// guarantees apply.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The same guard applies: the stores refuse to run outside a <c>Development</c>, <c>Test</c> or <c>Testing</c>
     /// environment unless <see cref="InMemoryStorageOptions.AllowProductionEnvironment"/> is set, and registering them
     /// beside another record store throws.
+    /// </para>
+    /// <para>
+    /// It also registers an in-memory embedding index (exact cosine search, behind the same guard), unless an
+    /// <see cref="IExperienceEmbeddingIndex"/> is already registered. It is used only when the container also has a
+    /// <c>Microsoft.Extensions.AI</c> embedding generator: then the one-call setup embeds each stored lesson and
+    /// retrieves by meaning as well as by words. Without a generator, retrieval is text-only, exactly as before.
+    /// </para>
     /// </remarks>
     /// <typeparam name="TBuilder">The builder <c>AddAgentExperience</c> returned.</typeparam>
     /// <param name="builder">The builder <c>AddAgentExperience</c> returned.</param>
@@ -39,6 +47,7 @@ public static class AgentExperienceInMemoryBuilderExtensions
         }
 
         builder.Services.AddAgentExperienceInMemoryStorageForDevelopment(configure);
+        AgentExperienceInMemoryServiceCollectionExtensions.AddInMemoryEmbeddingIndex(builder.Services);
         return builder;
     }
 }

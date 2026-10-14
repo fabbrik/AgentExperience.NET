@@ -374,6 +374,20 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         }
     }
 
+    /// <summary>
+    /// Runs <paramref name="action"/> under the store's lock, over every stored record keyed by ID, for the embedding
+    /// index over this store: a conditional index write checks a record's scope and revision and stores its vector as
+    /// one atomic step, so no commit can land between the two. <paramref name="action"/> must not call back into the
+    /// store, and must not keep the dictionary.
+    /// </summary>
+    internal T Locked<T>(Func<IReadOnlyDictionary<Guid, ExperienceRecord>, T> action)
+    {
+        lock (_gate)
+        {
+            return action(_records);
+        }
+    }
+
     private ExperienceRecordGetResult Read(Scope scope, Guid experienceId) =>
         TryGetInScope(scope, experienceId, out var record)
             ? new(ExperienceStoreOutcome.Found, record, NoErrors)

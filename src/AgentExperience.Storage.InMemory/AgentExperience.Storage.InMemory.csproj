@@ -33,6 +33,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The embedding index is internal (registered by UseInMemoryStorageForDevelopment); its contract tests and the
+         retrieval benchmark's hybrid column construct it directly. -->
+    <InternalsVisibleTo Include="AgentExperience.Storage.InMemory.Tests" />
+    <InternalsVisibleTo Include="AgentExperience.RetrievalQuality" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
