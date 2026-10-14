@@ -111,8 +111,29 @@ def server() -> Iterator[Server]:
         from testcontainers.postgres import PostgresContainer
 
     major = os.environ.get("AGENTEXPERIENCE_POSTGRES_MAJOR") or "16"
-    with PostgresContainer(f"postgres:{major}", username="postgres", password="postgres", dbname="postgres") as pg:
+    image = _apply_hub_image_prefix(f"postgres:{major}")
+    with PostgresContainer(image, username="postgres", password="postgres", dbname="postgres") as pg:
         yield Server(pg.get_container_host_ip(), int(pg.get_exposed_port(5432)), "postgres", "postgres")
+
+
+def _apply_hub_image_prefix(image: str) -> str:
+    """
+    ``image`` with ``TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX`` applied here rather than by testcontainers-python.
+
+    testcontainers-python (4.x) prepends the prefix to every image it starts, the Reaper's (Ryuk) included, but
+    recognises the Reaper by comparing that prefixed name with the unprefixed ``ryuk_image`` setting. With a prefix
+    they never match, so starting the Reaper starts another Reaper, without end, until a ``RecursionError``. CI sets
+    the prefix (a Docker Hub mirror), so this moves it into the two image names the tests use, the Reaper's and
+    PostgreSQL's, and clears it: the Reaper then starts once and removes every container when the session ends.
+    """
+    from testcontainers.core.config import testcontainers_config
+
+    prefix = testcontainers_config.hub_image_name_prefix
+    if not prefix:
+        return image
+    testcontainers_config.hub_image_name_prefix = ""
+    testcontainers_config.ryuk_image = prefix + testcontainers_config.ryuk_image
+    return prefix + image
 
 
 def prepare_roles(admin: Server) -> None:
