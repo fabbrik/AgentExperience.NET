@@ -26,6 +26,9 @@ internal enum SanitizationFailureReason
 
     /// <summary>The composed <see cref="Microsoft.Extensions.Compliance.Redaction.Redactor"/> threw while redacting a secret-classified value.</summary>
     RedactorFailed,
+
+    /// <summary>A number is NaN or an infinity, or is a JSON number beyond a double's range: it could be stored but never written as JSON again, so it is refused rather than captured.</summary>
+    NonFiniteNumber,
 }
 
 /// <summary>

@@ -1,7 +1,8 @@
 {
-  "contractVersion": "1.1",
+  "contractVersion": "1.2",
   "files": {
     "README-1.1.md": "eb7c3a0ec370ec5370aae110a57701d1818d70348f9eef1d88e73442b05398aa",
+    "README-1.2.md": "71948ff812426e85ebe3cc849025db6b8e6a959eb34fd8e10bd4757ea4065d94",
     "README.md": "0a2a234943ff9647cbd1d42260d31cccbe7063f5536864c71fd5bf77ef5eb99f",
     "fixtures/encoding/cases.json": "d3ac5a968bc8912a19bacedebf9fe40aa20236573a758aeaec64dfc730c0868d",
     "fixtures/error-class/cases-1.1.json": "03be8a68260f6afdd6a2f8d34398c845a1283ab1a1d088dddbc2f502dccf6d5f",
@@ -10,6 +11,10 @@
     "fixtures/finalize/allowlisted-argument-values/expected-event.json": "703132769707a766bfcad9391a2d5ecddd359b193bd49bc7d74f30a0792b470f",
     "fixtures/finalize/allowlisted-argument-values/expected-record.json": "41189b6a66eee300eeb63f5ee02fec65fe8a960561b1b63d112d04d9142f873c",
     "fixtures/finalize/allowlisted-argument-values/input.json": "c81bf6414fb60d5db3196c45a145fa0f7fdfb209ee219d48592ece4a6e93da7f",
+    "fixtures/finalize/argument-numbers-beyond-double-range/expected-capture.json": "28a56c6de9c3368443f77c52301d10748b533ab6c208726dc21fda3a26fb4d30",
+    "fixtures/finalize/argument-numbers-beyond-double-range/expected-event.json": "4b6111e0de1c120a6807a42d4f582d2035a8a32175fe8d0b8c2afb64d8968f96",
+    "fixtures/finalize/argument-numbers-beyond-double-range/expected-record.json": "1d5941b3a3dac3027730c7e07f38be5e3fd034947b8c86e21598d4d0f437792d",
+    "fixtures/finalize/argument-numbers-beyond-double-range/input.json": "7e4b1e4611f07a51022e468b4a10ee0247177fa4f38ee162f716571ec51d1e38",
     "fixtures/finalize/argument-numbers/expected-capture.json": "fc1631ceeba95436be8118472623ef223602800a9c8a96a8271f6574fcfd9419",
     "fixtures/finalize/argument-numbers/expected-event.json": "232d53e75c1c07ef23c0e00b9705a3d3ee12ff78eb5e6164307deb737e8be94b",
     "fixtures/finalize/argument-numbers/expected-record.json": "231291c65f96b2f8837b77406c8b711b337d0ac8612632080cf2122c0daeb068",

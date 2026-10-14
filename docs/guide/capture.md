@@ -107,6 +107,16 @@ host is told the decision and why, and can correct and resubmit the same attempt
 so a corrected resubmission succeeds. Unsafe content therefore never reaches an Experience Record, and never becomes
 something a grant could later share.
 
+Content is rejected when it breaks a limit (depth, field count, value or field-name length), uses `.`, `[` or `]` in
+a field name, or holds a number that JSON cannot carry. That last case covers an allowlisted value that is a `double`,
+`float`, `Half`, `NFloat` or `Complex` holding NaN or an infinity, or a `JsonElement` number beyond a double's range
+(such as `1e400`, or an integer literal that rounds past `double.MaxValue`). A record holding such a number could be
+stored but never written as JSON again. The reason names the field's path, never its value. A secret-named field
+holding one is still redacted without being read, and a field that is not allowlisted is still dropped. Other value
+types (integers, `bool`, `decimal`, `Guid`, dates, enums, and your own structs) are kept as opaque leaves, unexamined:
+a custom struct that holds a non-finite number is not detected, so allowlist only fields whose shape you know. If you
+supply your own `ISanitizer`, it must refuse non-finite numbers too, or a record that cannot round-trip can be stored.
+
 Sanitization is name-based: it cannot guarantee that every arbitrary secret hiding in free text is detected. See
 `DefaultSanitizer`.
 

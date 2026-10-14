@@ -47,7 +47,12 @@ namespace AgentExperience.Core.Sanitization;
 /// through unexamined -- it is omitted, exactly like an unknown field name, because an unexamined
 /// shape could carry an unclassified secret sub-value; a value-typed leaf (numeric, boolean,
 /// <see cref="Guid"/>, <see cref="DateTimeOffset"/>, an enum, ...) is atomic and opaque, so it
-/// passes through safely.
+/// passes through safely. A number is the exception: a <see cref="double"/>, <see cref="float"/>,
+/// <see cref="Half"/>, <see cref="System.Runtime.InteropServices.NFloat"/> or
+/// <see cref="System.Numerics.Complex"/> that is NaN or an infinity, or a <see cref="JsonElement"/>
+/// number beyond a double's range, rejects the whole payload fail-closed, because a stored record
+/// could hold it but could never be written as JSON again. A custom struct is not looked into, so
+/// one that holds a non-finite number is not detected.
 /// </para>
 /// </remarks>
 public sealed class DefaultSanitizer : ISanitizer
@@ -290,7 +295,10 @@ public sealed class DefaultSanitizer : ISanitizer
                 if (value.GetType().IsValueType)
                 {
                     // A value-type leaf (numeric, bool, Guid, DateTimeOffset, enum, a custom
-                    // struct, ...): opaque and atomic, safe to pass through unexamined.
+                    // struct, ...): opaque and atomic, safe to pass through unexamined -- except a
+                    // non-finite floating-point number, which a record could hold but JSON cannot
+                    // carry, so it is refused fail-closed rather than stored.
+                    EnsureFinite(value, kind, path);
                     sanitizedValue = value;
                     return true;
                 }
@@ -351,8 +359,20 @@ public sealed class DefaultSanitizer : ISanitizer
                 sanitizedValue = json;
                 return true;
 
+            case JsonValueKind.Number:
+                // A JSON number beyond a double's range would read back as an infinity that
+                // cannot be written as JSON again, so it is refused fail-closed. An integer
+                // beyond 64 bits that a double holds finitely is kept as written.
+                if (!json.TryGetDouble(out var number) || !double.IsFinite(number))
+                {
+                    throw new SanitizationFailureException(kind, SanitizationFailureReason.NonFiniteNumber, path);
+                }
+
+                sanitizedValue = json;
+                return true;
+
             default:
-                // Number/True/False/Null/Undefined: an opaque JSON scalar leaf, passed through as-is.
+                // True/False/Null/Undefined: an opaque JSON scalar leaf, passed through as-is.
                 sanitizedValue = json;
                 return true;
         }
@@ -453,6 +473,30 @@ public sealed class DefaultSanitizer : ISanitizer
         if (depth > policy.MaxDepth)
         {
             throw new SanitizationFailureException(kind, SanitizationFailureReason.DepthLimitExceeded, fieldPath);
+        }
+    }
+
+    /// <summary>
+    /// Rejects fail-closed a <see cref="double"/>, <see cref="float"/>, <see cref="Half"/>,
+    /// <see cref="System.Runtime.InteropServices.NFloat"/> or <see cref="System.Numerics.Complex"/> that is NaN or an
+    /// infinity (either part, for a complex number); the failure names the path, never the value. Any other value type
+    /// passes unexamined: a custom struct that holds a non-finite number is not detected.
+    /// </summary>
+    private static void EnsureFinite(object value, string kind, string fieldPath)
+    {
+        var finite = value switch
+        {
+            double d => double.IsFinite(d),
+            float f => float.IsFinite(f),
+            Half h => Half.IsFinite(h),
+            System.Runtime.InteropServices.NFloat n => System.Runtime.InteropServices.NFloat.IsFinite(n),
+            System.Numerics.Complex c => System.Numerics.Complex.IsFinite(c),
+            _ => true,
+        };
+
+        if (!finite)
+        {
+            throw new SanitizationFailureException(kind, SanitizationFailureReason.NonFiniteNumber, fieldPath);
         }
     }
 
