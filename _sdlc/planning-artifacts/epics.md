@@ -2161,10 +2161,14 @@ Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview sin
 
 **Acceptance Criteria:** **Given** the .NET implementation **When** the contract is written **Then** the stored record format, the injection block layout and its sanitization rules, and the search-function calls are specified independently of .NET, with conformance fixtures (record JSON, expected blocks) generated from the .NET golden tests, which every port must pass.
 
-### Story 22.2: Python Capture and Injection
+### Story 22.2: Python Core That Passes the Contract
 
-**Acceptance Criteria:** **Given** a Python MAF agent **When** it uses the Python package against the shared PostgreSQL schema **Then** it captures, verifies with built-in verifiers, stores and injects lessons that pass the 22.1 fixtures. A lesson written by .NET is injected by Python and vice versa.
+**Acceptance Criteria:** **Given** the contract (22.1) **When** the Python package's conformance tests run **Then** every finalize, inject, task-text, error-class and search fixture is reproduced exactly. That covers records, sanitization, the deterministic reflector, the block renderer, task-text derivation, and PostgreSQL storage and text search through the contract's SQL. Records the package writes validate against the schema and round-trip through the .NET store. The package runs on supported CPython versions in CI against PostgreSQL 15–18. No MAF dependency in this story.
 
-### Story 22.3: Go Capture and Injection
+### Story 22.3: Python MAF Capture and Injection
 
-**Acceptance Criteria:** As 22.2, for the Go SDK.
+**Acceptance Criteria:** **Given** a Python MAF agent **When** it uses the package's context provider and capture middleware with a built-in verifier **Then** it captures, verifies, stores and injects lessons through the 22.2 core. A lesson written by .NET is injected by Python and vice versa, and a runnable sample mirrors the .NET quick start.
+
+### Story 22.4: Go Capture and Injection
+
+**Acceptance Criteria:** As 22.2 and 22.3, for the Go SDK.
