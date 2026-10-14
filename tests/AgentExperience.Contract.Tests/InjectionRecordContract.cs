@@ -163,43 +163,47 @@ internal static class InjectionRecordContract
     public static JsonObject ToStepsJson(InjectionRecordCase definition) => new()
     {
         ["description"] = definition.Description,
-        ["steps"] = new JsonArray([.. definition.Steps.Select(step => (JsonNode)(step switch
+        ["steps"] = new JsonArray([.. definition.Steps.Select(step => (JsonNode)StepJson(step))]),
+    };
+
+    /// <summary>One step as <c>steps.json</c> holds it: <c>{"record": ...}</c> or <c>{"erase": ...}</c>.</summary>
+    public static JsonObject StepJson(InjectionStep step) => step switch
+    {
+        RecordInjectionStep record => new JsonObject
         {
-            RecordInjectionStep record => new JsonObject
+            ["record"] = new JsonObject
             {
-                ["record"] = new JsonObject
-                {
-                    ["scope"] = JsonSerializer.SerializeToNode(record.Scope, ContractJson.Options),
-                    ["experienceIds"] = new JsonArray([.. record.ExperienceIds.Select(id => (JsonNode)Id(id))]),
-                    ["injectedAt"] = ContractJson.Timestamp(record.InjectedAt),
-                },
+                ["scope"] = JsonSerializer.SerializeToNode(record.Scope, ContractJson.Options),
+                ["experienceIds"] = new JsonArray([.. record.ExperienceIds.Select(id => (JsonNode)Id(id))]),
+                ["injectedAt"] = ContractJson.Timestamp(record.InjectedAt),
             },
-            EraseStep erase => new JsonObject
+        },
+        EraseStep erase => new JsonObject
+        {
+            ["erase"] = new JsonObject
             {
-                ["erase"] = new JsonObject
-                {
-                    ["experienceId"] = Id(erase.ExperienceId),
-                    ["scope"] = JsonSerializer.SerializeToNode(erase.Scope, ContractJson.Options),
-                    ["deletedAt"] = ContractJson.Timestamp(erase.DeletedAt),
-                },
+                ["experienceId"] = Id(erase.ExperienceId),
+                ["scope"] = JsonSerializer.SerializeToNode(erase.Scope, ContractJson.Options),
+                ["deletedAt"] = ContractJson.Timestamp(erase.DeletedAt),
             },
-            _ => throw new InvalidOperationException($"Unknown step {step}."),
-        }))]),
+        },
+        _ => throw new InvalidOperationException($"Unknown step {step}."),
     };
 
     /// <summary>Reads <c>steps.json</c> back: the steps a runner runs.</summary>
     public static IReadOnlyList<InjectionStep> ReadSteps(JsonNode steps) =>
-    [
-        .. steps["steps"]!.AsArray().Select(step => step!["record"] is { } record
-            ? (InjectionStep)new RecordInjectionStep(
-                ScopeOf(record["scope"]!),
-                [.. record["experienceIds"]!.AsArray().Select(id => Guid.Parse(id!.GetValue<string>()))],
-                Instant(record["injectedAt"]!))
-            : new EraseStep(
-                Guid.Parse(step["erase"]!["experienceId"]!.GetValue<string>()),
-                ScopeOf(step["erase"]!["scope"]!),
-                Instant(step["erase"]!["deletedAt"]!))),
-    ];
+        [.. steps["steps"]!.AsArray().Select(step => ReadStep(step!))];
+
+    /// <summary>Reads one <c>record</c> or <c>erase</c> step back.</summary>
+    public static InjectionStep ReadStep(JsonNode step) => step["record"] is { } record
+        ? new RecordInjectionStep(
+            ScopeOf(record["scope"]!),
+            [.. record["experienceIds"]!.AsArray().Select(id => Guid.Parse(id!.GetValue<string>()))],
+            Instant(record["injectedAt"]!))
+        : new EraseStep(
+            Guid.Parse(step["erase"]!["experienceId"]!.GetValue<string>()),
+            ScopeOf(step["erase"]!["scope"]!),
+            Instant(step["erase"]!["deletedAt"]!));
 
     /// <summary>One row of the table, every column as PostgreSQL's text form.</summary>
     public static JsonObject Row(Guid experienceId, Scope scope, string lastInjectedAt, string injectionCount) => new()
@@ -225,7 +229,7 @@ internal static class InjectionRecordContract
 
     private static string Id(Guid id) => id.ToString("D", CultureInfo.InvariantCulture);
 
-    private static Scope ScopeOf(JsonNode scope) => JsonSerializer.Deserialize<Scope>(scope.ToJsonString(), ContractJson.Options)!;
+    internal static Scope ScopeOf(JsonNode scope) => JsonSerializer.Deserialize<Scope>(scope.ToJsonString(), ContractJson.Options)!;
 
     private static DateTimeOffset Instant(JsonNode value) =>
         DateTimeOffset.Parse(value.GetValue<string>(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);

@@ -145,11 +145,12 @@ public sealed partial class ContractFixtureTests
     [Fact]
     public void Every_search_seed_record_validates_against_the_schema()
     {
-        // The search family's expected rows need PostgreSQL (the PostgreSQL contract test); its seeds do not.
+        // The search and erased families' expected results need PostgreSQL (the PostgreSQL contract tests); their seeds do not.
         var problems = new List<string>();
-        foreach (var (name, _) in SearchContract.Cases)
+        var directories = SearchContract.Cases.Select(entry => $"fixtures/{SearchContract.Family}/{entry.Name}")
+            .Concat(ErasedRecordContract.Cases.Select(entry => $"fixtures/{ErasedRecordContract.Family}/{entry.Name}"));
+        foreach (var directory in directories)
         {
-            var directory = $"fixtures/{SearchContract.Family}/{name}";
             var seed = ContractFiles.Read($"{directory}/seed.json");
             Assert.True(seed is not null, $"{directory}/seed.json is missing; run the PostgreSQL contract tests with {ContractFiles.UpdateVariable}=1.");
             foreach (var (entry, index) in JsonNode.Parse(seed)!.AsArray().Select((entry, index) => (entry, index)))

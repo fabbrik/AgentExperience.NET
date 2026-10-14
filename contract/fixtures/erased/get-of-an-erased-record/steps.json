@@ -1,0 +1,58 @@
+{
+  "description": "A read by ID of an erased record finds nothing, as for an ID that never existed; the record beside it is still found.",
+  "steps": [
+    {
+      "get": {
+        "experienceId": "00000066-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        }
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "00000066-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "get": {
+        "experienceId": "00000066-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        }
+      }
+    },
+    {
+      "get": {
+        "experienceId": "00000066-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        }
+      }
+    }
+  ]
+}

@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.4, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.4. It is published to PyPI as `agentexperience`, the distribution and import name, with every
+**Status: alpha, contract 1.5, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.5. It is published to PyPI as `agentexperience`, the distribution and import name, with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agentexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.

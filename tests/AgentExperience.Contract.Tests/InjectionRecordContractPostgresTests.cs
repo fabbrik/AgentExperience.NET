@@ -146,7 +146,7 @@ public sealed class InjectionRecordContractPostgresTests(ContractPostgresDatabas
     }
 
     /// <summary>The erasure, as the owner, through the one function every erasure path runs.</summary>
-    private static async Task EraseAsync(NpgsqlDataSource owner, EraseStep step)
+    internal static async Task EraseAsync(NpgsqlDataSource owner, EraseStep step)
     {
         await using var command = owner.CreateCommand(
             "SELECT purge_outcome FROM agent_experience.purge_experience_record(@id, @tenant_id, @application_id, @project_id, " +
@@ -163,7 +163,7 @@ public sealed class InjectionRecordContractPostgresTests(ContractPostgresDatabas
         Assert.Equal("Deleted", (string?)await command.ExecuteScalarAsync());
     }
 
-    private static async Task<DateTimeOffset> ClockAsync(NpgsqlDataSource owner)
+    internal static async Task<DateTimeOffset> ClockAsync(NpgsqlDataSource owner)
     {
         await using var command = owner.CreateCommand("SELECT pg_catalog.clock_timestamp()");
         return new DateTimeOffset((DateTime)(await command.ExecuteScalarAsync())!);
@@ -174,7 +174,7 @@ public sealed class InjectionRecordContractPostgresTests(ContractPostgresDatabas
     /// row's instant must lie between the database clock before and after the steps, and is written as
     /// <see cref="InjectionRecordContract.DatabaseClock"/>.
     /// </summary>
-    private static async Task<JsonArray> RowsAsync(NpgsqlDataSource owner, IReadOnlyList<Guid> clamped, DateTimeOffset before, DateTimeOffset after)
+    internal static async Task<JsonArray> RowsAsync(NpgsqlDataSource owner, IReadOnlyList<Guid> clamped, DateTimeOffset before, DateTimeOffset after)
     {
         await using var connection = await owner.OpenConnectionAsync();
         await using (var zone = new NpgsqlCommand("SET TIME ZONE 'UTC'", connection))

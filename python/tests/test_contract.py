@@ -108,9 +108,9 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert check_contract_version(read_json(CONTRACT / "lock.json")) == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.5", None])
+@pytest.mark.parametrize("version", ["2.0", "1.6", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4"):
+    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5"):
         check_contract_version({"contractVersion": version})
 
 
@@ -137,6 +137,7 @@ def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
 def test_every_fixture_family_has_cases() -> None:
     assert {entry.name for entry in FIXTURES.iterdir() if entry.is_dir()} == {
         "encoding",
+        "erased",
         "error-class",
         "finalize",
         "inject",
@@ -144,7 +145,7 @@ def test_every_fixture_family_has_cases() -> None:
         "search",
         "task-text",
     }
-    for family in ("finalize", "inject", "search", "task-text"):
+    for family in ("erased", "finalize", "inject", "record-injection", "search", "task-text"):
         assert cases(family), family
 
 
@@ -295,9 +296,9 @@ def test_error_class(error: str | None, expected: str) -> None:
 # ---- search: the stored records (the search itself needs PostgreSQL) ---------------------------------------------
 
 
-@pytest.mark.parametrize("name", cases("search"))
-def test_search_seed_records_validate_and_read_back(name: str) -> None:
-    for stored in read_json(FIXTURES / "search" / name / "seed.json"):
+@pytest.mark.parametrize("family,name", [(family, name) for family in ("search", "erased") for name in cases(family)])
+def test_search_seed_records_validate_and_read_back(family: str, name: str) -> None:
+    for stored in read_json(FIXTURES / family / name / "seed.json"):
         assert_valid_record(stored)
         assert_json_equal(stored, to_stored(from_stored(stored)), "seed.json read back")
 

@@ -6,6 +6,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Contract 1.5: erased records are never read (story 22.10)
+
+- **Contract 1.5** (add-only: every earlier file is unchanged; [what 1.5 adds](contract/README-1.5.md)) adds a
+  PostgreSQL fixture family, `erased`, generated from .NET: a record erased through `purge_experience_record` is never
+  returned by the search (the next match takes its place), is not found by a read by ID, and gets no row when an
+  injection names it. The .NET store and the contract statements run as written must both give it; the Python and Go
+  ports pass it on their PostgreSQL legs and list 1.0 to 1.5 as supported. No library behaviour changed.
+
 ### Contract 1.4: the Python and Go ports record injections (story 22.9)
 
 - **Contract 1.4** (add-only: every earlier file is unchanged; [what 1.4 adds](contract/README-1.4.md)) publishes the

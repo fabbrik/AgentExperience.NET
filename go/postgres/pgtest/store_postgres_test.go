@@ -267,7 +267,6 @@ func TestSearch(t *testing.T) {
 			seed := ct.MustReadJSON(fixture("search", name, "seed.json")).([]any)
 			query := ct.MustReadJSON(fixture("search", name, "query.json")).(*ae.Object)
 			expected := ct.MustReadJSON(fixture("search", name, "expected.json")).(*ae.Object)
-			get := func(o *ae.Object, key string) any { value, _ := o.Get(key); return value }
 
 			store := newStore(t, admin, createDatabase(t, admin, "search_"+name))
 			seeded := map[string]any{}
@@ -281,70 +280,78 @@ func TestSearch(t *testing.T) {
 				}
 				seeded[record.ExperienceID.String()] = stored
 			}
-
-			parameters := searchParameters(t, query)
-			rows, err := store.Search(ctx, ae.BoundsOf(parameters.Scope), parameters)
-			if err != nil {
-				t.Fatal(err)
-			}
-			actualRows := []any{}
-			for _, row := range rows {
-				actualRows = append(actualRows, ae.NewObject(
-					ae.Member{Key: "experienceId", Value: row.Record.ExperienceID.String()},
-					ae.Member{Key: "relevance", Value: double(t, row.Relevance)},
-				))
-			}
-			expectedRows := get(expected, "rows").([]any)
-			if difference := ct.Difference(expectedRows, actualRows, "$.rows",
-				ct.Options{Tolerance: scoreTolerance}); difference != "" {
-				t.Fatal(difference)
-			}
-			for i, row := range rows {
-				// The relevance is the widened float4, exactly.
-				want, _ := strconv.ParseFloat(string(get(expectedRows[i].(*ae.Object), "relevance").(json.Number)), 64)
-				if row.Relevance != want {
-					t.Fatalf("row %d: relevance %v, want exactly %v", i, row.Relevance, want)
-				}
-				original := seeded[row.Record.ExperienceID.String()]
-				if difference := ct.Difference(original, ct.AsWritten(row.Record.ToStored()), "$",
-					ct.Options{IgnoreKind: true}); difference != "" {
-					t.Fatalf("row %d read back: %s", i, difference)
-				}
-			}
-
-			preferred := map[string]string{}
-			for _, m := range get(query, "preferredEnvironment").(*ae.Object).Members() {
-				preferred[m.Key] = m.Value.(string)
-			}
-			result, err := ae.Rank(rows, parameters.Scope, ae.MustParseInstant(get(query, "now").(string)), preferred,
-				parameters.ExcludeModelAuthored)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if result.Truncated != get(expected, "truncated").(bool) {
-				t.Fatalf("truncated: %v", result.Truncated)
-			}
-			actualRanked := []any{}
-			for _, entry := range result.Ranked {
-				components := []any{}
-				for _, component := range entry.Components {
-					components = append(components, ae.NewObject(
-						ae.Member{Key: "kind", Value: string(component.Kind)},
-						ae.Member{Key: "value", Value: double(t, component.Value)},
-						ae.Member{Key: "weight", Value: double(t, component.Weight)},
-					))
-				}
-				actualRanked = append(actualRanked, ae.NewObject(
-					ae.Member{Key: "experienceId", Value: entry.Record.ExperienceID.String()},
-					ae.Member{Key: "score", Value: double(t, entry.Score)},
-					ae.Member{Key: "components", Value: components},
-				))
-			}
-			if difference := ct.Difference(get(expected, "ranked"), actualRanked, "$.ranked",
-				ct.Options{Tolerance: scoreTolerance}); difference != "" {
-				t.Fatal(difference)
-			}
+			checkSearch(t, store, seeded, query, expected)
 		})
+	}
+}
+
+// checkSearch runs the store's text search for query and ranks it, as a search case's expected.json holds it; each
+// row must read back as seeded holds it.
+func checkSearch(t *testing.T, store *postgres.Store, seeded map[string]any, query, expected *ae.Object) {
+	t.Helper()
+	ctx := context.Background()
+	get := func(o *ae.Object, key string) any { value, _ := o.Get(key); return value }
+	parameters := searchParameters(t, query)
+	rows, err := store.Search(ctx, ae.BoundsOf(parameters.Scope), parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualRows := []any{}
+	for _, row := range rows {
+		actualRows = append(actualRows, ae.NewObject(
+			ae.Member{Key: "experienceId", Value: row.Record.ExperienceID.String()},
+			ae.Member{Key: "relevance", Value: double(t, row.Relevance)},
+		))
+	}
+	expectedRows := get(expected, "rows").([]any)
+	if difference := ct.Difference(expectedRows, actualRows, "$.rows",
+		ct.Options{Tolerance: scoreTolerance}); difference != "" {
+		t.Fatal(difference)
+	}
+	for i, row := range rows {
+		// The relevance is the widened float4, exactly.
+		want, _ := strconv.ParseFloat(string(get(expectedRows[i].(*ae.Object), "relevance").(json.Number)), 64)
+		if row.Relevance != want {
+			t.Fatalf("row %d: relevance %v, want exactly %v", i, row.Relevance, want)
+		}
+		original := seeded[row.Record.ExperienceID.String()]
+		if difference := ct.Difference(original, ct.AsWritten(row.Record.ToStored()), "$",
+			ct.Options{IgnoreKind: true}); difference != "" {
+			t.Fatalf("row %d read back: %s", i, difference)
+		}
+	}
+
+	preferred := map[string]string{}
+	for _, m := range get(query, "preferredEnvironment").(*ae.Object).Members() {
+		preferred[m.Key] = m.Value.(string)
+	}
+	result, err := ae.Rank(rows, parameters.Scope, ae.MustParseInstant(get(query, "now").(string)), preferred,
+		parameters.ExcludeModelAuthored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Truncated != get(expected, "truncated").(bool) {
+		t.Fatalf("truncated: %v", result.Truncated)
+	}
+	actualRanked := []any{}
+	for _, entry := range result.Ranked {
+		components := []any{}
+		for _, component := range entry.Components {
+			components = append(components, ae.NewObject(
+				ae.Member{Key: "kind", Value: string(component.Kind)},
+				ae.Member{Key: "value", Value: double(t, component.Value)},
+				ae.Member{Key: "weight", Value: double(t, component.Weight)},
+			))
+		}
+		actualRanked = append(actualRanked, ae.NewObject(
+			ae.Member{Key: "experienceId", Value: entry.Record.ExperienceID.String()},
+			ae.Member{Key: "score", Value: double(t, entry.Score)},
+			ae.Member{Key: "components", Value: components},
+		))
+	}
+	if difference := ct.Difference(get(expected, "ranked"), actualRanked, "$.ranked",
+		ct.Options{Tolerance: scoreTolerance}); difference != "" {
+		t.Fatal(difference)
 	}
 }
 
