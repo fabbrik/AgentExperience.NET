@@ -19,11 +19,13 @@ Package: `AgentExperience.MicrosoftAgentFramework`. Read the KL-12 boundary in
 
 Under the [one-call setup](deployment.md#the-one-call-setup) the container builds the provider, with a request
 resolver that uses the resolved identity and `DerivedTaskText`, and `UseAgentExperience(provider)` adds it to the agent;
-adjust any option below through the `options.Injection` hook. Added there, at the agent level, the provider sees the
-caller's messages and the agent's default tools, but not the chat history a `ChatClientAgent` replays or a run's own
-tools; also listing `provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders` gives
-it both, and the agent still gets exactly one block (see
-[Injection on the agent, or on its options](deployment.md#injection-on-the-agent-or-on-its-options)).
+adjust any option below through the `options.Injection` hook. Added there, at the agent level, over a
+`ChatClientAgent` the provider sees what it would see on the agent's options: the chat history the agent replays and a
+run's own tools as well as the agent's default ones, so it derives the same task text and gives the same block. Also
+listing `provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders` adds nothing, and
+the agent still gets exactly one block (see
+[Injection on the agent, or on its options](deployment.md#injection-on-the-agent-or-on-its-options), which also says
+what the agent level still does not see).
 
 Wired by hand, you add the provider yourself, through `ChatClientAgentOptions.AIContextProviders` — there is no builder extension,
 because `UseExperienceCapture` never constructs those options, and injection has no DI registration of its own,

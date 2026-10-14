@@ -121,8 +121,9 @@ public static class AgentExperienceServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// Optional with <c>UseAgentExperience</c>, which wires injection at the agent level when the agent was not given
-    /// this provider. On the agent's options the provider also sees the chat history a chat client agent replays and
-    /// the tools a run adds:
+    /// this provider, and over a chat client agent sees there the chat history the agent replays and the tools a run
+    /// adds, as on the agent's options. On the agent's options the provider also sees what another context provider
+    /// there adds, and the history exactly as the agent's reducer and filter present it:
     /// <c>new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [services.GetAgentExperienceContextProvider()] })</c>.
     /// The agent then gets exactly one block either way.
     /// </remarks>

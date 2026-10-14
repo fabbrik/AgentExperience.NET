@@ -155,7 +155,7 @@ The [README quick start](../../README.md#quick-start) is the setup above with a 
   `options.ResolveTaskId` sets another, and an unnamed agent's is `default`); see *The task ID* above.
 - **One block.** `UseAgentExperience` wires capture and injection both; an agent that also lists
   `provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders` still gets exactly one
-  block, and that wiring also lets injection see the replayed chat history and a run's own tools (see
+  block, and over a `ChatClientAgent` either wiring sees the replayed chat history and a run's own tools (see
   [Injection on the agent, or on its options](#injection-on-the-agent-or-on-its-options)).
 - **Nothing throws into the agent.** A slow store or `ResolveIdentity` means no memory for that run, reported through
   `options.Capture` and `options.Injection` callbacks.
@@ -215,13 +215,30 @@ runs, so a lesson is tied to the revision it was verified against.
 `AIAgentBuilder.UseAIContextProviders`, unless the agent already holds any `ExperienceContextProvider` in
 `ChatClientAgentOptions.AIContextProviders` (any one, deliberately, to avoid double injection) or an earlier
 `UseAgentExperience` on the same pipeline already added one; then it adds nothing, and the agent gets exactly one block
-either way. The provider is resolved only when it is added, when the agent is built. The two wirings inject the same block and keep the same session account. What the agent
-level cannot see: the chat history a `ChatClientAgent` replays (so a short follow-up is not joined with an earlier
-turn's request), and the tools a run adds through `ChatClientAgentRunOptions` (with
-`ReceivingAgentCapabilities.UseRunTools`, the capability gate reads the agent's default tools only, and withholds a
-record whose approach calls a run-only tool; an inner agent that is not a `ChatClientAgent` offers the tools it reports
-through `GetService<ChatOptions>()`, and none otherwise). Where either matters, give the agent the provider on its
-options too:
+either way. The provider is resolved only when it is added, when the agent is built. The two wirings inject the same block and keep the same session account. Over a
+`ChatClientAgent` the agent level sees what the agent hands the provider on its options: the chat history the agent
+replays, read the way the agent reads it (so a short follow-up is joined with an earlier turn's request), and the tools
+a run adds through `ChatClientAgentRunOptions` followed by the agent's default tools (so with
+`ReceivingAgentCapabilities.UseRunTools` a run-only tool counts). The derived task text and the block are the same,
+byte for byte. The agent's rules apply: no history is read under a conversation ID, with per-service-call persistence,
+when the agent would refuse the run (a history-provider conflict), or for a continued background response, which gets
+no injection at all, as on the options. With no session the agent starts one, and the read does the same. Differences
+remain:
+
+- The default `InMemoryChatHistoryProvider` is read without side effects, from the messages it stores. A reducer that
+  runs before retrieval is therefore not run a second time, and an output filter is not applied: the join reads the
+  history as stored, not the reduced or filtered view the model gets. The two differ only when the reducer or filter
+  drops the earlier turn the follow-up is joined to, which a reducer that keeps the latest messages does not.
+- Any other history provider is asked the way the agent asks it, so it is read once more per run, with whatever cost
+  or side effect a read has (a remote store, say). That read is bounded at 500 milliseconds and by the caller's
+  cancellation; a read that fails or times out joins nothing, adds no failure to the run, and sets
+  `agentexperience.history_read` on the `inject` span.
+- Messages or tools that another context provider on the agent's options adds, or run options and sessions that
+  middleware between the two replaces, are not seen.
+- An inner agent that is not a `ChatClientAgent` offers the caller's messages only, and the tools it reports through
+  `GetService<ChatOptions>()` (none otherwise).
+
+Where any of that matters, give the agent the provider on its options too:
 
 ```csharp
 AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions

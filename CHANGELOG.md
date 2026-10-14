@@ -6,6 +6,31 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Changed: the single-call wiring sees the chat history and a run's own tools
+
+- **`UseAgentExperience` alone now injects over a `ChatClientAgent` exactly as the provider on the agent's options
+  does.** At the agent level the provider now reads the chat history the agent replays, the way the agent reads it
+  (its `ChatHistoryProvider`, or one a run passes; none under a conversation ID or per-service-call persistence), so a
+  short follow-up such as "and close it" is joined with the earlier turn's request in the derived task text. It also
+  sees the tools a run adds through `ChatClientAgentRunOptions`, followed by the agent's default tools, so with
+  `ReceivingAgentCapabilities.UseRunTools` a lesson whose approach calls a run-only tool is no longer withheld. The
+  derived text and the block equal the explicit wiring's, byte for byte, on MAF 1.22.0 and 1.24.0; a new parity
+  suite runs both wirings over the same scenarios (follow-ups with and without a session, conversation IDs,
+  per-service-call persistence, passed history providers, a reducer, a continued background response, run-only tools,
+  run middleware, streaming). A run that continues a background response now gets no injection at the agent level,
+  as on the options. Behaviour change: an agent wired this way may now get a lesson for a follow-up, or a
+  run-only-tool lesson, it did not get before. The explicit wiring is unchanged.
+- How the history is read: the default `InMemoryChatHistoryProvider` without side effects, from its stored messages,
+  so its reducer is not run twice; with a reducer that runs before retrieval and drops the earlier turn, or an output
+  filter, the join reads the history as stored rather than the model's view. Any other history provider is asked as
+  the agent asks it, so it is read once more per run, bounded at 500 milliseconds and by the caller's cancellation. A
+  read that fails at the agent level only joins nothing; it adds no new failure to the run, and is reported on the
+  `inject` span as `agentexperience.history_read`. Messages or tools another context provider on the agent's options
+  adds are still not seen at the agent level, and an agent that is not a `ChatClientAgent` keeps today's behaviour.
+  Asking a custom history provider uses MAF's `[Experimental]` `ChatHistoryProvider.InvokingContext` constructor,
+  under the one `MAAI001` suppression in the library ([compatibility evidence](docs/compatibility-evidence.md)). No
+  public API changed.
+
 ### Added: Python and Go packages are published with each release
 
 - **Python and Go packages are published with each release**, from the same tag and the same verified commit as the
