@@ -370,6 +370,22 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string TextSearchAnyTermScriptName = "0025_text_search_any_term.sql";
 
+    /// <summary>
+    /// The script that records when each record was last injected, for the lessons view: it creates
+    /// <c>agent_experience.experience_injections</c>, one row per record injected in its own scope with the latest
+    /// instant and a count, which <see cref="PostgresExperienceRecordStore.RecordInjectionAsync"/> upserts once per
+    /// injected block and <see cref="PostgresExperienceRecordStore.QueryWithInjectionsAsync"/> reads back for the lessons
+    /// view; a trigger that deletes a record's row when the record is erased; and the table's row-level security
+    /// policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then the injection adapter reports each write as not recorded and injects anyway, and the
+    /// lessons view reads injections as not tracked. No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceInjectionsScriptName = "0026_experience_injections.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -377,7 +393,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0025</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0026</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -403,6 +419,7 @@ public static class PostgresExperienceRecordSchema
         RecordedOnlyEvidenceScriptName,
         TextSearchFunctionScriptName,
         TextSearchAnyTermScriptName,
+        ExperienceInjectionsScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

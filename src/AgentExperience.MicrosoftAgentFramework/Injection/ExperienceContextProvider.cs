@@ -730,6 +730,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
             ],
         };
 
+        // Story 21.8: when each delivered record was last injected, for the lessons view. One bounded store write that
+        // never fails the injection: whatever it does, the block below is handed over, and a failure is reported on the
+        // result.
+        var notRecorded = injectedRecords
+            ? await RecordInjectionAsync(request, payload.ExperienceIds, cancellationToken).ConfigureAwait(false)
+            : null;
+
         Report(trace, new ExperienceInjectionResult(
             injectedRecords ? InjectionOutcome.Injected : InjectionOutcome.Retracted,
             payload.ExperienceIds,
@@ -745,6 +752,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         {
             RetractedExperienceIds = payload.RetractedExperienceIds,
             Session = session?.Usage(),
+            InjectionNotRecorded = notRecorded,
         });
 
         // The records this block delivers, at the revision each was rendered from, on the run the invocation
@@ -763,6 +771,41 @@ public sealed class ExperienceContextProvider : AIContextProvider
         RecordExposures(context.Agent, delivered);
 
         return injected;
+    }
+
+    /// <summary>
+    /// Records, through the store, that <paramref name="experienceIds"/> were injected now in the request's scope, for
+    /// the lessons view's "last injected", bounded by <see cref="ExperienceInjectionLimits.EligibilityCheckTimeout"/>. Never throws, not even for the
+    /// invocation's own cancellation: the block is built and is handed over whatever happens here.
+    /// </summary>
+    /// <returns>Why it was not recorded, or <see langword="null"/> when it was (or the store does not track injections).</returns>
+    private async Task<InjectionFailure?> RecordInjectionAsync(
+        RetrieveExperienceRequest request,
+        IReadOnlyList<Guid> experienceIds,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(_options.Limits.EligibilityCheckTimeout, _options.TimeProvider);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            var recorded = await _store.RecordInjectionAsync(
+                request.Authorization,
+                request.Scope,
+                experienceIds,
+                _options.TimeProvider.GetUtcNow(),
+                linked.Token).ConfigureAwait(false);
+
+            return recorded?.Outcome switch
+            {
+                ExperienceStoreOutcome.Committed => null,
+                null => new InjectionFailure("The store answered no result when recording the injection; the block was injected anyway.", Exception: null),
+                { } outcome => new InjectionFailure($"The store answered {outcome} when recording the injection; the block was injected anyway.", Exception: null),
+            };
+        }
+        catch (Exception ex)
+        {
+            return new InjectionFailure($"Recording the injection threw {ex.GetType().FullName}; the block was injected anyway.", ex);
+        }
     }
 
     /// <summary>

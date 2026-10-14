@@ -71,6 +71,13 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
   replacement exists in the scope: with no record there is nothing to supersede.
 - `GetManyAsync` answers every position exactly as `GetAsync` would answer it alone. More IDs than its maximum is
   `Invalid`.
+- `RecordInjectionAsync` (story 21.8) counts only records live in exactly the request scope, each once per call
+  however often it is named, moves the last injection only forward, and changes nothing about the record itself. An
+  ID in another scope or one nothing holds is skipped without a word (`Committed`). Over the maximum, an empty ID, an
+  unset instant or a malformed scope is `Invalid`; a scope outside the authorization is `Denied`; neither writes.
+- `QueryWithInjectionsAsync` answers exactly what `QueryAsync` answers, plus an injection summary for every returned
+  record that was injected and none for one that was not, and refuses exactly what `QueryAsync` refuses. A store that
+  keeps the port's default implementations of these two (recording nothing, reading as not tracked) does not pass.
 
 **Candidate source**
 

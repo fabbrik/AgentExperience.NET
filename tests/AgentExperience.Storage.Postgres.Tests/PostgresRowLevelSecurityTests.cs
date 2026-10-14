@@ -22,7 +22,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
     private static readonly string[] CoveredTables =
     [
         "experience_records", "lifecycle_events", "confidence_evidence", "experience_grants", "experience_grant_events",
-        "experience_grant_access", "reuse_feedback", "reuse_feedback_exposures",
+        "experience_grant_access", "reuse_feedback", "reuse_feedback_exposures", "experience_injections",
     ];
 
     // ---------------------------------------------------------------- nothing declared
@@ -126,6 +126,90 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
             ExperienceRecordSql.ScopePredicate);
         Assert.Equal(0, await ExecuteAsync(
             world.App, Authorize(tenantA), brokenUpdate, ("experience_ids", new[] { b }), Scope(tenantA)));
+    }
+
+    // ---------------------------------------------------------------- injections (story 21.8)
+
+    [Fact]
+    public async Task A_broken_injection_statement_is_cut_back_to_the_declared_bounds_and_the_read_sees_only_its_own_rows()
+    {
+        await using var world = await RlsWorldAsync("rls_injections");
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var a = await world.CreateAsync(tenantA, Scope(tenantA));
+        var b = await world.CreateAsync(tenantB, Scope(tenantB));
+        var store = new PostgresExperienceRecordStore(world.App);
+        var at = DateTimeOffset.UtcNow;
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await store.RecordInjectionAsync(Authorize(tenantB), Scope(tenantB), [b], at, CancellationToken.None)).Outcome);
+
+        // The upsert with its exact-scope predicate replaced by "true", run in tenant A's bounds naming both records:
+        // tenant B's record is invisible to it, so only tenant A's row is written, and tenant B's is not touched.
+        var broken = BreakScopePredicate(PostgresExperienceRecordStore.RecordInjectionSql);
+        Assert.Equal(1, await ExecuteAsync(
+            world.App, Authorize(tenantA), broken, [("experience_ids", new[] { a, b }), ("injected_at", at)], Scope(tenantA)));
+        const string CountOf = "SELECT injection_count FROM agent_experience.experience_injections WHERE experience_id = @id";
+        Assert.Equal(1L, await ScalarAsync<long>(world.Owner, null, CountOf, ("id", b)));
+        Assert.Equal(1L, await ScalarAsync<long>(world.Owner, null, CountOf, ("id", a)));
+
+        // Each tenant's bounds see exactly its own row; nothing declared sees none.
+        const string All = "SELECT count(*) FROM agent_experience.experience_injections";
+        Assert.Equal(2L, await ScalarAsync<long>(world.Owner, All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantA), All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantB), All));
+        Assert.Equal(0L, await ScalarAsync<long>(world.App, All));
+
+        // And a hand-written update from tenant A's bounds cannot reach tenant B's row.
+        Assert.Equal(0, await ExecuteAsync(
+            world.App, Authorize(tenantA), "UPDATE agent_experience.experience_injections SET injection_count = injection_count + 1 WHERE experience_id = @id", ("id", b)));
+
+        // The store's read, through the policies, answers each tenant its own summary.
+        var pageA = await store.QueryWithInjectionsAsync(Authorize(tenantA), new ExperienceRecordQuery(Scope(tenantA)), CancellationToken.None);
+        Assert.Equal([a], pageA.Records.Select(r => r.ExperienceId));
+        Assert.Equal([a], pageA.Injections!.Keys);
+    }
+
+    [Fact]
+    public async Task A_database_before_0026_reads_injections_as_untracked_until_migrated_and_granted_and_never_fails_the_page()
+    {
+        await using var world = await RlsWorldAsync("rls_inj_upgrade");
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var id = await world.CreateAsync(tenant, scope);
+        var store = new PostgresExperienceRecordStore(world.App);
+        var query = new ExperienceRecordQuery(scope);
+
+        // Back to before 0026, as a deployment still on 0025 has it.
+        foreach (var sql in new[]
+        {
+            "DROP TABLE agent_experience.experience_injections",
+            "DROP TRIGGER experience_records_injections_cleared ON agent_experience.experience_records",
+            "DROP FUNCTION agent_experience.clear_erased_record_injections()",
+            $"DELETE FROM agent_experience.schema_versions WHERE scriptname LIKE '%{PostgresExperienceRecordSchema.ExperienceInjectionsScriptName}'",
+        })
+        {
+            await ExecuteAsync(world.Owner, declare: null, sql);
+        }
+
+        // No table: the page reads, untracked, and the write fails loudly for the adapter to report.
+        var before = await store.QueryWithInjectionsAsync(Authorize(tenant), query, CancellationToken.None);
+        Assert.Equal([id], before.Records.Select(r => r.ExperienceId));
+        Assert.Null(before.Injections);
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow, CancellationToken.None));
+
+        // Migrated: 0026 alone is applied; the table exists but the application role holds nothing on it yet.
+        var applied = await ExperienceSchemaMigrator.MigrateAsync(world.Owner, CancellationToken.None);
+        Assert.Equal([PostgresExperienceRecordSchema.ExperienceInjectionsScriptName], applied.AppliedScripts);
+        var migrated = await store.QueryWithInjectionsAsync(Authorize(tenant), query, CancellationToken.None);
+        Assert.Equal([id], migrated.Records.Select(r => r.ExperienceId));
+        Assert.Null(migrated.Injections);
+        await Assert.ThrowsAsync<ExperienceStoreException>(() => store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow, CancellationToken.None));
+
+        // The privileges call grants it and switches its row-level security on with the other tables.
+        await world.ApplyAsync(enable: true);
+        Assert.Contains(await RowSecurityAsync(world.Owner), row => row.Table == "experience_injections" && row.Enabled && !row.Forced);
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow, CancellationToken.None)).Outcome);
+        var granted = await store.QueryWithInjectionsAsync(Authorize(tenant), query, CancellationToken.None);
+        Assert.Equal(1, granted.Injections![id].Count);
     }
 
     // ---------------------------------------------------------------- grants
@@ -272,6 +356,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         { "experience_grant_access", "access_id" },
         { "reuse_feedback", "feedback_id" },
         { "reuse_feedback_exposures", "experience_id" },
+        { "experience_injections", "experience_id" },
     };
 
     [Theory]
@@ -927,6 +1012,11 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
                     [new ExperienceReuseExposure(record, Attributed: false, EvidenceId: null)]),
                 CancellationToken.None);
             Assert.Equal(ExperienceReuseFeedbackStoreOutcome.Recorded, feedback.Outcome);
+
+            // Story 21.8: the owner's injection of its own record.
+            var injected = await new PostgresExperienceRecordStore(App).RecordInjectionAsync(
+                Authorize(tenant), owner, [record], DateTimeOffset.UtcNow, CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Committed, injected.Outcome);
         }
 
         public async ValueTask DisposeAsync()

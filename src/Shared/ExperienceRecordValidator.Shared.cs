@@ -119,6 +119,35 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates an injection record (<see cref="IExperienceRecordStore.RecordInjectionAsync"/>): the scope, at most
+    /// <see cref="ExperienceRecordGetManyResult.MaxCount"/> records, none of them empty, and a set instant.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateRecordInjection(Scope scope, IReadOnlyList<Guid> experienceIds, DateTimeOffset injectedAt)
+    {
+        var errors = new List<StoreValidationError>();
+        if (experienceIds.Count > ExperienceRecordGetManyResult.MaxCount)
+        {
+            errors.Add(new("ExperienceIds", $"must name at most {ExperienceRecordGetManyResult.MaxCount} records."));
+        }
+
+        for (var i = 0; i < experienceIds.Count; i++)
+        {
+            if (experienceIds[i] == Guid.Empty)
+            {
+                errors.Add(new($"ExperienceIds[{i}]", "must not be empty."));
+            }
+        }
+
+        if (injectedAt == default)
+        {
+            errors.Add(new("InjectedAt", "must be set."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates a bounded history read: the scope, the record, the page bound, and the optional keyset
     /// cursor. A negative cursor is rejected rather than treated as "from the beginning", because a
     /// caller that computed one is asking for something it did not mean.

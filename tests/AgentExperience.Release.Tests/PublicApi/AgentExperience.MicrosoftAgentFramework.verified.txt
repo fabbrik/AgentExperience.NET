@@ -117,7 +117,9 @@
         public System.Guid ExperienceId { get; init; }
         public AgentExperience.MicrosoftAgentFramework.ExperienceLessonIneligibility? Ineligibility { get; init; }
         public string? IneligibleReason { get; init; }
+        public long InjectionCount { get; init; }
         public bool IsEligible { get; init; }
+        public System.DateTimeOffset? LastInjectedAt { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus Status { get; init; }
         public string TaskId { get; init; }
         public System.DateTimeOffset UpdatedAt { get; init; }
@@ -143,7 +145,9 @@
     {
         public const string DevelopmentBanner = "Development view: these are the lessons stored in this scope. It discloses them, " +
             "so serve it only behind your own authorization.";
+        public const string Never = "never";
         public const string NoLessons = "No lessons yet.";
+        public const string NotTracked = "not tracked";
         public static string Render(AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage page) { }
     }
     public sealed class ExperienceLessonsPage : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage>
@@ -151,6 +155,7 @@
         public ExperienceLessonsPage(AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLesson> Lessons, System.DateTimeOffset GeneratedAt) { }
         public System.DateTimeOffset GeneratedAt { get; init; }
         public bool HasMore { get; init; }
+        public bool InjectionsTracked { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLesson> Lessons { get; init; }
         public int OutOfScopeDropped { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
@@ -322,6 +327,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool Injected { get; }
         public int InjectedCount { get; }
         public System.Collections.Generic.IReadOnlyList<System.Guid> InjectedExperienceIds { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure? InjectionNotRecorded { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.InjectionOutcome Outcome { get; init; }
         public int PayloadBytes { get; init; }

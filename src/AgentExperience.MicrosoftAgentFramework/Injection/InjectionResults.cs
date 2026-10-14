@@ -275,6 +275,14 @@ public sealed record ExperienceInjectionResult(
     /// reports the invocation succeeded.
     /// </summary>
     public ExperienceInjectionSessionUsage? Session { get; init; }
+
+    /// <summary>
+    /// Why the store did not record when <see cref="InjectedExperienceIds"/> were injected, or
+    /// <see langword="null"/> when it did, when nothing was injected, or when the store does not track injections. The
+    /// block was injected either way: recording it is telemetry for the lessons view
+    /// (<see cref="ExperienceLesson.LastInjectedAt"/>) and never costs the invocation its context.
+    /// </summary>
+    public InjectionFailure? InjectionNotRecorded { get; init; }
 }
 
 /// <summary>

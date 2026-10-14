@@ -46,6 +46,34 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   is not the version `Directory.Build.props` sets; a release test holds the same. Nothing in the six NuGet packages
   changed.
 
+### Added: the lessons view shows when each lesson was last injected (story 21.8)
+
+- **`ExperienceLesson.LastInjectedAt` and `InjectionCount`**, and `ExperienceLessonsPage.InjectionsTracked`: when an
+  agent in the scope was last shown each lesson, and how many injected blocks delivered it. `ExperienceLessonsHtml`
+  shows it on every lesson ("last injected 2026-10-14 09:30:00 UTC (3 times)", "never", or "not tracked" when the store
+  cannot say). A lesson never injected is the first thing to look at: a dead lesson, or a retrieval miss.
+- **Where it comes from.** No stored fact answered it reliably: a run's record names what it was exposed to only when
+  the run was captured and finalized, inside a payload that is sealed in encrypted mode, and reuse feedback names
+  exposures only when a host submits it. So the context provider now records it: one store write per injected block,
+  never per record, never failing the injection. When the write fails, the block is injected anyway and the new
+  `ExperienceInjectionResult.InjectionNotRecorded` says why.
+- **Two port methods, both with default implementations** so existing stores keep compiling:
+  `IExperienceRecordStore.RecordInjectionAsync` (counts only records live in exactly the injecting scope; the default
+  records nothing) and `QueryWithInjectionsAsync` (the query plus each record's `ExperienceInjectionSummary` in one
+  bounded read, on the new `ExperienceRecordQueryResult.Injections`; the default is `QueryAsync`, read as not tracked).
+  A lesson another scope borrows through a grant and injects there is counted in neither scope; the owner sees those
+  deliveries in the grant access log. The in-memory and PostgreSQL stores implement both; the store conformance
+  suite covers them.
+- **Migration `0026_experience_injections.sql`** creates `agent_experience.experience_injections` (one row per record:
+  scope, `last_injected_at`, `injection_count`; no content), a trigger that deletes a record's row when it is erased,
+  and the table's row-level security policies. The application role gets `SELECT`, `INSERT` and `UPDATE` on the two
+  moving columns. **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**: until then every injection reports
+  `InjectionNotRecorded` and the view reads as not tracked, and nothing else changes. The table is .NET-only, so the
+  contract (still 1.3) and its privileges file are unchanged.
+- **The 20.8 capability gate, end to end on PostgreSQL**: a new test runs the provider over the real candidate source
+  and record store with grant auditing on. A borrowed record whose grant shows the approach and whose tool the agent
+  lacks takes no slot, the reader's own record backfills it, and the only access row is the search's.
+
 ### Contract 1.3, and port hardening (story 22.8)
 
 - **Contract 1.3** (add-only: every 1.0, 1.1 and 1.2 file is unchanged; [what 1.3 adds](contract/README-1.3.md)).

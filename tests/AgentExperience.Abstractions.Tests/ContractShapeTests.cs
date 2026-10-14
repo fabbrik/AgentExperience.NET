@@ -303,8 +303,15 @@ public class ContractShapeTests
         // with the record. Only auditing looks at the difference, so the second has a default
         // implementation and an existing store keeps compiling.
         Assert.Equal(
-            ["CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "GetManyAsync", "QueryAsync"],
+            [
+                "CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "GetManyAsync",
+                "QueryAsync", "QueryWithInjectionsAsync", "RecordInjectionAsync",
+            ],
             methods.Select(m => m.Name));
+
+        // The lessons view's injection read and the provider's injection write both have default implementations, so an
+        // existing store keeps compiling (and reads as not tracking injections).
+        Assert.All(methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync"), method => Assert.False(method.IsAbstract));
         Assert.All(methods, method =>
         {
             var parameters = method.GetParameters();

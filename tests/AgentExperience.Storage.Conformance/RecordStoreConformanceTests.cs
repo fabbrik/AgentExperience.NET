@@ -352,6 +352,123 @@ public abstract class RecordStoreConformanceTests
         Assert.NotEmpty(result.Errors);
     }
 
+    // ---------------------------------------------------------------- injections (story 21.8)
+
+    [Fact]
+    public async Task Query_with_injections_answers_the_query_with_each_record_s_latest_injection_and_none_for_one_never_injected()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var once = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated, createdAt: Time));
+        var thrice = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated, createdAt: Time.AddMinutes(1)));
+        var never = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated, createdAt: Time.AddMinutes(2)));
+
+        await RecordInjectionAsync(tenant, scope, [thrice.ExperienceId], Time.AddHours(1));
+        await RecordInjectionAsync(tenant, scope, [thrice.ExperienceId, once.ExperienceId, thrice.ExperienceId], Time.AddHours(2));
+
+        // A block recorded late, with an earlier instant, counts but never moves the last injection back.
+        await RecordInjectionAsync(tenant, scope, [thrice.ExperienceId], Time.AddMinutes(30));
+
+        var plain = await Store.QueryAsync(Authorize(tenant), new ExperienceRecordQuery(scope), CancellationToken.None);
+        var page = await Store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(scope), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Found, page.Outcome);
+        Assert.Equal(plain.Records.Select(Json), page.Records.Select(Json));
+        Assert.Null(plain.Injections);
+        Assert.NotNull(page.Injections);
+        Assert.Equal(new ExperienceInjectionSummary(Time.AddHours(2), 3), page.Injections[thrice.ExperienceId]);
+        Assert.Equal(new ExperienceInjectionSummary(Time.AddHours(2), 1), page.Injections[once.ExperienceId]);
+        Assert.False(page.Injections.ContainsKey(never.ExperienceId));
+        Assert.Equal(2, page.Injections.Count);
+
+        // The status filter and the limit apply exactly as they do to the plain query.
+        var limited = await Store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(scope, Limit: 1), CancellationToken.None);
+        Assert.Equal([never.ExperienceId], limited.Records.Select(r => r.ExperienceId));
+        Assert.Empty(limited.Injections!);
+        var filtered = await Store.QueryWithInjectionsAsync(
+            Authorize(tenant), new ExperienceRecordQuery(scope, [ExperienceStatus.Candidate]), CancellationToken.None);
+        Assert.Empty(filtered.Records);
+        Assert.Empty(filtered.Injections!);
+    }
+
+    [Fact]
+    public async Task Recording_an_injection_counts_only_records_live_in_exactly_that_scope_and_changes_nothing_about_them()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var other = Scope(tenant, team: "team-1");
+        var record = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var neighbour = await CreateAsync(tenant, Record(other, ExperienceStatus.Validated));
+
+        // Another scope naming this scope's record (as a borrowed injection would), and an ID nothing holds: written
+        // without a word, and counted nowhere.
+        var foreign = await Store.RecordInjectionAsync(Authorize(tenant), other, [record.ExperienceId, Guid.NewGuid()], Time.AddHours(1), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, foreign.Outcome);
+        Assert.True(foreign.Tracked);
+        Assert.Empty(foreign.Errors);
+
+        await RecordInjectionAsync(tenant, other, [neighbour.ExperienceId], Time.AddHours(2));
+
+        var mine = await Store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(scope), CancellationToken.None);
+        var theirs = await Store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(other), CancellationToken.None);
+        Assert.Empty(mine.Injections!);
+        Assert.Equal(new ExperienceInjectionSummary(Time.AddHours(2), 1), Assert.Single(theirs.Injections!).Value);
+
+        // The record itself is untouched: same revision, same UpdatedAt, same content.
+        await RecordInjectionAsync(tenant, scope, [record.ExperienceId], Time.AddHours(3));
+        var read = await Store.GetAsync(Authorize(tenant), scope, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(Json(record), Json(read.Record));
+
+        // An empty list records nothing and is not an error.
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await Store.RecordInjectionAsync(Authorize(tenant), scope, [], Time, CancellationToken.None)).Outcome);
+    }
+
+    [Theory]
+    [InlineData("denied")]
+    [InlineData("empty-id")]
+    [InlineData("too-many")]
+    [InlineData("unset-instant")]
+    [InlineData("blank-tenant")]
+    public async Task A_refused_injection_record_writes_nothing(string refusal)
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var record = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        Guid[] one = [record.ExperienceId];
+        var (authorization, requestScope, ids, at) = refusal switch
+        {
+            "denied" => (Authorize(NewTenant()), scope, one, Time),
+            "empty-id" => (Authorize(tenant), scope, [record.ExperienceId, Guid.Empty], Time),
+            "too-many" => (Authorize(tenant), scope, [record.ExperienceId, .. Enumerable.Range(0, ExperienceRecordGetManyResult.MaxCount).Select(_ => Guid.NewGuid())], Time),
+            "unset-instant" => (Authorize(tenant), scope, one, default(DateTimeOffset)),
+            _ => (Authorize(tenant), scope with { TenantId = " " }, one, Time),
+        };
+
+        var result = await Store.RecordInjectionAsync(authorization, requestScope, ids, at, CancellationToken.None);
+
+        Assert.Equal(refusal == "denied" ? ExperienceStoreOutcome.Denied : ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(refusal != "denied", result.Errors.Count > 0);
+        var page = await Store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(scope), CancellationToken.None);
+        Assert.Empty(page.Injections!);
+    }
+
+    [Fact]
+    public async Task Query_with_injections_refuses_exactly_what_the_query_refuses()
+    {
+        var tenant = NewTenant();
+        await CreateAsync(tenant, Record(Scope(tenant)));
+
+        var denied = await Store.QueryWithInjectionsAsync(Authorize(NewTenant()), new ExperienceRecordQuery(Scope(tenant)), CancellationToken.None);
+        var invalid = await Store.QueryWithInjectionsAsync(Authorize(tenant), new ExperienceRecordQuery(Scope(tenant), Limit: 0), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Denied, denied.Outcome);
+        Assert.Empty(denied.Records);
+        Assert.Null(denied.Injections);
+        Assert.Equal(ExperienceStoreOutcome.Invalid, invalid.Outcome);
+        Assert.NotEmpty(invalid.Errors);
+        Assert.Null(invalid.Injections);
+    }
+
     // ---------------------------------------------------------------- lifecycle commit
 
     [Fact]
@@ -1297,6 +1414,12 @@ public abstract class RecordStoreConformanceTests
             NewContradictions = record.Contradictions,
             Admission = ConfidenceEvidenceAdmission.HostTrusted,
         };
+
+    private async Task RecordInjectionAsync(string tenant, Scope scope, IReadOnlyList<Guid> ids, DateTimeOffset at)
+    {
+        var recorded = await Store.RecordInjectionAsync(Authorize(tenant), scope, ids, at, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, recorded.Outcome);
+    }
 
     private async Task<ExperienceRecord> CreateAsync(string tenant, ExperienceRecord record)
     {

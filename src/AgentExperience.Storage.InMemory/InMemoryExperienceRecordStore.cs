@@ -59,6 +59,9 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     private readonly HashSet<(Guid ExperienceId, string Key)> _recordedOnlyIndependenceKeys = [];
     private readonly HashSet<(Guid ExperienceId, Guid AssessmentId)> _spentAssessments = [];
 
+    /// <summary>Each record's last injection in its own scope, and how many were recorded.</summary>
+    private readonly Dictionary<Guid, ExperienceInjectionSummary> _injections = [];
+
     /// <summary>
     /// Creates an empty store. <b>For development and tests only</b>: data is lost when the process ends, and none
     /// of the PostgreSQL guarantees apply.
@@ -240,6 +243,81 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         }
 
         return Task.FromResult(new ExperienceRecordQueryResult(ExperienceStoreOutcome.Found, records, NoErrors));
+    }
+
+    /// <inheritdoc />
+    public Task<ExperienceInjectionRecordResult> RecordInjectionAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        DateTimeOffset injectedAt,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(experienceIds);
+
+        var errors = ExperienceRecordValidator.ValidateRecordInjection(scope, experienceIds, injectedAt);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ExperienceInjectionRecordResult(ExperienceStoreOutcome.Invalid, errors));
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return Task.FromResult(new ExperienceInjectionRecordResult(ExperienceStoreOutcome.Denied, NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ExperienceInjectionRecordResult>(cancellationToken);
+        }
+
+        var at = StoredSnapshots.Timestamp(injectedAt);
+        lock (_gate)
+        {
+            foreach (var id in experienceIds.Distinct())
+            {
+                // Only a record in exactly this scope; anything else is skipped, revealing nothing.
+                if (!_records.TryGetValue(id, out var record) || record.Scope != scope)
+                {
+                    continue;
+                }
+
+                _injections[id] = _injections.TryGetValue(id, out var current)
+                    ? new ExperienceInjectionSummary(current.LastInjectedAt >= at ? current.LastInjectedAt : at, current.Count + 1)
+                    : new ExperienceInjectionSummary(at, 1);
+            }
+        }
+
+        return Task.FromResult(new ExperienceInjectionRecordResult(ExperienceStoreOutcome.Committed, NoErrors));
+    }
+
+    /// <inheritdoc />
+    public async Task<ExperienceRecordQueryResult> QueryWithInjectionsAsync(
+        AuthorizationContext authorization,
+        ExperienceRecordQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await QueryAsync(authorization, query, cancellationToken).ConfigureAwait(false);
+        if (result.Outcome != ExperienceStoreOutcome.Found)
+        {
+            return result;
+        }
+
+        var injections = new Dictionary<Guid, ExperienceInjectionSummary>();
+        lock (_gate)
+        {
+            foreach (var record in result.Records)
+            {
+                if (_injections.TryGetValue(record.ExperienceId, out var summary))
+                {
+                    injections[record.ExperienceId] = summary;
+                }
+            }
+        }
+
+        return result with { Injections = injections };
     }
 
     /// <inheritdoc />

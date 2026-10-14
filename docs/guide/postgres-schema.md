@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0025` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0026` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -719,6 +719,26 @@ as the store's own statement now does (see [How the text channel matches](retrie
   `ApplyApplicationRolePrivilegesAsync` after migrating** when row-level security is on; until then searches run the
   store's own statement under the policies (correct, without the GIN index).
 - No table, column or index changes and no table lock. The header restates the security review for the replacement.
+
+### 0026: when each record was last injected
+
+`0026_experience_injections.sql` backs the lessons view's "last injected" (see
+[Seeing what it learned](deployment.md#seeing-what-it-learned)):
+
+- `agent_experience.experience_injections`: one row per record injected in its own scope, keyed on `experience_id`,
+  with the record's six scope columns, `last_injected_at` and `injection_count`. The store writes it with one
+  `INSERT … SELECT … ON CONFLICT DO UPDATE` per injected block, which copies the scope from the record (live, in exactly
+  the caller's scope, locked `FOR KEY SHARE` in ID order), moves `last_injected_at` only forward (`GREATEST`) and adds
+  one to the count. It holds no content, so nothing in it is sealed in encrypted mode.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes a record's row when the
+  record is tombstoned, so every erasure path removes it without `0010`'s purge function being restated.
+- Its row-level security policies (`rls_injections_select`, `_insert`, `_update`): the row's scope inside the declared
+  bounds. A grant never admits one.
+- The application role gets `SELECT`, `INSERT` and `UPDATE` on the two moving columns. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**; until then injections are reported as not recorded and the
+  lessons view reads as not tracked. The table is .NET-only: it is not in the contract's privileges file, and a
+  contract 1.x port never reads or writes it.
+- No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
 

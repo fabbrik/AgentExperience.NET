@@ -392,6 +392,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.RecordedOnlyEvidenceScriptName,
                 PostgresExperienceRecordSchema.TextSearchFunctionScriptName,
                 PostgresExperienceRecordSchema.TextSearchAnyTermScriptName,
+                PostgresExperienceRecordSchema.ExperienceInjectionsScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1339,8 +1340,51 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+    }
+
+    /// <summary>
+    /// Story 21.8: 0026 creates the injection table, its erasure trigger and exactly its three canonical policies, and
+    /// switches nothing on, grants nothing and defines no SECURITY DEFINER function.
+    /// </summary>
+    [Fact]
+    public void The_injection_script_creates_the_table_its_erasure_trigger_and_its_canonical_policies_only()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        var policies = RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.InjectionsTable).ToList();
+        Assert.Equal(["rls_injections_insert", "rls_injections_select", "rls_injections_update"], RowLevelSecurityPolicies.NamesFor(ApplicationRolePrivileges.InjectionsTable));
+        foreach (var policy in policies)
+        {
+            Assert.Equal(1, CountOccurrences(statements, policy.Ddl));
+        }
+
+        Assert.Equal(3, CountOccurrences(statements, "CREATE POLICY "));
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_injections (", statements, StringComparison.Ordinal);
+        Assert.Contains("CONSTRAINT experience_injections_pkey PRIMARY KEY (experience_id)", statements, StringComparison.Ordinal);
+        Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+        Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_injections_cleared", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+
+        // The manifest grants the upsert's two columns and nothing else, and keeps the table out of the contract's
+        // privileges file: a contract 1.x port never touches it.
+        var manifest = Assert.Single(ApplicationRolePrivileges.Tables, t => t.Name == ApplicationRolePrivileges.InjectionsTable);
+        Assert.Equal(["injection_count", "last_injected_at"], manifest.UpdateColumns);
+        Assert.False(manifest.Delete);
+        Assert.False(manifest.Optional);
+        Assert.False(manifest.InContract);
+
+        // The upsert copies the scope from the record, in exactly the caller's scope, and only moves forward.
+        Assert.Contains(ExperienceRecordSql.RecordScopePredicate, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordLivePredicate, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
+        Assert.Contains("GREATEST(i.last_injected_at, EXCLUDED.last_injected_at)", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
+
+        // The last script.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>
@@ -1368,7 +1412,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // of the embedding table's, which are the vectors package's own script.
         foreach (var policy in RowLevelSecurityPolicies.All)
         {
-            Assert.Equal(policy.Table == ApplicationRolePrivileges.EmbeddingsTable ? 0 : 1, CountOccurrences(statements, policy.Ddl));
+            Assert.Equal(policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable ? 0 : 1, CountOccurrences(statements, policy.Ddl));
         }
 
         Assert.Equal(18, CountOccurrences(statements, "CREATE POLICY "));

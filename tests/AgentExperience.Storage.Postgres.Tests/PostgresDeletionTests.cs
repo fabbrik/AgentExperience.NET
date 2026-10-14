@@ -71,6 +71,12 @@ public sealed class PostgresDeletionTests
         Assert.Equal(1, await CountAsync("experience_grant_access", record.ExperienceId));
         var feedbackId = Assert.Single(await FeedbackIdsAsync(record.ExperienceId));
 
+        // Story 21.8: when it was last injected, a row of its own.
+        Assert.Equal(
+            ExperienceStoreOutcome.Committed,
+            (await _store.RecordInjectionAsync(auth, owner, [record.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None)).Outcome);
+        Assert.Equal(1, await CountAsync("experience_injections", record.ExperienceId));
+
         var deleted = await _store.DeleteAsync(auth, owner, record.ExperienceId, CancellationToken.None);
 
         Assert.Equal(ExperienceStoreOutcome.Deleted, deleted.Outcome);
@@ -83,6 +89,11 @@ public sealed class PostgresDeletionTests
         Assert.Equal(0, await CountGrantEventsAsync(record.ExperienceId));
         Assert.Equal(0, await CountAsync("experience_grants", record.ExperienceId));
         Assert.Equal(0, await CountAsync("lifecycle_events", record.ExperienceId));
+        Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
+
+        // An injection recorded against the tombstone afterwards writes nothing: it is not a live record.
+        await _store.RecordInjectionAsync(auth, owner, [record.ExperienceId], DateTimeOffset.UtcNow, CancellationToken.None);
+        Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
 
         // ...except the access trail, which is retained on purpose: it names a grant and a principal,
         // carries no payload, and is the answer to "who read this before it was deleted". It has to stay

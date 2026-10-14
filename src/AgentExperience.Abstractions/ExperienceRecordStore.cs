@@ -170,6 +170,76 @@ public interface IExperienceRecordStore
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Records that the named records were just injected into a model's context in <paramref name="scope"/>: for each
+    /// one that is a live record in exactly that scope, its last injection becomes the later of the one stored and
+    /// <paramref name="injectedAt"/>, and its injection count rises by one. An ID that names nothing in that scope -- a
+    /// record another scope lent through a grant, one erased since, one that never existed -- is skipped without a
+    /// word, so the call reveals nothing across scopes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is what the lessons view's "last injected" reads back through <see cref="QueryWithInjectionsAsync"/>. The
+    /// injection adapter calls it once per injected block, after the block is built, and never lets it fail the
+    /// injection: a failure is reported with the injection's own telemetry, and the block is delivered anyway.
+    /// </para>
+    /// <para>
+    /// <b>A default implementation is provided</b>, which records nothing and reports
+    /// <see cref="ExperienceInjectionRecordResult.Tracked"/> as <see langword="false"/>, so an existing implementation
+    /// keeps compiling; its lessons view then says injections are not tracked rather than "never". An implementation
+    /// should override it with one bounded write, and override <see cref="QueryWithInjectionsAsync"/> to read it back.
+    /// It is the only write on this port that is not an <see cref="ExperienceRecord"/>'s own state: it never changes a
+    /// record, its revision or its <see cref="ExperienceRecord.UpdatedAt"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the block was injected in: the invocation's own.</param>
+    /// <param name="experienceIds">
+    /// The records the block delivered, at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>, none of them
+    /// <see cref="Guid.Empty"/>. Duplicates count once. Empty records nothing.
+    /// </param>
+    /// <param name="injectedAt">When the block was injected, by the caller's clock. Must be set.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Committed"/> when the write ran (whatever it matched),
+    /// <see cref="ExperienceStoreOutcome.Denied"/> when <paramref name="scope"/> lies outside
+    /// <paramref name="authorization"/>, or <see cref="ExperienceStoreOutcome.Invalid"/> for a malformed request.
+    /// Neither refusal accesses storage.
+    /// </returns>
+    Task<ExperienceInjectionRecordResult> RecordInjectionAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        IReadOnlyList<Guid> experienceIds,
+        DateTimeOffset injectedAt,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ExperienceInjectionRecordResult.NotTracked);
+
+    /// <summary>
+    /// <see cref="QueryAsync"/>, with each returned record's injection summary (when it was last injected in this
+    /// scope, and how many times) read in the same bounded operation: one read for the page, never one per record.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The result is exactly <see cref="QueryAsync"/>'s, plus <see cref="ExperienceRecordQueryResult.Injections"/>:
+    /// an entry for every returned record <see cref="RecordInjectionAsync"/> has recorded, none for a record never
+    /// injected. Only injections in the record's own scope are counted; a record another scope borrowed through a grant
+    /// and injected there is not (the owner sees those deliveries in the grant access log).
+    /// </para>
+    /// <para>
+    /// <b>A default implementation is provided</b>: <see cref="QueryAsync"/>, with
+    /// <see cref="ExperienceRecordQueryResult.Injections"/> left <see langword="null"/>, which means "not tracked".
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="query">The scoped query.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>As <see cref="QueryAsync"/>, with <see cref="ExperienceRecordQueryResult.Injections"/> set when the store tracks injections and the outcome is <see cref="ExperienceStoreOutcome.Found"/>.</returns>
+    Task<ExperienceRecordQueryResult> QueryWithInjectionsAsync(
+        AuthorizationContext authorization,
+        ExperienceRecordQuery query,
+        CancellationToken cancellationToken) =>
+        QueryAsync(authorization, query, cancellationToken);
+
+    /// <summary>
     /// Appends <paramref name="lifecycleEvent"/> and updates the record's projection
     /// (<see cref="ExperienceRecord.Status"/>, <see cref="ExperienceRecord.Revision"/>,
     /// <see cref="ExperienceRecord.UpdatedAt"/>) in one transaction: both writes commit together or
@@ -636,7 +706,37 @@ public sealed record ExperienceRecordGetManyResult(
 public sealed record ExperienceRecordQueryResult(
     ExperienceStoreOutcome Outcome,
     IReadOnlyList<ExperienceRecord> Records,
-    IReadOnlyList<StoreValidationError> Errors);
+    IReadOnlyList<StoreValidationError> Errors)
+{
+    /// <summary>
+    /// From <see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/>: each returned record's injection summary, by
+    /// <see cref="ExperienceRecord.ExperienceId"/>, with no entry for a record never injected. <see langword="null"/>
+    /// when the store does not track injections, and always from <see cref="IExperienceRecordStore.QueryAsync"/>.
+    /// </summary>
+    public IReadOnlyDictionary<Guid, ExperienceInjectionSummary>? Injections { get; init; }
+}
+
+/// <summary>When a record was last injected in its own scope, and how many times, as <see cref="IExperienceRecordStore.RecordInjectionAsync"/> recorded it.</summary>
+/// <param name="LastInjectedAt">The latest injection recorded, by the injecting caller's clock (a store may truncate it, as PostgreSQL does to whole microseconds).</param>
+/// <param name="Count">How many injections were recorded: one per injected block that delivered the record.</param>
+public sealed record ExperienceInjectionSummary(DateTimeOffset LastInjectedAt, long Count);
+
+/// <summary>The result of <see cref="IExperienceRecordStore.RecordInjectionAsync"/>.</summary>
+/// <param name="Outcome"><see cref="ExperienceStoreOutcome.Committed"/>, <see cref="ExperienceStoreOutcome.Denied"/> or <see cref="ExperienceStoreOutcome.Invalid"/>.</param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceInjectionRecordResult(
+    ExperienceStoreOutcome Outcome,
+    IReadOnlyList<StoreValidationError> Errors)
+{
+    /// <summary>
+    /// What the port's default implementation answers: <see cref="ExperienceStoreOutcome.Committed"/> with
+    /// <see cref="Tracked"/> <see langword="false"/>, having recorded nothing.
+    /// </summary>
+    public static ExperienceInjectionRecordResult NotTracked { get; } = new(ExperienceStoreOutcome.Committed, []) { Tracked = false };
+
+    /// <summary>Whether the store tracks injections at all. <see langword="false"/> only from the port's default implementation.</summary>
+    public bool Tracked { get; init; } = true;
+}
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.CommitLifecycleEventAsync"/>.

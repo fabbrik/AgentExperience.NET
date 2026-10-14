@@ -271,14 +271,29 @@ each lesson, newest first, it gives:
   not: whether retrieval would currently consider it, setting the task aside. The codes are `Status` (quarantined,
   retired and so on), `BelowConfidenceFloor`, `ModelAuthored` and `ContentUnconfirmed` (when the provider excludes
   model-authored lessons), `Expired` (older than the policy's maximum age), `OverByteBudget` (its block alone does not
-  fit the provider's byte budget) and `Unrenderable` (the record could not be rendered; the rest are still listed).
+  fit the provider's byte budget) and `Unrenderable` (the record could not be rendered; the rest are still listed);
+- `LastInjectedAt` and `InjectionCount`: when an agent in that scope was last shown the lesson, and how many injected
+  blocks delivered it. `null` and 0 mean never, while the page's `InjectionsTracked` is `true`; when it is `false` (a
+  store that does not track injections, or a PostgreSQL schema whose application role has not been granted `0026`'s
+  table yet) they mean "not known", and the HTML says "not tracked" instead of "never".
 
 `ExperienceLessonsQuery` narrows it: `Statuses`, `Limit` (the store's bounds, 1 to 500, default 50) and
 `IncludeIneligible` (default `true`). The page's `HasMore` says whether more lessons match than it shows (or may: the
-store answers at most 500 records per call). It reads through `IExperienceRecordStore.QueryAsync` under the identity's
-own authorization and scope, the boundary retrieval reads within, so lessons another scope lends through a sharing grant
+store answers at most 500 records per call). It reads through `IExperienceRecordStore.QueryWithInjectionsAsync` (the
+page and each record's last injection in one bounded read; in PostgreSQL one statement) under the identity's own
+authorization and scope, the boundary retrieval reads within, so lessons another scope lends through a sharing grant
 are not listed; a record the store answers from another scope is left out and counted in `OutOfScopeDropped`. It never
 writes. A store answer other than `Found` (`Denied`, say) is an empty page carrying that outcome, not an exception.
+
+**Where "last injected" comes from.** The context provider records it: after it builds a block, it calls
+`IExperienceRecordStore.RecordInjectionAsync` once with the records the block delivers (one upsert in PostgreSQL, into
+`0026`'s `experience_injections`). The store counts only records live in exactly the injecting scope, so a lesson
+another scope borrows through a sharing grant and injects there is counted in neither scope; its owner sees those
+deliveries in the grant access log instead. The write never fails the injection: it is bounded by
+`EligibilityCheckTimeout`, and when it fails the block is injected anyway and the result's `InjectionNotRecorded` says
+why. A third-party store that does not override the two methods records nothing and reads as not tracked. After
+migrating to `0026`, re-run `ApplyApplicationRolePrivilegesAsync`: until then the application role cannot reach the
+table, every injection reports `InjectionNotRecorded`, and the view reads as not tracked.
 
 `ExperienceLessonsHtml.Render(page)` returns one self-contained HTML document: inline CSS, no script, no external
 request, light and dark mode, a "development view" banner and the scope. Every value drawn from a record is
@@ -707,6 +722,7 @@ then grants exactly this:
 | `experience_records` | `SELECT`, `INSERT`, and `UPDATE` on `status`, `revision`, `updated_at`, `reuse_confidence`, `supporting_validations`, `contradictions` only |
 | `experience_grants` | `SELECT`, `INSERT`, and `UPDATE` on `revoked_at`, `revocation_reason` only |
 | `lifecycle_events`, `experience_grant_events`, `confidence_evidence`, `reuse_feedback`, `reuse_feedback_exposures`, `experience_grant_access` | `SELECT`, `INSERT` |
+| `experience_injections` (`0026`) | `SELECT`, `INSERT`, and `UPDATE` on `last_injected_at`, `injection_count` only — the injection upsert; never its record ID or scope columns, and no `DELETE` (erasure removes a row through `0026`'s trigger, as the owner) |
 | `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
@@ -816,8 +832,8 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    `ALTER POLICY … USING (true)`) is put back before anything is enabled;
 3. runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` on every table the application role reads or writes by scope:
    `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
-   `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`, and
-   `experience_embeddings` when the vectors package created it;
+   `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`,
+   `experience_injections`, and `experience_embeddings` when the vectors package created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
    permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
    volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; the text search function exactly
