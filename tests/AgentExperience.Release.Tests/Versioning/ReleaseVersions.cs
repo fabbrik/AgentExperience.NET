@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace AgentExperience.Release.Tests.Versioning;
@@ -34,8 +33,8 @@ internal sealed partial record ReleaseVersions(string DotNet, string Python, str
             throw new ArgumentException($"VersionSuffix '{suffix}' is neither empty nor preview.N.", nameof(suffix));
         }
 
-        var n = int.Parse(preview.Groups["n"].Value, CultureInfo.InvariantCulture);
-        return new ReleaseVersions($"{prefix}-{suffix}", $"{prefix}a{n}", $"v{prefix}-{suffix}");
+        // The digits as written, never parsed: the workflow's copy works on the text too, so the two agree on any number.
+        return new ReleaseVersions($"{prefix}-{suffix}", $"{prefix}a{preview.Groups["n"].Value}", $"v{prefix}-{suffix}");
     }
 
     /// <summary>The versions <c>Directory.Build.props</c> sets for this commit.</summary>

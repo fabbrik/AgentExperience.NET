@@ -27,6 +27,7 @@ public sealed class VersionAgreementTests
     [InlineData("0.1.0", "preview.14", "0.1.0-preview.14", "0.1.0a14", "v0.1.0-preview.14")]
     [InlineData("1.0.0", "", "1.0.0", "1.0.0", "v1.0.0")]
     [InlineData("0.2.3", "preview.1", "0.2.3-preview.1", "0.2.3a1", "v0.2.3-preview.1")]
+    [InlineData("0.1.0", "preview.99999999999999999999", "0.1.0-preview.99999999999999999999", "0.1.0a99999999999999999999", "v0.1.0-preview.99999999999999999999")]
     public void The_versions_derive_from_the_props_version(string prefix, string suffix, string dotnet, string python, string go)
     {
         Assert.Equal(new ReleaseVersions(dotnet, python, go), ReleaseVersions.Derive(prefix, suffix));
@@ -46,10 +47,11 @@ public sealed class VersionAgreementTests
     /// The workflow's own copy of the rule, run in bash, agrees with this one on both the release shapes (a preview and
     /// a version with no suffix) and refuses what this one refuses.
     /// </summary>
-    [Theory]
+    [UnixTheory]
     [InlineData("0.1.0", "preview.14")]
     [InlineData("1.0.0", "")]
     [InlineData("0.2.3", "preview.1")]
+    [InlineData("0.1.0", "preview.99999999999999999999")]
     public void The_release_workflow_derives_the_same_versions(string prefix, string suffix)
     {
         var expected = ReleaseVersions.Derive(prefix, suffix);
@@ -60,7 +62,7 @@ public sealed class VersionAgreementTests
         Assert.Equal($"{expected.DotNet} {expected.Python} {expected.Go}", output.Trim());
     }
 
-    [Theory]
+    [UnixTheory]
     [InlineData("0.1.0", "rc.1")]
     [InlineData("0.1.0", "preview.1x")]
     [InlineData("0.1", "preview.1")]
@@ -69,6 +71,102 @@ public sealed class VersionAgreementTests
         var (exitCode, _) = RunDeriveVersions(prefix, suffix);
 
         Assert.NotEqual(0, exitCode);
+    }
+
+    /// <summary>The tag-time check's sibling sets (<c>siblings_of</c> in <c>release.yml</c>) are this test's.</summary>
+    [UnixFact]
+    public void The_release_workflow_expects_the_same_Go_sibling_sets()
+    {
+        var function = Regex.Match(ReleaseWorkflow(), @"\n(?<indent> *)siblings_of\(\) \{\n.*?\n\k<indent>\}\n", RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        Assert.True(function.Success, "release.yml has no siblings_of function.");
+
+        foreach (var (module, siblings) in GoModules)
+        {
+            var (exitCode, output, error) = RunBash(function.Value + "\nsiblings_of \"$1\"", [module], new Dictionary<string, string>());
+            Assert.True(exitCode == 0, error);
+            Assert.Equal(siblings.Order(StringComparer.Ordinal), output.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal));
+        }
+
+        Assert.NotEqual(0, RunBash(function.Value + "\nsiblings_of go/unknown", [], new Dictionary<string, string>()).ExitCode);
+    }
+
+    private const string ReleaseSha = "1111111111111111111111111111111111111111";
+
+    /// <summary>
+    /// The publish job's "Tag the Go modules" script, run for real against a stub <c>gh</c> first on PATH: an absent tag
+    /// (a 404) is created at the release commit for all five modules; a tag already at that commit, directly or through
+    /// an annotated tag, is kept; a tag at another commit, or any lookup error but a 404, fails before anything is
+    /// created.
+    /// </summary>
+    [UnixTheory]
+    [InlineData("absent", "", 0, 5)]
+    [InlineData("commit " + ReleaseSha, "", 0, 0)]
+    [InlineData("tag 2222222222222222222222222222222222222222", ReleaseSha, 0, 0)]
+    [InlineData("commit 3333333333333333333333333333333333333333", "", 1, 0)]
+    [InlineData("tag 2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", 1, 0)]
+    [InlineData("error", "", 1, 0)]
+    public void The_Go_tag_step_creates_absent_tags_keeps_its_own_and_refuses_anything_else(string lookup, string annotatedTarget, int exitCode, int created)
+    {
+        var stubs = Directory.CreateTempSubdirectory("release-yml-gh-");
+        try
+        {
+            var gh = Path.Combine(stubs.FullName, "gh");
+            File.WriteAllText(gh, """
+                #!/usr/bin/env bash
+                # A stand-in for `gh api`: logs each call, and answers by the path ($2).
+                printf '%s\n' "$*" >> "$STUB_LOG"
+                case "$2" in
+                  */git/refs) exit 0 ;;
+                  */git/tags/*) printf '%s\n' "$STUB_TAG_TARGET" ;;
+                  */git/ref/tags/*)
+                    case "$STUB_LOOKUP" in
+                      absent) echo '{"message":"Not Found","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+                      error) echo 'gh: Server Error (HTTP 502)' >&2; exit 1 ;;
+                      *) printf '%s\n' "$STUB_LOOKUP" ;;
+                    esac ;;
+                  *) echo "unexpected call: $*" >&2; exit 2 ;;
+                esac
+                """.ReplaceLineEndings("\n"));
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(gh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            var log = Path.Combine(stubs.FullName, "calls.log");
+            File.WriteAllText(log, string.Empty);
+
+            var (actualExit, output, error) = RunBash(Marked("tag-go-modules"), [], new Dictionary<string, string>
+            {
+                ["PATH"] = stubs.FullName + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"),
+                ["GH_REPO"] = "fabbrik/AgentExperience.NET",
+                ["GITHUB_SHA"] = ReleaseSha,
+                ["GO_VERSION"] = "v0.1.0-preview.14",
+                ["STUB_LOG"] = log,
+                ["STUB_LOOKUP"] = lookup,
+                ["STUB_TAG_TARGET"] = annotatedTarget,
+            });
+
+            var calls = File.ReadAllLines(log);
+            var creates = calls.Where(call => call.StartsWith("api repos/fabbrik/AgentExperience.NET/git/refs ", StringComparison.Ordinal)).ToList();
+            Assert.True(exitCode == 0 ? actualExit == 0 : actualExit != 0, $"exit {actualExit}\n{output}\n{error}");
+            Assert.Equal(created, creates.Count);
+            Assert.DoesNotContain(calls, call => call.Contains("unexpected", StringComparison.Ordinal));
+            if (created > 0)
+            {
+                Assert.Equal(
+                    GoModules.Keys.Select(module => $"api repos/fabbrik/AgentExperience.NET/git/refs -f ref=refs/tags/{module}/v0.1.0-preview.14 -f sha={ReleaseSha} --silent").Order(StringComparer.Ordinal),
+                    creates.Order(StringComparer.Ordinal));
+            }
+
+            if (lookup == "error")
+            {
+                Assert.Contains("HTTP 502", output + error, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            stubs.Delete(recursive: true);
+        }
     }
 
     [Fact]
@@ -226,13 +324,26 @@ public sealed class VersionAgreementTests
     private static bool IsSibling(string path) =>
         path == ModulePrefix || path.StartsWith(ModulePrefix + "/", StringComparison.Ordinal);
 
+    private static string ReleaseWorkflow() =>
+        File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "release.yml")).ReplaceLineEndings("\n");
+
+    /// <summary>The script between <c># name:begin</c> and <c># name:end</c> in <c>release.yml</c>.</summary>
+    private static string Marked(string name)
+    {
+        var block = Regex.Match(ReleaseWorkflow(), $@"# {name}:begin\n(?<body>.*?)\n\s*# {name}:end\n", RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        Assert.True(block.Success, $"release.yml has no {name}:begin ... {name}:end block.");
+        return block.Groups["body"].Value;
+    }
+
     /// <summary>Runs <c>derive_versions</c>, as <c>release.yml</c> defines it, in bash.</summary>
     private static (int ExitCode, string Output) RunDeriveVersions(string prefix, string suffix)
     {
-        var workflow = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "release.yml")).ReplaceLineEndings("\n");
-        var function = Regex.Match(workflow, @"# derive-versions:begin\n(?<body>.*?)\n\s*# derive-versions:end\n", RegexOptions.Singleline | RegexOptions.CultureInvariant);
-        Assert.True(function.Success, "release.yml has no derive-versions:begin ... derive-versions:end block.");
+        var (exitCode, output, _) = RunBash(Marked("derive-versions") + "\nderive_versions \"$1\" \"$2\"", [prefix, suffix], new Dictionary<string, string>());
+        return (exitCode, output);
+    }
 
+    private static (int ExitCode, string Output, string Error) RunBash(string script, IEnumerable<string> arguments, IDictionary<string, string> environment)
+    {
         var start = new ProcessStartInfo("bash")
         {
             RedirectStandardOutput = true,
@@ -240,16 +351,46 @@ public sealed class VersionAgreementTests
             UseShellExecute = false,
         };
         start.ArgumentList.Add("-c");
-        start.ArgumentList.Add(function.Groups["body"].Value + "\nderive_versions \"$1\" \"$2\"");
-        start.ArgumentList.Add("derive-versions");
-        start.ArgumentList.Add(prefix);
-        start.ArgumentList.Add(suffix);
+        start.ArgumentList.Add(script);
+        start.ArgumentList.Add("release-yml");
+        foreach (var argument in arguments)
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        foreach (var (name, value) in environment)
+        {
+            start.Environment[name] = value;
+        }
 
         using var process = Process.Start(start) ?? throw new InvalidOperationException("bash did not start.");
         var stderr = process.StandardError.ReadToEndAsync();
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
-        _ = stderr.Result;
-        return (process.ExitCode, output);
+        return (process.ExitCode, output, stderr.Result);
+    }
+}
+
+/// <summary>A theory that runs only where bash runs the workflow's scripts as the Linux runner does; skipped on Windows.</summary>
+public sealed class UnixTheoryAttribute : TheoryAttribute
+{
+    public UnixTheoryAttribute()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip = "Runs release.yml's bash scripts; not on Windows.";
+        }
+    }
+}
+
+/// <summary>A fact that runs only where bash runs the workflow's scripts as the Linux runner does; skipped on Windows.</summary>
+public sealed class UnixFactAttribute : FactAttribute
+{
+    public UnixFactAttribute()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip = "Runs release.yml's bash scripts; not on Windows.";
+        }
     }
 }

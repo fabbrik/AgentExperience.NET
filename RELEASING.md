@@ -392,7 +392,7 @@ deployments**, select `nuget-release`, and approve. The `publish` job then:
    `go/inmemory/vX`, `go/postgres/vX`, `go/postgres/pgtest/vX` and `go/maf/vX`, where `vX` is the tag. A tag that
    already points at that commit is kept; one that points anywhere else fails the job here, before the GitHub release.
    It then asks `proxy.golang.org` for each module at that version, and fails if the proxy does not know one after
-   a few minutes of retries;
+   ten attempts, 30 seconds apart (at worst about 48 minutes for all five; the job's timeout is 75 minutes);
 5. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
    version's `CHANGELOG.md` section, the Known limits table (or "None currently.") and the Documented boundaries
    table from `docs/known-limits.md` as its notes. A preview's release notes say what it does not promise.
@@ -405,8 +405,16 @@ Publishing: the job's OIDC token is exchanged for a short-lived PyPI token, and 
 
 If `publish` fails part-way, re-run the failed job from the Actions tab (it needs approving again): `--skip-duplicate`
 skips the packages nuget.org already has, Go tags already at the commit are kept, and an existing GitHub release is
-left as it is. If `publish-pypi` fails, nuget.org, the Go tags and the GitHub release stand; fix the cause and re-run
-that job alone. If `verify` fails, nothing was published: fix the cause on `main`, delete the tag (`git push origin
+left as it is. If `publish` fails at the Go module proxy check, nuget.org and the Go tags stand, but the GitHub
+release and PyPI wait: `publish-pypi` runs only after `publish` succeeds. Re-run `publish` (the tags are kept, and the
+proxy check runs again); the proxy can remember that a version was not found for up to about 30 minutes, so wait that
+long before re-running if the tags were only just created. If `publish-pypi` fails, nuget.org, the Go tags and the
+GitHub release stand; fix the cause and re-run that job alone.
+
+A publish job can be re-run only while the artifacts `verify` uploaded are retained: 30 days for the NuGet packages
+and the release notes, 90 days (the most GitHub allows) for the Python distribution. After that, delete the version tag
+and push it again at the same commit (step 10's commands), which runs `verify` again and rebuilds them; everything
+already published is skipped. If `verify` fails, nothing was published: fix the cause on `main`, delete the tag (`git push origin
 :refs/tags/vX` and `git tag -d vX`), and tag again. A version pushed by mistake cannot be deleted from nuget.org —
 **unlist** it (and, if it is harmful, mark it deprecated) on its nuget.org page, then publish the next preview. The
 same holds for PyPI (**yank** the release) and for the Go module proxy, which serves a tagged version for ever (add a
@@ -512,28 +520,52 @@ been used.
 
 The ports, by hand, from the same verified working copy and only once the version tag exists (so they ship the
 commit the tag names). The Python distribution needs a PyPI API token scoped to the `agentexperience` project, which
-the maintainer creates for this upload and deletes straight after; `uv publish` reads it from `UV_PUBLISH_TOKEN`, and
-`--check-url` makes a retry skip the files PyPI already has. The Go modules need only their tags, at the verified
-commit: a tag that already exists there is kept, and one that exists at any other commit stops the command.
+the maintainer creates for this upload and deletes straight after; `uv publish` reads it from `UV_PUBLISH_TOKEN`. The
+Go modules need only their tags, at the verified commit: a tag that already exists there is kept, and one that exists
+at any other commit stops the command.
+
+First, in the same shell, the versions, derived from `Directory.Build.props` as `release.yml`'s `derive_versions`
+derives them (no suffix: the same version in every language; `preview.N`: Python `aN`), then the distribution, built
+once and refused unless `pyproject.toml` carries the derived version:
 
 ```bash
-( if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
+prefix="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)"
+suffix="$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+version="$prefix${suffix:+-$suffix}"; go="v$version"
+case "$suffix" in '') python="$prefix" ;; preview.*) python="${prefix}a${suffix#preview.}" ;; *) python="(no Python version for $suffix)" ;; esac
+echo "NuGet $version, Python $python, Go $go"
+
+( declared="$(sed -nE 's/^version = "([^"]+)"$/\1/p' python/pyproject.toml | head -n 1)"
+  if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
     echo "FAILED: HEAD is not the commit steps 1-9 verified ($verified); re-run the checks"; false
+  elif [ "$declared" != "$python" ]; then
+    echo "FAILED: python/pyproject.toml says $declared, but Directory.Build.props versions this commit as $version (expected $python)"; false
   else
-    version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
-    ( cd python && rm -rf dist && uv build --out-dir dist && uv publish --check-url https://pypi.org/simple/ dist/* ) \
+    cd python && rm -rf dist && uv build --out-dir dist && rm -f dist/.gitignore && ls dist \
+      && echo "Built agentexperience $python" || { echo "FAILED: see above"; false; }
+  fi )
+```
+
+Then the upload and the Go tags. This uploads the files just built, never a rebuild, so it is safe to run again after a
+partial failure: `--check-url` skips the files PyPI already has, and tags already at the commit are kept.
+
+```bash
+( if [ ! -f "python/dist/agentexperience-$python.tar.gz" ] || [ ! -f "python/dist/agentexperience-$python-py3-none-any.whl" ]; then
+    echo "FAILED: python/dist does not hold agentexperience $python; run the build above first"; false
+  else
+    uv publish --check-url https://pypi.org/simple/ "python/dist/agentexperience-$python.tar.gz" "python/dist/agentexperience-$python-py3-none-any.whl" \
       && for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
-           tag="$module/v$version"
+           tag="$module/$go"
            git rev-parse -q --verify "refs/tags/$tag" > /dev/null || git tag "$tag" "$verified" || exit 1
            [ "$(git rev-parse "$tag^{commit}")" = "$verified" ] || { echo "FAILED: $tag exists at another commit"; exit 1; }
            git push origin "refs/tags/$tag" || exit 1
          done \
-      && echo "Published agentexperience and tagged the Go modules at v$version" || { echo "FAILED: see above; a re-run skips what is already done"; false; }
+      && echo "Published agentexperience $python and tagged the Go modules at $go" || { echo "FAILED: see above; running this again skips what is already done"; false; }
   fi )
 ```
 
-Then confirm the Go modules on the proxy: `go list -m github.com/fabbrik/AgentExperience.NET/go/maf@v$version` (with
-`version` set as above) must print that version.
+Then confirm the Go modules on the proxy: `go list -m "github.com/fabbrik/AgentExperience.NET/go/maf@$go"` must print
+that version.
 
 ## After the release: move the package-validation baseline
 

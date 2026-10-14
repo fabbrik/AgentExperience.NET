@@ -41,7 +41,10 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling>=1.26"]
+# One exact hatchling, so the sdist and wheel a release builds and publishes come from a known build backend, not
+# whichever release PyPI serves on the day of the tag (uv.lock does not cover the build environment). Bump it
+# deliberately.
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

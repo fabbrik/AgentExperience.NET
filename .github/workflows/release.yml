@@ -91,24 +91,47 @@ jobs:
             exit 1
           fi
 
-          # Go: every requirement of one of this repository's modules on another names exactly the derived version. The
-          # replace directives, which consumers ignore, are not requirements.
+          # Go: each module requires exactly these of this repository's modules (by directory), every one at the derived
+          # version, and keeps a replace for each, so builds here use the tree. The replace directives, which consumers
+          # ignore, are not requirements. The release tests hold the same sets (VersionAgreementTests).
+          siblings_of() {
+            case "$1" in
+              go) echo "" ;;
+              go/inmemory | go/postgres) echo "go" ;;
+              go/postgres/pgtest) echo "go go/postgres" ;;
+              go/maf) echo "go go/inmemory go/postgres go/postgres/pgtest" ;;
+              *) echo "::error::No sibling set for the Go module in $1" >&2; return 1 ;;
+            esac
+          }
           mismatched=0
-          checked=0
-          for mod in go/go.mod go/inmemory/go.mod go/postgres/go.mod go/postgres/pgtest/go.mod go/maf/go.mod; do
+          for dir in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+            mod="$dir/go.mod"
             test -f "$mod" || { echo "::error::$mod is missing"; exit 1; }
             requires="$(grep -v '=>' "$mod" | sed -nE 's#^[[:space:]]*(require[[:space:]]+)?(github\.com/fabbrik/AgentExperience\.NET/go[^[:space:]]*)[[:space:]]+([^[:space:]]+).*#\2 \3#p')"
+            found=""
             while read -r path required; do
               [ -n "$path" ] || continue
-              checked=$((checked + 1))
+              found="$found ${path#github.com/fabbrik/AgentExperience.NET/}"
               if [ "$required" != "$go" ]; then
                 echo "::error file=$mod::requires $path $required, but Directory.Build.props versions this commit as $version (expected $go)"
                 mismatched=1
               fi
             done <<< "$requires"
+            expected="$(siblings_of "$dir")"
+            found="$(printf '%s\n' $found | sort | xargs)"
+            expected="$(printf '%s\n' $expected | sort | xargs)"
+            if [ "$found" != "$expected" ]; then
+              echo "::error file=$mod::requires [$found] of this repository's modules, expected exactly [$expected]"
+              mismatched=1
+            fi
+            for sibling in $expected; do
+              if ! grep -qE "^[[:space:]]*(replace[[:space:]]+)?github\.com/fabbrik/AgentExperience\.NET/$sibling[[:space:]]+=>" "$mod"; then
+                echo "::error file=$mod::has no replace for github.com/fabbrik/AgentExperience.NET/$sibling"
+                mismatched=1
+              fi
+            done
           done
           test "$mismatched" -eq 0
-          test "$checked" -gt 0 || { echo "::error::No Go module requires another of this repository's modules"; exit 1; }
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "python-version=$python" >> "$GITHUB_OUTPUT"
@@ -245,13 +268,18 @@ jobs:
           uv sync --locked --extra maf --extra postgres
           uv run pytest -m "not postgres"
 
-      # The sdist and the wheel, built once, here: publish-pypi uploads exactly these files.
+      # The sdist and the wheel, built once, here: publish-pypi uploads exactly these files. uv also writes a
+      # .gitignore into the output directory, which is not part of the distribution. Their hashes are recorded now and
+      # checked again just before the upload, so nothing that runs in between can change what is published.
       - name: Build the Python distribution
         working-directory: python
         run: |
           set -euo pipefail
           rm -rf dist
           uv build --out-dir dist
+          rm -f dist/.gitignore
+          (cd dist && sha256sum -- *.whl *.tar.gz) > "$RUNNER_TEMP/python-dist.sha256"
+          cat "$RUNNER_TEMP/python-dist.sha256"
 
       # Exactly one sdist and one wheel, named agentexperience at the derived version, whose metadata says the same,
       # and which twine accepts as PyPI would (--strict fails on any warning, such as a README PyPI cannot render).
@@ -261,19 +289,25 @@ jobs:
           PYTHON_VERSION: ${{ steps.version.outputs.python-version }}
         run: |
           set -euo pipefail
-          ls -l dist
+          ls -la dist
           test -f "dist/agentexperience-$PYTHON_VERSION.tar.gz" || { echo "::error::No sdist agentexperience-$PYTHON_VERSION.tar.gz"; exit 1; }
           test -f "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" || { echo "::error::No wheel agentexperience-$PYTHON_VERSION-py3-none-any.whl"; exit 1; }
-          total="$(find dist -type f | wc -l)"
-          test "$total" -eq 2 || { echo "::error::Expected an sdist and a wheel and nothing else in dist; found $total files"; exit 1; }
-          uvx --no-cache twine==7.0.0 check --strict dist/*
+          wheels="$(find dist -type f -name '*.whl' | wc -l)"
+          sdists="$(find dist -type f -name '*.tar.gz' | wc -l)"
+          if [ "$wheels" -ne 1 ] || [ "$sdists" -ne 1 ]; then
+            echo "::error::Expected one wheel and one sdist; found $wheels and $sdists"
+            exit 1
+          fi
+          uvx --no-cache twine==7.0.0 check --strict dist/*.whl dist/*.tar.gz
           metadata="$(unzip -p "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" "agentexperience-$PYTHON_VERSION.dist-info/METADATA")"
           grep -qx "Name: agentexperience" <<< "$metadata" || { echo "::error::The wheel's METADATA does not name agentexperience"; exit 1; }
           grep -qx "Version: $PYTHON_VERSION" <<< "$metadata" || { echo "::error::The wheel's METADATA is not version $PYTHON_VERSION"; exit 1; }
           echo "agentexperience $PYTHON_VERSION: sdist and wheel OK"
 
       # The Go modules (go/), on Go 1.26, which every module builds with (the CI matrix tests each floor): go vet and
-      # the tests in every module. No module cache is restored. The PostgreSQL leg is not repeated here, as for Python.
+      # the tests in every module. No module cache is restored. The PostgreSQL tests are the files behind the
+      # `postgres` build tag, which this run does not set, so none of them is built or run here: the counterpart of
+      # Python's -m "not postgres". CI on main ran them.
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -293,6 +327,14 @@ jobs:
             )
           done
 
+      # The last step before anything is uploaded: the Python files are byte for byte the ones built and checked above.
+      - name: Check the Python distribution is unchanged since it was built
+        working-directory: python/dist
+        run: |
+          set -euo pipefail
+          sha256sum --check --strict "$RUNNER_TEMP/python-dist.sha256"
+          test "$(find . -type f \( -name '*.whl' -o -name '*.tar.gz' \) | wc -l)" -eq "$(wc -l < "$RUNNER_TEMP/python-dist.sha256")"
+
       - name: Upload the verified packages
         uses: actions/upload-artifact@v4
         with:
@@ -309,13 +351,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # Kept for 90 days, the most GitHub allows: re-running publish-pypi needs it (RELEASING.md).
       - name: Upload the verified Python distribution
         uses: actions/upload-artifact@v4
         with:
           name: python-dist
-          path: python/dist/
+          path: |
+            python/dist/*.whl
+            python/dist/*.tar.gz
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
   # Pushes exactly what verify uploaded. The job does not check out the repository: it builds nothing, and runs no
   # code from the tree while it holds a nuget.org key. Re-running it is safe: --skip-duplicate skips a version
@@ -323,20 +368,20 @@ jobs:
   publish:
     needs: verify
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 75
     environment: nuget-release
     permissions:
       id-token: write
       contents: write
     steps:
       - name: Download the verified packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: packages
           path: artifacts/packages
 
       - name: Download the release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-notes
           path: artifacts/release-notes
@@ -357,7 +402,7 @@ jobs:
           fi
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: ${{ needs.verify.outputs.sdk }}
 
@@ -378,17 +423,21 @@ jobs:
 
       # The Go modules are released by tags, one per module, at the tagged commit: created through the API with this
       # job's token, with no checkout and nothing pushed from a clone. A tag that already points at this commit (a
-      # re-run) is left as it is; one that points anywhere else stops the release here, before the GitHub release.
+      # re-run) is left as it is; one that points anywhere else stops the release here, before the GitHub release. Only
+      # a 404 means the tag is absent: any other error from the lookup stops the job with that error. The release tests
+      # run this script against a stub gh (between the markers).
       - name: Tag the Go modules
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           GO_VERSION: ${{ needs.verify.outputs.go-version }}
         run: |
+          # tag-go-modules:begin
           set -euo pipefail
+          error="$(mktemp)"
           for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
             tag="$module/$GO_VERSION"
-            if existing="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha' 2> /dev/null)"; then
+            if existing="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha' 2> "$error")"; then
               read -r type sha <<< "$existing"
               if [ "$type" = "tag" ]; then sha="$(gh api "repos/$GH_REPO/git/tags/$sha" --jq '.object.sha')"; fi
               if [ "$sha" != "$GITHUB_SHA" ]; then
@@ -396,15 +445,21 @@ jobs:
                 exit 1
               fi
               echo "The tag $tag already points at $GITHUB_SHA; leaving it as it is."
-            else
+            elif grep -q 'HTTP 404' "$error"; then
               gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" --silent
               echo "Tagged $tag at $GITHUB_SHA"
+            else
+              echo "::error::Could not look up the tag $tag: $(cat "$error")"
+              exit 1
             fi
           done
+          # tag-go-modules:end
 
       # The Go module proxy must know every module at the new version before the release is announced. Asking for a
       # version makes the proxy fetch it; a module path is case-escaped as the proxy protocol requires (each upper-case
-      # letter becomes ! and the letter in lower case: AgentExperience is !agent!experience).
+      # letter becomes ! and the letter in lower case: AgentExperience is !agent!experience). Each module gets ten
+      # attempts of at most 30 seconds, 30 seconds apart: at worst 9.5 minutes a module, 47.5 for all five, which the
+      # job's 75-minute timeout covers with the push to nuget.org.
       - name: Check the Go module proxy has every module
         env:
           GO_VERSION: ${{ needs.verify.outputs.go-version }}
@@ -415,12 +470,12 @@ jobs:
             escaped="$(sed -E 's/([A-Z])/!\L\1/g' <<< "$path")"
             url="https://proxy.golang.org/$escaped/@v/$GO_VERSION.info"
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if info="$(curl -fsS "$url")"; then
+              if info="$(curl -fsS --connect-timeout 10 --max-time 30 "$url")"; then
                 echo "proxy.golang.org: $info"
                 continue 2
               fi
               echo "Attempt $attempt: proxy.golang.org does not know $url yet"
-              sleep 30
+              if [ "$attempt" -lt 10 ]; then sleep 30; fi
             done
             echo "::error::proxy.golang.org does not know $path@$GO_VERSION"
             exit 1
@@ -462,7 +517,7 @@ jobs:
       id-token: write
     steps:
       - name: Download the verified Python distribution
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: python-dist
           path: dist
