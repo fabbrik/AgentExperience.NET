@@ -6,6 +6,34 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added: see what it learned (story 21.4)
+
+- **`AgentExperienceLessons`**, a read-only view of the lessons stored in one scope, registered by the one-call setup.
+  Get it with `provider.GetAgentExperienceLessons()` or from the container. `ListAsync(identity, query?)` returns an
+  `ExperienceLessonsPage` of `ExperienceLesson`s, newest first: experience and task IDs, status, confidence, created and
+  updated times, the verified checks (evidence kind and result, never the detail text), the block an agent in that scope
+  would be shown for the record, and whether retrieval would currently consider it eligible, with a code
+  (`ExperienceLessonIneligibility`: `Status`, `BelowConfidenceFloor`, `ModelAuthored`, `ContentUnconfirmed`, `Expired`,
+  `OverByteBudget`, `Unrenderable`) and a reason when not. The block is rendered by the container's context provider
+  with its injection options, for every status; it is the injected text but for its ranking line (none: ranking depends
+  on the task) and its record number (always 1).
+- `ListForDevelopmentIdentityAsync(query?)` lists what `UseDevelopmentIdentity()` stored, for the quick start; it throws
+  when the setup does not use that identity.
+- `ExperienceLessonsQuery` filters by status, sets the limit (1 to 500) and can leave ineligible lessons out; the page's
+  `HasMore` says whether more match, and `OutOfScopeDropped` counts records a store answered from another scope, which
+  are left out. It reads through `IExperienceRecordStore.QueryAsync` under the caller's own authorization and scope, so
+  no grant-borrowed record is listed, and it never writes. A store answer other than `Found` is an empty page carrying
+  that outcome; a record that cannot be rendered is listed as `Unrenderable` and the rest still are.
+- **`ExperienceLessonsHtml.Render(page)`** returns one self-contained HTML document (inline CSS, no script, no external
+  request, light and dark mode, a development-view banner and the scope). Every record value is HTML-encoded and the
+  page's content security policy allows no script.
+- **No endpoint is mapped by the library**, and the view is development-first by documentation only: nothing enforces
+  it. The host maps the view behind its own authorization (the guide's example also maps it only in development and sets
+  `Cache-Control: no-store` and anti-framing headers), with the identity from its own authentication; exposing it
+  publicly discloses the lessons. See [Seeing what it learned](docs/guide/deployment.md#seeing-what-it-learned).
+- Not in this version: when a lesson was last injected (deferred).
+- Additive public API only; no new package and no ASP.NET dependency.
+
 ### Docs: say why, plainly (story 21.5)
 
 - **README first screen.** The first 60 lines now hold what the library is (memory of what *worked*, verified by your

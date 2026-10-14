@@ -327,6 +327,42 @@ public sealed class ExperienceRetrievalService
     /// <exception cref="ArgumentNullException"><paramref name="record"/> is <see langword="null"/>.</exception>
     public bool IsContentConfirmed(ExperienceRecord record) => RecordAuthorship.IsContentConfirmed(record, _signer);
 
+    /// <summary>
+    /// Why this service would never return <paramref name="record"/> today, whatever the task, or
+    /// <see langword="null"/> when it could: a status that is not eligible for reuse, a confidence below the policy's
+    /// floor (which the candidate source applies; a NaN confidence is below it), a model-authored or unconfirmed lesson
+    /// when <paramref name="excludeModelAuthored"/>, or a last activity older than the policy's maximum age by this
+    /// service's clock. The task-dependent decisions (relevance, the candidate ceiling, required environment
+    /// attributes) are not made here. The same rules, in the same order, as a retrieval's own filtering; a parity test
+    /// keeps the two in step. For the read-only lessons view.
+    /// </summary>
+    internal StandingExclusion? StandingIneligibility(ExperienceRecord record, bool excludeModelAuthored)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        if (!EligibleStatuses.Contains(record.Status))
+        {
+            return StandingExclusion.Status;
+        }
+
+        if (!(record.ReuseConfidence >= _policy.MinimumConfidence))
+        {
+            return StandingExclusion.BelowConfidenceFloor;
+        }
+
+        if (excludeModelAuthored && RecordAuthorship.ExclusionReason(record, _signer) is { } authorship)
+        {
+            return authorship == RetrievalExclusionReason.ModelAuthored ? StandingExclusion.ModelAuthored : StandingExclusion.UnconfirmedContent;
+        }
+
+        if (_policy.MaxAge is { } maxAge && _timeProvider.GetUtcNow() - record.UpdatedAt > maxAge)
+        {
+            return StandingExclusion.Expired;
+        }
+
+        return null;
+    }
+
     /// <summary>The policy this service runs under.</summary>
     public RetrievalPolicy Policy => _policy;
 
@@ -1237,4 +1273,14 @@ public sealed class ExperienceRetrievalService
 
     /// <summary>Both channels' answers, produced together inside the one timeout.</summary>
     private readonly record struct ChannelOutcome(SearchOutcome Text, VectorOutcome Vector);
+}
+
+/// <summary>Why <see cref="ExperienceRetrievalService.StandingIneligibility"/> says a record would never be returned.</summary>
+internal enum StandingExclusion
+{
+    Status,
+    BelowConfidenceFloor,
+    ModelAuthored,
+    UnconfirmedContent,
+    Expired,
 }

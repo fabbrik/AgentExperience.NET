@@ -738,8 +738,39 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         }
     }
 
-    public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
-        throw new InvalidOperationException("Injection must not query records.");
+    /// <summary>
+    /// Whether <see cref="QueryAsync"/> answers, newest first, from the stored records (for the lessons view); off by
+    /// default, so an injection test still proves injection never queries.
+    /// </summary>
+    public bool AnswersQueries { get; set; }
+
+    /// <summary>Whether an answering <see cref="QueryAsync"/> also returns records from other scopes, as a faulty store would.</summary>
+    public bool QueryIgnoresScope { get; set; }
+
+    public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken)
+    {
+        if (!AnswersQueries)
+        {
+            throw new InvalidOperationException("Injection must not query records.");
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return Task.FromResult(new ExperienceRecordQueryResult(ExperienceStoreOutcome.Denied, [], []));
+        }
+
+        lock (_stored)
+        {
+            var records = _stored.Values
+                .Where(record => (QueryIgnoresScope || record.Scope == query.Scope)
+                    && (query.Statuses is null || query.Statuses.Contains(record.Status)))
+                .OrderByDescending(record => record.CreatedAt)
+                .ThenBy(record => record.ExperienceId)
+                .Take(query.Limit)
+                .ToList();
+            return Task.FromResult(new ExperienceRecordQueryResult(ExperienceStoreOutcome.Found, records, []));
+        }
+    }
 
     public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Injection must not read history.");

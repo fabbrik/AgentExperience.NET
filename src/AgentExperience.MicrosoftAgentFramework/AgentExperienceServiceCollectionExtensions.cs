@@ -21,7 +21,7 @@ public static class AgentExperienceServiceCollectionExtensions
     /// It registers Core (<see cref="AgentExperienceCoreServiceCollectionExtensions.AddAgentExperienceCore"/> with
     /// <see cref="AgentExperienceOptions.Sanitization"/> and <see cref="AgentExperienceOptions.CaptureLimits"/>),
     /// retrieval (<see cref="AgentExperienceCoreServiceCollectionExtensions.AddAgentExperienceRetrieval"/>), and the
-    /// <see cref="ExperienceContextProvider"/>, each with <c>TryAdd</c>, so a service the host registered first is kept.
+    /// <see cref="ExperienceContextProvider"/> and the read-only <see cref="AgentExperienceLessons"/> view, each with <c>TryAdd</c>, so a service the host registered first is kept.
     /// </para>
     /// <para>
     /// When the container has a <c>Microsoft.Extensions.AI</c> <c>IEmbeddingGenerator&lt;string, Embedding&lt;float&gt;&gt;</c>,
@@ -102,6 +102,15 @@ public static class AgentExperienceServiceCollectionExtensions
             provider => provider.GetRequiredService<AgentExperienceEmbeddingsRuntime>().VectorChannel());
         services.TryAddSingleton(provider => AgentExperienceRegistration.From(provider).CreateContextProvider(provider));
         services.TryAddSingleton<AgentExperienceLifetimes>();
+        services.TryAddSingleton(provider =>
+        {
+            var registration = AgentExperienceRegistration.From(provider);
+            return new AgentExperienceLessons(
+                provider.GetRequiredService<IExperienceRecordStore>(),
+                provider.GetRequiredService<ExperienceContextProvider>(),
+                registration.ClockFrom(provider),
+                registration);
+        });
 
         return new AgentExperienceBuilder(services);
     }
@@ -129,6 +138,25 @@ public static class AgentExperienceServiceCollectionExtensions
 
         AgentExperienceRegistration.From(services);
         return services.GetRequiredService<ExperienceContextProvider>();
+    }
+
+    /// <summary>
+    /// The read-only lessons view the one-call setup registered: what is stored in a scope, and the block an agent there
+    /// would be shown for each lesson. Serve it only behind the host's own authorization (see <see cref="AgentExperienceLessons"/>).
+    /// </summary>
+    /// <param name="services">The service provider built from the collection <see cref="AddAgentExperience"/> was called on.</param>
+    /// <returns>The lessons view.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="AddAgentExperience"/> was not called, no storage was chosen, or
+    /// <see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> is used outside a development or test environment.
+    /// </exception>
+    public static AgentExperienceLessons GetAgentExperienceLessons(this IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        AgentExperienceRegistration.From(services);
+        AgentExperienceRegistration.EnsureStorage(services);
+        return services.GetRequiredService<AgentExperienceLessons>();
     }
 
     /// <summary>

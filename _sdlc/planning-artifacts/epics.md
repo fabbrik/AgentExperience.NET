@@ -2130,8 +2130,8 @@ Verifiers compose with all-of and any-of. Each produces the same `ExperienceVeri
 **Acceptance Criteria:**
 
 **Given** a running app using the library
-**When** a developer opens the lessons view
-**Then** they see each stored lesson with its task, status, confidence and evidence, the `Tried:`/`Worked:` lines exactly as an agent would see them, and when it was last injected. The view is read-only, goes through the same authorization and scope as retrieval, and is off unless the host maps it. It is development-first: it refuses outside Development/Test/Testing unless the host passes an authorization policy.
+**When** a developer lists the lessons through `AgentExperienceLessons.ListAsync(identity)` (registered by the one-call setup) or renders them with `ExperienceLessonsHtml.Render(page)`
+**Then** they see each stored lesson in the caller's scope with its task, status, confidence and verified checks (evidence kind and result, no detail), the block text an agent in that scope would be shown for it (but for the task-dependent ranking line and the record number), and whether retrieval would currently consider it eligible, with a reason code. When a lesson was last injected is deferred. The view is read-only and reads through the same authorization and scope as retrieval (no grant-borrowed records). The library maps no endpoint: the host maps the view and authorizes it (for example `app.MapGet(...).RequireAuthorization()`), with the scope from its own authentication, and the docs say that exposing it publicly discloses lessons. The HTML is self-contained, script-free and encodes every record value.
 
 ### Story 21.5: Say Why, Plainly
 

@@ -214,6 +214,37 @@ public sealed class ExperienceContextProvider : AIContextProvider
     }
 
     /// <summary>
+    /// <paramref name="record"/>, one of the reader's own (never borrowed), rendered alone as this provider would
+    /// render it into a block: the same writer, layout, failure detail, argument allowlist and content confirmation.
+    /// It carries no ranking (none was computed), so its ranking line says so, and it is rendered whatever its status
+    /// and size; compare <see cref="HistoricalReferencePayload.ByteCount"/> with <see cref="MaxBlockBytes"/>. For the
+    /// read-only lessons view.
+    /// </summary>
+    internal HistoricalReferencePayload RenderAlone(ExperienceRecord record) =>
+        HistoricalReferenceWriter.Write(
+            [new RankedExperience(record, double.NaN, [])],
+            new ExperienceInjectionLimits(1, int.MaxValue),
+            _approachArguments,
+            NoIds,
+            sessionBytesRemaining: null,
+            _retrieval.IsContentConfirmed,
+            _options.FailureDetail,
+            _options.Rendering);
+
+    /// <summary>The most UTF-8 bytes one block this provider injects may occupy.</summary>
+    internal int MaxBlockBytes => _options.Limits.MaxBytes;
+
+    /// <summary>The confidence floor this provider's retrieval applies.</summary>
+    internal double ConfidenceFloor => _retrieval.Policy.MinimumConfidence;
+
+    /// <summary>
+    /// Why this provider's retrieval would never return <paramref name="record"/> today, whatever the task, or
+    /// <see langword="null"/> when it could. For the read-only lessons view.
+    /// </summary>
+    internal StandingExclusion? StandingIneligibility(ExperienceRecord record) =>
+        _retrieval.StandingIneligibility(record, _excludeModelAuthored);
+
+    /// <summary>
     /// The request messages MAF handed this provider <em>before</em> its input filter (history included), for
     /// <see cref="ExperienceInjectionContext.DerivedTaskText"/> only. Set for one <see cref="InvokingCoreAsync"/> on
     /// its own async flow, so concurrent invocations never see each other's, and cleared as soon as the context is

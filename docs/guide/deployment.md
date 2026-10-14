@@ -235,6 +235,71 @@ AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 `options.InjectWithUseAgentExperience = false` turns the agent-level injection off: an agent without the provider on its
 options is then captured and verified but not injected, as `UseAgentExperience` alone did before it wired injection.
 
+## Seeing what it learned
+
+The one-call setup also registers `AgentExperienceLessons`, a read-only view of what is stored in one scope. Get it
+with `provider.GetAgentExperienceLessons()` (or from the container), and list a scope with `ListAsync(identity)`. After
+the [quick start](#starting-from-the-quick-start), `ListForDevelopmentIdentityAsync()` lists what
+`UseDevelopmentIdentity()` stored; it throws `InvalidOperationException` when the setup does not use that identity. For
+each lesson, newest first, it gives:
+
+- its experience ID, task ID, status, confidence, and when it was stored and last changed;
+- the checks that verified it, each with its evidence kind and result (never the evidence's detail text);
+- `BlockText`, the Historical Reference block an agent in that scope would be shown for that record, rendered by the
+  container's own context provider with its injection options (layout, failure detail, argument allowlist). It is the
+  same text as an injected block but for two things: ranking depends on the task, so its ranking line says there is
+  none (`Matched: no ranking data` in the compact layout), and the record stands alone as record 1, where a real block
+  numbers it by rank. It is rendered even for a lesson retrieval would not use;
+- `IsEligible`, with `Ineligibility` (an `ExperienceLessonIneligibility` code) and `IneligibleReason` (words) when it is
+  not: whether retrieval would currently consider it, setting the task aside. The codes are `Status` (quarantined,
+  retired and so on), `BelowConfidenceFloor`, `ModelAuthored` and `ContentUnconfirmed` (when the provider excludes
+  model-authored lessons), `Expired` (older than the policy's maximum age), `OverByteBudget` (its block alone does not
+  fit the provider's byte budget) and `Unrenderable` (the record could not be rendered; the rest are still listed).
+
+`ExperienceLessonsQuery` narrows it: `Statuses`, `Limit` (the store's bounds, 1 to 500, default 50) and
+`IncludeIneligible` (default `true`). The page's `HasMore` says whether more lessons match than it shows (or may: the
+store answers at most 500 records per call). It reads through `IExperienceRecordStore.QueryAsync` under the identity's
+own authorization and scope, the boundary retrieval reads within, so lessons another scope lends through a sharing grant
+are not listed; a record the store answers from another scope is left out and counted in `OutOfScopeDropped`. It never
+writes. A store answer other than `Found` (`Denied`, say) is an empty page carrying that outcome, not an exception.
+
+`ExperienceLessonsHtml.Render(page)` returns one self-contained HTML document: inline CSS, no script, no external
+request, light and dark mode, a "development view" banner and the scope. Every value drawn from a record is
+HTML-encoded, because lesson text is untrusted, and the page's content security policy allows no script.
+
+**The library maps no endpoint, and nothing in it enforces "development only".** Map it yourself, behind your own
+authorization, with the identity from your own authentication; never take the scope from the query string. **Exposing
+it publicly discloses every lesson in the scope.** In an ASP.NET Core minimal API, mapped only in development:
+
+```csharp
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/agent-experience/lessons", async (HttpContext http, CancellationToken cancellationToken) =>
+    {
+        ExperienceIdentity identity = MyIdentity.From(http.User);   // your own mapping from the authenticated user
+        var page = await http.RequestServices.GetAgentExperienceLessons().ListAsync(identity, cancellationToken: cancellationToken);
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers["X-Frame-Options"] = "DENY";
+        http.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
+        return Results.Content(ExperienceLessonsHtml.Render(page), "text/html; charset=utf-8");
+    }).RequireAuthorization();
+}
+```
+
+The headers matter: `no-store` keeps the lessons out of browser and proxy caches, and `X-Frame-Options` with
+`frame-ancestors 'none'` stops another site framing the page. The page's own content security policy is a `<meta>` tag,
+and a `<meta>` policy cannot set `frame-ancestors`; only a response header can.
+
+From a console app, write it to a file and open it:
+
+```csharp
+var page = await provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync();   // after the quick start
+// or, with your own identity: .ListAsync(new ExperienceIdentity(authorization, scope))
+File.WriteAllText("lessons.html", ExperienceLessonsHtml.Render(page));
+```
+
+When a lesson was last injected is not shown in this version.
+
 ## Wiring it all together
 
 ```csharp
