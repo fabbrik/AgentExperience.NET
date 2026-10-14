@@ -6,8 +6,10 @@ namespace AgentExperience.Release.Tests.Workflows;
 /// Story 4.3, frozen rule 3, as amended by the trusted-publishing decision: nothing publishes a package except
 /// <c>release.yml</c>, and it only under the constraints <see cref="ReleaseViolations"/> enforces (a pushed version
 /// tag as its only trigger, a publish job gated by the <c>nuget-release</c> environment's reviewers, a short-lived
-/// nuget.org key from NuGet Trusted Publishing, and no stored secret). Every other workflow may carry no step, secret
-/// or permission that would let a publish fire. The MAF compatibility probe's latest leg was non-blocking (AD-F);
+/// nuget.org key from NuGet Trusted Publishing, and no stored secret). Story 22.7 adds the Python distribution and the
+/// Go modules to the same tag: a <c>publish-pypi</c> job behind the <c>pypi-release</c> environment, publishing through
+/// PyPI Trusted Publishing, and the Go tags created by the publish job. Every other workflow may carry no step, secret
+/// or permission that would let a publish fire, a PyPI upload or a tag push included. The MAF compatibility probe's latest leg was non-blocking (AD-F);
 /// story 6.3 added the floating-dependency leg, which gates outside pull requests, and story 7.2 made the MAF latest
 /// leg gate the same way, once MAF became a range the newest 1.x belongs to.
 /// </summary>
@@ -24,6 +26,15 @@ public sealed class WorkflowTests
         "gh release",
         "softprops/action-gh-release",
         "actions/create-release",
+        // Story 22.7: PyPI, and the Go modules, which a tag releases.
+        "pypa/gh-action-pypi-publish",
+        "uv publish",
+        "twine upload",
+        "upload.pypi.org",
+        "pypi-release",
+        "git push",
+        "git tag",
+        "git/refs",
         // The public API baseline's accept switch: a workflow that set it would accept every API change.
         "AGENTEXPERIENCE_ACCEPT_API_CHANGES",
         // No workflow here needs a secret, so none may reference one (a publish key would arrive this way).
@@ -88,6 +99,13 @@ public sealed class WorkflowTests
     [InlineData("env:\n  AGENTEXPERIENCE_ACCEPT_API_CHANGES: true")]
     [InlineData("run: echo ${{ secrets.ANYTHING }}")]
     [InlineData("run: dotnet nuget push x.nupkg")]
+    [InlineData("      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2")]
+    [InlineData("run: uv publish --trusted-publishing always")]
+    [InlineData("run: uvx twine upload dist/*")]
+    [InlineData("    environment: pypi-release")]
+    [InlineData("run: git tag go/v0.1.0 && git push origin go/v0.1.0")]
+    [InlineData("run: git push --tags")]
+    [InlineData("run: gh api repos/fabbrik/AgentExperience.NET/git/refs -f ref=refs/tags/go/v0.1.0 -f sha=$GITHUB_SHA")]
     public void The_guard_catches_each_way_a_workflow_could_gain_publishing_power(string workflowText)
     {
         Assert.True(ForbiddenIn(workflowText, out _), $"The guard missed: {workflowText}");
@@ -314,19 +332,35 @@ public sealed class WorkflowTests
 
     /// <summary>
     /// First-party actions stay on the refs ci.yml uses, so the two workflows cannot drift onto different majors of
-    /// the same action; the artifact download follows the upload's major.
+    /// the same action; the artifact download follows the upload's major. The verify job uses the same refs; the
+    /// publish jobs pin every action by commit SHA (story 22.7), so there the version comment's major must match.
     /// </summary>
     [Fact]
     public void The_release_workflow_uses_the_same_first_party_actions_as_CI()
     {
         var ci = UsesRefs(ReadWorkflow("ci.yml"));
-        var release = UsesRefs(ReadWorkflow(ReleaseWorkflow));
+        var workflow = ReadWorkflow(ReleaseWorkflow);
+        var verify = UsesRefs(Job(workflow, "verify"));
+        var published = Uses.Matches(Job(workflow, "publish") + Job(workflow, "publish-pypi"))
+            .Select(m => (Action: m.Groups["action"].Value, Major: Regex.Match(m.Groups["comment"].Value, @"#\s*(v[0-9]+)", RegexOptions.CultureInvariant).Groups[1].Value))
+            .Where(pair => pair.Action.StartsWith("actions/", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(published);
 
-        foreach (var (action, reference) in release.Where(pair => pair.Action.StartsWith("actions/", StringComparison.Ordinal)))
+        string? Expected(string action) => action == "actions/download-artifact"
+            ? ci.First(pair => pair.Action == "actions/upload-artifact").Ref
+            : ci.FirstOrDefault(pair => pair.Action == action).Ref;
+
+        foreach (var (action, major) in published)
         {
-            var expected = action == "actions/download-artifact"
-                ? ci.First(pair => pair.Action == "actions/upload-artifact").Ref
-                : ci.FirstOrDefault(pair => pair.Action == action).Ref;
+            var expected = Expected(action);
+            Assert.True(expected is not null, $"release.yml uses {action}, which ci.yml does not.");
+            Assert.Equal(expected, major);
+        }
+
+        foreach (var (action, reference) in verify.Where(pair => pair.Action.StartsWith("actions/", StringComparison.Ordinal)))
+        {
+            var expected = Expected(action);
             Assert.True(expected is not null, $"release.yml uses {action}, which ci.yml does not.");
             Assert.Equal(expected, reference);
         }
@@ -365,6 +399,57 @@ public sealed class WorkflowTests
     [InlineData("table { exit }' docs/known-limits.md; }", "table { exit }' README.md; }")]
     [InlineData("dotnet run eng/verify-packages.cs -- artifacts/packages", "echo skipped")]
     [InlineData("    steps:\n      - name: Download the verified packages", "    steps:\n      - uses: actions/checkout@v5\n      - name: Download the verified packages")]
+    // Story 22.7: the PyPI job.
+    [InlineData("    environment: pypi-release\n", "")]
+    [InlineData("    environment: pypi-release\n", "    environment: nuget-release\n")]
+    [InlineData("    needs: [verify, publish]\n", "    needs: verify\n")]
+    [InlineData("    environment: pypi-release\n    permissions:\n      id-token: write\n", "    environment: pypi-release\n    permissions:\n      id-token: write\n      contents: write\n")]
+    [InlineData("    environment: pypi-release\n    permissions:\n      id-token: write\n", "    environment: pypi-release\n")]
+    [InlineData("pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2", "pypa/gh-action-pypi-publish@release/v1")]
+    [InlineData("pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2", "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33")]
+    [InlineData("skip-existing: true", "skip-existing: false")]
+    [InlineData("          skip-existing: true\n", "          skip-existing: true\n          password: ${{ secrets.PYPI_API_TOKEN }}\n")]
+    [InlineData("    steps:\n      - name: Download the verified Python distribution", "    steps:\n      - uses: actions/checkout@v5\n      - name: Download the verified Python distribution")]
+    [InlineData("    steps:\n      - name: Download the verified Python distribution", "    steps:\n      - run: uv build\n      - name: Download the verified Python distribution")]
+    [InlineData("          name: python-dist\n          path: dist\n", "          name: packages\n          path: dist\n")]
+    // Story 22.7: the Go tags.
+    [InlineData("if [ \"$sha\" != \"$GITHUB_SHA\" ]; then", "if false; then")]
+    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do", "for module in go; do")]
+    [InlineData("https://proxy.golang.org/$escaped/@v/$GO_VERSION.info", "https://example.invalid/$escaped")]
+    [InlineData("-f \"sha=$GITHUB_SHA\"", "-f \"sha=$(git rev-parse HEAD)\"")]
+    // Story 22.7: the verify job's version agreement, Python and Go checks, and that it publishes nothing.
+    [InlineData("test \"$(derive_versions 1.0.0 '')\" = \"1.0.0 1.0.0 v1.0.0\"", "true")]
+    [InlineData("if [ \"$declared\" != \"$python\" ]; then", "if false; then")]
+    [InlineData("if [ \"$required\" != \"$go\" ]; then", "if false; then")]
+    [InlineData("uv run pytest -m \"not postgres\"\n", "true\n")]
+    [InlineData("uvx --no-cache twine==7.0.0 check --strict dist/*.whl dist/*.tar.gz\n", "true\n")]
+    [InlineData("          rm -f dist/.gitignore\n", "")]
+    [InlineData("if [ \"$wheels\" -ne 1 ] || [ \"$sdists\" -ne 1 ]; then", "if false; then")]
+    [InlineData("          sha256sum --check --strict \"$RUNNER_TEMP/python-dist.sha256\"\n", "          true\n")]
+    [InlineData("(cd dist && sha256sum -- *.whl *.tar.gz) > \"$RUNNER_TEMP/python-dist.sha256\"", "true")]
+    [InlineData("      - name: Upload the verified packages\n", "      - name: Late step\n        run: echo late\n\n      - name: Upload the verified packages\n")]
+    [InlineData("retention-days: 90\n", "retention-days: 30\n")]
+    [InlineData("            python/dist/*.whl\n            python/dist/*.tar.gz\n", "            python/dist/\n")]
+    [InlineData("if [ \"$found\" != \"$expected\" ]; then", "if false; then")]
+    // Story 22.7: every action in the publish jobs is SHA-pinned.
+    [InlineData("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0\n        with:\n          name: python-dist", "uses: actions/download-artifact@v4\n        with:\n          name: python-dist")]
+    [InlineData("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0\n        with:\n          name: packages", "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n        with:\n          name: packages")]
+    [InlineData("actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0", "actions/setup-dotnet@v5")]
+    // Story 22.7: the Go tags and the proxy check.
+    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do\n            tag=", "for module in go go/maf; do\n            tag=")]
+    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do\n            path=", "for module in go; do\n            path=")]
+    [InlineData("elif grep -q 'HTTP 404' \"$error\"; then", "elif true; then")]
+    [InlineData("--connect-timeout 10 --max-time 30 ", "")]
+    [InlineData("if [ \"$attempt\" -lt 10 ]; then sleep 30; fi", "sleep 30")]
+    [InlineData("    timeout-minutes: 75\n", "    timeout-minutes: 20\n")]
+    [InlineData("grep -qx \"Version: $PYTHON_VERSION\"", "true")]
+    [InlineData("              go test ./...\n", "")]
+    [InlineData("              go vet ./...\n", "")]
+    [InlineData("astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0", "astral-sh/setup-uv@v6")]
+    [InlineData("          version: '0.12.24'\n", "")]
+    [InlineData("enable-cache: false", "enable-cache: true")]
+    [InlineData("uv build --out-dir dist\n", "uv build --out-dir dist\n          uv publish dist/*\n")]
+    [InlineData("uv build --out-dir dist\n", "uv build --out-dir dist\n          git tag go/v1 && git push origin go/v1\n")]
     public void The_release_rules_catch_each_way_the_workflow_could_weaken(string original, string replacement)
     {
         var workflow = ReadWorkflow(ReleaseWorkflow);
@@ -410,32 +495,55 @@ public sealed class WorkflowTests
             TopLevelBlock(lines, "permissions").SequenceEqual(["permissions:", "  contents: read"]),
             "Workflow-level permissions must be exactly `contents: read`.");
 
-        // Exactly two jobs.
+        // Exactly three jobs.
         var jobs = TopLevelBlock(lines, "jobs")
             .Select(line => Regex.Match(line, @"^  (?<name>[A-Za-z0-9_-]+):\s*$", RegexOptions.CultureInvariant))
             .Where(m => m.Success)
             .Select(m => m.Groups["name"].Value)
             .ToList();
-        Require(jobs.SequenceEqual(["verify", "publish"]), $"The jobs must be verify, then publish (found: {string.Join(", ", jobs)}).");
+        Require(jobs.SequenceEqual(["verify", "publish", "publish-pypi"]), $"The jobs must be verify, publish, then publish-pypi (found: {string.Join(", ", jobs)}).");
         var verify = jobs.Contains("verify") ? Job(workflow, "verify") : string.Empty;
         var publish = jobs.Contains("publish") ? Job(workflow, "publish") : string.Empty;
+        var pypi = jobs.Contains("publish-pypi") ? Job(workflow, "publish-pypi") : string.Empty;
 
-        // Write permissions: exactly two in the whole file, both on the publish job, and exactly these.
+        // Write permissions: exactly three in the whole file, two on the publish job and one on publish-pypi, and
+        // exactly these.
         Require(
-            WritePermission.Matches(workflow).Count == 2 && WritePermission.Matches(publish).Count == 2,
-            "The only write permissions must be the publish job's.");
+            WritePermission.Matches(workflow).Count == 3 && WritePermission.Matches(publish).Count == 2 && WritePermission.Matches(pypi).Count == 1,
+            "The only write permissions must be the publish job's and the publish-pypi job's.");
         Require(
             JobPermissions(publish).Order(StringComparer.Ordinal).SequenceEqual(["contents: write", "id-token: write"]),
             "The publish job's permissions must be exactly `id-token: write` and `contents: write`.");
+        Require(JobPermissions(pypi).SequenceEqual(["id-token: write"]), "The publish-pypi job's permissions must be exactly `id-token: write`.");
         Require(!Regex.IsMatch(workflow, @"^\s*packages\s*:", RegexOptions.Multiline | RegexOptions.CultureInvariant), "No job may be granted `packages`.");
         Require(!verify.Contains("permissions:", StringComparison.Ordinal), "The verify job must not be granted any permission.");
 
-        // The publish job: after verify, behind the environment's reviewers, with no checkout of the tree.
+        // The publish jobs: after verify, behind their environment's reviewers, with no checkout of the tree.
         Require(publish.Contains("\n    needs: verify\n", StringComparison.Ordinal), "The publish job must `needs: verify`.");
         Require(publish.Contains("\n    environment: nuget-release\n", StringComparison.Ordinal), "The publish job must run in the `nuget-release` environment.");
         Require(!verify.Contains("environment:", StringComparison.Ordinal), "The verify job must not use a deployment environment.");
-        Require(!publish.Contains("actions/checkout", StringComparison.Ordinal), "The publish job must not check out the tree; it publishes what verify uploaded.");
-        Require(Regex.IsMatch(publish, @"uses: actions/download-artifact@\S+\n\s+with:\n\s+name: packages\n", RegexOptions.CultureInvariant), "The publish job must download the verified `packages` artifact.");
+        foreach (var (name, job) in new[] { ("publish", publish), ("publish-pypi", pypi) })
+        {
+            Require(!job.Contains("actions/checkout", StringComparison.Ordinal), $"The {name} job must not check out the tree; it publishes what verify uploaded.");
+            Require(!Regex.IsMatch(job, @"\b(dotnet (build|pack|restore)|uv (build|sync|run)|python -m build|go (build|test|vet))\b", RegexOptions.CultureInvariant), $"The {name} job must build nothing.");
+        }
+
+        Require(Regex.IsMatch(publish, @"uses: actions/download-artifact@\S+(?: #[^\n]*)?\n\s+with:\n\s+name: packages\n", RegexOptions.CultureInvariant), "The publish job must download the verified `packages` artifact.");
+
+        // publish-pypi: only after the NuGet push succeeded, behind its own environment, publishing what verify built
+        // through PyPI Trusted Publishing (no token, no password), safe to re-run.
+        Require(pypi.Contains("\n    needs: [verify, publish]\n", StringComparison.Ordinal), "The publish-pypi job must `needs: [verify, publish]`.");
+        Require(pypi.Contains("\n    environment: pypi-release\n", StringComparison.Ordinal), "The publish-pypi job must run in the `pypi-release` environment.");
+        Require(
+            Regex.Matches(workflow, @"\n\s+environment:", RegexOptions.CultureInvariant).Count == 2,
+            "Only the two publish jobs may use a deployment environment.");
+        Require(Regex.IsMatch(pypi, @"uses: actions/download-artifact@\S+(?: #[^\n]*)?\n\s+with:\n\s+name: python-dist\n", RegexOptions.CultureInvariant), "The publish-pypi job must download the verified `python-dist` artifact.");
+        Require(
+            Regex.IsMatch(pypi, @"\n\s+uses: pypa/gh-action-pypi-publish@[0-9a-f]{40} # v[0-9][^\n]*\n\s+with:\n\s+packages-dir: dist/\n\s+skip-existing: true\n", RegexOptions.CultureInvariant),
+            "The publish-pypi job must publish dist/ with a SHA-pinned pypa/gh-action-pypi-publish and skip-existing: true.");
+        Require(Regex.Matches(workflow, "pypa/gh-action-pypi-publish", RegexOptions.CultureInvariant).Count == 1, "There must be exactly one PyPI publish.");
+        Require(!Regex.IsMatch(pypi, @"\b(password|user|repository-url|repository_url)\s*:", RegexOptions.CultureInvariant), "The PyPI publish must use Trusted Publishing: no password, user or other repository.");
+        Require(!Regex.IsMatch(workflow, @"\b(uv publish|twine upload|git push|git tag)\b", RegexOptions.CultureInvariant), "Nothing may upload to PyPI, or push a tag, but the steps described here.");
 
         // Secrets: none but GITHUB_TOKEN, however spelled.
         var secrets = Regex.Matches(workflow, @"secrets\s*(?:\.\s*|\[\s*['""])(?<name>[A-Za-z0-9_]+)", RegexOptions.CultureInvariant)
@@ -462,6 +570,20 @@ public sealed class WorkflowTests
             }
         }
 
+        // Story 22.7: in the jobs that hold publishing credentials, every action, first-party ones included, is pinned to
+        // a full commit SHA with a version comment.
+        foreach (var (name, job) in new[] { ("publish", publish), ("publish-pypi", pypi) })
+        {
+            var uses = Uses.Matches(job).ToList();
+            Require(uses.Count > 0 && job.Split('\n').Count(line => Regex.IsMatch(line, @"^\s*(-\s+)?uses:", RegexOptions.CultureInvariant)) == uses.Count, $"Every action in the {name} job must be written as `uses: owner/action@ref`.");
+            foreach (var use in uses)
+            {
+                Require(
+                    Regex.IsMatch(use.Groups["ref"].Value, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant) && Regex.IsMatch(use.Groups["comment"].Value, @"^\s+#\s*v[0-9]", RegexOptions.CultureInvariant),
+                    $"{use.Groups["action"].Value}@{use.Groups["ref"].Value} in the {name} job must be pinned to a full commit SHA with a version comment.");
+            }
+        }
+
         // Trusted Publishing: NuGet/login in the publish job only, as the nuget.org profile, and the key only through env.
         Require(Regex.IsMatch(publish, @"\n\s+id: login\n\s+uses: NuGet/login@[0-9a-f]{40} # v[0-9]", RegexOptions.CultureInvariant), "The publish job must log in with a SHA-pinned NuGet/login step whose id is `login`.");
         Require(publish.Contains("\n          user: fabbrik76\n", StringComparison.Ordinal), "NuGet/login's user must be the nuget.org profile fabbrik76.");
@@ -476,10 +598,47 @@ public sealed class WorkflowTests
         Require(publish.Contains(Push, StringComparison.Ordinal), $"The publish job must run exactly: {Push}");
         Require(Regex.Matches(workflow, "nuget push", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Count == 1, "There must be exactly one push.");
 
-        // The GitHub release: only after the push, idempotent on a re-run, a prerelease for a suffixed version.
+        // The Go tags: after the push, before the GitHub release, one per module at the verified version, created at the
+        // tagged commit through the API (no checkout, no git push), idempotent only for a tag already at that commit, and
+        // confirmed by the Go module proxy.
+        const string GoModules = "for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do";
+        const string CreateTag = "gh api \"repos/$GH_REPO/git/refs\" -f \"ref=refs/tags/$tag\" -f \"sha=$GITHUB_SHA\"";
+        var tagsAt = publish.IndexOf(CreateTag, StringComparison.Ordinal);
+        var proxyAt = publish.IndexOf("https://proxy.golang.org/$escaped/@v/$GO_VERSION.info", StringComparison.Ordinal);
+        foreach (var (text, rule) in new[]
+        {
+            ("GO_VERSION: ${{ needs.verify.outputs.go-version }}", "take the Go version verify derived"),
+            (GoModules, "tag exactly the five Go modules"),
+            ("tag=\"$module/$GO_VERSION\"", "name each tag module/version"),
+            ("gh api \"repos/$GH_REPO/git/ref/tags/$tag\"", "look each tag up first"),
+            ("if [ \"$sha\" != \"$GITHUB_SHA\" ]; then", "refuse a tag that exists at another commit"),
+            (CreateTag, "create each tag at the tagged commit through the API"),
+            ("elif grep -q 'HTTP 404' \"$error\"; then", "create a tag only when the lookup says 404"),
+            ("echo \"::error::Could not look up the tag $tag: $(cat \"$error\")\"", "fail on any other lookup error"),
+            ("# tag-go-modules:begin\n", "mark the tag script, which the release tests run"),
+            ("# tag-go-modules:end\n", "mark the tag script's end"),
+            ("sed -E 's/([A-Z])/!\\L\\1/g'", "case-escape the module path for the proxy"),
+            ("path=\"github.com/fabbrik/AgentExperience.NET/$module\"", "ask the proxy for the repository's module paths"),
+            ("curl -fsS --connect-timeout 10 --max-time 30 \"$url\"", "bound each request to the proxy"),
+            ("if [ \"$attempt\" -lt 10 ]; then sleep 30; fi", "not sleep after the last attempt"),
+            // Worst case, the push to nuget.org plus 47.5 minutes of proxy retries.
+            ("\n    timeout-minutes: 75\n", "allow the push and the whole proxy wait"),
+        })
+        {
+            Require(publish.Contains(text, StringComparison.Ordinal), $"The publish job must {rule} (`{text}`).");
+        }
+
+        Require(
+            Regex.Matches(publish, Regex.Escape(GoModules), RegexOptions.CultureInvariant).Count == 2,
+            "The publish job must loop over exactly the five Go modules twice: once to tag them and once to ask the proxy.");
+
+        Require(Regex.Matches(workflow, @"git/refs", RegexOptions.CultureInvariant).Count == 1, "Only the publish job's Go tag step may create a ref.");
+
+        // The GitHub release: only after the push and the Go tags, idempotent on a re-run, a prerelease for a suffixed version.
         var pushAt = publish.IndexOf(Push, StringComparison.Ordinal);
         var viewAt = publish.IndexOf("if gh release view \"$TAG\"", StringComparison.Ordinal);
         var createAt = publish.IndexOf("gh release create \"$TAG\"", StringComparison.Ordinal);
+        Require(pushAt >= 0 && tagsAt > pushAt && proxyAt > tagsAt && viewAt > proxyAt, "The Go modules must be tagged, and found on the proxy, after the push and before the GitHub release.");
         Require(pushAt >= 0 && viewAt > pushAt && createAt > viewAt, "The GitHub release must be looked up, then created, only after the push.");
         Require(publish.Contains("flags+=(--prerelease)", StringComparison.Ordinal) && publish.Contains("--notes-file artifacts/release-notes/notes.md", StringComparison.Ordinal), "The GitHub release must be a prerelease for a suffixed version, with the built notes.");
 
@@ -502,10 +661,59 @@ public sealed class WorkflowTests
             ("run: dotnet test --no-build --configuration Release\n", "run the full test suite"),
             ("dotnet pack --no-build --configuration Release --output artifacts/packages -p:AgentExperienceReleaseBuild=true", "pack to artifacts/packages"),
             ("run: dotnet run eng/verify-packages.cs -- artifacts/packages\n", "verify the packages"),
+            // Story 22.7: one version for every language, and the Python and Go checks on the tagged commit.
+            ("# derive-versions:begin\n", "derive the Python and Go versions in one function"),
+            ("test \"$(derive_versions 0.1.0 preview.14)\" = \"0.1.0-preview.14 0.1.0a14 v0.1.0-preview.14\"", "test the derivation on a preview"),
+            ("test \"$(derive_versions 1.0.0 '')\" = \"1.0.0 1.0.0 v1.0.0\"", "test the derivation on a version with no suffix"),
+            ("if [ \"$declared\" != \"$python\" ]; then", "refuse a pyproject.toml version that is not the derived one"),
+            ("if [ \"$required\" != \"$go\" ]; then", "refuse a Go module requirement that is not the derived version"),
+            ("if [ \"$found\" != \"$expected\" ]; then", "refuse a Go module that does not require exactly its siblings"),
+            ("has no replace for github.com/fabbrik/AgentExperience.NET/$sibling", "refuse a Go module without a replace for each sibling"),
+            ("uv sync --locked --extra maf --extra postgres\n", "install the Python project from its lock file"),
+            ("uv run pytest -m \"not postgres\"\n", "run the Python tests"),
+            ("uv build --out-dir dist\n", "build the Python sdist and wheel"),
+            ("rm -f dist/.gitignore\n", "drop the .gitignore uv writes into the output directory"),
+            ("(cd dist && sha256sum -- *.whl *.tar.gz) > \"$RUNNER_TEMP/python-dist.sha256\"", "record the built files' hashes"),
+            ("sha256sum --check --strict \"$RUNNER_TEMP/python-dist.sha256\"", "check the hashes again before the upload"),
+            (" check --strict dist/*.whl dist/*.tar.gz\n", "check the Python distribution as PyPI would, with twine check --strict"),
+            ("if [ \"$wheels\" -ne 1 ] || [ \"$sdists\" -ne 1 ]; then", "require exactly one wheel and one sdist"),
+            ("            python/dist/*.whl\n            python/dist/*.tar.gz\n", "upload only the wheel and the sdist"),
+            ("retention-days: 90\n", "keep the Python distribution as long as GitHub allows"),
+            ("grep -qx \"Name: agentexperience\"", "check the wheel names agentexperience"),
+            ("grep -qx \"Version: $PYTHON_VERSION\"", "check the wheel carries the derived version"),
+            ("PYTHON_VERSION: ${{ steps.version.outputs.python-version }}", "check the distribution against the derived Python version"),
+            ("for module in . inmemory postgres postgres/pgtest maf; do", "check every Go module"),
+            ("go vet ./...\n", "vet the Go modules"),
+            ("go test ./...\n", "test the Go modules"),
         })
         {
             Require(verify.Contains(text, StringComparison.Ordinal), $"The verify job must {rule} (`{text}`).");
         }
+
+        // The verify job publishes nothing.
+        Require(
+            !Regex.IsMatch(verify, @"gh-action-pypi-publish|uv publish|twine upload|git/refs|gh release|nuget push", RegexOptions.CultureInvariant),
+            "The verify job must publish nothing.");
+        Require(Regex.IsMatch(verify, @"\n\s+uses: astral-sh/setup-uv@[0-9a-f]{40} # v[0-9][^\n]*\n\s+with:\n\s+version: '[0-9]+\.[0-9]+\.[0-9]+'\n", RegexOptions.CultureInvariant), "The verify job must install a pinned uv through a SHA-pinned astral-sh/setup-uv.");
+        Require(!Regex.IsMatch(workflow, @"enable-cache: true|cache: true", RegexOptions.CultureInvariant), "No release job may restore a cache.");
+        Require(Regex.IsMatch(verify, @"\n\s+uvx --no-cache twine==[0-9.]+ check --strict dist/\*\.whl dist/\*\.tar\.gz\n", RegexOptions.CultureInvariant), "The verify job must run a pinned twine's check --strict on the wheel and the sdist.");
+        var pythonDistAt = verify.IndexOf(" check --strict dist/*", StringComparison.Ordinal);
+        var pythonUploadAt = verify.IndexOf("name: python-dist", StringComparison.Ordinal);
+        Require(pythonDistAt >= 0 && pythonUploadAt > pythonDistAt, "The Python distribution must be uploaded only after it is checked.");
+
+        // The hashes are recorded right after the build, and checked again after everything else has run (twine, Go)
+        // and before the first upload.
+        var buildAt = verify.IndexOf("uv build --out-dir dist", StringComparison.Ordinal);
+        var recordAt = verify.IndexOf("sha256sum -- *.whl *.tar.gz", StringComparison.Ordinal);
+        var twineAt = verify.IndexOf("twine==", StringComparison.Ordinal);
+        var goTestAt = verify.IndexOf("go test ./...", StringComparison.Ordinal);
+        var recheckAt = verify.IndexOf("sha256sum --check --strict", StringComparison.Ordinal);
+        var firstUploadAt = verify.IndexOf("actions/upload-artifact", StringComparison.Ordinal);
+        Require(
+            buildAt >= 0 && recordAt > buildAt && twineAt > recordAt && goTestAt > twineAt && recheckAt > goTestAt && firstUploadAt > recheckAt
+                // Between the re-check and the first upload, only the upload step's own start: no other step.
+                && Regex.Matches(verify[recheckAt..firstUploadAt], @"\n      - ", RegexOptions.CultureInvariant).Count == 1,
+            "The Python files' hashes must be recorded right after the build and re-checked as the last step before the uploads.");
 
         // net10.0 is the only target framework, and the pinned SDK carries its runtime: another SDK or runtime installed
         // beside it would be one nothing needs (SupportMatrixTests requires one again for any framework added later).
@@ -514,7 +722,7 @@ public sealed class WorkflowTests
         var verifiedAt = verify.IndexOf("dotnet run eng/verify-packages.cs", StringComparison.Ordinal);
         var uploadAt = verify.IndexOf("actions/upload-artifact", StringComparison.Ordinal);
         Require(verifiedAt >= 0 && uploadAt > verifiedAt, "The packages must be uploaded only after they are verified.");
-        Require(!verify.Contains("continue-on-error", StringComparison.Ordinal) && !publish.Contains("continue-on-error", StringComparison.Ordinal), "No release step may be allowed to fail.");
+        Require(!workflow.Contains("continue-on-error", StringComparison.Ordinal), "No release step may be allowed to fail.");
 
         return violations;
     }

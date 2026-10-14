@@ -241,10 +241,16 @@ this library (the stored record format, the injected block, the task text and th
 [a language-neutral contract](contract/README.md), version `1.2` ([what 1.1 adds](contract/README-1.1.md),
 [what 1.2 adds](contract/README-1.2.md)): a JSON Schema, the SQL to run, and fixtures generated from and checked
 against this implementation on every build. A pure-Python core that passes contract 1.2, with a one-call Python Agent
-Framework integration, is in [`python/`](python/README.md): pre-release and not on PyPI. A lesson a .NET agent learned
-is injected into a Python agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.2, with
-a one-call Go Agent Framework integration, are in [`go/`](go/README.md): pre-release and untagged. A lesson a .NET
-agent learned is injected into a Go agent, and the other way round.
+Framework integration, is in [`python/`](python/README.md). A lesson a .NET agent learned is injected into a Python
+agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.2, with a one-call Go Agent
+Framework integration, are in [`go/`](go/README.md). A lesson a .NET agent learned is injected into a Go agent, and
+the other way round. Both are published with each release, at the same version as the NuGet packages (a Python alpha,
+`0.1.0aN`, for `0.1.0-preview.N`), and are previews in the same sense:
+
+```bash
+pip install "agentexperience[maf]"
+go get github.com/fabbrik/AgentExperience.NET/go/maf@latest
+```
 
 ## Documentation
 

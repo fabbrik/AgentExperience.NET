@@ -3,7 +3,7 @@ module github.com/fabbrik/AgentExperience.NET/go/postgres
 go 1.25.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.0.0-00010101000000-000000000000
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.14
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
@@ -17,6 +17,7 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 )
 
-// The core is developed in the same repository; until a version of it is tagged, it is built from the parent
-// directory.
+// The core is developed in the same repository, so a build here uses the parent directory. A consumer ignores this
+// replace and gets the core at the version required above: each release tags every module at the same version
+// (RELEASING.md).
 replace github.com/fabbrik/AgentExperience.NET/go => ../

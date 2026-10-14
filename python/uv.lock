@@ -27,7 +27,7 @@ wheels = [
 
 [[package]]
 name = "agentexperience"
-version = "0.1.0.dev0"
+version = "0.1.0a14"
 source = { editable = "." }
 
 [package.optional-dependencies]

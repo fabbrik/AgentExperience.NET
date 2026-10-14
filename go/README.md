@@ -4,10 +4,17 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: pre-release, contract 1.2, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.2 (and so every 1.0 and 1.1 fixture). No version is tagged or published. The module paths under
-`github.com/fabbrik/AgentExperience.NET/go` and the package name `agentexperience` are provisional until the project
-is named. It is Apache-2.0, as the [repository](../LICENSE) is.
+**Status: preview, contract 1.2, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.2 (and so every 1.0 and 1.1 fixture). Every release of this repository tags each module at the
+same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
+packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
+[repository](../LICENSE) is.
+
+```bash
+go get github.com/fabbrik/AgentExperience.NET/go/maf@latest
+```
+
+That brings the core (`.../go`) with it; add `.../go/postgres` or `.../go/inmemory` for a store the same way.
 
 ## Modules
 
@@ -25,7 +32,8 @@ what the pgx and `golang.org/x/text` releases without known vulnerabilities need
 Go SDK's own minimum. The PostgreSQL test support is a module of its own, so the store's module requires no container
 library: it is on Go 1.26, where the Docker client testcontainers-go brings in has no known vulnerability, and every
 module, it included, passes govulncheck with nothing left out. The store's and the integration's tests also use a JSON
-Schema validator. Until the modules are tagged, each `go.mod` builds the others from their directories (a `replace`).
+Schema validator. Each module requires the others at the release's own version, and also builds them from their
+directories in this repository (a `replace`, which a program that imports the module ignores).
 
 ## Quick start with Microsoft Agent Framework
 

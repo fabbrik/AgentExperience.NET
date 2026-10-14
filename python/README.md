@@ -1,17 +1,24 @@
 # AgentExperience for Python
 
-A pure-Python core of AgentExperience that implements the [language-neutral contract](../contract/README.md), so a
+A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: pre-release, contract 1.2, with a Microsoft Agent Framework integration (the `maf` extra).** It passes
-every fixture of contract 1.2. It is not published to PyPI. The distribution and import name `agentexperience` are
-provisional until the package is named, and both live in one place (`pyproject.toml` and `src/agentexperience/`).
+**Status: alpha, contract 1.2, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.2. It is published to PyPI as `agentexperience`, the distribution and import name, with every
+release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
+`agentexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
+Like the .NET packages, it claims no production readiness, and its API may change between alphas.
+
+```bash
+pip install "agentexperience[maf]"        # with Microsoft Agent Framework
+pip install "agentexperience[postgres]"   # with the PostgreSQL store
+```
 
 ## Quick start with Microsoft Agent Framework
 
-Install from this directory with the `maf` extra (`pip install ".[maf]"`, which brings `agent-framework-core` 1.0.0 or
-later); bring `client` (any MAF chat client) and `run_tests` (your test run, returning text such as `exit=0`).
-Development and tests only: see [In production](#in-production). After the two imports, five lines: one call that
+Install with the `maf` extra (`pip install "agentexperience[maf]"`, which brings `agent-framework-core` 1.0.0 or
+later, or `pip install ".[maf]"` from this directory); bring `client` (any MAF chat client) and `run_tests` (your test
+run, returning text such as `exit=0`). Development and tests only: see [In production](https://github.com/fabbrik/AgentExperience.NET/blob/main/python/README.md#in-production). After the two imports, five lines: one call that
 wires the agent (three lines), and two runs.
 
 ```python
@@ -34,13 +41,13 @@ Tried:
   - attempt 0: run_tests [failed: exit 3], run_tests [returned] → completed
 ```
 
-[`samples/quickstart.py`](samples/quickstart.py) is based on this snippet and runs it with no key and no network:
+[`samples/quickstart.py`](https://github.com/fabbrik/AgentExperience.NET/blob/main/python/samples/quickstart.py) is based on this snippet and runs it with no key and no network:
 `uv run python samples/quickstart.py`. It differs in what a runnable, repeatable demo needs: the model is a scripted
 stand-in (`ScriptedModel`, which calls `run_tests` until a call returns `exit=0`), `run_tests` is a small class whose
 first call of each run returns `exit=3`, the identity names its application (`development_identity(application=
 "quickstart")`), the recorded environment is fixed (`environment=...`) so the output is the same on every machine, and it
 prints each run and the block. Its output is checked in as
-[`samples/quickstart.expected.txt`](samples/quickstart.expected.txt), and a test compares them.
+[`samples/quickstart.expected.txt`](https://github.com/fabbrik/AgentExperience.NET/blob/main/python/samples/quickstart.expected.txt), and a test compares them.
 
 ### What the one call wires
 
@@ -131,7 +138,7 @@ print(error_class("System.TimeoutException: The operation has timed out."))  # T
 ### End to end
 
 Capture a run, finalize it, store it, search for it, rank the rows and render the block. Steps 1 and 2 need nothing
-else; step 3 needs the `postgres` extra (`pip install "agentexperience[postgres]"` from this directory) and a database
+else; step 3 needs the `postgres` extra (`pip install "agentexperience[postgres]"`) and a database
 the .NET migrator set up.
 
 ```python
@@ -242,7 +249,7 @@ uv run pytest
 ```
 
 `uv run pytest` runs the unit tests and the conformance runner (`tests/test_contract.py`), which loads every fixture
-family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly: blocks and task
+family from [`../contract/fixtures`](https://github.com/fabbrik/AgentExperience.NET/tree/main/contract/fixtures) and compares this package's output exactly: blocks and task
 text byte for byte, JSON by value. It validates every record against the contract's JSON Schema, checks every
 contract file against `contract/lock.json`, and fails with a clear message if the lock names a contract version this
 package does not support.
@@ -256,7 +263,7 @@ runs the sample (`AGENTEXPERIENCE_QUICKSTART_GOLDEN_UPDATE=1` rewrites its expec
 **The cross-language proof** (`tests/test_cross_language.py`):
 
 - *Python writes, .NET reads.* A Python agent on a fixed clock and fixed identifiers stores two runs, and the records
-  must be exactly [`tests/cross-language/python-agent-records.json`](tests/cross-language/python-agent-records.json)
+  must be exactly [`tests/cross-language/python-agent-records.json`](https://github.com/fabbrik/AgentExperience.NET/blob/main/python/tests/cross-language/python-agent-records.json)
   (checked in memory, and written to and read back from PostgreSQL in the PostgreSQL leg). The .NET contract tests'
   `PythonAgentRecordsPostgresRoundTripTests` insert that file into a schema the .NET migrator applied and read each
   record back through the .NET PostgreSQL store: it must come back unchanged. `AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`
@@ -269,9 +276,9 @@ runs the sample (`AGENTEXPERIENCE_QUICKSTART_GOLDEN_UPDATE=1` rewrites its expec
 The PostgreSQL tests (`tests/test_postgres.py` and the cross-language tests, marker `postgres`) write each finalize fixture through the store and
 read it back row for row, and run every search fixture, then rank. Each test database is migrated with the .NET
 migrator's own scripts from
-[`src/AgentExperience.Storage.Postgres/Migrations`](../src/AgentExperience.Storage.Postgres/Migrations), in order;
+[`src/AgentExperience.Storage.Postgres/Migrations`](https://github.com/fabbrik/AgentExperience.NET/tree/main/src/AgentExperience.Storage.Postgres/Migrations), in order;
 the application role's privileges are the contract's
-[`sql/application-role-privileges.sql`](../contract/sql/application-role-privileges.sql), which a .NET test keeps
+[`sql/application-role-privileges.sql`](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/sql/application-role-privileges.sql), which a .NET test keeps
 identical to the statements the .NET migrator runs. The server is a Testcontainers `postgres` container (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or
 the server libpq's `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` name (a superuser). With neither, they are skipped.
 On a Mac with Rancher Desktop or Colima, Testcontainers may need:
