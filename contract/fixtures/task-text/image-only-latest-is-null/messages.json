@@ -1,0 +1,29 @@
+{
+  "description": "When the new input has no text, the result is null: an older message is never taken for the request.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "ChatHistory",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Earlier request with text"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "image",
+          "text": null
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

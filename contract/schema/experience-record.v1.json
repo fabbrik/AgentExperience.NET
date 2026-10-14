@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fabbrik/AgentExperience.NET/contract/schema/experience-record.v1.json",
+  "title": "Experience Record, payload_version 1 (contract-v1)",
+  "description": "One stored Experience Record as agent_experience.experience_records holds it: the record columns, and the payload jsonb column at payload_version 1. Property names, enum spellings and value formats are exactly what the .NET adapter writes and reads. See contract/README.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["columns", "payload"],
+  "properties": {
+    "columns": { "$ref": "#/$defs/columns" },
+    "payload": { "$ref": "#/$defs/payload" }
+  },
+  "$defs": {
+    "uuid": {
+      "description": "A UUID in its 36-character lower-case hyphenated form.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "nonEmptyUuid": {
+      "allOf": [
+        { "$ref": "#/$defs/uuid" },
+        { "not": { "const": "00000000-0000-0000-0000-000000000000" } }
+      ]
+    },
+    "timestamp": {
+      "description": "An ISO 8601 instant in UTC, written with the offset +00:00 and at most seven fractional digits, trailing zeros dropped (2026-03-01T10:00:00+00:00, 2026-03-01T10:00:00.25+00:00). Columns are timestamptz and keep whole microseconds.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,7})?(\\+00:00|Z)$"
+    },
+    "duration": {
+      "description": "A duration in the .NET constant TimeSpan format [-][d.]hh:mm:ss[.fffffff] (00:00:01.5, 1.02:03:04).",
+      "type": "string",
+      "pattern": "^-?([0-9]+\\.)?[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,7})?$"
+    },
+    "nonBlank": {
+      "type": "string",
+      "pattern": "[^\\s]"
+    },
+    "nullableString": { "type": ["string", "null"] },
+    "status": {
+      "description": "ExperienceStatus, by member name.",
+      "enum": ["Candidate", "Validated", "Quarantined", "Contested", "Stale", "Superseded", "Revoked", "Reinforced"]
+    },
+    "verificationStatus": {
+      "description": "TaskVerificationStatus, by member name.",
+      "enum": ["Unknown", "Verified", "Failed"]
+    },
+    "checkResult": {
+      "description": "CheckResult, by member name.",
+      "enum": ["Pass", "Fail", "Unknown"]
+    },
+    "unit": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "columns": {
+      "description": "The record columns, named as in the table. Optional scope fields are JSON null when absent, never an empty string.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience_id", "source_run_id", "tenant_id", "application_id", "project_id", "team_id", "agent_id", "user_id",
+        "task_id", "status", "reuse_confidence", "supporting_validations", "contradictions", "revision", "created_at",
+        "updated_at", "payload_version"
+      ],
+      "properties": {
+        "experience_id": { "$ref": "#/$defs/nonEmptyUuid" },
+        "source_run_id": { "$ref": "#/$defs/uuid" },
+        "tenant_id": { "$ref": "#/$defs/nonBlank" },
+        "application_id": { "$ref": "#/$defs/nonBlank" },
+        "project_id": { "$ref": "#/$defs/nonBlank" },
+        "team_id": { "anyOf": [{ "$ref": "#/$defs/nonBlank" }, { "type": "null" }] },
+        "agent_id": { "anyOf": [{ "$ref": "#/$defs/nonBlank" }, { "type": "null" }] },
+        "user_id": { "anyOf": [{ "$ref": "#/$defs/nonBlank" }, { "type": "null" }] },
+        "task_id": { "$ref": "#/$defs/nonBlank" },
+        "status": { "$ref": "#/$defs/status" },
+        "reuse_confidence": { "$ref": "#/$defs/unit" },
+        "supporting_validations": { "type": "integer", "minimum": 0 },
+        "contradictions": { "type": "integer", "minimum": 0 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "payload_version": { "const": 1 }
+      }
+    },
+    "payload": {
+      "description": "The payload column at payload_version 1. Members marked optional are omitted, never written as null, when absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskSummary", "attempts", "outcome", "completionScore", "reflection", "environment", "provenance"],
+      "properties": {
+        "taskSummary": { "$ref": "#/$defs/nullableString" },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/attempt" } },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "completionScore": { "$ref": "#/$defs/unit" },
+        "reflection": { "anyOf": [{ "$ref": "#/$defs/reflection" }, { "type": "null" }] },
+        "environment": { "$ref": "#/$defs/environment" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "closedRoundId": {
+          "description": "Optional. The verification round finalization closed; omitted when none.",
+          "$ref": "#/$defs/nonEmptyUuid"
+        },
+        "origin": {
+          "description": "Optional. Finalized for a record finalization derived from a captured run; omitted for HostWritten, which is how it reads back when absent.",
+          "const": "Finalized"
+        },
+        "provenanceSignature": {
+          "description": "Optional. Signing is outside contract-v1; a port writes none and must not alter one it reads.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["keyId", "algorithm", "value"],
+          "properties": {
+            "keyId": { "type": "string" },
+            "algorithm": { "type": "string" },
+            "value": { "type": "string", "contentEncoding": "base64" }
+          }
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attemptId", "sequenceNumber", "startedAt", "duration", "toolCalls", "result", "error"],
+      "properties": {
+        "attemptId": { "$ref": "#/$defs/uuid" },
+        "sequenceNumber": { "type": "integer", "minimum": 0 },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "duration": { "$ref": "#/$defs/duration" },
+        "toolCalls": { "type": "array", "items": { "$ref": "#/$defs/toolCall" } },
+        "result": { "$ref": "#/$defs/nullableString" },
+        "error": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolCallId", "sequenceNumber", "toolName", "arguments", "startedAt", "duration", "result", "error"],
+      "properties": {
+        "toolCallId": { "$ref": "#/$defs/uuid" },
+        "sequenceNumber": { "type": "integer", "minimum": 0 },
+        "toolName": { "type": "string" },
+        "arguments": {
+          "description": "The sanitized arguments: only what capture's sanitizer kept. Values are any JSON (string, number, boolean, null, object, array); a redacted secret is the empty string.",
+          "type": "object"
+        },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "duration": { "$ref": "#/$defs/duration" },
+        "result": { "$ref": "#/$defs/nullableString" },
+        "error": {
+          "description": "Set when the call failed: the thrown error's text, or the class a host classifier recorded for a call that returned.",
+          "$ref": "#/$defs/nullableString"
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence", "reason", "evaluatedAt"],
+      "properties": {
+        "status": { "$ref": "#/$defs/verificationStatus" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "reason": { "$ref": "#/$defs/nullableString" },
+        "evaluatedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "verificationRoundId", "artifactRevision", "checkId", "kind", "result", "producer", "detail", "capturedAt"],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/uuid" },
+        "verificationRoundId": { "$ref": "#/$defs/uuid" },
+        "artifactRevision": { "type": "string" },
+        "checkId": { "type": "string" },
+        "kind": { "type": "string" },
+        "result": { "$ref": "#/$defs/checkResult" },
+        "producer": { "type": "string" },
+        "detail": { "$ref": "#/$defs/nullableString" },
+        "capturedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "reflection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reflectionId", "experienceRunId", "lesson", "successfulApproaches", "failedApproaches", "preconditions", "warnings",
+        "reuseGuidance", "evidenceIds", "verificationStatus", "completionScore", "verificationRuleVersion", "producer", "createdAt"
+      ],
+      "properties": {
+        "reflectionId": { "$ref": "#/$defs/uuid" },
+        "experienceRunId": { "$ref": "#/$defs/uuid" },
+        "lesson": { "type": "string" },
+        "successfulApproaches": { "type": "array", "items": { "type": "string" } },
+        "failedApproaches": { "type": "array", "items": { "type": "string" } },
+        "preconditions": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "reuseGuidance": { "$ref": "#/$defs/nullableString" },
+        "evidenceIds": { "type": "array", "items": { "$ref": "#/$defs/uuid" } },
+        "verificationStatus": { "$ref": "#/$defs/verificationStatus" },
+        "completionScore": { "$ref": "#/$defs/unit" },
+        "verificationRuleVersion": { "type": "string" },
+        "producer": { "type": "string" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "authorship": {
+          "description": "Optional. Model for a model-authored reflection; omitted for Deterministic, which is how it reads back when absent. Any other value is read as model-authored.",
+          "const": "Model"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostName", "runtimeVersion", "operatingSystem", "applicationVersion", "metadata"],
+      "properties": {
+        "hostName": { "type": "string" },
+        "runtimeVersion": { "type": "string" },
+        "operatingSystem": { "type": "string" },
+        "applicationVersion": { "$ref": "#/$defs/nullableString" },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "sourceVersion", "recordedAt", "correlationId"],
+      "properties": {
+        "source": { "type": "string" },
+        "sourceVersion": { "$ref": "#/$defs/nullableString" },
+        "recordedAt": { "$ref": "#/$defs/timestamp" },
+        "correlationId": { "$ref": "#/$defs/nullableString" },
+        "exposedTo": {
+          "description": "Optional. The stored records this run was shown, by ID and revision; omitted when none.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["experienceId", "revision"],
+            "properties": {
+              "experienceId": { "$ref": "#/$defs/uuid" },
+              "revision": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

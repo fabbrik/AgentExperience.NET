@@ -1,0 +1,17 @@
+{
+  "contractVersion": "contract-v1",
+  "files": {
+    "coverage-filters-and-ranking/expected.json": "018ed44b14e42874a72f7fe5e1c9e9274a6cb77911f05d9262739c2836905208",
+    "coverage-filters-and-ranking/query.json": "61bb99803b2681f6194474a2ff5d533de79093255d1efb3afd1eb0c42a127c9f",
+    "coverage-filters-and-ranking/seed.json": "370ca32608007f6f3108a99aaaf59e0f19254d1905e0c8ff1300e1323002c6a6",
+    "model-authored-excluded/expected.json": "7d80483018e23293fad6e037566016b3e86d854a7e9cab98c6fe8fb9c26f66b6",
+    "model-authored-excluded/query.json": "91bc994b2cad536ea3b2bdb0b85e05dd7d59a87f4df4a0b1f6fb4f71b2c99235",
+    "model-authored-excluded/seed.json": "0c9bd217cfb16bef5f85c75c217711bdbe66b44614951ec07e3de4ff9ad492b3",
+    "query-syntax-is-plain-words/expected.json": "53c2138b4b17d012a31c1471f1a104e21bec65bbb1d9ad62c200bc2ea1195fb4",
+    "query-syntax-is-plain-words/query.json": "c8f4d4e816b522b8142e7e66b7384b1fb4d47ad282322147b951685742ff445c",
+    "query-syntax-is-plain-words/seed.json": "78b3d86880961b10d2d58af79cdf1fae7beddfea20312404ffb080e3a63e7e24",
+    "recency-status-and-environment/expected.json": "eeb97bc91e9c88adff6e6a6be8b8f755709d7a20e2d8be94435828dfae394166",
+    "recency-status-and-environment/query.json": "ee70bd92c1d593d2f557a16ef817ef6e3d6e4a221a907d309c95549224379ecc",
+    "recency-status-and-environment/seed.json": "594aabc57f7ff3290a1b6104bf40f49e52e4b83386efecc844ddf0897efc8bf9"
+  }
+}

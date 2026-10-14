@@ -1,0 +1,29 @@
+{
+  "description": "A latest request over 512 code units is cut to 512, never inside a surrogate pair, trailing spaces trimmed; the previous message is dropped.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Earlier"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \uD83E\uDDFE tail that is cut"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

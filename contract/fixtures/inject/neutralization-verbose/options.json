@@ -1,0 +1,11 @@
+{
+  "rendering": "Verbose",
+  "failureDetail": "ErrorClass",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {
+    "lookup": [
+      "q"
+    ]
+  }
+}

@@ -1,0 +1,460 @@
+[
+  {
+    "record": {
+      "columns": {
+        "experience_id": "bf24ada0-63f5-86c2-bdd9-20ae989e6e30",
+        "source_run_id": "000000f1-0000-4000-8000-000000000000",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "refund-stuck-pending",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-03-02T09:00:30+00:00",
+        "updated_at": "2026-03-02T09:00:30+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Refund ticket 42 is stuck in pending",
+        "attempts": [
+          {
+            "attemptId": "000000f1-0000-4000-8000-0000000000a0",
+            "sequenceNumber": 0,
+            "startedAt": "2026-03-02T09:00:01+00:00",
+            "duration": "00:00:03.5000000",
+            "toolCalls": [
+              {
+                "toolCallId": "000000f1-0000-4000-8000-000000000c00",
+                "sequenceNumber": 0,
+                "toolName": "run_refund_check",
+                "arguments": {},
+                "startedAt": "2026-03-02T09:00:01+00:00",
+                "duration": "00:00:01.2500000",
+                "result": null,
+                "error": "System.InvalidOperationException: the refund lock is held by another worker"
+              }
+            ],
+            "result": null,
+            "error": "System.InvalidOperationException: the refund lock is held by another worker"
+          },
+          {
+            "attemptId": "000000f1-0000-4000-8000-0000000000a1",
+            "sequenceNumber": 1,
+            "startedAt": "2026-03-02T09:00:05+00:00",
+            "duration": "00:00:03.5000000",
+            "toolCalls": [
+              {
+                "toolCallId": "000000f1-0000-4000-8000-000000000c10",
+                "sequenceNumber": 0,
+                "toolName": "run_refund_check",
+                "arguments": {},
+                "startedAt": "2026-03-02T09:00:05+00:00",
+                "duration": "00:00:01.2500000",
+                "result": "refund issued",
+                "error": null
+              }
+            ],
+            "result": "Refund issued.",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000f1-0000-4000-8000-00000000e100",
+              "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+              "artifactRevision": "rev-1",
+              "checkId": "refund-issued",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": "all assertions passed",
+              "capturedAt": "2026-03-02T09:00:25+00:00"
+            }
+          ],
+          "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+          "evaluatedAt": "2026-03-02T09:00:30+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "48a76728-3ea0-84f6-9dfd-eb8a3f3b8ec8",
+          "experienceRunId": "000000f1-0000-4000-8000-000000000000",
+          "lesson": "Verified after 2 attempts. Failed: attempt 0 — InvalidOperationException. Worked: attempt 1. Checks: [refund-issued].",
+          "successfulApproaches": [
+            "Attempt 1 using tools [run_refund_check] completed without an error (result: \"Refund issued.\") as the final attempt of a verified run."
+          ],
+          "failedApproaches": [
+            "Attempt 0 using tools [run_refund_check (error: \"System.InvalidOperationException: the refund lock is held by another worker\")] ended with error: \"System.InvalidOperationException: the refund lock is held by another worker\"."
+          ],
+          "preconditions": [
+            "Runtime version: runtime-1",
+            "Operating system: linux",
+            "Application version: 1.0.0",
+            "Environment metadata [region]: eu-west"
+          ],
+          "warnings": [
+            "Verification applies only to this run and its captured environment; reuse in another context is not itself verified."
+          ],
+          "reuseGuidance": "Reuse only where the listed preconditions match, and re-run required checks [refund-issued] to confirm the outcome in the new context.",
+          "evidenceIds": [
+            "000000f1-0000-4000-8000-00000000e100"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "AgentExperience.DefaultExperienceReflector/1.1.0",
+          "createdAt": "2026-03-02T09:00:30+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-03-02T09:00:00+00:00",
+          "correlationId": null
+        },
+        "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+        "origin": "Finalized"
+      }
+    },
+    "ranking": {
+      "score": 0.9124999999999999,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.95,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 1,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  },
+  {
+    "record": {
+      "columns": {
+        "experience_id": "95376466-e10b-8113-bdfe-767f1397ba05",
+        "source_run_id": "000000f4-0000-4000-8000-000000000000",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "refund-stuck-pending",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-03-02T12:00:30+00:00",
+        "updated_at": "2026-03-02T12:00:30+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Refund ticket 44 is stuck in pending",
+        "attempts": [
+          {
+            "attemptId": "000000f4-0000-4000-8000-0000000000a0",
+            "sequenceNumber": 0,
+            "startedAt": "2026-03-02T12:00:01+00:00",
+            "duration": "00:00:03.5000000",
+            "toolCalls": [
+              {
+                "toolCallId": "000000f4-0000-4000-8000-000000000c00",
+                "sequenceNumber": 0,
+                "toolName": "run_refund_check",
+                "arguments": {
+                  "strategy": "wait-for-lock",
+                  "ticket": 44
+                },
+                "startedAt": "2026-03-02T12:00:01+00:00",
+                "duration": "00:00:01.2500000",
+                "result": "refund issued",
+                "error": null
+              }
+            ],
+            "result": "Refund issued.",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000f4-0000-4000-8000-00000000e100",
+              "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+              "artifactRevision": "rev-1",
+              "checkId": "refund-issued",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": "all assertions passed",
+              "capturedAt": "2026-03-02T12:00:25+00:00"
+            }
+          ],
+          "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+          "evaluatedAt": "2026-03-02T12:00:30+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "142f6430-66f7-8830-a7d7-707eeb8d9819",
+          "experienceRunId": "000000f4-0000-4000-8000-000000000000",
+          "lesson": "Verified after 1 attempt. Worked: attempt 0. Checks: [refund-issued].",
+          "successfulApproaches": [
+            "Attempt 0 using tools [run_refund_check] completed without an error (result: \"Refund issued.\") as the final attempt of a verified run."
+          ],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1",
+            "Operating system: linux",
+            "Application version: 1.0.0",
+            "Environment metadata [region]: eu-west"
+          ],
+          "warnings": [
+            "Verification applies only to this run and its captured environment; reuse in another context is not itself verified."
+          ],
+          "reuseGuidance": "Reuse only where the listed preconditions match, and re-run required checks [refund-issued] to confirm the outcome in the new context.",
+          "evidenceIds": [
+            "000000f4-0000-4000-8000-00000000e100"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "AgentExperience.DefaultExperienceReflector/1.1.0",
+          "createdAt": "2026-03-02T12:00:30+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-03-02T12:00:00+00:00",
+          "correlationId": null
+        },
+        "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+        "origin": "Finalized"
+      }
+    },
+    "ranking": {
+      "score": 0.8124999999999999,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 0.75,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.9,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 1,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  },
+  {
+    "record": {
+      "columns": {
+        "experience_id": "32feeeb9-209e-89b8-8a97-c43f21213d6a",
+        "source_run_id": "000000f3-0000-4000-8000-000000000000",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "deploy-service",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-03-02T11:00:30+00:00",
+        "updated_at": "2026-03-02T11:00:30+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Deploy service X to prod",
+        "attempts": [
+          {
+            "attemptId": "000000f3-0000-4000-8000-0000000000a0",
+            "sequenceNumber": 0,
+            "startedAt": "2026-03-02T11:00:01+00:00",
+            "duration": "00:00:03.5000000",
+            "toolCalls": [
+              {
+                "toolCallId": "000000f3-0000-4000-8000-000000000c00",
+                "sequenceNumber": 0,
+                "toolName": "run_deploy",
+                "arguments": {},
+                "startedAt": "2026-03-02T11:00:01+00:00",
+                "duration": "00:00:01.2500000",
+                "result": "exit=3",
+                "error": "exit 3"
+              },
+              {
+                "toolCallId": "000000f3-0000-4000-8000-000000000c01",
+                "sequenceNumber": 1,
+                "toolName": "run_deploy",
+                "arguments": {},
+                "startedAt": "2026-03-02T11:00:03+00:00",
+                "duration": "00:00:01.2500000",
+                "result": "exit=0",
+                "error": null
+              }
+            ],
+            "result": "Deployed on the second try.",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000f3-0000-4000-8000-00000000e100",
+              "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+              "artifactRevision": "rev-1",
+              "checkId": "service-healthy",
+              "kind": "smoke-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": "all assertions passed",
+              "capturedAt": "2026-03-02T11:00:25+00:00"
+            }
+          ],
+          "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+          "evaluatedAt": "2026-03-02T11:00:30+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "f9627a9a-df12-83c5-8fff-59740e977c5b",
+          "experienceRunId": "000000f3-0000-4000-8000-000000000000",
+          "lesson": "Verified after 1 attempt. Worked: attempt 0. Checks: [service-healthy].",
+          "successfulApproaches": [
+            "Attempt 0 using tools [run_deploy (error: \"exit 3\"), run_deploy] completed without an error (result: \"Deployed on the second try.\") as the final attempt of a verified run."
+          ],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1",
+            "Operating system: linux",
+            "Application version: 1.0.0",
+            "Environment metadata [region]: eu-west"
+          ],
+          "warnings": [
+            "Verification applies only to this run and its captured environment; reuse in another context is not itself verified."
+          ],
+          "reuseGuidance": "Reuse only where the listed preconditions match, and re-run required checks [service-healthy] to confirm the outcome in the new context.",
+          "evidenceIds": [
+            "000000f3-0000-4000-8000-00000000e100"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "AgentExperience.DefaultExperienceReflector/1.1.0",
+          "createdAt": "2026-03-02T11:00:30+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-03-02T11:00:00+00:00",
+          "correlationId": null
+        },
+        "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+        "origin": "Finalized"
+      }
+    },
+    "ranking": {
+      "score": 0.65,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 0.5,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.8,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 1,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 0.5,
+          "weight": 0.1
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "description": "One user message is the task text.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Refund ticket 42 is stuck in pending"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

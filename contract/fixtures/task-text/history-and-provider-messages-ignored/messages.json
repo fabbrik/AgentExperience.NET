@@ -1,0 +1,51 @@
+{
+  "description": "Only new external user input is the latest request; history before it and context-provider messages are never it.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "ChatHistory",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Rotate the signing keys for tenant 9 and publish the new JWKS document"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "AIContextProvider",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Injected context: a lesson about refunds that is long enough to stand alone easily."
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Why is the build red on main since the dependency bump this morning?"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "AIContextProvider",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Another injected message after the request."
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "description": "With the model-authored exclusion asked for, a record whose reflection a model wrote is left out before the limit.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "deploy service X to prod",
+  "statuses": [
+    "Validated",
+    "Reinforced"
+  ],
+  "minConfidence": 0.5,
+  "limit": 51,
+  "excludeModelAuthored": true,
+  "withGrants": false,
+  "minimumMatchedTerms": 3,
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {}
+}

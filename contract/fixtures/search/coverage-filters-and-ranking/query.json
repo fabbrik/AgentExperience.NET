@@ -1,0 +1,23 @@
+{
+  "description": "Five query terms (refund, stuck, pend, lock, timeout), at least three required. Below three matched terms, a Quarantined status, a confidence under the floor and another scope are all left out. Rows come back by coverage, then ts_rank_cd, then ID; ranking then reorders them by the weighted score.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "refund stuck in pending after a lock timeout",
+  "statuses": [
+    "Validated",
+    "Reinforced"
+  ],
+  "minConfidence": 0.5,
+  "limit": 51,
+  "excludeModelAuthored": false,
+  "withGrants": false,
+  "minimumMatchedTerms": 3,
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {}
+}

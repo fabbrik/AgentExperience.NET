@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "experienceId": "0000005b-0000-4000-8000-000000000001",
+      "relevance": 1
+    }
+  ],
+  "ranked": [
+    {
+      "experienceId": "0000005b-0000-4000-8000-000000000001",
+      "score": 0.8107217455642816,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 0.7937005259840998,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  ]
+}

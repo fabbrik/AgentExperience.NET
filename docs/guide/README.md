@@ -36,6 +36,7 @@ And around the loop:
 | Making erasure reach backups, replicas and WAL | [Crypto-shredding](crypto-shredding.md) |
 | Wiring the services, the two database roles, and the trust boundary | [Deployment](deployment.md) |
 | The PostgreSQL schema, script by script, and how it is applied | [PostgreSQL schema](postgres-schema.md) |
+| What a Python or Go port must match to share lessons: the record format, the block, the task text and the search, with conformance fixtures | [The language-neutral contract](../../contract/README.md) |
 | Spans and metrics | [Telemetry contract](../telemetry.md) |
 | The tests behind the security claims | [Security suite](../security-suite.md) |
 | Supported versions, and the evidence for every dependency pin | [Compatibility evidence](../compatibility-evidence.md) |
