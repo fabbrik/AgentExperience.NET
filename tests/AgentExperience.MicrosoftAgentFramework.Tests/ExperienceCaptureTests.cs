@@ -1674,11 +1674,18 @@ public class ExperienceCaptureTests
     /// completion, <see cref="OpenRunRegistry.BackgroundWorkSettledAsync"/> waits for that abandoned completion
     /// too, so everything it did is in by the time the wait returns.
     /// </summary>
+    /// <remarks>
+    /// Every timeout is manual here. With a real 100 ms finalization timeout, a loaded machine could run the first
+    /// invocation's own finalization past it: that finalization was then abandoned with its token cancelled, its
+    /// append failed on the cancellation, and failing closed it completed the run too -- a second completion the
+    /// assertions below counted (CI, 2026-10-13: expected 1 completion, saw 2). Now the first invocation's
+    /// finalization can never time out, and the close times out exactly when the test fires its timeout.
+    /// </remarks>
     [Fact]
     public async Task Background_work_settles_only_after_a_timed_out_close_abandoned_completion_has_finished()
     {
         var harness = new Harness();
-        var clock = new ManualBoundTimeProvider();
+        var clock = new ManualBoundTimeProvider { ManualTimeouts = true };
         var runId = Guid.NewGuid();
         var options = harness.Options(
             resolve: _ => new ExperienceRunDescriptor("incident-42", TestScope, ContinuesRunId: runId),
@@ -1698,6 +1705,7 @@ public class ExperienceCaptureTests
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         harness.Service.HoldAfterCancellation = hold;
         var completions = harness.Service.CompleteCalls;
+        var armed = clock.Timeouts.Count;
 
         Assert.Single(clock.Bounds).Fire();
         Assert.Equal(1, registry.ClosesStarted);
@@ -1707,6 +1715,11 @@ public class ExperienceCaptureTests
             await Eventually(() => registry.Count == 0);
             hold.SetResult();
         });
+
+        // The close arms exactly one timeout of its own; firing it is what makes the close overrun.
+        await Eventually(() => clock.Timeouts.Count > armed);
+        Assert.Equal(armed + 1, clock.Timeouts.Count);
+        clock.Timeouts[armed].Fire();
 
         await settled.WaitAsync(TimeSpan.FromSeconds(10));
 

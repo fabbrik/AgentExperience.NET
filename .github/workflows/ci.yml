@@ -377,7 +377,7 @@ jobs:
   # MAF tests (the quick-start sample included), and the built wheel on every supported CPython (3.10 to 3.14), with the
   # MAF tests repeated on the lowest agent-framework-core the maf extra allows; then the PostgreSQL leg, which writes
   # the finalize fixtures through the Python store, runs every search fixture, and runs the cross-language proof (a
-  # .NET-finalized lesson injected into a Python agent, and a Python agent's records read back unchanged; the .NET half
+  # .NET-finalized lesson injected into a Python agent, and the raw rows a Python agent wrote checked; the .NET half
   # of that proof is AgentExperience.Contract.Tests' PythonAgentRecordsPostgresRoundTripTests), on the oldest and newest
   # majors the contract tests cover. The leg sets AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips
   # without Docker, and AGENTEXPERIENCE_POSTGRES_MAJOR, which the tests assert the server reports.
@@ -425,7 +425,7 @@ jobs:
 
       - name: Type-check (mypy --strict)
         if: ${{ !matrix.pg-major }}
-        run: uv run mypy --strict src
+        run: uv run mypy --strict src tests
 
       - name: Unit and conformance tests
         if: ${{ !matrix.pg-major }}

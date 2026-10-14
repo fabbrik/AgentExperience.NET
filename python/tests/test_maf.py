@@ -15,6 +15,7 @@ import pytest
 pytest.importorskip("agent_framework")
 
 from _maf import NEXT_TICKET, TICKET, ScriptedClient
+from _sync import run
 from agent_framework import Agent, tool
 
 from agentexperience import BlockOptions, EnvironmentFingerprint, Scope
@@ -78,10 +79,6 @@ def exits(*values: str) -> Callable[[], str]:
 
 def agent_with(client: ScriptedClient, *tools: Any, name: str = "triage-ticket") -> Agent:
     return Agent(client=client, name=name, tools=list(tools))
-
-
-def run(coroutine: Any) -> Any:
-    return asyncio.run(coroutine)
 
 
 def test_two_runs_the_second_gets_the_lesson_naming_both_calls() -> None:
@@ -208,10 +205,14 @@ def test_the_classifier_sees_the_name_raw_arguments_and_raw_result_read_only() -
         """Runs a suite."""
         return "exit=0"
 
+    def classify(context: Any) -> str | None:
+        seen.append(context)
+        return None
+
     agent = host.wire(
         agent_with(ScriptedClient(calls=1, arguments={"suite": "unit", "token": "s3cret"}), tool(run_tests)),
         verify=tool_succeeded("run_tests"),
-        classify_tool_result=lambda context: seen.append(context) or None,
+        classify_tool_result=classify,
     )
     run(agent.run(TICKET))
 
@@ -278,8 +279,11 @@ def test_a_verify_that_raises_or_returns_foreign_evidence_is_reported_and_not_st
     def not_a_verification(context: VerificationContext) -> Any:
         return {"passed": True}
 
+    def says_yes(context: VerificationContext) -> Any:
+        return "yes"  # neither a bool nor None: the check refuses it
+
     reasons = []
-    for verify in (raises, foreign, not_a_verification, check("c", lambda _: "yes")):  # type: ignore[arg-type]
+    for verify in (raises, foreign, not_a_verification, check("c", says_yes)):
         host = Host()
         store = InMemoryExperienceStore()
         agent = host.wire(agent_with(ScriptedClient(calls=0)), store=store, verify=verify)
@@ -602,6 +606,7 @@ def test_a_middleware_terminating_the_run_ends_it_completed_with_its_result() ->
     seen = _Seen()
     host = Host()
     agent = host.wire(agent_with(ScriptedClient(calls=0)), verify=check("c", seen))
+    assert agent.middleware is not None
     agent.middleware.append(Stop())
     run(agent.run(TICKET))
 
@@ -623,6 +628,7 @@ def test_a_middleware_terminating_the_function_loop_at_a_call_is_recorded_and_re
     agent = host.wire(
         agent_with(ScriptedClient(calls=1), tool(exits("exit=0"), name="run_tests")), verify=check("c", seen)
     )
+    assert agent.middleware is not None
     agent.middleware.append(StopTools())
     run(agent.run(TICKET))
 
@@ -734,7 +740,8 @@ def test_a_resolver_returning_a_development_identity_outside_development_is_refu
 def test_settings_refuse_a_callback_that_is_not_callable() -> None:
     for name in ("verify", "classify_tool_result", "on_capture_failure", "on_injection_failure", "on_finalized"):
         with pytest.raises(TypeError, match=name):
-            ExperienceSettings(store=InMemoryExperienceStore(), identity=lambda _: None, **{name: "not callable"})
+            not_callable: dict[str, Any] = {name: "not callable"}
+            ExperienceSettings(store=InMemoryExperienceStore(), identity=lambda _: None, **not_callable)
 
 
 def test_completion_exposure_and_identifier_failures_are_reported_never_raised(monkeypatch: pytest.MonkeyPatch) -> None:

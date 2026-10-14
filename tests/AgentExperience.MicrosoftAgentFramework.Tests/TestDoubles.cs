@@ -385,12 +385,14 @@ internal sealed class ScriptedAgent : AIAgent
 /// <summary>
 /// A <see cref="TimeProvider"/> whose open-run duration bounds fire only when a test fires them, so a
 /// bound can be driven into exactly the interleaving under test. Every other timer -- the finalization
-/// timeout's, for one -- is a real system timer, and the clock itself is the system clock.
+/// timeout's, for one -- is a real system timer unless <see cref="ManualTimeouts"/> is set, and the clock
+/// itself is the system clock.
 /// </summary>
 internal sealed class ManualBoundTimeProvider : TimeProvider
 {
     private readonly List<ManualBoundTimer> _bounds = [];
     private readonly object _nowGate = new();
+    private readonly List<ManualBoundTimer> _timeouts = [];
     private DateTimeOffset? _now;
 
     /// <summary>
@@ -432,11 +434,41 @@ internal sealed class ManualBoundTimeProvider : TimeProvider
         }
     }
 
+    /// <summary>
+    /// When set, every other timer (a finalization timeout, the invocation's or a bound close's) is manual as well:
+    /// it is listed in <see cref="Timeouts"/>, in the order it was armed, and fires only when the test fires it. A
+    /// finalization then never overruns its timeout because a loaded machine ran it slowly.
+    /// </summary>
+    public bool ManualTimeouts { get; init; }
+
+    /// <summary>Every timeout armed so far, when <see cref="ManualTimeouts"/> is set, in the order it was armed.</summary>
+    public IReadOnlyList<ManualBoundTimer> Timeouts
+    {
+        get
+        {
+            lock (_timeouts)
+            {
+                return _timeouts.ToList();
+            }
+        }
+    }
+
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {
         if (state is not OpenRun)
         {
-            return System.CreateTimer(callback, state, dueTime, period);
+            if (!ManualTimeouts)
+            {
+                return System.CreateTimer(callback, state, dueTime, period);
+            }
+
+            var timeout = new ManualBoundTimer(callback, state, dueTime);
+            lock (_timeouts)
+            {
+                _timeouts.Add(timeout);
+            }
+
+            return timeout;
         }
 
         if (ThrowOnBound)

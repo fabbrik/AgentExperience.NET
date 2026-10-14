@@ -75,6 +75,10 @@ internal static class FinalizeContract
 
         // Contract 1.2.
         ("argument-numbers-beyond-double-range", ArgumentNumbersBeyondDoubleRange()),
+
+        // Contract 1.3.
+        ("sub-microsecond-instants", SubMicrosecondInstants()),
+        ("sub-microsecond-instants-at-a-second-boundary", SubMicrosecondInstantsAtASecondBoundary()),
     ];
 
     /// <summary>The files of one finalize case.</summary>
@@ -605,6 +609,55 @@ internal static class FinalizeContract
             ]),
             Fixed.Id(0x120, 0xe0),
             Verified(run, t.AddSeconds(30), ("limits-applied", "integration-test", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput SubMicrosecondInstants()
+    {
+        var run = Fixed.Id(0x130, 0);
+
+        // 100-ns ticks below the microsecond on every instant the run carries: .1234567 truncates to .123456, where
+        // rounding would give .123457.
+        var t = Fixed.T0.AddHours(17).AddTicks(1_234_567);
+        return new FinalizeInput(
+            "Every instant the host supplied carries 100-ns ticks below the microsecond (.1234567). The finalization instant " +
+            "is truncated, never rounded, to whole microseconds (.123456) before anything is derived from it: the outcome's " +
+            "evaluatedAt, the reflection's createdAt, the created_at and updated_at columns and the initial event's " +
+            "occurred_at all hold the truncated instant. The instants the record copies from the run as given (the " +
+            "provenance's recordedAt, each attempt's and tool call's startedAt, each evidence's capturedAt) are payload " +
+            "instants and keep all seven fractional digits.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "refund-stuck-pending", "Refund ticket 51 is stuck in pending", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1),
+                [
+                    Call(run, 0, 0, "run_refund_check", t.AddSeconds(1), new(), result: null, error: "TimeoutException: the refund lock timed out"),
+                ],
+                error: "TimeoutException: the refund lock timed out"),
+                Attempt(run, 1, t.AddSeconds(5), [Call(run, 1, 0, "run_refund_check", t.AddSeconds(5), new(), result: "refund issued")], result: "Refund issued."),
+            ]),
+            Fixed.Id(0x130, 0xe0),
+            Verified(run, t.AddSeconds(30), ("refund-issued", "integration-test", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput SubMicrosecondInstantsAtASecondBoundary()
+    {
+        var run = Fixed.Id(0x131, 0);
+
+        // .9999996 is 4 ticks short of the next second: rounding to microseconds would carry into it, truncation never does.
+        var t = Fixed.T0.AddHours(18).AddTicks(9_999_996);
+        return new FinalizeInput(
+            "A finalization instant 400 ns before a whole second (:59.9999996): truncated to whole microseconds it is " +
+            ":59.999999, never the next second, in every instant derived from it (evaluatedAt, the reflection's createdAt, " +
+            "created_at, updated_at and the initial event's occurred_at). The run's own instants (the provenance's " +
+            "recordedAt, the attempt's and tool call's startedAt, the evidence's capturedAt) sit at the same fraction of " +
+            "other seconds and keep all seven fractional digits.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "rotate-signing-keys", "Rotate the signing keys for tenant 7", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "rotate_keys", t.AddSeconds(1), new(), result: "rotated")], result: "Keys rotated."),
+            ]),
+            Fixed.Id(0x131, 0xe0),
+            Verified(run, t.AddSeconds(59), ("keys-rotated", "integration-test", CheckResult.Pass)));
     }
 
     /// <summary>A JSON value exactly as written, as a host that deserialized a tool call's arguments holds it.</summary>

@@ -1508,7 +1508,7 @@ public sealed class ExperienceFinalizationService
     /// only when the record carries a reflection, which it does only for a verified run whose
     /// reflection succeeded.
     /// </summary>
-    private static ExperienceStatus TargetStatusFor(ExperienceRecord record) =>
+    internal static ExperienceStatus TargetStatusFor(ExperienceRecord record) =>
         record.Reflection is not null ? ExperienceStatus.Validated : ExperienceStatus.Quarantined;
 
     /// <summary>
@@ -1539,7 +1539,7 @@ public sealed class ExperienceFinalizationService
     /// The initial event's auditable reason, derived only from the record so a retry -- which reads
     /// the stored record rather than recomputing -- produces exactly the same text.
     /// </summary>
-    private static string InitialEventReason(ExperienceRecord record) => string.Format(
+    internal static string InitialEventReason(ExperienceRecord record) => string.Format(
         CultureInfo.InvariantCulture,
         "Initial finalization: verification {0}, completion score {1}, {2}.",
         record.Outcome.Status,

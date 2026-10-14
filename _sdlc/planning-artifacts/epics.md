@@ -2180,3 +2180,11 @@ Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview sin
 ### Story 22.6: Go MAF Capture and Injection
 
 **Acceptance Criteria:** As 22.3, for the Microsoft Agent Framework Go SDK (public preview since 2026-07-10), with the cross-language proof against .NET.
+
+### Story 22.7: Python and Go on the Release Train
+
+**Acceptance Criteria:** **Given** the maintainer's decision to keep the name AgentExperience (2026-10-14) **When** a release tag is pushed **Then** the same verified commit publishes the NuGet packages, the `agentexperience` distribution to PyPI (Trusted Publishing, its own approved environment) and the five Go modules (tags plus a proxy check), all at one version derived from `Directory.Build.props`. A Release test holds the versions in agreement and the workflow guards cover the new publishing paths.
+
+### Story 22.8: Port Hardening
+
+**Acceptance Criteria:** **Given** the follow-ups the port reviews deferred **When** contract 1.3 is published **Then** .NET-generated fixtures pin the truncation of instants to whole microseconds (and a tombstoned row if the search format allows), Python and Go pass them, .NET reads the raw rows the Python store wrote as it does for Go's, `mypy --strict` covers the Python tests in CI, and the timing-sensitive capture test is deterministic under a 200-run stress loop.

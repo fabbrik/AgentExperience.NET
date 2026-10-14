@@ -1,13 +1,16 @@
 """
-Story 22.3's cross-language proof.
+Story 22.3's cross-language proof, read from the raw rows since story 22.8.
 
 - **Python writes, .NET reads.** A Python MAF agent, on a fixed clock and fixed identifiers, captures, verifies and
   stores two runs. The records it writes must be exactly ``tests/cross-language/python-agent-records.json`` (checked in
-  memory here, and written to and read back from PostgreSQL in the PostgreSQL leg). The .NET contract tests insert that
-  same file into a schema the .NET migrator applied and read it back through ``PostgresExperienceRecordStore.GetAsync``,
-  which must return it unchanged (``PythonAgentRecordsPostgresRoundTripTests``). So a record the Python agent writes
-  reads back through the .NET store identically. Set ``AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`` to rewrite the file on
-  purpose, then read the diff.
+  memory here, and written to and read back from PostgreSQL in the PostgreSQL leg). In the PostgreSQL leg the rows the
+  Python store wrote, every column in PostgreSQL's own text form, must also be exactly
+  ``tests/cross-language/python-agent-rows.json``. The .NET contract tests insert those raw rows as they are into a
+  schema the .NET migrator applied, read every record back through ``PostgresExperienceRecordStore.GetAsync`` (it
+  must be the records file), check each initial lifecycle event, and compare every column with what the .NET store
+  writes for the same record (``PythonAgentRecordsPostgresRoundTripTests``). So a Python writer that encodes a column
+  differently from .NET fails there, even when the Python reader undoes it. Set
+  ``AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`` to rewrite the files on purpose, then read the diff.
 - **.NET writes, Python reads.** The records the .NET library finalized (the contract's finalize fixtures, generated
   from .NET and checked against it on every build) are written into PostgreSQL as stored, and a Python agent on the
   same scope is injected with them. No .NET process runs at test time: the fixtures are the .NET-written records.
@@ -15,7 +18,7 @@ Story 22.3's cross-language proof.
 
 from __future__ import annotations
 
-import asyncio
+import datetime
 import json
 import os
 import uuid
@@ -31,6 +34,8 @@ pytest.importorskip("agent_framework")
 
 from _contract import FIXTURES, cases, json_difference, read_json
 from _maf import NEXT_TICKET, TICKET, ScriptedClient
+from _postgres import Server
+from _sync import run
 from agent_framework import Agent, tool
 from test_contract import assert_valid_record
 
@@ -55,8 +60,30 @@ from agentexperience.maf import (
     tool_succeeded,
     use_agent_experience,
 )
+from agentexperience.records import COLUMN_NAMES
 
 GOLDEN = Path(__file__).resolve().parent / "cross-language" / "python-agent-records.json"
+ROWS_GOLDEN = GOLDEN.parent / "python-agent-rows.json"
+# The columns the Python store writes to each table, in the order it writes them.
+EVENT_COLUMNS = (
+    "event_id",
+    "experience_id",
+    "tenant_id",
+    "application_id",
+    "project_id",
+    "team_id",
+    "agent_id",
+    "user_id",
+    "prior_status",
+    "current_status",
+    "reason",
+    "producer",
+    "occurred_at",
+    "recorded_at",
+    "expected_revision",
+    "applied_revision",
+    "actor",
+)
 UPDATE_VARIABLE = "AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE"
 SCOPE = Scope("contract-tenant", "contract-app", "contract-project", agent_id="python-agent")
 IDENTITY = ExperienceIdentity("python-principal", SCOPE)
@@ -113,13 +140,13 @@ def run_python_agent(store: ExperienceStore) -> tuple[list[Any], ScriptedClient,
     # The package version is recorded in each run's provenance; pinned here so the checked-in records do not change
     # with every version bump (on either side: the .NET test reads this same file).
     with patch.object(agentexperience.maf, "__version__", GOLDEN_SOURCE_VERSION):
-        asyncio.run(agent.run(TICKET))
-        asyncio.run(agent.run(NEXT_TICKET))
+        run(agent.run(TICKET))
+        run(agent.run(NEXT_TICKET))
     assert problems == []
     return finalized, client, [to_stored(item.record) for item in finalized]
 
 
-def _golden_text(records: list[Any]) -> str:
+def _golden_text(records: Any) -> str:
     return json.dumps(records, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -153,14 +180,62 @@ def test_the_checked_in_records_read_back_through_the_python_reader_unchanged() 
 # ---- PostgreSQL --------------------------------------------------------------------------------------------------
 
 
+def _raw_rows(
+    admin: Server, database: str, table: str, columns: tuple[str, ...], order: tuple[str, ...]
+) -> list[dict[str, str | None]]:
+    """The rows of ``table`` in the agent's scope, every given column in PostgreSQL's text form, read in UTC."""
+    import psycopg
+    from psycopg import sql
+
+    query = sql.SQL("SELECT {columns} FROM {table} WHERE tenant_id = %s AND agent_id = %s ORDER BY {order}").format(
+        columns=sql.SQL(", ").join(sql.SQL("{}::text").format(sql.Identifier(column)) for column in columns),
+        table=sql.Identifier("agent_experience", table),
+        order=sql.SQL(", ").join(sql.Identifier(column) for column in order),
+    )
+    with psycopg.connect(admin.conninfo(database)) as connection:
+        connection.execute("SET TIME ZONE 'UTC'")
+        rows = connection.execute(query, (SCOPE.tenant_id, SCOPE.agent_id)).fetchall()
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
 @pytest.mark.postgres
-def test_the_python_agent_writes_to_postgresql_what_the_dotnet_store_reads(pg_server: Any) -> None:
+def test_the_python_agent_writes_to_postgresql_what_the_dotnet_store_reads(pg_server: Server) -> None:
     from _postgres import application_conninfo, create_database
 
+    from agentexperience.finalize import FinalizedExperience
     from agentexperience.postgres import PostgresExperienceStore
 
-    store = PostgresExperienceStore(application_conninfo(pg_server, create_database(pg_server, "python_agent")))
+    class RecordedWhenItOccurred(PostgresExperienceStore):
+        """The store, recording each initial event when it occurred, so the rows written are deterministic."""
+
+        def insert_finalized(
+            self,
+            bounds: AuthorizationBounds,
+            finalized: FinalizedExperience,
+            *,
+            actor: str,
+            recorded_at: datetime.datetime | None = None,
+        ) -> None:
+            occurred = finalized.event.occurred_at.to_datetime()
+            super().insert_finalized(bounds, finalized, actor=actor, recorded_at=recorded_at or occurred)
+
+    database = create_database(pg_server, "python_agent")
+    store = RecordedWhenItOccurred(application_conninfo(pg_server, database))
     finalized, _, _ = run_python_agent(store)
+
+    # The rows themselves, as the .NET test inserts them: it reads them back through the .NET store, and compares
+    # every column with what the .NET store writes for the same record (PythonAgentRecordsPostgresRoundTripTests).
+    rows = {
+        "experience_records": _raw_rows(pg_server, database, "experience_records", COLUMN_NAMES, ("source_run_id",)),
+        "lifecycle_events": _raw_rows(
+            pg_server, database, "lifecycle_events", EVENT_COLUMNS, ("occurred_at", "event_id")
+        ),
+    }
+    assert len(rows["experience_records"]) == len(rows["lifecycle_events"]) == len(finalized)
+    if os.environ.get(UPDATE_VARIABLE) == "1":
+        ROWS_GOLDEN.write_text(_golden_text(rows), encoding="utf-8")
+    difference = json_difference(read_json(ROWS_GOLDEN), rows)
+    assert difference is None, f"{difference} (set {UPDATE_VARIABLE}=1 to rewrite {ROWS_GOLDEN.name} on purpose)"
 
     golden = read_json(GOLDEN)
     bounds = AuthorizationBounds.of(SCOPE)
@@ -205,7 +280,7 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
         on_injection_failure=problems.append,
     )
 
-    asyncio.run(agent.run("Deploy service X to prod"))
+    run(agent.run("Deploy service X to prod"))
 
     assert problems == []
     assert [str(experience_id) for experience_id in injections[0].experience_ids] == [
@@ -219,7 +294,7 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
     assert sum(1 for m in first if m.additional_properties.get(HISTORICAL_REFERENCE_KEY) is True) == 1
 
     # A quarantined .NET record is never injected: the refund task's block holds only the validated refund lessons.
-    asyncio.run(agent.run("Refund ticket 43 is stuck in pending"))
+    run(agent.run("Refund ticket 43 is stuck in pending"))
     assert len(injections) == 2
     quarantined = {s["columns"]["experience_id"] for s in seeded if s["columns"]["status"] == "Quarantined"}
     injected = {str(i) for i in injections[-1].experience_ids}
@@ -235,6 +310,6 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
         on_injected=other.append,
         on_injection_failure=problems.append,
     )
-    asyncio.run(other_agent.run("Deploy service X to prod"))
-    asyncio.run(other_agent.run("Refund ticket 43 is stuck in pending"))
+    run(other_agent.run("Deploy service X to prod"))
+    run(other_agent.run("Refund ticket 43 is stuck in pending"))
     assert other == [] and other_client.blocks() == [] and problems == []

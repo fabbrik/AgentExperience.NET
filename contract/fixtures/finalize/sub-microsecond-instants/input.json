@@ -1,0 +1,109 @@
+{
+  "description": "Every instant the host supplied carries 100-ns ticks below the microsecond (.1234567). The finalization instant is truncated, never rounded, to whole microseconds (.123456) before anything is derived from it: the outcome's evaluatedAt, the reflection's createdAt, the created_at and updated_at columns and the initial event's occurred_at all hold the truncated instant. The instants the record copies from the run as given (the provenance's recordedAt, each attempt's and tool call's startedAt, each evidence's capturedAt) are payload instants and keep all seven fractional digits.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "00000130-0000-4000-8000-000000000000",
+    "taskId": "refund-stuck-pending",
+    "taskDescription": "Refund ticket 51 is stuck in pending",
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": null,
+      "agentId": "refund-agent",
+      "userId": null
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-03T02:00:00.1234567+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [
+      {
+        "attemptId": "00000130-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-03T02:00:01.1234567+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000130-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-03T02:00:01.1234567+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "TimeoutException: the refund lock timed out"
+          }
+        ],
+        "result": null,
+        "error": "TimeoutException: the refund lock timed out"
+      },
+      {
+        "attemptId": "00000130-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-03T02:00:05.1234567+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000130-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-03T02:00:05.1234567+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "refund issued",
+            "error": null
+          }
+        ],
+        "result": "Refund issued.",
+        "error": null
+      }
+    ],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-03T02:00:00.1234567+00:00",
+    "endedAt": "2026-03-03T02:00:20.1234567+00:00"
+  },
+  "completionEventId": "00000130-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": {
+      "roundId": "0000007e-0000-4000-8000-000000000001",
+      "artifactRevision": "rev-1"
+    },
+    "requiredChecks": [
+      {
+        "checkId": "refund-issued",
+        "expectedKind": "integration-test"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "00000130-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "refund-issued",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-03T02:00:25.1234567+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-03T02:00:30.1234567+00:00"
+  }
+}
