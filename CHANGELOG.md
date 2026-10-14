@@ -6,6 +6,26 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Changed: the single-call wiring sees the chat history and a run's own tools
+
+- **`UseAgentExperience` alone now injects over a `ChatClientAgent` exactly as the provider on the agent's options
+  does.** At the agent level the provider now reads the chat history the agent replays, the way the agent reads it
+  (its `ChatHistoryProvider`, or one a run passes; none under a conversation ID or per-service-call persistence), so a
+  short follow-up such as "and close it" is joined with the earlier turn's request in the derived task text. It also
+  sees the tools a run adds through `ChatClientAgentRunOptions`, followed by the agent's default tools, so with
+  `ReceivingAgentCapabilities.UseRunTools` a lesson whose approach calls a run-only tool is no longer withheld. The
+  derived text and the block equal the explicit wiring's, byte for byte, on MAF 1.22.0 and 1.24.0; a new parity
+  suite runs both wirings over the same scenarios (a follow-up in a session, run-only tools, streaming, no session, a
+  history provider passed by the run, a service-kept conversation). Behaviour change: an agent wired this way may now
+  get a lesson for a follow-up, or a run-only-tool lesson, it did not get before. The explicit wiring is unchanged.
+- The cost: the history is read once more per run than the agent alone reads it, so a history provider with a cost or
+  a side effect on read (a remote store, a reducer that runs before retrieval) incurs it twice; a read that fails joins
+  nothing and never fails the run. Messages or tools another context provider on the agent's options adds are still
+  not seen at the agent level, and an agent that is not a `ChatClientAgent` keeps today's behaviour. Asking a history
+  provider for its history uses MAF's `[Experimental]` `ChatHistoryProvider.InvokingContext` constructor, under the
+  one `MAAI001` suppression in the library ([compatibility evidence](docs/compatibility-evidence.md)). No public API
+  changed.
+
 ### Added: Python and Go packages are published with each release
 
 - **Python and Go packages are published with each release**, from the same tag and the same verified commit as the

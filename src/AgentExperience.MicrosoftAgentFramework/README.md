@@ -41,8 +41,8 @@ AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket")
 ```
 
 `UseAgentExperience` wires injection at the agent level unless the agent already lists
-`provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders`; there the provider also
-sees the replayed chat history and a run's own tools, and the agent gets exactly one block either way. Runs are stored
+`provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders`. Over a `ChatClientAgent`
+either way the provider sees the replayed chat history and a run's own tools, and the agent gets exactly one block. Runs are stored
 under the agent's name as their task ID unless `options.TaskId` or `options.ResolveTaskId` says otherwise.
 `options.ResolveIdentity` (required) says who each invocation runs for, from your own authentication;
 `options.UseDevelopmentIdentity()` sets one fixed local identity instead, and refuses outside `Development`, `Test` or

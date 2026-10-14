@@ -28,12 +28,16 @@ public static class AgentExperienceAgentBuilderExtensions
     /// When the agent was not given an <see cref="ExperienceContextProvider"/> on its options (any one: the check is
     /// deliberately by type, to avoid double injection), and no earlier <c>UseAgentExperience</c> on the same pipeline
     /// wired it already, injection is wired at the agent level, through MAF's <see cref="AIAgentBuilder.UseAIContextProviders"/>, with the container's context
-    /// provider: the same block, the same session account. What the agent level cannot see: the chat history a
-    /// <see cref="ChatClientAgent"/> replays (so a short follow-up is not joined with an earlier turn's request), and
-    /// the tools a run adds through its run options (with <see cref="ReceivingAgentCapabilities.UseRunTools"/> the
-    /// capability gate reads the agent's default tools only, and withholds a record whose approach calls a run-only
-    /// tool). Where either matters, give the agent the provider on its options as well, as below; then nothing is
-    /// added here, and the agent gets exactly one block:
+    /// provider: the same block, the same session account. Over a <see cref="ChatClientAgent"/> it sees what the agent
+    /// would hand it on its options: the chat history the agent replays (so a short follow-up is joined with an earlier
+    /// turn's request), and the tools a run adds through its run options (with
+    /// <see cref="ReceivingAgentCapabilities.UseRunTools"/> a run-only tool counts). The block is the one the provider
+    /// gives on the agent's options, byte for byte. The history is read once more per run than the agent alone reads it,
+    /// so a history provider with a cost or a side effect on read incurs it twice. Messages and tools another context
+    /// provider on the agent's options adds are not seen here; an inner agent that is not a
+    /// <see cref="ChatClientAgent"/> offers the caller's messages only, and the tools it reports through
+    /// <see cref="AIAgent.GetService"/> as <c>ChatOptions</c>. Giving the agent the provider on its options as well, as
+    /// below, adds nothing here, and the agent still gets exactly one block:
     /// </para>
     /// <code>
     /// AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { AIContextProviders = [services.GetAgentExperienceContextProvider()] })

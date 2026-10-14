@@ -93,8 +93,8 @@ context providers (`AIContextProvider`, `InvokingContext`, `InvokedContext`), `A
   the adapter uses, and it was a fix the adapter's tests caught and pin (below). Other [BREAKING] pull requests in
   the window (#7671, #8032, #8375, #8425, #7991) are outside the adapter's surface.
 - **`[Experimental]` surface** next to the hooks: the `InvokingContext`/`InvokedContext` constructors (`MAAI001`) and
-  the continuation tokens, unchanged from 1.15 to 1.22. The adapter uses none of it, and builds with warnings as
-  errors and no `MAAI001` suppression.
+  the continuation tokens, unchanged from 1.15 to 1.22. The adapter builds with warnings as errors and uses one piece
+  of it, in one place: the `ChatHistoryProvider.InvokingContext` constructor (below).
 
 So an exact pin is not justified: every one of those minors kept the adapter's surface compatible, and the one change
 that mattered was caught by a test. But MAF makes no SemVer promise, ships behaviour changes in minors, and marks
@@ -151,10 +151,24 @@ Facts from MAF's own source that shaped the adapter, re-checked at tag `dotnet-1
   that matters. Source: `dotnet/src/Microsoft.Agents.AI.Abstractions/AIContextProvider.cs` at the tag above;
   proven by `MafHooksProof` and by `ExperienceCaptureTests`' failed and cancelled runs.
 - Parts of that surface are still marked `[Experimental]` (`MAAI001`) at 1.22.0: in `AIContextProvider.cs`, the
-  `InvokingContext` and `InvokedContext` constructors, exactly as at 1.20.0. The adapter uses neither — it builds
-  with warnings as errors and no `MAAI001` suppression anywhere under `src/`, and since story 5.1 the proofs carry
-  none either — but the neighbouring surface is still settling, which is one reason the range stops at 2.0 rather
-  than being a bare floor.
+  `InvokingContext` and `InvokedContext` constructors, exactly as at 1.20.0, and the same constructors in
+  `ChatHistoryProvider.cs`. The adapter uses the AIContextProvider ones nowhere. Since story 21.7 it uses one
+  `ChatHistoryProvider.InvokingContext` constructor, under the only `MAAI001` suppression in `src/`, in
+  `ExperienceMessageContextProvider`: the single-call wiring asks a `ChatClientAgent`'s history provider for the
+  history the agent replays, with the call and arguments the agent itself makes (`ChatClientAgent.LoadChatHistoryAsync`),
+  and a `ChatHistoryProvider` has no other public way to be asked. The constructor's signature is the same at 1.22.0
+  and 1.24.0, and a change to it fails the build rather than behaviour, on the probe's floor and newest legs alike.
+  The proofs carry no suppression (since story 5.1). The neighbouring surface is still settling, which is one reason
+  the range stops at 2.0 rather than being a bare floor.
+- The single-call wiring (story 21.7) reproduces, from public members only, two rules `ChatClientAgent` applies before
+  it runs the context providers on its options: which history provider it reads (none under
+  `RequirePerServiceCallChatHistoryPersistence` or a conversation ID on the session or the chat options; else
+  `ChatClientAgent.ChatHistoryProvider`; a provider passed in the merged additional properties wins), and the tools it
+  hands them (the run's `ChatClientAgentRunOptions.ChatOptions.Tools`, then the agent's default tools). The run's
+  options come from `AIAgent.CurrentRunContext`, which `AIAgent.RunAsync` sets for the agent-level providers' run. The
+  rules are the same at 1.22.0 and 1.24.0 (`ChatClientAgent.cs` differs only in documentation). A MAF minor that
+  changes them changes what the explicit wiring sees and not what the single-call wiring sees; `SingleCallParityTests`
+  runs both wirings over the same scenarios and fails on any difference, on the probe's floor and newest legs.
 - Function-invocation middleware (`FunctionInvocationDelegatingAgent`) now works on a per-run clone of a
   `ChatClientAgentRunOptions`. At 1.20.0 it wrote its `ChatClientFactory` onto the caller's instance, so a reused
   instance stacked middleware layers and the adapter README told hosts not to reuse one. At 1.22.0 sequential reuse

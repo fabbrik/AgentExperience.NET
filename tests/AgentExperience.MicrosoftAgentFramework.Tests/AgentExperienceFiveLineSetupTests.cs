@@ -151,7 +151,7 @@ public sealed class AgentExperienceFiveLineSetupTests
     }
 
     [Fact]
-    public async Task At_the_agent_level_a_short_follow_up_is_not_joined_with_the_replayed_history()
+    public async Task At_the_agent_level_a_short_follow_up_is_joined_with_the_replayed_history()
     {
         async Task<List<string?>> TextsOf(bool twoLines)
         {
@@ -178,7 +178,7 @@ public sealed class AgentExperienceFiveLineSetupTests
         }
 
         Assert.Equal("Reconcile the ledger for invoice 7731 \u2014 and close it", (await TextsOf(twoLines: true))[1]);
-        Assert.Equal("and close it", (await TextsOf(twoLines: false))[1]);
+        Assert.Equal("Reconcile the ledger for invoice 7731 \u2014 and close it", (await TextsOf(twoLines: false))[1]);
     }
 
     [Fact]
@@ -315,7 +315,7 @@ public sealed class AgentExperienceFiveLineSetupTests
     }
 
     [Fact]
-    public async Task With_UseRunTools_the_agent_level_sees_the_agents_default_tools_but_not_a_runs_own()
+    public async Task With_UseRunTools_the_agent_level_sees_the_agents_default_tools_and_a_runs_own()
     {
         var host = new Host();
         await using var services = host.Build(options => options.Injection = injection =>
@@ -336,15 +336,23 @@ public sealed class AgentExperienceFiveLineSetupTests
         Assert.Equal(InjectionOutcome.Injected, host.Injections[^1].Outcome);
         Assert.Single(withDefault.Calls[0], IsHistoricalReference);
 
-        // The same tool given only on the run's own options is not seen at the agent level: the record is withheld.
+        // The same tool given only on the run's own options is seen at the agent level too: the record is injected.
         var runOnly = new Model { Tool = EchoTool };
         var runAgent = new ChatClientAgent(runOnly, new ChatClientAgentOptions { ChatOptions = new ChatOptions { Tools = [RunOnly] } })
             .AsBuilder().UseAgentExperience(services).Build();
         await runAgent.RunAsync(Task, options: new ChatClientAgentRunOptions(new ChatOptions { Tools = [Echo] }));
+        Assert.Equal(InjectionOutcome.Injected, host.Injections[^1].Outcome);
+        Assert.Single(runOnly.Calls[0], IsHistoricalReference);
+
+        // Without it, neither on the run nor on the agent, the record is withheld.
+        var without = new Model { Tool = EchoTool };
+        var withoutAgent = new ChatClientAgent(without, new ChatClientAgentOptions { ChatOptions = new ChatOptions { Tools = [RunOnly] } })
+            .AsBuilder().UseAgentExperience(services).Build();
+        await withoutAgent.RunAsync(Task);
         var withheld = host.Injections[^1];
         Assert.NotEqual(InjectionOutcome.Injected, withheld.Outcome);
         Assert.Contains(withheld.Omitted, omission => omission.Reason == InjectionOmissionReason.ToolUnavailable);
-        Assert.DoesNotContain(runOnly.Calls[0], IsHistoricalReference);
+        Assert.DoesNotContain(without.Calls[0], IsHistoricalReference);
 
         // On the agent's options, the provider sees the run's tools, as before.
         var seesRun = new Model { Tool = EchoTool };
