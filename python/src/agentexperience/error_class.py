@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from ._text import SPACE_CLASS, ignore_case, is_null_or_whitespace, utf16_prefix, word_class
+from ._text import SPACE_CLASS, ignore_case, is_null_or_whitespace, utf16_len, utf16_prefix, word_class
 
 UNCLASSIFIED = "unclassified error"
 MAX_TOKENS = 3
@@ -113,3 +113,17 @@ def first_token(errorclass: str) -> str:
     """The first token of a class: what a call's ``[failed: ...]`` marker shows."""
     end = errorclass.find(",")
     return errorclass if end < 0 else errorclass[:end]
+
+
+def is_single_token(value: str | None) -> bool:
+    """
+    Whether ``value`` is exactly one token: the first token :func:`error_class` finds in it is all of it, in its
+    normalized form (``exit 3``, not ``Exit 3`` or ``exit code 3``), at most 40 characters. Such a value is its own
+    class's first token, so a ``Tried:`` line's call marker shows it unchanged.
+    """
+    if not value or utf16_len(value) > MAX_TOKEN_LENGTH:
+        return False
+    found = error_class(value)
+    if found == UNCLASSIFIED:
+        return False
+    return first_token(found) == value

@@ -6,6 +6,36 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added: Python Agent Framework capture and injection (story 22.3)
+
+- **`agentexperience.maf`** (the new `maf` extra, `agent-framework-core>=1.0.0`, tested on the floor (1.0.0) and the locked version): one call,
+  `use_agent_experience(agent, store=..., identity=..., verify=..., classify_tool_result=...)`, wires a Python MAF
+  agent the way `UseAgentExperience` wires a .NET one. Capture is agent-run middleware plus function middleware: each
+  non-streaming invocation is one run of one attempt, with every tool call's arguments, result and error (a raised
+  exception by its type name only, or a returned call the classifier named a class for, an invalid class becoming
+  `ToolReportedError`). When it ends, `verify` decides and the run is finalized and stored through the core. Injection
+  is a context provider: the contract's task text, text search and ranking, and the rendered block as one user-role
+  message stamped `AgentExperience.HistoricalReference`. An agent that already holds the provider gets no second one.
+  Nothing raises into the agent: failures go to `on_capture_failure` and `on_injection_failure`. A streaming
+  invocation is injected but not captured. As in .NET, a run whose invocation raised or was cancelled ends `Failed` or
+  `Cancelled` and is still verified, and finalization is bounded by `finalization_timeout` (5 seconds).
+- **Verifiers and classifiers** with the semantics of .NET's `ExperienceVerifiers` and
+  `ExperienceToolResultClassifiers`: `tool_succeeded`, `check`, `approval`, `all_of`, `any_of`, `exit_code` and
+  `http_status` (dependency-free, in `agentexperience.verifiers` and `agentexperience.classifiers`).
+- **`development_identity()`**, which refuses outside Development, Test or Testing by the .NET rule
+  (`DOTNET_ENVIRONMENT`, else `ASPNETCORE_ENVIRONMENT`), and **`InMemoryExperienceStore`**, for development with no
+  PostgreSQL (insert, get and the in-memory text search, honouring scope and bounds). `AGENTEXPERIENCE_ENVIRONMENT`
+  is read before the .NET variables.
+- **Cross-language proof.** The contract's .NET-finalized fixture records, written into PostgreSQL, are injected into
+  a Python agent; and the records a Python agent writes (`python/tests/cross-language/python-agent-records.json`, which
+  the Python tests check the agent writes exactly) read back unchanged through the .NET PostgreSQL store, in the new
+  test-only `PythonAgentRecordsPostgresRoundTripTests`: a new .NET test was added, and the .NET library itself is
+  unchanged.
+- **`python/samples/quickstart.py`**, the README quick start with a scripted model: the second run is handed the lesson
+  naming `run_tests [failed: exit 3], run_tests [returned]`. A test runs it and compares its output.
+- **CI:** the `python` job installs the `maf` extra, runs the MAF tests again on agent-framework-core 1.0.0, and checks
+  that the built wheel's `agentexperience.maf` needs the extra. Not published to PyPI.
+
 ### Added: a Python core that passes the contract (story 22.2)
 
 - **[`python/`](python/README.md)**, a pure-Python package (provisional name `agentexperience`, version

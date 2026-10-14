@@ -1,0 +1,240 @@
+"""
+Story 22.3's cross-language proof.
+
+- **Python writes, .NET reads.** A Python MAF agent, on a fixed clock and fixed identifiers, captures, verifies and
+  stores two runs. The records it writes must be exactly ``tests/cross-language/python-agent-records.json`` (checked in
+  memory here, and written to and read back from PostgreSQL in the PostgreSQL leg). The .NET contract tests insert that
+  same file into a schema the .NET migrator applied and read it back through ``PostgresExperienceRecordStore.GetAsync``,
+  which must return it unchanged (``PythonAgentRecordsPostgresRoundTripTests``). So a record the Python agent writes
+  reads back through the .NET store identically. Set ``AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`` to rewrite the file on
+  purpose, then read the diff.
+- **.NET writes, Python reads.** The records the .NET library finalized (the contract's finalize fixtures, generated
+  from .NET and checked against it on every build) are written into PostgreSQL as stored, and a Python agent on the
+  same scope is injected with them. No .NET process runs at test time: the fixtures are the .NET-written records.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import uuid
+from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+pytest.importorskip("agent_framework")
+
+from _contract import FIXTURES, cases, json_difference, read_json
+from _maf import NEXT_TICKET, TICKET, ScriptedClient
+from agent_framework import Agent, tool
+from test_contract import assert_valid_record
+
+import agentexperience.maf
+from agentexperience import (
+    AuthorizationBounds,
+    Duration,
+    EnvironmentFingerprint,
+    Instant,
+    Scope,
+    from_stored,
+    to_stored,
+)
+from agentexperience.inmemory import ExperienceStore, InMemoryExperienceStore
+from agentexperience.maf import (
+    HISTORICAL_REFERENCE_KEY,
+    CaptureFailure,
+    ExperienceIdentity,
+    InjectionFailure,
+    InjectionResult,
+    exit_code,
+    tool_succeeded,
+    use_agent_experience,
+)
+
+GOLDEN = Path(__file__).resolve().parent / "cross-language" / "python-agent-records.json"
+UPDATE_VARIABLE = "AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE"
+SCOPE = Scope("contract-tenant", "contract-app", "contract-project", agent_id="python-agent")
+IDENTITY = ExperienceIdentity("python-principal", SCOPE)
+ENVIRONMENT = EnvironmentFingerprint("python-host", "CPython 3", "linux", "1.0.0", {"region": "eu-west"})
+GOLDEN_SOURCE_VERSION = "0.0.0+cross-language"
+START = Instant.parse("2026-03-02T09:00:00+00:00")
+
+
+def fixed_clock() -> Callable[[], Instant]:
+    """A clock that moves 1.25 seconds every time it is read, from a fixed start."""
+    ticks = [0]
+
+    def now() -> Instant:
+        ticks[0] += 1
+        return START.add(Duration.from_seconds(1.25 * ticks[0]))
+
+    return now
+
+
+def fixed_ids() -> Callable[[], uuid.UUID]:
+    counter = [0]
+
+    def new_id() -> uuid.UUID:
+        counter[0] += 1
+        return uuid.UUID(f"0000c0de-0000-4000-8000-{counter[0]:012d}")
+
+    return new_id
+
+
+def run_python_agent(store: ExperienceStore) -> tuple[list[Any], ScriptedClient, list[Any]]:
+    """Two runs of a Python agent, deterministic: the first fails a test run once, the second is shown the lesson."""
+    finalized: list[Any] = []
+    problems: list[CaptureFailure | InjectionFailure] = []
+    exits = iter(["exit=3", "exit=0", "exit=3", "exit=0"])
+
+    def run_tests(suite: str) -> str:
+        """Runs a test suite."""
+        return next(exits)
+
+    client = ScriptedClient(calls=2, arguments={"suite": "unit"})
+    agent = use_agent_experience(
+        Agent(client=client, name="Python Agent", tools=[tool(run_tests)]),
+        store=store,
+        identity=IDENTITY,
+        verify=tool_succeeded("run_tests", artifact_revision="build-7"),
+        classify_tool_result=exit_code("run_tests"),
+        environment=ENVIRONMENT,
+        on_capture_failure=problems.append,
+        on_injection_failure=problems.append,
+        on_finalized=finalized.append,
+        clock=fixed_clock(),
+        new_id=fixed_ids(),
+    )
+    # The package version is recorded in each run's provenance; pinned here so the checked-in records do not change
+    # with every version bump (on either side: the .NET test reads this same file).
+    with patch.object(agentexperience.maf, "__version__", GOLDEN_SOURCE_VERSION):
+        asyncio.run(agent.run(TICKET))
+        asyncio.run(agent.run(NEXT_TICKET))
+    assert problems == []
+    return finalized, client, [to_stored(item.record) for item in finalized]
+
+
+def _golden_text(records: list[Any]) -> str:
+    return json.dumps(records, indent=2, ensure_ascii=False) + "\n"
+
+
+def test_the_python_agent_writes_exactly_the_checked_in_records() -> None:
+    finalized, client, stored = run_python_agent(InMemoryExperienceStore())
+
+    assert [item.record.status for item in finalized] == ["Validated", "Validated"]
+    assert [len(item.record.provenance.exposed_to) for item in finalized] == [0, 1]
+    counts = [
+        sum(1 for m in request if m.additional_properties.get(HISTORICAL_REFERENCE_KEY) is True)
+        for request in client.requests
+    ]
+    assert counts == [0, 0, 0, 1, 1, 1]  # the second run's three requests each carry the one block
+    assert {item.record.provenance.source_version for item in finalized} == {GOLDEN_SOURCE_VERSION}
+    for record in stored:
+        assert_valid_record(record)
+
+    if os.environ.get(UPDATE_VARIABLE) == "1":
+        GOLDEN.parent.mkdir(parents=True, exist_ok=True)
+        GOLDEN.write_text(_golden_text(stored), encoding="utf-8")
+    difference = json_difference(read_json(GOLDEN), stored)
+    assert difference is None, f"{difference} (set {UPDATE_VARIABLE}=1 to rewrite {GOLDEN.name} on purpose)"
+
+
+def test_the_checked_in_records_read_back_through_the_python_reader_unchanged() -> None:
+    for stored in read_json(GOLDEN):
+        assert_valid_record(stored)
+        assert json_difference(stored, to_stored(from_stored(stored))) is None
+
+
+# ---- PostgreSQL --------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.postgres
+def test_the_python_agent_writes_to_postgresql_what_the_dotnet_store_reads(pg_server: Any) -> None:
+    from _postgres import application_conninfo, create_database
+
+    from agentexperience.postgres import PostgresExperienceStore
+
+    store = PostgresExperienceStore(application_conninfo(pg_server, create_database(pg_server, "python_agent")))
+    finalized, _, _ = run_python_agent(store)
+
+    golden = read_json(GOLDEN)
+    bounds = AuthorizationBounds.of(SCOPE)
+    for expected, item in zip(golden, finalized, strict=True):
+        read = store.get(bounds, SCOPE, item.record.experience_id)
+        assert read is not None
+        difference = json_difference(expected, to_stored(read))
+        assert difference is None, difference
+
+
+def _dotnet_records() -> list[dict[str, Any]]:
+    """Every record the .NET library finalized in the contract's finalize fixtures, once per experience ID."""
+    records: dict[str, dict[str, Any]] = {}
+    for name in cases("finalize"):
+        stored = read_json(FIXTURES / "finalize" / name / "expected-record.json")
+        records.setdefault(stored["columns"]["experience_id"], stored)
+    return list(records.values())
+
+
+@pytest.mark.postgres
+def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent(pg_server: Any) -> None:
+    from _postgres import application_conninfo, create_database
+
+    from agentexperience.postgres import PostgresExperienceStore
+
+    store = PostgresExperienceStore(application_conninfo(pg_server, create_database(pg_server, "dotnet_lessons")))
+    seeded = _dotnet_records()
+    for stored in seeded:
+        record = from_stored(stored)
+        store.insert_record(AuthorizationBounds.of(record.scope), record)
+
+    scope = Scope("contract-tenant", "contract-app", "contract-project", agent_id="refund-agent")
+    deploy = next(s for s in seeded if s["columns"]["task_id"] == "deploy-service" and s["columns"]["team_id"] is None)
+    injections: list[InjectionResult] = []
+    problems: list[InjectionFailure] = []
+    client = ScriptedClient(calls=0)
+    agent = use_agent_experience(
+        Agent(client=client, name="refund-agent"),
+        store=store,
+        identity=ExperienceIdentity("python-principal", scope),
+        on_injected=injections.append,
+        on_injection_failure=problems.append,
+    )
+
+    asyncio.run(agent.run("Deploy service X to prod"))
+
+    assert problems == []
+    assert [str(experience_id) for experience_id in injections[0].experience_ids] == [
+        deploy["columns"]["experience_id"]
+    ]
+    (block,) = client.blocks()
+    assert block.startswith("=== BEGIN HISTORICAL REFERENCE")
+    assert f"--- RECORD 1: {deploy['columns']['task_id']} ---" in block
+    assert f"Lesson: {deploy['payload']['reflection']['lesson']}" in block
+    first = client.first_requests()[0]
+    assert sum(1 for m in first if m.additional_properties.get(HISTORICAL_REFERENCE_KEY) is True) == 1
+
+    # A quarantined .NET record is never injected: the refund task's block holds only the validated refund lessons.
+    asyncio.run(agent.run("Refund ticket 43 is stuck in pending"))
+    assert len(injections) == 2
+    quarantined = {s["columns"]["experience_id"] for s in seeded if s["columns"]["status"] == "Quarantined"}
+    injected = {str(i) for i in injections[-1].experience_ids}
+    assert injected and not quarantined & injected
+
+    # Another agent's scope, on the same database, sees none of them.
+    other: list[InjectionResult] = []
+    other_client = ScriptedClient(calls=0)
+    other_agent = use_agent_experience(
+        Agent(client=other_client, name="other-agent"),
+        store=store,
+        identity=ExperienceIdentity("python-principal", replace(scope, agent_id="other-agent")),
+        on_injected=other.append,
+        on_injection_failure=problems.append,
+    )
+    asyncio.run(other_agent.run("Deploy service X to prod"))
+    asyncio.run(other_agent.run("Refund ticket 43 is stuck in pending"))
+    assert other == [] and other_client.blocks() == [] and problems == []

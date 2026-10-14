@@ -22,6 +22,8 @@ dependencies = []
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
+# Microsoft Agent Framework for Python: 1.0.0 is the lowest release whose APIs agentexperience.maf uses (CI tests it).
+maf = ["agent-framework-core>=1.0.0"]
 
 [project.urls]
 Repository = "https://github.com/fabbrik/AgentExperience.NET"
@@ -34,6 +36,7 @@ dev = [
     "ruff>=0.8",
     "testcontainers[postgres]>=4.8",
     "psycopg[binary]>=3.2",
+    "agent-framework-core>=1.0.0",
 ]
 
 [build-system]
@@ -60,6 +63,10 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+
+[tool.ruff.format]
+# The README's quick start is laid out as the five lines it promises, not as the formatter would spread it.
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "RUF"]

@@ -372,11 +372,15 @@ jobs:
       - name: Probe Microsoft.Agents.AI (${{ matrix.leg }})
         run: eng/probe-maf-version.sh ${{ matrix.leg == 'pinned' && 'pinned' || '' }}
 
-  # The Python port (python/): a pure-Python core that implements the language-neutral contract (contract/). Lint,
-  # strict typing, the unit and conformance tests, and the built wheel on every supported CPython (3.10 to 3.14); then the PostgreSQL leg, which writes
-  # the finalize fixtures through the Python store and runs every search fixture, on the oldest and newest majors the
-  # contract tests cover. The leg sets AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips without Docker,
-  # and AGENTEXPERIENCE_POSTGRES_MAJOR, which the tests assert the server reports.
+  # The Python port (python/): a pure-Python core that implements the language-neutral contract (contract/), and its
+  # Microsoft Agent Framework integration (the maf extra, story 22.3). Lint, strict typing, the unit, conformance and
+  # MAF tests (the quick-start sample included), and the built wheel on every supported CPython (3.10 to 3.14), with the
+  # MAF tests repeated on the lowest agent-framework-core the maf extra allows; then the PostgreSQL leg, which writes
+  # the finalize fixtures through the Python store, runs every search fixture, and runs the cross-language proof (a
+  # .NET-finalized lesson injected into a Python agent, and a Python agent's records read back unchanged; the .NET half
+  # of that proof is AgentExperience.Contract.Tests' PythonAgentRecordsPostgresRoundTripTests), on the oldest and newest
+  # majors the contract tests cover. The leg sets AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips
+  # without Docker, and AGENTEXPERIENCE_POSTGRES_MAJOR, which the tests assert the server reports.
   python:
     runs-on: ubuntu-24.04
     strategy:
@@ -411,7 +415,7 @@ jobs:
           cache-dependency-glob: python/uv.lock
 
       - name: Install (locked)
-        run: uv sync --locked
+        run: uv sync --locked --extra maf --extra postgres
 
       - name: Lint
         if: ${{ !matrix.pg-major }}
@@ -426,6 +430,18 @@ jobs:
       - name: Unit and conformance tests
         if: ${{ !matrix.pg-major }}
         run: uv run pytest -m "not postgres"
+
+      # The maf extra's floor: the MAF tests again on the lowest agent-framework-core it allows, so the floor is tested,
+      # not assumed. Installed over the locked environment and run without re-syncing it.
+      - name: MAF tests on the lowest agent-framework-core the maf extra allows
+        if: ${{ !matrix.pg-major }}
+        run: |
+          set -euo pipefail
+          floor="$(sed -nE 's/^maf = \["agent-framework-core>=([0-9.]+)"\]$/\1/p' pyproject.toml)"
+          test -n "$floor"
+          uv pip install "agent-framework-core==$floor"
+          uv run --no-sync python -c "import importlib.metadata as m; v = m.version('agent-framework-core'); assert v == '$floor', v; print('agent-framework-core', v)"
+          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_quickstart.py tests/test_cross_language.py
 
       # The wheel, not the source tree: built, installed into a clean environment outside the checkout, and imported,
       # so the packaged SQL files and py.typed are proven to ship.
@@ -448,7 +464,19 @@ jobs:
           assert "search_experience_text" in contract_sql("search-experience-text.sql")
           assert resources.files("agentexperience").joinpath("py.typed").is_file()
           print("agentexperience", agentexperience.__version__, "imports from the wheel")
+
+          # The core has no runtime dependency: the integration needs the maf extra, and says so by failing to import.
+          try:
+              import agentexperience.maf
+          except ImportError:
+              print("agentexperience.maf needs the maf extra, as it should")
+          else:
+              raise AssertionError("agentexperience.maf imported without agent-framework-core")
           PY
+          wheels=("$out"/dist/*.whl)
+          test "${#wheels[@]}" -eq 1 || { echo "::error::expected exactly one wheel, found ${#wheels[@]}"; exit 1; }
+          uv pip install --python "$out/venv/bin/python" "${wheels[0]}[maf]"
+          "$out/venv/bin/python" -c "import agentexperience.maf as maf; print('agentexperience.maf imports with the maf extra:', maf.use_agent_experience.__name__)"
 
       - name: PostgreSQL ${{ matrix.pg-major }} conformance tests
         if: ${{ matrix.pg-major }}

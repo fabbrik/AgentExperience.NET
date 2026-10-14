@@ -67,6 +67,11 @@ class Instant:
             + utc.microsecond * TICKS_PER_MICROSECOND
         )
 
+    @staticmethod
+    def now() -> Instant:
+        """The current time, from the system clock (microsecond precision)."""
+        return Instant.from_datetime(_dt.datetime.now(_dt.timezone.utc))
+
     def to_datetime(self) -> _dt.datetime:
         """This instant as an aware UTC ``datetime``; the sub-microsecond part is truncated."""
         days, rest = divmod(self.ticks, _TICKS_PER_DAY)

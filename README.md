@@ -240,8 +240,8 @@ previews fixed is in [Limits history](docs/limits-history.md).
 match to share lessons with this library (the stored record format, the injected block, the task text and the text
 search) is published as [a language-neutral contract](contract/README.md), version `1.0`: a JSON Schema, the SQL to
 run, and fixtures generated from and checked against this implementation on every build. A pure-Python core that
-passes contract 1.0 is in [`python/`](python/README.md): pre-release, not on PyPI, and not yet wired into the Python
-Agent Framework.
+passes contract 1.0, with a one-call Python Agent Framework integration, is in [`python/`](python/README.md):
+pre-release and not on PyPI. A lesson a .NET agent learned is injected into a Python agent, and the other way round.
 
 ## Documentation
 

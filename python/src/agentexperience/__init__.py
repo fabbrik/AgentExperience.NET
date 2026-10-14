@@ -3,7 +3,8 @@ AgentExperience for Python: a pure-Python core that implements the AgentExperien
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
-in a PostgreSQL schema the .NET migrator applied. It has no Microsoft Agent Framework integration yet.
+in a PostgreSQL schema the .NET migrator applied. ``agentexperience.maf`` (the ``maf`` extra) wires it into a Microsoft
+Agent Framework for Python agent with one call.
 """
 
 from __future__ import annotations
