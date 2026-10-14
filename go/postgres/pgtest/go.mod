@@ -3,8 +3,8 @@ module github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest
 go 1.26.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.0.0-00010101000000-000000000000
-	github.com/fabbrik/AgentExperience.NET/go/postgres v0.0.0-00010101000000-000000000000
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.14
+	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.14
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
@@ -66,8 +66,9 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 )
 
-// The core and the PostgreSQL store are developed in the same repository; until a version of each is tagged, they
-// are built from their directories.
+// The core and the PostgreSQL store are developed in the same repository, so a build here uses their directories. A
+// consumer ignores these replaces and gets them at the versions required above: each release tags every module at
+// the same version (RELEASING.md).
 replace (
 	github.com/fabbrik/AgentExperience.NET/go => ../../
 	github.com/fabbrik/AgentExperience.NET/go/postgres => ../

@@ -3,15 +3,22 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](../contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: pre-release, contract 1.2, with a Microsoft Agent Framework integration (the `maf` extra).** It passes
-every fixture of contract 1.2. It is not published to PyPI. The distribution and import name `agentexperience` are
-provisional until the package is named, and both live in one place (`pyproject.toml` and `src/agentexperience/`).
+**Status: alpha, contract 1.2, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.2. It is published to PyPI as `agentexperience`, the distribution and import name, with every
+release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
+`agentexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
+Like the .NET packages, it claims no production readiness, and its API may change between alphas.
+
+```bash
+pip install "agentexperience[maf]"        # with Microsoft Agent Framework
+pip install "agentexperience[postgres]"   # with the PostgreSQL store
+```
 
 ## Quick start with Microsoft Agent Framework
 
-Install from this directory with the `maf` extra (`pip install ".[maf]"`, which brings `agent-framework-core` 1.0.0 or
-later); bring `client` (any MAF chat client) and `run_tests` (your test run, returning text such as `exit=0`).
-Development and tests only: see [In production](#in-production). After the two imports, five lines: one call that
+Install with the `maf` extra (`pip install "agentexperience[maf]"`, which brings `agent-framework-core` 1.0.0 or
+later, or `pip install ".[maf]"` from this directory); bring `client` (any MAF chat client) and `run_tests` (your test
+run, returning text such as `exit=0`). Development and tests only: see [In production](#in-production). After the two imports, five lines: one call that
 wires the agent (three lines), and two runs.
 
 ```python
@@ -131,7 +138,7 @@ print(error_class("System.TimeoutException: The operation has timed out."))  # T
 ### End to end
 
 Capture a run, finalize it, store it, search for it, rank the rows and render the block. Steps 1 and 2 need nothing
-else; step 3 needs the `postgres` extra (`pip install "agentexperience[postgres]"` from this directory) and a database
+else; step 3 needs the `postgres` extra (`pip install "agentexperience[postgres]"`) and a database
 the .NET migrator set up.
 
 ```python

@@ -119,6 +119,14 @@ def test_placeholders_are_rewritten_in_code_only() -> None:
 
 
 def test_the_version_is_the_installed_distributions() -> None:
+    import re
+    from pathlib import Path
+
     import agentexperience
 
-    assert agentexperience.__version__ == "0.1.0.dev0"
+    # pyproject.toml's version, which a release test holds to Directory.Build.props (0.1.0-preview.N is 0.1.0aN).
+    pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    declared = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
+    assert declared is not None
+    assert agentexperience.__version__ == declared.group(1)
+    assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(a[1-9][0-9]*)?", agentexperience.__version__)

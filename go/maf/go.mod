@@ -3,10 +3,10 @@ module github.com/fabbrik/AgentExperience.NET/go/maf
 go 1.26.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.0.0-00010101000000-000000000000
-	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.0.0-00010101000000-000000000000
-	github.com/fabbrik/AgentExperience.NET/go/postgres v0.0.0-00010101000000-000000000000
-	github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest v0.0.0-00010101000000-000000000000
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.14
+	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.14
+	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.14
+	github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest v0.1.0-preview.14
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microsoft/agent-framework-go v0.1.1
 	github.com/openai/openai-go/v3 v3.74.0
@@ -78,8 +78,9 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 )
 
-// The core, the in-memory store, the PostgreSQL store and its test helper are developed in the same repository; until a version of
-// each is tagged, they are built from their directories.
+// The core, the in-memory store, the PostgreSQL store and its test helper are developed in the same repository, so a
+// build here uses their directories. A consumer ignores these replaces and gets them at the versions required above:
+// each release tags every module at the same version (RELEASING.md).
 replace (
 	github.com/fabbrik/AgentExperience.NET/go => ../
 	github.com/fabbrik/AgentExperience.NET/go/inmemory => ../inmemory

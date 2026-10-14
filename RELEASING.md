@@ -7,10 +7,11 @@ your terminal. Automation
 builds, tests, packs, and verifies on every pull request, every push to `main`, and a weekly schedule
 (`.github/workflows/ci.yml`). **Publishing takes two maintainer
 actions**: pushing a version tag, and approving the deployment it starts (step 10). Only
-`.github/workflows/release.yml` can publish. It re-runs these checks on the tagged commit, and pushes to nuget.org
-with a short-lived key from NuGet Trusted Publishing, so no NuGet API key is stored in the repository or its secrets.
-A release test holds that workflow to its constraints, and fails if any other workflow gains a publish step, a NuGet
-key, or a write permission.
+`.github/workflows/release.yml` can publish. It re-runs these checks on the tagged commit, pushes to nuget.org
+with a short-lived key from NuGet Trusted Publishing, tags the Go modules, and uploads the Python distribution to PyPI
+through PyPI Trusted Publishing, so no API key or token is stored in the repository or its secrets. A release test
+holds that workflow to its constraints, and fails if any other workflow gains a publish step, a PyPI upload, a tag
+push, a key, or a write permission.
 
 ## What a release is today
 
@@ -20,6 +21,13 @@ and, since story 11.2, `AgentExperience.Storage.InMemory` (development and tests
 packages, six symbol packages, six API baselines — is that list; `eng/verify-packages.cs` and `release.yml` hold it
 too. The first release that carries a package ID nuget.org has never seen needs one extra check, described under
 [First publish of a new package ID](#first-publish-of-a-new-package-id).
+
+The same tag also releases the two ports, at the same version, from the same verified commit:
+
+- **Python:** the distribution `agentexperience` (`python/`), an sdist and a wheel, on PyPI. The first release that
+  carries it is described under [First publish to PyPI](#first-publish-to-pypi).
+- **Go:** the five modules under `go/`: `github.com/fabbrik/AgentExperience.NET/go`, `.../go/inmemory`, `.../go/postgres`, `.../go/postgres/pgtest` and `.../go/maf`. A Go module is released by a tag
+  named after its directory, `go/vX`, `go/inmemory/vX`, and so on, which the Go module proxy serves from then on.
 
 Every release from this repository is a **preview** — `0.1.0-preview.N`, set once in `Directory.Build.props` — and
 claims no production readiness. That is not modesty; it is the acceptance criterion's own condition: *support limits
@@ -36,9 +44,30 @@ ledger closed, dropping the suffix is a maintainer's decision, not something ste
 The version is deliberately not `1.0.0`. With no version property at all, `dotnet pack` would emit `1.0.0` — a
 stability promise this codebase declines to make while it still ships documented breaking changes between previews.
 
-To cut the next preview, bump the suffix (for example `preview.2` → `preview.3`) in `Directory.Build.props`, add
-that version's section to `CHANGELOG.md` (step 10's release notes are built from it), and nothing else. Once it is
-published, move the package-validation baseline to it ([after the release](#after-the-release-move-the-package-validation-baseline)).
+The version is set once, in `Directory.Build.props`, and the ports carry the version derived from it, never one of
+their own:
+
+| `Directory.Build.props` | .NET packages and the tag | Python (`python/pyproject.toml`) | Go (each module's requirement on its siblings) |
+| --- | --- | --- | --- |
+| `0.1.0` + `preview.N` | `0.1.0-preview.N`, tag `v0.1.0-preview.N` | `0.1.0aN` | `v0.1.0-preview.N` |
+| `1.0.0`, no suffix | `1.0.0`, tag `v1.0.0` | `1.0.0` | `v1.0.0` |
+
+Python's is an explicit PEP 440 alpha: PEP 440 would read `0.1.0-preview.N` as a release candidate. The Go modules
+keep their `replace` directives, so builds in this repository and CI use the tree; a consumer ignores them and
+resolves the siblings at the same tag. A release test, and the tagged run's verify job, fail when any of these
+disagrees with `Directory.Build.props`.
+
+To cut the next preview, bump the suffix (for example `preview.2` → `preview.3`) in `Directory.Build.props`, set
+the same version in `python/pyproject.toml` (and `python/uv.lock`, with `uv lock` in `python/`) and in every
+`go/*/go.mod` requirement on another module of this repository, add that version's section to `CHANGELOG.md` (step
+10's release notes are built from it), and nothing else. The release test names every file that disagrees, and the
+version it expects there:
+
+```bash
+dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~VersionAgreementTests"
+```
+
+Once it is published, move the package-validation baseline to it ([after the release](#after-the-release-move-the-package-validation-baseline)).
 
 ## Decision: known limits and documented boundaries
 
@@ -334,7 +363,7 @@ and only once that commit is on `main`. Tag it and push the tag:
   else
     git tag -a "v$version" -m "AgentExperience.NET $version (preview)" "$verified" \
       && git push origin "v$version" \
-      && echo "Tagged v$version: now approve the nuget-release deployment" || { echo "FAILED: see above"; false; }
+      && echo "Tagged v$version: now approve the nuget-release deployment, then pypi-release" || { echo "FAILED: see above"; false; }
   fi )
 ```
 
@@ -344,30 +373,49 @@ the pinned SDK (step 1), the locked restore and release build (step 2), the full
 PostgreSQL major (the first command of step 3; the per-major and crypto-shredding runs, and steps 4–6 and 8, are
 not repeated there: they are what you ran locally, and CI's `postgres`, `maf-compatibility` and
 `floating-dependencies` jobs on `main`), pack and package verification (step 7), and the production-readiness gate
-(step 9). It builds the release notes from this
-version's `CHANGELOG.md` section, and fails if there is none. Last, it uploads the packages it verified.
+(step 9). It also checks that `python/pyproject.toml` and every Go module's requirement on its siblings carry the
+version derived from `Directory.Build.props` (see [What a release is today](#what-a-release-is-today)); builds the
+Python sdist and wheel with a pinned `uv`, checks that they are `agentexperience` at that version (`twine check
+--strict` and the wheel's metadata), and runs the Python tests; and runs `go vet` and `go test` in each Go module (the
+PostgreSQL legs of both ports are not repeated: CI on `main` ran them). It builds the release notes from this
+version's `CHANGELOG.md` section, and fails if there is none. Last, it uploads what it verified: the NuGet packages,
+and the Python distribution as its own artifact. It publishes nothing.
 
-Then **approve the deployment**. Open the run under the repository's **Actions** tab, choose **Review deployments**,
-select `nuget-release`, and approve. The `publish` job then:
+Then **approve the deployments**, two of them. Open the run under the repository's **Actions** tab, choose **Review
+deployments**, select `nuget-release`, and approve. The `publish` job then:
 
 1. downloads exactly the files `verify` uploaded (it does not check out or build anything);
 2. exchanges the job's GitHub OIDC token for a short-lived nuget.org key through `NuGet/login`;
 3. runs `dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate`, with the short-lived key from step 2,
    which uploads each `.snupkg` alongside its `.nupkg`;
-4. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
+4. tags the five Go modules at the tagged commit, through the GitHub API with the job's own token: `go/vX`,
+   `go/inmemory/vX`, `go/postgres/vX`, `go/postgres/pgtest/vX` and `go/maf/vX`, where `vX` is the tag. A tag that
+   already points at that commit is kept; one that points anywhere else fails the job here, before the GitHub release.
+   It then asks `proxy.golang.org` for each module at that version, and fails if the proxy does not know one after
+   a few minutes of retries;
+5. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
    version's `CHANGELOG.md` section, the Known limits table (or "None currently.") and the Documented boundaries
    table from `docs/known-limits.md` as its notes. A preview's release notes say what it does not promise.
 
+When `publish` has succeeded, the run asks for the second approval: select `pypi-release` and approve. The
+`publish-pypi` job downloads exactly the sdist and wheel `verify` uploaded (it checks nothing out and builds nothing),
+checks they are the tagged version, and uploads them to PyPI with `pypa/gh-action-pypi-publish` through PyPI Trusted
+Publishing: the job's OIDC token is exchanged for a short-lived PyPI token, and no token is stored anywhere.
+`skip-existing` makes a re-run skip the files PyPI already has.
+
 If `publish` fails part-way, re-run the failed job from the Actions tab (it needs approving again): `--skip-duplicate`
-skips the packages nuget.org already has, and an existing GitHub release is left as it is. If `verify` fails,
-nothing was published: fix the cause on `main`, delete the tag (`git push origin :refs/tags/vX` and `git tag -d vX`),
-and tag again. A version pushed by mistake cannot be deleted from nuget.org — **unlist** it (and, if it is harmful,
-mark it deprecated) on its nuget.org page, then publish the next preview.
+skips the packages nuget.org already has, Go tags already at the commit are kept, and an existing GitHub release is
+left as it is. If `publish-pypi` fails, nuget.org, the Go tags and the GitHub release stand; fix the cause and re-run
+that job alone. If `verify` fails, nothing was published: fix the cause on `main`, delete the tag (`git push origin
+:refs/tags/vX` and `git tag -d vX`), and tag again. A version pushed by mistake cannot be deleted from nuget.org —
+**unlist** it (and, if it is harmful, mark it deprecated) on its nuget.org page, then publish the next preview. The
+same holds for PyPI (**yank** the release) and for the Go module proxy, which serves a tagged version for ever (add a
+`retract` directive to the module's `go.mod` in the next release).
 
 #### One-time setup
 
-Both halves must exist before the first tagged release. Without the policy, `publish` cannot log in; without the
-environment's reviewers, it would run without an approval.
+All four must exist before the first tagged release that publishes to them. Without a policy or publisher, a
+publish job cannot log in; without an environment's reviewers, its job would run without an approval.
 
 - **The nuget.org Trusted Publishing policy.** Signed in to nuget.org as `fabbrik76`, open **Trusted Publishing**
   from the account menu and add a GitHub Actions policy: owner `fabbrik`, repository `AgentExperience.NET`, workflow
@@ -377,6 +425,32 @@ environment's reviewers, it would run without an approval.
   `nuget-release` and add the maintainers as **required reviewers**. Under **Deployment branches and tags**, choose
   **Selected branches and tags** and add the tag rule `v*`, so no other ref can reach the environment. Add no
   environment secrets: the workflow needs none.
+- **The PyPI pending Trusted Publisher.** Signed in to pypi.org as the maintainer, open **Your account → Publishing**
+  and add a pending GitHub publisher: PyPI project name `agentexperience`, owner `fabbrik`, repository
+  `AgentExperience.NET`, workflow name `release.yml`, environment name `pypi-release`. A pending publisher lets the
+  workflow create the project on its first upload; from then on it is an ordinary trusted publisher of that project,
+  and only that file, in that environment, in this repository, can publish it.
+- **The GitHub environment `pypi-release`.** As for `nuget-release`: create it under **Settings → Environments**, add
+  the maintainers as **required reviewers**, restrict **Deployment branches and tags** to the tag rule `v*`, and add
+  no secrets.
+
+The Go modules need no setup: the job's token creates their tags, and the Go module proxy fetches a public module the
+first time anyone asks for it.
+
+#### First publish to PyPI
+
+The first release that carries the Python distribution creates the `agentexperience` project on PyPI, through the
+pending publisher above.
+
+1. Before tagging, confirm on pypi.org that the pending publisher exists with exactly the values above, and that
+   the `pypi-release` environment exists with its reviewers and tag rule.
+2. Tag and approve as usual (step 10). Watch the `publish-pypi` job: it must upload the sdist and the wheel.
+3. **If the pending publisher is missing or wrong**, `publish-pypi` fails alone, at the token exchange (an
+   `invalid-publisher` error). nuget.org, the Go tags and the GitHub release already stand, and nothing reached
+   PyPI. Add or correct the publisher on pypi.org, then re-run the failed `publish-pypi` job from the Actions tab (it
+   needs approving again).
+4. Afterwards, `https://pypi.org/project/agentexperience/` lists the version, and the project's **Publishing** page
+   shows the publisher as active rather than pending.
 
 #### First publish of a new package ID
 
@@ -435,6 +509,31 @@ boundaries tables pasted into its notes.
 
 That key lives with the maintainer, never in this repository or its secrets. Revoke it on nuget.org once it has
 been used.
+
+The ports, by hand, from the same verified working copy and only once the version tag exists (so they ship the
+commit the tag names). The Python distribution needs a PyPI API token scoped to the `agentexperience` project, which
+the maintainer creates for this upload and deletes straight after; `uv publish` reads it from `UV_PUBLISH_TOKEN`, and
+`--check-url` makes a retry skip the files PyPI already has. The Go modules need only their tags, at the verified
+commit: a tag that already exists there is kept, and one that exists at any other commit stops the command.
+
+```bash
+( if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
+    echo "FAILED: HEAD is not the commit steps 1-9 verified ($verified); re-run the checks"; false
+  else
+    version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+    ( cd python && rm -rf dist && uv build --out-dir dist && uv publish --check-url https://pypi.org/simple/ dist/* ) \
+      && for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+           tag="$module/v$version"
+           git rev-parse -q --verify "refs/tags/$tag" > /dev/null || git tag "$tag" "$verified" || exit 1
+           [ "$(git rev-parse "$tag^{commit}")" = "$verified" ] || { echo "FAILED: $tag exists at another commit"; exit 1; }
+           git push origin "refs/tags/$tag" || exit 1
+         done \
+      && echo "Published agentexperience and tagged the Go modules at v$version" || { echo "FAILED: see above; a re-run skips what is already done"; false; }
+  fi )
+```
+
+Then confirm the Go modules on the proxy: `go list -m github.com/fabbrik/AgentExperience.NET/go/maf@v$version` (with
+`version` set as above) must print that version.
 
 ## After the release: move the package-validation baseline
 

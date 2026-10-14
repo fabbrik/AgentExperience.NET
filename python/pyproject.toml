@@ -1,15 +1,16 @@
 [project]
-# The distribution and import names are provisional until the maintainer picks the package's name. They live here
-# (name) and in the src/agentexperience directory; renaming the package touches only those two places.
 name = "agentexperience"
-version = "0.1.0.dev0"
-description = "Verified agent experience for Python: a pure-Python core that passes the AgentExperience.NET language-neutral contract 1.0."
+# Derived from Directory.Build.props, never set on its own: 0.1.0-preview.N there is 0.1.0aN here (an explicit PEP 440
+# alpha; "preview" would normalise to rc), and a version with no suffix is the same here. RELEASING.md bumps both, and a
+# release test and release.yml fail when they disagree.
+version = "0.1.0a14"
+description = "Verified agent experience for Python: a pure-Python core that passes the AgentExperience.NET language-neutral contract 1.2."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [{ name = "AgentExperience contributors" }]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

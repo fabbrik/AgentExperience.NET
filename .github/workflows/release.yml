@@ -1,19 +1,24 @@
 name: Release
 
 # The one workflow in this repository that may publish (RELEASING.md step 10). A maintainer starts it by pushing a
-# version tag, and nothing else can: no branch push, pull request, schedule or manual dispatch. The verify job
-# re-runs the release checks on the tagged commit and uploads the packages it verified; the publish job pushes
-# exactly those files to nuget.org, and only after a reviewer approves the `nuget-release` environment.
+# version tag, and nothing else can: no branch push, pull request, schedule or manual dispatch. One tag releases all
+# three languages at one version, from one verified commit. The verify job re-runs the release checks on the tagged
+# commit and uploads what it verified: the six NuGet packages, and the Python sdist and wheel. After a reviewer
+# approves the `nuget-release` environment, the publish job pushes exactly those NuGet files to nuget.org, then tags
+# the five Go modules at the tagged commit and creates the GitHub release. After a reviewer approves the
+# `pypi-release` environment, the publish-pypi job uploads exactly the verified Python files to PyPI.
 #
-# No NuGet API key is stored anywhere. The publish job exchanges its GitHub OIDC token for a short-lived nuget.org
+# No API key or token is stored anywhere. The publish job exchanges its GitHub OIDC token for a short-lived nuget.org
 # key through NuGet/login (NuGet Trusted Publishing), under a policy on nuget.org that names this repository, this
-# file and that environment. AgentExperience.Release.Tests' WorkflowTests hold every constraint here in place, and
+# file and that environment, and creates the Go tags with the job's own GITHUB_TOKEN. The publish-pypi job publishes
+# through PyPI Trusted Publishing, under a publisher on pypi.org that names this repository, this file and the
+# `pypi-release` environment. AgentExperience.Release.Tests' WorkflowTests hold every constraint here in place, and
 # fail if any other workflow gains a publish step.
 on:
   push:
     tags: ['v*']
 
-# Read-only by default. Only the publish job is granted more, and only what it uses.
+# Read-only by default. Only the two publish jobs are granted more, and each only what it uses.
 permissions:
   contents: read
 
@@ -28,6 +33,8 @@ jobs:
     timeout-minutes: 90
     outputs:
       version: ${{ steps.version.outputs.version }}
+      python-version: ${{ steps.version.outputs.python-version }}
+      go-version: ${{ steps.version.outputs.go-version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       sdk: ${{ steps.sdk.outputs.sdk }}
     # Testcontainers pulls its Docker Hub images through Google's public mirror; see the note in ci.yml.
@@ -40,22 +47,74 @@ jobs:
         with:
           fetch-depth: 0
 
-      # RELEASING.md: the version is set once, in Directory.Build.props. The tag must name exactly that version.
+      # RELEASING.md: the version is set once, in Directory.Build.props. The tag must name exactly that version, and the
+      # Python distribution and every Go module's requirement on another of this repository's modules must carry the
+      # version derived from it.
       - name: Check the tag names the version in Directory.Build.props
         id: version
         run: |
           set -euo pipefail
+          # The versions derived from VersionPrefix ($1) and VersionSuffix ($2, possibly empty): .NET, Python and Go.
+          # P-preview.N is Python PaN (an explicit PEP 440 alpha: PEP 440 would normalise "preview" to rc) and Go
+          # vP-preview.N; no suffix is P, P and vP. The release tests run this function and hold it to their own copy.
+          # derive-versions:begin
+          derive_versions() {
+            local prefix="$1" suffix="$2" python
+            [[ "$prefix" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::VersionPrefix '$prefix' is not MAJOR.MINOR.PATCH" >&2; return 1; }
+            if [ -z "$suffix" ]; then
+              python="$prefix"
+            elif [[ "$suffix" =~ ^preview\.([1-9][0-9]*)$ ]]; then
+              python="${prefix}a${BASH_REMATCH[1]}"
+            else
+              echo "::error::VersionSuffix '$suffix' is neither empty nor preview.N" >&2; return 1
+            fi
+            echo "$prefix${suffix:+-$suffix} $python v$prefix${suffix:+-$suffix}"
+          }
+          # derive-versions:end
+          test "$(derive_versions 0.1.0 preview.14)" = "0.1.0-preview.14 0.1.0a14 v0.1.0-preview.14"
+          test "$(derive_versions 1.0.0 '')" = "1.0.0 1.0.0 v1.0.0"
+
           prefix="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)"
           suffix="$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
           test -n "$prefix" || { echo "::error::Directory.Build.props has no VersionPrefix"; exit 1; }
-          version="$prefix${suffix:+-$suffix}"
+          derived="$(derive_versions "$prefix" "$suffix")"
+          read -r version python go <<< "$derived"
           if [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::The tag is $GITHUB_REF_NAME, but Directory.Build.props versions this commit as $version (expected tag v$version)"
             exit 1
           fi
+
+          # Python: pyproject.toml's version.
+          declared="$(sed -nE 's/^version = "([^"]+)"$/\1/p' python/pyproject.toml | head -n 1)"
+          if [ "$declared" != "$python" ]; then
+            echo "::error file=python/pyproject.toml::version is '$declared', but Directory.Build.props versions this commit as $version (expected $python)"
+            exit 1
+          fi
+
+          # Go: every requirement of one of this repository's modules on another names exactly the derived version. The
+          # replace directives, which consumers ignore, are not requirements.
+          mismatched=0
+          checked=0
+          for mod in go/go.mod go/inmemory/go.mod go/postgres/go.mod go/postgres/pgtest/go.mod go/maf/go.mod; do
+            test -f "$mod" || { echo "::error::$mod is missing"; exit 1; }
+            requires="$(grep -v '=>' "$mod" | sed -nE 's#^[[:space:]]*(require[[:space:]]+)?(github\.com/fabbrik/AgentExperience\.NET/go[^[:space:]]*)[[:space:]]+([^[:space:]]+).*#\2 \3#p')"
+            while read -r path required; do
+              [ -n "$path" ] || continue
+              checked=$((checked + 1))
+              if [ "$required" != "$go" ]; then
+                echo "::error file=$mod::requires $path $required, but Directory.Build.props versions this commit as $version (expected $go)"
+                mismatched=1
+              fi
+            done <<< "$requires"
+          done
+          test "$mismatched" -eq 0
+          test "$checked" -gt 0 || { echo "::error::No Go module requires another of this repository's modules"; exit 1; }
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "python-version=$python" >> "$GITHUB_OUTPUT"
+          echo "go-version=$go" >> "$GITHUB_OUTPUT"
           if [ -n "$suffix" ]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
-          echo "Tag $GITHUB_REF_NAME names version $version"
+          echo "Tag $GITHUB_REF_NAME names version $version (Python $python, Go $go)"
 
       # Only a commit that is already on main may be released: a tag on a feature branch, or on a commit main
       # never took, is refused.
@@ -167,6 +226,73 @@ jobs:
       - name: Verify the packages
         run: dotnet run eng/verify-packages.cs -- artifacts/packages
 
+      # The Python distribution (python/). uv is pinned to one release, with its checksum, and nothing is cached: a
+      # release restores from the lock file alone.
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: '0.12.24'
+          checksum: 'b4dfaef47d491a7296981f8374a4595f55dbf84e8937c8ecd2983574d8bb3da6'
+          python-version: '3.13'
+          enable-cache: false
+
+      # The unit, conformance and Agent Framework tests on the tagged commit. The PostgreSQL leg is not repeated here:
+      # CI on main ran it, as it ran the .NET per-major legs.
+      - name: Python tests
+        working-directory: python
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra maf --extra postgres
+          uv run pytest -m "not postgres"
+
+      # The sdist and the wheel, built once, here: publish-pypi uploads exactly these files.
+      - name: Build the Python distribution
+        working-directory: python
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          uv build --out-dir dist
+
+      # Exactly one sdist and one wheel, named agentexperience at the derived version, whose metadata says the same,
+      # and which twine accepts as PyPI would (--strict fails on any warning, such as a README PyPI cannot render).
+      - name: Check the Python distribution
+        working-directory: python
+        env:
+          PYTHON_VERSION: ${{ steps.version.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          test -f "dist/agentexperience-$PYTHON_VERSION.tar.gz" || { echo "::error::No sdist agentexperience-$PYTHON_VERSION.tar.gz"; exit 1; }
+          test -f "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" || { echo "::error::No wheel agentexperience-$PYTHON_VERSION-py3-none-any.whl"; exit 1; }
+          total="$(find dist -type f | wc -l)"
+          test "$total" -eq 2 || { echo "::error::Expected an sdist and a wheel and nothing else in dist; found $total files"; exit 1; }
+          uvx --no-cache twine==7.0.0 check --strict dist/*
+          metadata="$(unzip -p "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" "agentexperience-$PYTHON_VERSION.dist-info/METADATA")"
+          grep -qx "Name: agentexperience" <<< "$metadata" || { echo "::error::The wheel's METADATA does not name agentexperience"; exit 1; }
+          grep -qx "Version: $PYTHON_VERSION" <<< "$metadata" || { echo "::error::The wheel's METADATA is not version $PYTHON_VERSION"; exit 1; }
+          echo "agentexperience $PYTHON_VERSION: sdist and wheel OK"
+
+      # The Go modules (go/), on Go 1.26, which every module builds with (the CI matrix tests each floor): go vet and
+      # the tests in every module. No module cache is restored. The PostgreSQL leg is not repeated here, as for Python.
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Go vet and tests
+        working-directory: go
+        run: |
+          set -euo pipefail
+          for module in . inmemory postgres postgres/pgtest maf; do
+            (
+              cd "$module"
+              go mod verify
+              go vet ./...
+              go test ./...
+            )
+          done
+
       - name: Upload the verified packages
         uses: actions/upload-artifact@v4
         with:
@@ -183,9 +309,17 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload the verified Python distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: python/dist/
+          if-no-files-found: error
+          retention-days: 30
+
   # Pushes exactly what verify uploaded. The job does not check out the repository: it builds nothing, and runs no
   # code from the tree while it holds a nuget.org key. Re-running it is safe: --skip-duplicate skips a version
-  # nuget.org already has, and an existing GitHub release is left as it is.
+  # nuget.org already has, a Go tag already at this commit is kept, and an existing GitHub release is left as it is.
   publish:
     needs: verify
     runs-on: ubuntu-24.04
@@ -242,7 +376,57 @@ jobs:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
 
-      # Only after the push. An existing release (a re-run) is left untouched.
+      # The Go modules are released by tags, one per module, at the tagged commit: created through the API with this
+      # job's token, with no checkout and nothing pushed from a clone. A tag that already points at this commit (a
+      # re-run) is left as it is; one that points anywhere else stops the release here, before the GitHub release.
+      - name: Tag the Go modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GO_VERSION: ${{ needs.verify.outputs.go-version }}
+        run: |
+          set -euo pipefail
+          for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+            tag="$module/$GO_VERSION"
+            if existing="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha' 2> /dev/null)"; then
+              read -r type sha <<< "$existing"
+              if [ "$type" = "tag" ]; then sha="$(gh api "repos/$GH_REPO/git/tags/$sha" --jq '.object.sha')"; fi
+              if [ "$sha" != "$GITHUB_SHA" ]; then
+                echo "::error::The tag $tag already exists at $sha, not at the release commit $GITHUB_SHA"
+                exit 1
+              fi
+              echo "The tag $tag already points at $GITHUB_SHA; leaving it as it is."
+            else
+              gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" --silent
+              echo "Tagged $tag at $GITHUB_SHA"
+            fi
+          done
+
+      # The Go module proxy must know every module at the new version before the release is announced. Asking for a
+      # version makes the proxy fetch it; a module path is case-escaped as the proxy protocol requires (each upper-case
+      # letter becomes ! and the letter in lower case: AgentExperience is !agent!experience).
+      - name: Check the Go module proxy has every module
+        env:
+          GO_VERSION: ${{ needs.verify.outputs.go-version }}
+        run: |
+          set -euo pipefail
+          for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+            path="github.com/fabbrik/AgentExperience.NET/$module"
+            escaped="$(sed -E 's/([A-Z])/!\L\1/g' <<< "$path")"
+            url="https://proxy.golang.org/$escaped/@v/$GO_VERSION.info"
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if info="$(curl -fsS "$url")"; then
+                echo "proxy.golang.org: $info"
+                continue 2
+              fi
+              echo "Attempt $attempt: proxy.golang.org does not know $url yet"
+              sleep 30
+            done
+            echo "::error::proxy.golang.org does not know $path@$GO_VERSION"
+            exit 1
+          done
+
+      # Only after the push and the Go tags. An existing release (a re-run) is left untouched.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -260,3 +444,44 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
           gh release create "$TAG" --verify-tag --title "AgentExperience.NET $VERSION" \
             --notes-file artifacts/release-notes/notes.md "${flags[@]}"
+
+  # Uploads exactly the Python files verify built and checked, through PyPI Trusted Publishing: the action exchanges
+  # the job's GitHub OIDC token for a short-lived PyPI token, under a publisher on pypi.org that names this repository,
+  # this file and the `pypi-release` environment. It runs only after the push to nuget.org and the Go tags succeeded,
+  # behind its own environment's reviewers, with no permission but the OIDC token. It does not check out the
+  # repository: it builds nothing, and runs no code from the tree. Re-running it is safe: skip-existing skips files
+  # PyPI already has.
+  # If the publisher is missing on pypi.org, this job fails alone; nuget.org, the Go tags and the GitHub release stand,
+  # and a re-run after adding the publisher completes the release (RELEASING.md).
+  publish-pypi:
+    needs: [verify, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: pypi-release
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the verified Python distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      # One sdist and one wheel, at the derived version, and nothing else.
+      - name: Check the distribution is the tagged version
+        env:
+          PYTHON_VERSION: ${{ needs.verify.outputs.python-version }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          total="$(find dist -type f | wc -l)"
+          if [ ! -f "dist/agentexperience-$PYTHON_VERSION.tar.gz" ] || [ ! -f "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" ] || [ "$total" -ne 2 ]; then
+            echo "::error::Expected agentexperience-$PYTHON_VERSION.tar.gz and agentexperience-$PYTHON_VERSION-py3-none-any.whl and nothing else; found $total files"
+            exit 1
+          fi
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          skip-existing: true
