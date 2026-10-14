@@ -1,5 +1,5 @@
 // Package agentexperience is a Go core of AgentExperience that implements the AgentExperience.NET language-neutral
-// contract 1.4 (the repository's contract directory).
+// contract 1.5 (the repository's contract directory).
 //
 // Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical
 // Reference block, derives the task text, classifies errors, and computes the text-search parameters and the
@@ -18,7 +18,7 @@
 package agentexperience
 
 // ContractVersion is the contract version this package implements.
-const ContractVersion = "1.4"
+const ContractVersion = "1.5"
 
 // SupportedContractVersions are the contract versions this package passes: every fixture of each.
-var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4"}
+var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5"}

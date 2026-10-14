@@ -45,15 +45,15 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if version != ae.ContractVersion {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
-	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4" {
+	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5" {
 		t.Fatalf("supported versions: %v", ae.SupportedContractVersions)
 	}
 }
 
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
-	for _, version := range []any{"2.0", "1.5", nil} {
+	for _, version := range []any{"2.0", "1.6", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
-		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4") {
+		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5") {
 			t.Fatalf("version %v: %v", version, err)
 		}
 	}
@@ -112,10 +112,10 @@ func TestEveryFixtureFamilyHasCases(t *testing.T) {
 			families = append(families, entry.Name())
 		}
 	}
-	if strings.Join(families, ",") != "encoding,error-class,finalize,inject,record-injection,search,task-text" {
+	if strings.Join(families, ",") != "encoding,erased,error-class,finalize,inject,record-injection,search,task-text" {
 		t.Fatalf("families: %v", families)
 	}
-	for _, family := range []string{"finalize", "inject", "record-injection", "search", "task-text"} {
+	for _, family := range []string{"erased", "finalize", "inject", "record-injection", "search", "task-text"} {
 		if len(ct.Cases(family)) == 0 {
 			t.Fatalf("%s has no cases", family)
 		}
@@ -383,16 +383,18 @@ func truncate(value any) string {
 // ---- search: the stored records (the search itself needs PostgreSQL) -------------------------------------------
 
 func TestSearchSeedRecordsValidateAndReadBack(t *testing.T) {
-	for _, name := range ct.Cases("search") {
-		t.Run(name, func(t *testing.T) {
-			for _, stored := range ct.MustReadJSON(fixture("search", name, "seed.json")).([]any) {
-				record, err := ae.FromStored(stored)
-				if err != nil {
-					t.Fatal(err)
+	for _, family := range []string{"search", "erased"} {
+		for _, name := range ct.Cases(family) {
+			t.Run(family+"/"+name, func(t *testing.T) {
+				for _, stored := range ct.MustReadJSON(fixture(family, name, "seed.json")).([]any) {
+					record, err := ae.FromStored(stored)
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertJSONEqual(t, stored, record.ToStored(), "seed.json read back")
 				}
-				assertJSONEqual(t, stored, record.ToStored(), "seed.json read back")
-			}
-		})
+			})
+		}
 	}
 }
 

@@ -109,7 +109,7 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
     }
 
     /// <summary>Runs <c>contract/sql/declare-bounds.sql</c> then <c>contract/sql/search-experience-text.sql</c>, as written.</summary>
-    private static async Task<IReadOnlyList<SearchRow>> SearchAsync(NpgsqlDataSource application, SearchQuery query)
+    internal static async Task<IReadOnlyList<SearchRow>> SearchAsync(NpgsqlDataSource application, SearchQuery query)
     {
         await using var connection = await application.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -149,7 +149,7 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
     }
 
     /// <summary>Core's ranking over the .NET candidate source, at the case's clock, with the default policy and weights.</summary>
-    private static async Task<(IReadOnlyList<RankedRow> Ranked, bool Truncated)> RankAsync(NpgsqlDataSource application, SearchQuery query)
+    internal static async Task<(IReadOnlyList<RankedRow> Ranked, bool Truncated)> RankAsync(NpgsqlDataSource application, SearchQuery query)
     {
         var retrieval = new ExperienceRetrievalService(
             new PostgresExperienceCandidateSource(application),

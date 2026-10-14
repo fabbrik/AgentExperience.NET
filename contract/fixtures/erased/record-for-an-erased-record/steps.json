@@ -1,0 +1,36 @@
+{
+  "description": "Recording an injection that names an erased record leaves no row for it; the live record named beside it gets its row.",
+  "steps": [
+    {
+      "erase": {
+        "experienceId": "00000067-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000067-0000-4000-8000-000000000001",
+          "00000067-0000-4000-8000-000000000002"
+        ],
+        "injectedAt": "2026-03-02T11:00:00+00:00"
+      }
+    }
+  ]
+}

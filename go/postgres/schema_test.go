@@ -104,9 +104,11 @@ func TestEveryFixtureRecordAndEveryRecordTheCoreWritesValidates(t *testing.T) {
 			assertValidRecord(t, stored)
 		}
 	}
-	for _, name := range ct.Cases("search") {
-		for _, stored := range ct.MustReadJSON(fixture("search", name, "seed.json")).([]any) {
-			assertValidRecord(t, stored)
+	for _, family := range []string{"search", "erased"} {
+		for _, name := range ct.Cases(family) {
+			for _, stored := range ct.MustReadJSON(fixture(family, name, "seed.json")).([]any) {
+				assertValidRecord(t, stored)
+			}
 		}
 	}
 }

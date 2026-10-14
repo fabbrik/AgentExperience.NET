@@ -2200,3 +2200,7 @@ Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview sin
 ### Story 22.9: Contract 1.4, Ports Record Injections
 
 **Acceptance Criteria:** **Given** Python and Go agents injecting against a PostgreSQL store shared with .NET **When** contract 1.4 is published **Then** the injection-recording upsert the .NET store runs and the injection table's application-role grants are contract SQL files (add-only, the grants applied after the 1.0 file), .NET-generated record-injection fixtures pin the scope, the clock clamp, saturation and erasure, each port's PostgreSQL store runs the statement verbatim and each MAF integration records after the block is handed over (background, bounded, fail-open), `experience_injections` holds the rows .NET writes for the same injections and the .NET lessons view reads them, the lessons page drops its ".NET agents only" note, and all three languages pass, PostgreSQL legs included.
+
+### Story 22.10: Contract 1.5, Erased Records Are Never Read
+
+**Acceptance Criteria:** **Given** a record erased through `purge_experience_record` **When** contract 1.5 is published (add-only, a new .NET-generated `erased` fixture family) **Then** a search never returns it and the next match takes its place, a read by ID finds nothing, recording an injection for it leaves no row, and the Python and Go ports pass those cases on their PostgreSQL legs.

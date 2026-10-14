@@ -95,6 +95,11 @@ def test_search(pg_server: Server, name: str) -> None:
         record = from_stored(stored)
         store.insert_record(AuthorizationBounds.of(record.scope), record)
 
+    _check_search(store, seed, query, expected)
+
+
+def _check_search(store: PostgresExperienceStore, seed: list[Any], query: dict[str, Any], expected: Any) -> None:
+    """Runs the store's text search for ``query`` and ranks it, as a search case's ``expected.json`` holds it."""
     parameters = _parameters(query)
     rows = store.search(AuthorizationBounds.of(parameters.scope), parameters)
 
@@ -266,24 +271,37 @@ def test_record_injection(pg_server: Server, name: str) -> None:
     before = _clock(owner)
     for step in steps:
         if "record" in step:
-            scope = scope_of(step["record"]["scope"])
-            store.record_injection(
-                AuthorizationBounds.of(scope),
-                scope,
-                [uuid.UUID(text) for text in step["record"]["experienceIds"]],
-                Instant.parse(step["record"]["injectedAt"]),
-            )
+            _record(store, step["record"])
         else:
-            erase = step["erase"]
-            with psycopg.connect(owner) as connection:
-                purged = connection.execute(
-                    "SELECT purge_outcome FROM agent_experience.purge_experience_record(%s::uuid, %s, %s, %s, %s, %s, "
-                    "%s, NULL, %s::timestamptz)",
-                    (erase["experienceId"], *scope_of(erase["scope"]).fields(), erase["deletedAt"]),
-                ).fetchone()
-            assert purged == ("Deleted",)
+            _erase(owner, step["erase"])
     after = _clock(owner)
+    _check_injection_rows(owner, expected, before, after)
 
+
+def _record(store: PostgresExperienceStore, record: dict[str, Any]) -> None:
+    """A ``record`` step: the store's record call (the packaged record-injection.sql)."""
+    scope = scope_of(record["scope"])
+    store.record_injection(
+        AuthorizationBounds.of(scope),
+        scope,
+        [uuid.UUID(text) for text in record["experienceIds"]],
+        Instant.parse(record["injectedAt"]),
+    )
+
+
+def _erase(owner: str, erase: dict[str, Any]) -> None:
+    """An ``erase`` step: ``purge_experience_record`` as the schema's owner."""
+    with psycopg.connect(owner) as connection:
+        purged = connection.execute(
+            "SELECT purge_outcome FROM agent_experience.purge_experience_record(%s::uuid, %s, %s, %s, %s, %s, "
+            "%s, NULL, %s::timestamptz)",
+            (erase["experienceId"], *scope_of(erase["scope"]).fields(), erase["deletedAt"]),
+        ).fetchone()
+    assert purged == ("Deleted",)
+
+
+def _check_injection_rows(owner: str, expected: Any, before: dt.datetime, after: dt.datetime) -> None:
+    """Every row of the injection table, compared with ``expected["experience_injections"]``."""
     with psycopg.connect(owner) as connection:
         connection.execute("SET TIME ZONE 'UTC'")
         rows = connection.execute(
@@ -305,6 +323,47 @@ def test_record_injection(pg_server: Server, name: str) -> None:
         actual.append(values)
     difference = json_difference(expected["experience_injections"], actual, "$.experience_injections")
     assert difference is None, difference
+
+
+# ---- Contract 1.5: erased records are never read -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", cases("erased"))
+def test_erased(pg_server: Server, name: str) -> None:
+    """An erased fixture: search, read by ID and record through the store, erase as the owner."""
+    directory = FIXTURES / "erased" / name
+    seed = read_json(directory / "seed.json")
+    steps = read_json(directory / "steps.json")["steps"]
+    expected = read_json(directory / "expected.json")
+    assert len(expected["steps"]) == len(steps)
+
+    database = create_database(pg_server, "erased_" + name)
+    owner = pg_server.conninfo(database, OWNER, PASSWORD)
+    store = PostgresExperienceStore(application_conninfo(pg_server, database))
+    for stored in seed:
+        record = from_stored(stored)
+        store.insert_record(AuthorizationBounds.of(record.scope), record)
+
+    before = _clock(owner)
+    for step, outcome in zip(steps, expected["steps"], strict=True):
+        if "search" in step:
+            _check_search(store, seed, step["search"], outcome)
+        elif "get" in step:
+            scope = scope_of(step["get"]["scope"])
+            experience_id = step["get"]["experienceId"]
+            read = store.get(AuthorizationBounds.of(scope), scope, uuid.UUID(experience_id))
+            assert {"found": read is not None} == outcome, step
+            if read is not None:
+                original = next(item for item in seed if item["columns"]["experience_id"] == experience_id)
+                assert json_difference(original, to_stored(read)) is None
+        elif "record" in step:
+            assert outcome is None
+            _record(store, step["record"])
+        else:
+            assert outcome is None
+            _erase(owner, step["erase"])
+    after = _clock(owner)
+    _check_injection_rows(owner, expected, before, after)
 
 
 def test_without_the_1_4_grants_recording_an_injection_fails_and_writes_nothing(pg_server: Server) -> None:
