@@ -341,17 +341,24 @@ public sealed class SingleCallParityTests
         var (single, explicitTrace) = await Both(
             async (trace, agent) =>
             {
-                var runOptions = new ChatClientAgentRunOptions(new ChatOptions { Tools = [Echo, RunOnly] });
-                await Run(agent, AgentExperienceFiveLineSetupTests.Task, session: null, runOptions, streaming: false);
-                await Run(agent, AgentExperienceFiveLineSetupTests.Task, session: null, runOptions, streaming: false);
-                await Run(agent, AgentExperienceFiveLineSetupTests.Task, session: null, options: null, streaming: false);
+                // Taught through the agent's own echo; then a run offers a second tool of the same name.
+                await Run(agent, AgentExperienceFiveLineSetupTests.Task, session: null, new ChatClientAgentRunOptions(new ChatOptions { Tools = [RunOnly] }), streaming: false);
+                try
+                {
+                    await Run(agent, AgentExperienceFiveLineSetupTests.Task, session: null, new ChatClientAgentRunOptions(new ChatOptions { Tools = [Echo, RunOnly] }), streaming: false);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // Newer Microsoft.Extensions.AI refuses duplicate tool names at the model call, after injection.
+                    trace.Errors.Add(ex.GetType().Name);
+                }
             },
             options: () => new ChatClientAgentOptions { ChatOptions = new ChatOptions { Tools = [EchoTwin] } },
             useRunTools: true);
 
         AssertSame(explicitTrace, single);
+        Assert.Equal(explicitTrace.Errors, single.Errors);
         Assert.Equal(InjectionOutcome.Injected, single.Host.Injections[1].Outcome);
-        Assert.Equal(InjectionOutcome.Injected, single.Host.Injections[2].Outcome);
     }
 
     // ---- Pipeline shapes, continuations and refusals ------------------------------------------------------
@@ -640,6 +647,8 @@ public sealed class SingleCallParityTests
         public Model Model { get; set; } = new();
 
         public List<string?> DerivedTexts { get; } = [];
+
+        public List<string> Errors { get; } = [];
 
         public void RecordDerivedTexts(AgentExperienceOptions options)
         {
