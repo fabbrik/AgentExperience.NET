@@ -454,6 +454,40 @@ def from_columns(columns: Mapping[str, Any], payload: Mapping[str, Any]) -> Expe
     )
 
 
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+
+
+def _read_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Stored tool-call arguments, their numbers read as the .NET reader reads them: an integer a 64-bit integer holds
+    as that integer, and any other number as a double. An integer beyond a double's range is outside the contract
+    (.NET reads it as an infinity it cannot write again) and is refused here with a ``ValueError``. PostgreSQL
+    writes a ``jsonb`` number back in its own form (``1.5e19`` as ``15000000000000000000``), so reading it as
+    written would keep, as an integer, a value .NET holds as a double.
+    """
+    return {key: _read_argument(value) for key, value in arguments.items()}
+
+
+def _read_argument(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if _INT64_MIN <= value <= _INT64_MAX:
+            return value
+        try:
+            return float(value)
+        except OverflowError:
+            raise ValueError(
+                "A stored tool-call argument is an integer beyond a double's range, which is outside the contract: "
+                ".NET reads it back as an infinity it cannot write again."
+            ) from None
+    if isinstance(value, Mapping):
+        return _read_arguments(value)
+    if isinstance(value, list):
+        return [_read_argument(item) for item in value]
+    return value
+
+
 def _attempt(value: Mapping[str, Any]) -> Attempt:
     return Attempt(
         attempt_id=parse_uuid(value["attemptId"]),
@@ -465,7 +499,7 @@ def _attempt(value: Mapping[str, Any]) -> Attempt:
                 tool_call_id=parse_uuid(call["toolCallId"]),
                 sequence_number=_integer(call["sequenceNumber"], "sequenceNumber"),
                 tool_name=call["toolName"],
-                arguments=dict(call["arguments"]),
+                arguments=_read_arguments(call["arguments"]),
                 started_at=_instant(call["startedAt"]),
                 duration=Duration.parse(call["duration"]),
                 result=call.get("result"),

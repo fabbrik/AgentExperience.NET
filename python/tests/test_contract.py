@@ -5,9 +5,14 @@ text byte for byte; JSON by value; search rows and scores (in ``test_postgres.py
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import re
+import uuid
+from collections.abc import Iterator
 from functools import cache
+from pathlib import Path
 from typing import Any
 
 import jsonschema
@@ -23,12 +28,22 @@ from _contract import (
     read_json,
     run_finalize_case,
 )
+from jsonschema.exceptions import ValidationError
 
 from agentexperience import (
     CONTRACT_VERSION,
+    SUPPORTED_CONTRACT_VERSIONS,
     BlockOptions,
+    ClosedVerificationRound,
+    Duration,
+    EnvironmentFingerprint,
+    Instant,
     Message,
     MessagePart,
+    Provenance,
+    RequiredCheck,
+    RunCapture,
+    Scope,
     derive_task_text,
     error_class,
     from_stored,
@@ -36,14 +51,43 @@ from agentexperience import (
     to_stored,
 )
 from agentexperience.block import ranked_from_json
+from agentexperience.ids import experience_id_for
 from agentexperience.postgres import contract_sql
+from agentexperience.records import Evidence
+from agentexperience.verification import aggregate
+
+# JSON Schema's patterns are ECMA-262 regular expressions, whose \s is not Python's: Python's also matches the
+# information separators U+001C to U+001F (and U+0085), ECMA-262's does not. The schema's one \s (a task ID must hold
+# a non-whitespace character) is evaluated as ECMA-262 defines it.
+_ECMA_WHITESPACE = "\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
+
+
+def _ecma(pattern: str) -> str:
+    """``pattern`` (ECMA-262) as a Python pattern, for the constructs the schema uses; anything else is refused."""
+    translated = pattern.replace("[^\\s]", f"[^{_ECMA_WHITESPACE}]")
+    # ECMA-262's $ (without the multiline flag) matches only at the very end; Python's also before a final line break.
+    if translated.endswith("$") and not translated.endswith("\\$"):
+        translated = translated[:-1] + "\\Z"
+    unsupported = re.findall(r"\\[sSdDwWbB]|(?<!\\)\$", translated)
+    assert not unsupported, f"Translate {unsupported} in {pattern!r} for ECMA-262: Python's meaning differs."
+    return translated
+
+
+def _ecma_pattern(validator: Any, pattern: str, instance: Any, schema: Any) -> Iterator[ValidationError]:
+    if not validator.is_type(instance, "string"):
+        return
+    if not re.search(_ecma(pattern), instance):
+        yield ValidationError(f"{instance!r} does not match {pattern!r}")
+
+
+_Validator = jsonschema.validators.extend(jsonschema.Draft202012Validator, {"pattern": _ecma_pattern})
 
 
 @cache
-def validator() -> jsonschema.Draft202012Validator:
+def validator() -> Any:
     schema = read_json(SCHEMA)
     jsonschema.Draft202012Validator.check_schema(schema)
-    return jsonschema.Draft202012Validator(schema)
+    return _Validator(schema)
 
 
 def assert_valid_record(stored: dict[str, Any]) -> None:
@@ -64,9 +108,9 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert check_contract_version(read_json(CONTRACT / "lock.json")) == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.1", None])
+@pytest.mark.parametrize("version", ["2.0", "1.2", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0"):
+    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1"):
         check_contract_version({"contractVersion": version})
 
 
@@ -92,6 +136,7 @@ def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
 
 def test_every_fixture_family_has_cases() -> None:
     assert {entry.name for entry in FIXTURES.iterdir() if entry.is_dir()} == {
+        "encoding",
         "error-class",
         "finalize",
         "inject",
@@ -121,6 +166,39 @@ def test_finalize(name: str) -> None:
 def test_a_finalized_record_reads_back_identical(name: str) -> None:
     expected = read_json(FIXTURES / "finalize" / name / "expected-record.json")
     assert_json_equal(expected, to_stored(from_stored(expected)), "read back")
+
+
+def test_argument_numbers_read_back_as_dotnet_reads_them() -> None:
+    stored = read_json(FIXTURES / "finalize" / "argument-numbers" / "expected-record.json")
+
+    def arguments_of(record: dict[str, Any]) -> dict[str, Any]:
+        return dict(from_stored(record).attempts[0].tool_calls[0].arguments)
+
+    def with_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        changed = copy.deepcopy(stored)
+        changed["payload"]["attempts"][0]["toolCalls"][0]["arguments"] = arguments
+        return changed
+
+    arguments = arguments_of(stored)
+    assert type(arguments["int64Max"]) is int and arguments["int64Max"] == 2**63 - 1
+    assert type(arguments["int64Min"]) is int and arguments["int64Min"] == -(2**63)
+    for name in ("beyondInt64", "belowInt64", "twentyOneDigits"):
+        assert type(arguments[name]) is float, name
+    written = to_stored(from_stored(stored))["payload"]["attempts"][0]["toolCalls"][0]["arguments"]
+    assert json.dumps(written["beyondInt64"]) == "1.5e+19"
+    assert json.dumps(written["belowInt64"]) == "-1e+19"
+    assert json.dumps(written["twentyOneDigits"]) == "1e+20"
+    assert json.dumps(written["int64Max"]) == "9223372036854775807"
+
+    nested = arguments_of(with_arguments({"outer": {"big": 10**20, "items": [2**63, 1, {"small": -(2**63)}]}}))
+    assert nested == {"outer": {"big": 1e20, "items": [9.223372036854776e18, 1, {"small": -(2**63)}]}}
+    assert type(nested["outer"]["big"]) is float
+    assert type(nested["outer"]["items"][0]) is float
+    assert type(nested["outer"]["items"][1]) is int
+    assert type(nested["outer"]["items"][2]["small"]) is int
+
+    with pytest.raises(ValueError, match="outside the contract"):
+        arguments_of(with_arguments({"huge": {"items": [10**400]}}))
 
 
 # ---- inject -----------------------------------------------------------------------------------------------------
@@ -177,8 +255,35 @@ def test_task_text(name: str) -> None:
 # ---- error-class ------------------------------------------------------------------------------------------------
 
 
+def _version_key(version: str) -> tuple[int, int]:
+    major, minor = version.split(".")
+    return int(major), int(minor)
+
+
+def error_case_files() -> list[Path]:
+    """
+    Every ``cases*.json`` of the error-class family, in version order: ``cases.json`` is 1.0's, and each later minor
+    version N adds ``cases-1.N.json``. A file for a version this package does not support fails clearly.
+    """
+    by_name = {
+        ("cases.json" if version.endswith(".0") else f"cases-{version}.json"): version
+        for version in SUPPORTED_CONTRACT_VERSIONS
+    }
+    on_disk = {file.name: file for file in (FIXTURES / "error-class").glob("cases*.json")}
+    unknown = sorted(set(on_disk) - set(by_name))
+    assert not unknown, (
+        f"error-class holds {unknown}, for a contract version this package does not support "
+        f"({', '.join(SUPPORTED_CONTRACT_VERSIONS)})."
+    )
+    return [on_disk[name] for name in sorted(on_disk, key=lambda name: _version_key(by_name[name]))]
+
+
 def error_cases() -> list[tuple[str | None, str]]:
-    return [(case["error"], case["class"]) for case in read_json(FIXTURES / "error-class" / "cases.json")]
+    return [(case["error"], case["class"]) for file in error_case_files() for case in read_json(file)]
+
+
+def test_the_error_class_files_are_one_per_supported_version() -> None:
+    assert [file.name for file in error_case_files()] == ["cases.json", "cases-1.1.json"]
 
 
 @pytest.mark.parametrize(("error", "expected"), error_cases(), ids=lambda value: str(value)[:40])
@@ -194,3 +299,88 @@ def test_search_seed_records_validate_and_read_back(name: str) -> None:
     for stored in read_json(FIXTURES / "search" / name / "seed.json"):
         assert_valid_record(stored)
         assert_json_equal(stored, to_stored(from_stored(stored)), "seed.json read back")
+
+
+# ---- encoding (contract 1.1) ---------------------------------------------------------------------------------------
+
+
+def encoding_cases() -> list[dict[str, Any]]:
+    return list(read_json(FIXTURES / "encoding" / "cases.json"))
+
+
+def _utf16(units: list[int] | None) -> str | None:
+    """A scope field given as UTF-16 code units: a surrogate pair is one character, a lone surrogate stays one."""
+    if units is None:
+        return None
+    for unit in units:
+        if not 0 <= unit <= 0xFFFF:
+            raise AssertionError(f"{unit} is not a UTF-16 code unit (0 to 65535).")
+    return b"".join(unit.to_bytes(2, "little") for unit in units).decode("utf-16-le", "surrogatepass")
+
+
+_T0 = Instant.parse("2026-03-02T09:00:00+00:00")
+_ROUND = ClosedVerificationRound(uuid.UUID(int=0x7E), "rev-1")
+
+
+def _encode(kind: str, value: Any) -> str:
+    if kind == "instant":
+        return Instant.parse(value).format()
+    if kind == "duration":
+        return Duration.parse(value).format()
+    if kind == "non-blank":
+        # Accepted, and the check it names is the one the evidence satisfies.
+        evidence = Evidence(
+            evidence_id=uuid.UUID(int=0xE1),
+            verification_round_id=_ROUND.round_id,
+            artifact_revision="rev-1",
+            check_id=value,
+            kind="integration-test",
+            result="Pass",
+            producer="contract-ci",
+            detail=None,
+            captured_at=_T0,
+        )
+        result = aggregate([evidence], [RequiredCheck(value, "integration-test")], _ROUND, "rev-1", _T0)
+        assert result.outcome.status == "Verified"
+        assert [item.check_id for item in result.outcome.evidence] == [value]
+        return str(value)
+    if kind == "task-id":
+        capture = RunCapture.start(
+            uuid.UUID(int=1), value, None, Scope("t", "a", "p"), EnvironmentFingerprint("h", "r", "o", None, {}),
+            Provenance("s", None, _T0, None), _T0,
+        )  # fmt: skip
+        return capture.run.task_id
+    if kind == "experience-id":
+        scope = value["scopeUtf16"]
+        return str(
+            experience_id_for(
+                uuid.UUID(value["runId"]),
+                Scope(
+                    *(
+                        _utf16(scope[name])
+                        for name in ("tenantId", "applicationId", "projectId", "teamId", "agentId", "userId")
+                    )
+                ),
+            )
+        )
+    raise AssertionError(f"Unknown encoding kind {kind!r}.")
+
+
+def _refusal(kind: str, value: Any) -> str:
+    """What the refusal of an invalid case must say."""
+    if kind in ("instant", "duration"):
+        return re.escape(f"'{value}'")
+    if kind == "non-blank":
+        return "Required check IDs must not be blank"
+    if kind == "task-id":
+        return "task ID must not be blank"
+    raise AssertionError(f"An {kind} case is never invalid.")
+
+
+@pytest.mark.parametrize("case", encoding_cases(), ids=lambda case: f"{case['kind']}-{str(case['input'])[:40]}")
+def test_encoding(case: dict[str, Any]) -> None:
+    if case["valid"]:
+        assert _encode(case["kind"], case["input"]) == case["canonical"]
+    else:
+        with pytest.raises(ValueError, match=_refusal(case["kind"], case["input"])):
+            _encode(case["kind"], case["input"])

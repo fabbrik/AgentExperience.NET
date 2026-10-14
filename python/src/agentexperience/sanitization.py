@@ -83,7 +83,8 @@ class SanitizationPolicy:
 
     def _value(self, value: Any, depth: int) -> tuple[bool, Any]:
         if isinstance(value, float) and not math.isfinite(value):
-            # No JSON number holds it, so .NET could never have captured it: refused, never stored.
+            # Outside the contract: no JSON number holds it, and .NET reads a number beyond a double's range back as an
+            # infinity it cannot write again. Refused, so nothing is stored that .NET would read back changed.
             raise SanitizationRejected("A number is not finite (NaN or an infinity).")
         if value is None or isinstance(value, (bool, int, float)):
             return True, value

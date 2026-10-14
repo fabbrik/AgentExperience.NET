@@ -1,6 +1,6 @@
 """
-.NET parity and robustness beyond what the contract 1.0 fixtures reach. Each expectation below is what the .NET
-library does (checked against .NET 10), matched here by construction.
+.NET parity and robustness beyond what the contract fixtures reach (contract 1.1 pins several of these cases too).
+Each expectation below is what the .NET library does (checked against .NET 10), matched here by construction.
 """
 
 from __future__ import annotations
@@ -201,6 +201,10 @@ def test_an_integer_argument_beyond_64_bits_renders_as_dotnet_reads_it(value: in
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_a_non_finite_number_is_refused_at_capture(value: float) -> None:
+    # Python's choice, not .NET's: .NET captures a NaN or an infinity (or a JSON number beyond a double's range), but
+    # cannot write the first two as JSON and reads the last back as an infinity it cannot write again. The contract
+    # leaves such numbers out (contract/README.md, numbers in tool-call arguments); refusing them stores nothing .NET
+    # would read back changed.
     policy = Sanitization.allowing(["n"]).tool_arguments
     with pytest.raises(SanitizationRejected):
         policy.sanitize({"n": value})

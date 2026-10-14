@@ -1,0 +1,89 @@
+{
+  "description": "The information separators U+001C to U+001F are not whitespace: a task ID and a required check ID made of one are not blank, so the run is captured and verified, and the lesson names the check as it is.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "00000112-0000-4000-8000-000000000000",
+    "taskId": "\u001C",
+    "taskDescription": "Separators \u001C\u001D\u001E\u001F between words",
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": null,
+      "agentId": "refund-agent",
+      "userId": null
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-03T00:00:00+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [
+      {
+        "attemptId": "00000112-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-03T00:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000112-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_check",
+            "arguments": {},
+            "startedAt": "2026-03-03T00:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": "Done.",
+        "error": null
+      }
+    ],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-03T00:00:00+00:00",
+    "endedAt": "2026-03-03T00:00:20+00:00"
+  },
+  "completionEventId": "00000112-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": {
+      "roundId": "0000007e-0000-4000-8000-000000000001",
+      "artifactRevision": "rev-1"
+    },
+    "requiredChecks": [
+      {
+        "checkId": "\u001F",
+        "expectedKind": "integration-test"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "00000112-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "\u001F",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-03T00:00:25+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-03T00:00:30+00:00"
+  }
+}

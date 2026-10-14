@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Capture;
@@ -66,6 +67,11 @@ internal static class FinalizeContract
         ("rejected-attempts", RejectedAttempts()),
         ("capture-caps", CaptureCaps()),
         ("exposures-and-correlation-id", ExposuresAndCorrelationId()),
+
+        // Contract 1.1.
+        ("argument-numbers", ArgumentNumbers()),
+        ("secret-names-ordinal-ignore-case", SecretNamesOrdinalIgnoreCase()),
+        ("separator-task-and-check-ids", SeparatorTaskAndCheckIds()),
     ];
 
     /// <summary>The files of one finalize case.</summary>
@@ -482,6 +488,91 @@ internal static class FinalizeContract
             },
             Fixed.Id(0xfd, 0xe0),
             Verified(run, t.AddSeconds(30), ("refund-issued", "integration-test", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput ArgumentNumbers()
+    {
+        var run = Fixed.Id(0x110, 0);
+        var t = Fixed.T0.AddHours(13);
+        var arguments = new Dictionary<string, object?>
+        {
+            ["negativeZero"] = Number("-0"),
+            ["negativeZeroFraction"] = Number("-0.0"),
+            ["int64Max"] = Number("9223372036854775807"),
+            ["int64Min"] = Number("-9223372036854775808"),
+            ["beyondInt64"] = Number("15000000000000000000"),
+            ["belowInt64"] = Number("-10000000000000000000"),
+            ["twentyOneDigits"] = Number("100000000000000000000"),
+            ["largestDouble"] = Number("1.7976931348623157e308"),
+            ["fraction"] = Number("0.1"),
+            ["exponent"] = Number("1E2"),
+        };
+
+        return new FinalizeInput(
+            "Allowlisted argument values that are JSON numbers at and beyond a 64-bit integer's range (integers a double " +
+            "holds exactly), with a fraction or an exponent, and negative zero: capture keeps each as the JSON number it was " +
+            "given, and a reader reads an integer that fits in 64 bits as one and any other number as a double. The inject " +
+            "case argument-numbers shows how a block renders them.",
+            new FinalizeOptions(AllowedArgumentNames: [.. arguments.Keys]),
+            Run(run, "set-limits", "Set the export limits", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "set_limits", t.AddSeconds(1), arguments, result: "limits set")], result: "Done."),
+            ]),
+            Fixed.Id(0x110, 0xe0),
+            Verified(run, t.AddSeconds(30), ("limits-applied", "integration-test", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput SecretNamesOrdinalIgnoreCase()
+    {
+        var run = Fixed.Id(0x111, 0);
+        var t = Fixed.T0.AddHours(14);
+        var arguments = new Dictionary<string, object?>
+        {
+            ["PASSWORD"] = "a secret name in another case",
+            ["pa\u017Fsword"] = "the long s is not s",
+            ["TOKEN"] = "a secret name in another case",
+            ["to\u212Aen"] = "the Kelvin sign is not k",
+            ["ap\u0130Key"] = "the dotted capital I is not i",
+            ["ap\u0131Key"] = "the dotless i is not i",
+            ["SECRET"] = "a secret name in another case",
+            ["query"] = "amount > 100",
+        };
+
+        return new FinalizeInput(
+            "Secret names match ignoring case ordinally, one UTF-16 code unit at a time by its simple upper-case mapping: " +
+            "PASSWORD, TOKEN and SECRET are redacted, while the long s (U+017F), the Kelvin sign (U+212A), the dotted capital " +
+            "I (U+0130) and the dotless i (U+0131) fold to no ASCII letter, so those names are not secret and, allowlisted " +
+            "exactly, are kept.",
+            new FinalizeOptions(AllowedArgumentNames: ["pa\u017Fsword", "to\u212Aen", "ap\u0130Key", "ap\u0131Key", "query"]),
+            Run(run, "search-refunds", "Find refunds over 100 EUR this week", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "search_refunds", t.AddSeconds(1), arguments, result: "3 rows")], result: "3 refunds found."),
+            ]),
+            Fixed.Id(0x111, 0xe0),
+            Verified(run, t.AddSeconds(30), ("results-returned", "assertion", CheckResult.Pass)));
+    }
+
+    private static FinalizeInput SeparatorTaskAndCheckIds()
+    {
+        var run = Fixed.Id(0x112, 0);
+        var t = Fixed.T0.AddHours(15);
+        return new FinalizeInput(
+            "The information separators U+001C to U+001F are not whitespace: a task ID and a required check ID made of one are " +
+            "not blank, so the run is captured and verified, and the lesson names the check as it is.",
+            new FinalizeOptions(AllowedArgumentNames: null),
+            Run(run, "\u001C", "Separators \u001C\u001D\u001E\u001F between words", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "run_check", t.AddSeconds(1), new(), result: "ok")], result: "Done."),
+            ]),
+            Fixed.Id(0x112, 0xe0),
+            Verified(run, t.AddSeconds(30), ("\u001F", "integration-test", CheckResult.Pass)));
+    }
+
+    /// <summary>A JSON number exactly as written, as a host that deserialized a tool call's arguments holds it.</summary>
+    private static JsonElement Number(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
     }
 
     // ---- Builders ----------------------------------------------------------------------------------------------------

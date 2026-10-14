@@ -1,0 +1,20 @@
+{
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {
+    "set_limits": [
+      "negativeZero",
+      "negativeZeroFraction",
+      "int64Max",
+      "int64Min",
+      "beyondInt64",
+      "belowInt64",
+      "twentyOneDigits",
+      "largestDouble",
+      "fraction",
+      "exponent"
+    ]
+  }
+}

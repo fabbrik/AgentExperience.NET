@@ -15,10 +15,11 @@ namespace AgentExperience.Contract.Tests;
 internal static class ContractFiles
 {
     /// <summary>
-    /// The contract version, <c>major.minor</c>. A change that only adds cases bumps the minor version; a change to
-    /// anything already published (a fixture, the schema, the SQL, the README) bumps the major version.
+    /// The contract version, <c>major.minor</c>. A change that only adds files (new cases, and a <c>README-1.N.md</c> for
+    /// what minor version N adds) bumps the minor version; a change to anything already published (a fixture, the
+    /// schema, the SQL, a README) bumps the major version.
     /// </summary>
-    public const string ContractVersion = "1.0";
+    public const string ContractVersion = "1.1";
 
     /// <summary>
     /// The SHA-256 of <c>contract/lock.json</c> for every published version. This, not <c>lock.json</c>, is the authority:
@@ -28,6 +29,7 @@ internal static class ContractFiles
     public static IReadOnlyDictionary<string, string> LockDigests { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["1.0"] = "cd0864cee6fc7fbfe2693adf53f95727e0f9ccf02dfca99c287a9eb8fc31f3a1",
+        ["1.1"] = "e52de445919c02ca1a6d29c58fd42b12cbbc360ed071947a9b76ac087ebd0db7",
     };
 
     /// <summary>The environment variable that rewrites the fixtures instead of only comparing against them.</summary>

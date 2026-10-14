@@ -105,6 +105,16 @@ internal static class TaskTextContract
         ("threshold-off", new TaskTextInput(
             "A follow-up threshold of 0 turns the join off.",
             Max, 0, [User("Deploy service X to prod"), User("and retry")])),
+
+        // Contract 1.1.
+        ("information-separators-are-not-whitespace", new TaskTextInput(
+            "The information separators U+001C to U+001F are control characters, not whitespace: they are removed like any " +
+            "other control character, so they join the words around them rather than separating them.",
+            Max, Threshold, [User("Refund\u001Cticket\u001D42 is\u001E\u001Fstuck in pending \u001C")])),
+        ("separators-only-latest", new TaskTextInput(
+            "A user message made only of information separators has no text once they are removed, so it is passed over " +
+            "like a message with no text: the request before it is the latest.",
+            Max, Threshold, [User("Deploy service X to prod"), User("\u001C\u001D\u001E\u001F")])),
     ];
 
     /// <summary>Derives a case's task text through the library.</summary>

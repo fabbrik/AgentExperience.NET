@@ -5,13 +5,10 @@ The schema is never reimplemented here. Each test database is migrated by runnin
 (``src/AgentExperience.Storage.Postgres/Migrations/*.sql``) in name order, one transaction per script, as the owner
 role, which is what ``ExperienceSchemaMigrator.MigrateAsync`` does through DbUp (with variable substitution off).
 
-What is replayed by hand is the application role's privileges. ``ExperienceSchemaMigrator.
-ApplyApplicationRolePrivilegesAsync`` is .NET code, not a script, so :data:`APPLICATION_ROLE_PRIVILEGES` repeats
-the statements it issues with ``EnableRowLevelSecurity = true`` on a fresh role (``ApplicationRolePrivileges.
-Statements`` and ``RowLevelSecurityStatements``): USAGE on the schema, SELECT and INSERT on each table, UPDATE on the
-columns the stores move, EXECUTE on the text search function, and row-level security enabled on every table. The
-policies and helper functions it re-creates are the ones migration 0019 already created. If that .NET code changes,
-this list must follow it; the search fixtures, which need row-level security and the EXECUTE grant, catch a drift.
+The application role's privileges are the contract's ``sql/application-role-privileges.sql``: the statements
+``ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync`` runs on a freshly migrated schema, which a .NET test
+keeps identical to that method's. Both of its modes are applied (``EnableRowLevelSecurity = true``, what a contract
+1.x port runs against), with the role's name in place of its ``:"application_role"`` placeholder.
 
 The server comes from ``PGHOST`` (with ``PGPORT``, ``PGUSER``, ``PGPASSWORD``: a superuser connection, libpq's own
 variables) when set, else from a Testcontainers ``postgres`` container (``AGENTEXPERIENCE_POSTGRES_MAJOR``, default 16).
@@ -27,45 +24,44 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from _contract import MIGRATIONS
+from _contract import CONTRACT, MIGRATIONS
 
 OWNER = "contract_owner"
 APPLICATION = "contract_app"
 PASSWORD = "contract-role-password"
 SCHEMA = "agent_experience"
 
-_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "experience_records",
-        ("contradictions", "reuse_confidence", "revision", "status", "supporting_validations", "updated_at"),
-    ),
-    ("experience_grants", ("revocation_reason", "revoked_at")),
-    ("lifecycle_events", ()),
-    ("experience_grant_events", ()),
-    ("confidence_evidence", ()),
-    ("reuse_feedback", ()),
-    ("reuse_feedback_exposures", ()),
-    ("experience_grant_access", ()),
-)
-
-TEXT_SEARCH_SIGNATURE = (
-    "agent_experience.search_experience_text(text, text, text, text, text, text, text, text[], double precision, "
-    "integer, boolean, boolean, integer)"
-)
+PRIVILEGES_SQL = CONTRACT / "sql" / "application-role-privileges.sql"
+_ROLE_PLACEHOLDER = ':"application_role"'
 
 
-def _privileges(role: str) -> list[str]:
-    statements = [f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}"]
-    for table, update_columns in _TABLES:
-        statements.append(f"GRANT SELECT, INSERT ON {SCHEMA}.{table} TO {role}")
-        if update_columns:
-            statements.append(f"GRANT UPDATE ({', '.join(update_columns)}) ON {SCHEMA}.{table} TO {role}")
-    statements.append(f"GRANT EXECUTE ON FUNCTION {TEXT_SEARCH_SIGNATURE} TO {role}")
-    statements.extend(f"ALTER TABLE {SCHEMA}.{table} ENABLE ROW LEVEL SECURITY" for table, _ in _TABLES)
-    return statements
+def application_role_privileges(role: str, *, row_level_security: bool = True) -> list[str]:
+    """
+    The statements of ``sql/application-role-privileges.sql`` for ``role`` (a plain identifier): those under
+    ``-- mode: always``, then, with ``row_level_security``, those under ``-- mode: row-level-security``.
+    """
+    assert re.fullmatch(r"[a-z_][a-z0-9_]*", role), role
+    modes: dict[str, list[str]] = {"always": [], "row-level-security": []}
+    current: list[str] | None = None
+    for line in PRIVILEGES_SQL.read_text(encoding="utf-8").splitlines():
+        if re.match(r"--\s*mode\b", line, re.IGNORECASE):
+            mode = line.removeprefix("-- mode: ")
+            if not line.startswith("-- mode: ") or mode not in modes:
+                raise AssertionError(
+                    f"Unknown mode marker {line!r}: the markers are '-- mode: always' and "
+                    "'-- mode: row-level-security'."
+                )
+            current = modes[mode]
+        elif line and not line.startswith("--"):
+            if current is None:
+                raise AssertionError(f"A statement before any mode marker: {line!r}")
+            if not line.endswith(";") or line.index(";") != len(line) - 1:
+                raise AssertionError(f"Not one statement on one line ending in ';': {line!r}")
+            current.append(line[:-1].replace(_ROLE_PLACEHOLDER, role))
+    return modes["always"] + (modes["row-level-security"] if row_level_security else [])
 
 
-APPLICATION_ROLE_PRIVILEGES = _privileges(APPLICATION)
+APPLICATION_ROLE_PRIVILEGES = application_role_privileges(APPLICATION)
 
 
 @dataclass(frozen=True)

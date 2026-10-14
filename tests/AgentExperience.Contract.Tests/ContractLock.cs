@@ -18,7 +18,8 @@ namespace AgentExperience.Contract.Tests;
 /// </para>
 /// <para>
 /// <b>Publishing a change.</b> Bump <see cref="ContractFiles.ContractVersion"/> (and the README): the minor version when
-/// the change only adds files (new cases), the major version when any file already locked changed or went away. Regenerate
+/// the change only adds files (new cases, or a <c>README-1.N.md</c> for what minor version N adds), the major version
+/// when any file already locked, the README included, changed or went away. Regenerate
 /// with the update switch, which checks the kind of bump against the previous lock and writes the new one, then add the
 /// digest it reports to <see cref="ContractFiles.LockDigests"/>.
 /// </para>
@@ -102,23 +103,11 @@ internal static class ContractLock
                 return;
             }
 
-            if (previous is { } prior && previousTrusted)
+            if (previous is { } prior && previousTrusted
+                && Classify(previousVersion!, prior.Files, ContractFiles.ContractVersion, Current()) is { Allowed: false } refused)
             {
-                var changed = prior.Files.Where(entry => !Current().TryGetValue(entry.Key, out var hash) || hash != entry.Value).Select(entry => entry.Key).ToList();
-                var (oldMajor, oldMinor) = Split(previousVersion!);
-                var (newMajor, newMinor) = Split(ContractFiles.ContractVersion);
-                if (changed.Count > 0 && newMajor <= oldMajor)
-                {
-                    drift.Add($"{changed.Count} locked file(s) changed or went away ({string.Join(", ", changed.Take(5))}): that changes the " +
-                        $"contract's meaning, so version {ContractFiles.ContractVersion} must be a major bump from {previousVersion}.");
-                    return;
-                }
-
-                if (newMajor < oldMajor || (newMajor == oldMajor && newMinor <= oldMinor))
-                {
-                    drift.Add($"Version {ContractFiles.ContractVersion} is not later than {previousVersion}.");
-                    return;
-                }
+                drift.Add(refused.Reason);
+                return;
             }
 
             ContractFiles.Verify(FileName, content, drift);
@@ -127,6 +116,44 @@ internal static class ContractLock
                 drift.Add($"Publish version {ContractFiles.ContractVersion}: set [\"{ContractFiles.ContractVersion}\"] = \"{Hash(content)}\" in ContractFiles.LockDigests.");
             }
         }
+    }
+
+    /// <summary>
+    /// Whether moving from the lock <paramref name="previousVersion"/> (with <paramref name="previousFiles"/>) to
+    /// <paramref name="newVersion"/> over <paramref name="currentFiles"/> is an allowed bump, and why not. A minor bump may
+    /// only add files: any locked file (a fixture, the schema, the SQL, a README) that changed or went away needs a major
+    /// bump. The version must be later either way.
+    /// </summary>
+    internal static (bool Allowed, string Reason) Classify(
+        string previousVersion,
+        IReadOnlyDictionary<string, string> previousFiles,
+        string newVersion,
+        IReadOnlyDictionary<string, string> currentFiles)
+    {
+        var (oldMajor, oldMinor) = Split(previousVersion);
+        var (newMajor, newMinor) = Split(newVersion);
+        if (oldMajor < 0 || newMajor < 0)
+        {
+            return (false, $"Version {(oldMajor < 0 ? previousVersion : newVersion)} is not major.minor.");
+        }
+
+        if (newMajor < oldMajor || (newMajor == oldMajor && newMinor <= oldMinor))
+        {
+            return (false, $"Version {newVersion} is not later than {previousVersion}.");
+        }
+
+        var changed = previousFiles
+            .Where(entry => !currentFiles.TryGetValue(entry.Key, out var hash) || hash != entry.Value)
+            .Select(entry => entry.Key)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        if (changed.Count > 0 && newMajor == oldMajor)
+        {
+            return (false, $"{changed.Count} locked file(s) changed or went away ({string.Join(", ", changed.Take(5))}): a minor " +
+                $"version may only add files, so version {newVersion} must be a major bump from {previousVersion}.");
+        }
+
+        return (true, newMajor > oldMajor ? "A major bump: any change is allowed." : "A minor bump that only adds files.");
     }
 
     private static string Render(SortedDictionary<string, string> files)

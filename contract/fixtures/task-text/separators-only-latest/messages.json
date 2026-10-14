@@ -1,0 +1,29 @@
+{
+  "description": "A user message made only of information separators has no text once they are removed, so it is passed over like a message with no text: the request before it is the latest.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "Deploy service X to prod"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "\u001C\u001D\u001E\u001F"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

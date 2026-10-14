@@ -1,0 +1,18 @@
+{
+  "description": "The information separators U+001C to U+001F are control characters, not whitespace: they are removed like any other control character, so they join the words around them rather than separating them.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "Refund\u001Cticket\u001D42 is\u001E\u001Fstuck in pending \u001C"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}
