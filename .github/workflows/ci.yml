@@ -371,3 +371,88 @@ jobs:
 
       - name: Probe Microsoft.Agents.AI (${{ matrix.leg }})
         run: eng/probe-maf-version.sh ${{ matrix.leg == 'pinned' && 'pinned' || '' }}
+
+  # The Python port (python/): a pure-Python core that implements the language-neutral contract (contract/). Lint,
+  # strict typing, the unit and conformance tests, and the built wheel on every supported CPython (3.10 to 3.14); then the PostgreSQL leg, which writes
+  # the finalize fixtures through the Python store and runs every search fixture, on the oldest and newest majors the
+  # contract tests cover. The leg sets AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips without Docker,
+  # and AGENTEXPERIENCE_POSTGRES_MAJOR, which the tests assert the server reports.
+  python:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: '3.10'
+          - python-version: '3.11'
+          - python-version: '3.12'
+          - python-version: '3.13'
+          - python-version: '3.14'
+          - python-version: '3.13'
+            pg-major: 16
+          - python-version: '3.13'
+            pg-major: 18
+    name: python (${{ matrix.python-version }}${{ matrix.pg-major && format(', PostgreSQL {0}', matrix.pg-major) || '' }})
+    defaults:
+      run:
+        working-directory: python
+    env:
+      # testcontainers-python prepends the prefix as written, so it carries its own slash.
+      TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: mirror.gcr.io/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        if: ${{ !matrix.pg-major }}
+        run: |
+          uv run ruff check
+          uv run ruff format --check
+
+      - name: Type-check (mypy --strict)
+        if: ${{ !matrix.pg-major }}
+        run: uv run mypy --strict src
+
+      - name: Unit and conformance tests
+        if: ${{ !matrix.pg-major }}
+        run: uv run pytest -m "not postgres"
+
+      # The wheel, not the source tree: built, installed into a clean environment outside the checkout, and imported,
+      # so the packaged SQL files and py.typed are proven to ship.
+      - name: Build the wheel and import it from a clean environment
+        if: ${{ !matrix.pg-major }}
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          uv build --wheel --out-dir "$out/dist"
+          uv venv --python "${{ matrix.python-version }}" "$out/venv"
+          uv pip install --python "$out/venv/bin/python" "$out"/dist/*.whl
+          cd "$out"
+          "$out/venv/bin/python" - <<'PY'
+          from importlib import resources
+
+          import agentexperience
+          from agentexperience.postgres import contract_sql
+
+          assert "set_config" in contract_sql("declare-bounds.sql")
+          assert "search_experience_text" in contract_sql("search-experience-text.sql")
+          assert resources.files("agentexperience").joinpath("py.typed").is_file()
+          print("agentexperience", agentexperience.__version__, "imports from the wheel")
+          PY
+
+      - name: PostgreSQL ${{ matrix.pg-major }} conformance tests
+        if: ${{ matrix.pg-major }}
+        env:
+          AGENTEXPERIENCE_POSTGRES_MAJOR: ${{ matrix.pg-major }}
+          AGENTEXPERIENCE_REQUIRE_POSTGRES: '1'
+        run: uv run pytest -m postgres

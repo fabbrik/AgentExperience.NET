@@ -6,6 +6,22 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added: a Python core that passes the contract (story 22.2)
+
+- **[`python/`](python/README.md)**, a pure-Python package (provisional name `agentexperience`, version
+  `0.1.0.dev0`, Python 3.10 or later, typed, no runtime dependency) that implements contract 1.0: capture with
+  sanitization and the default limits, verification, the deterministic reflector and its screening, the derived IDs,
+  finalization into a stored record and its initial lifecycle event, the injected block in both layouts, the task text,
+  the error class, and the text search's parameters, safety checks and ranking. A `postgres` extra (psycopg 3) adds a
+  store that writes a finalized record with its initial event as the application role, reads records back, and runs
+  the contract's SQL files as written.
+- **A conformance runner** (`python/tests/test_contract.py`) runs every contract fixture and compares the output
+  exactly, validates every record against the schema, and checks `contract/lock.json`. The PostgreSQL tests migrate a
+  database with the .NET migrator's own scripts, write each finalize fixture through the store and read it back row for
+  row, and run every search fixture.
+- **CI:** a `python` job runs ruff, `mypy --strict` and the tests on CPython 3.10 to 3.14, imports the built wheel
+  from a clean environment, and runs the PostgreSQL tests on PostgreSQL 16 and 18. Not published to PyPI; no Agent Framework integration yet. No change to the .NET library.
+
 ### Added: a language-neutral contract for ports (story 22.1)
 
 - **[`contract/`](contract/README.md), version `1.0`**, states what a Python or Go port must match to share lessons
