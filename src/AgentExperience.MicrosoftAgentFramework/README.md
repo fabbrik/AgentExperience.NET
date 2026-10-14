@@ -43,7 +43,9 @@ sees the replayed chat history and a run's own tools, and the agent gets exactly
 under the agent's name as their task ID unless `options.TaskId` or `options.ResolveTaskId` says otherwise.
 `options.ResolveIdentity` (required) says who each invocation runs for, from your own authentication;
 `options.UseDevelopmentIdentity()` sets one fixed local identity instead, and refuses outside `Development`, `Test` or
-`Testing`. `options.Verify` runs your own checks on each completed run, and without it nothing is stored. The
+`Testing`. `options.Verify` runs your own checks on each completed run, and without it nothing is stored. When the
+container has a `Microsoft.Extensions.AI` `IEmbeddingGenerator<string, Embedding<float>>`, retrieval also matches by
+meaning (`options.Embeddings`: `Auto` by default, `Off`, `Required`; with PostgreSQL, add `.WithPostgresVectors()`). The
 [README quick start](https://github.com/fabbrik/AgentExperience.NET#quick-start) shows it whole, and
 [the deployment guide](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/deployment.md#the-one-call-setup)
 lists every option. The sections below are the explicit wiring, which keeps working unchanged.

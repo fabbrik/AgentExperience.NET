@@ -170,6 +170,24 @@ public sealed record RetrievalPolicy(
         init => field = EnsurePositive(value, nameof(MinimumMatchedTerms));
     } = ExperienceCandidateQuery.DefaultMinimumMatchedTerms;
 
+    /// <summary>
+    /// The smallest relevance a <em>vector</em> candidate may have and still be merged and ranked, in [0, 1], or
+    /// <see langword="null"/> (the default) for no floor. Relevance on the vector channel is <c>(1 + cosine) / 2</c>, so
+    /// a floor of 0.75 keeps candidates whose cosine similarity to the task text is at least 0.5. Without a floor the
+    /// vector channel returns the nearest eligible records however far they are, so a task with no related lesson can
+    /// still be shown some. The text channel is unaffected: a record the text channel found is kept whatever its vector
+    /// relevance.
+    /// </summary>
+    public double? MinimumVectorRelevance
+    {
+        get;
+        init => field = value is { } floor
+            ? (floor >= 0d && floor <= 1d
+                ? floor
+                : throw new ArgumentOutOfRangeException(nameof(MinimumVectorRelevance), floor, "The minimum vector relevance must be between 0 and 1 inclusive."))
+            : null;
+    }
+
     private static TimeSpan EnsurePositive(TimeSpan value, string paramName) =>
         value > TimeSpan.Zero
             ? value

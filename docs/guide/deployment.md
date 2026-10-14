@@ -52,8 +52,12 @@ services.AddAgentExperience(options =>
     // options.IdentityTimeout = ...;          how long ResolveIdentity may take; 5 seconds
     // options.ReuseEvidence = ReuseEvidenceMode.SameTask;  let verified reuse move confidence; Off by default
     // options.ContradictOnFailure = true;     with it, a failed run contradicts what it was given; false by default
+    // options.Embeddings = ...;               Auto: semantic retrieval when an IEmbeddingGenerator is registered; Off; Required
+    // options.MinimumSemanticSimilarity = ...; the cosine a vector match needs; 0.5 (-1: no floor)
+    // options.EmbeddingGeneratorKey = ...;    a keyed IEmbeddingGenerator to use; the unkeyed one by default
 })
-.UsePostgres(appConnectionString);   // or .UsePostgres(dataSource), or .UseInMemoryStorageForDevelopment()
+.UsePostgres(appConnectionString)    // or .UsePostgres(dataSource), or .UseInMemoryStorageForDevelopment()
+.WithPostgresVectors();              // optional (AgentExperience.Storage.Postgres.Vectors): semantic retrieval, see below
 ```
 
 `ReuseEvidence` and `ContradictOnFailure` are carried onto `ExperienceFinalizationOptions` (see
@@ -87,9 +91,25 @@ data source, the record store and the candidate source). A second choice, or one
 store or a different data source, throws. Without one, `UseAgentExperience` and
 `GetAgentExperienceContextProvider` throw `InvalidOperationException` naming the choices. Nothing migrates the schema:
 that stays an explicit step for the owner role ([Applying the schema](#applying-the-schema)). Grants, reuse feedback,
-encryption, vectors, signing and independence options are registered with the calls below, beside the one-call setup.
+encryption, signing and independence options are registered with the calls below, beside the one-call setup.
 
 `AddAgentExperience` registers with `TryAdd`, so a service the host registered first is kept; calling it twice throws.
+
+**Semantic retrieval.** When the container has a `Microsoft.Extensions.AI` `IEmbeddingGenerator<string, Embedding<float>>`
+(registered before or after `AddAgentExperience`), the setup embeds each stored lesson's sanitized summary and retrieves
+by meaning as well as by words; with none, nothing changes. The in-memory storage has an index built in. With
+PostgreSQL, add `.WithPostgresVectors()` after `UsePostgres` and apply the vector schema as the owner role
+(`ExperienceVectorSchemaMigrator.MigrateAsync`, after the base migration and before the privileges; see
+[Applying the schema](#applying-the-schema)). Without it, a PostgreSQL setup stays text-only and reports that once,
+through `OnCaptureFailure` at stage `Embeddings`. A missing vector schema, or a generator that throws or times out,
+never fails a run: that retrieval answers from text and says so (`VectorFallback`), and that record's indexing reports
+the failure. `options.Embeddings = AgentExperienceEmbeddings.Off` keeps retrieval text-only whatever is registered, and
+`Required` makes building an agent throw unless semantic retrieval is on. A vector match counts only at a cosine similarity
+of at least `options.MinimumSemanticSimilarity` (0.5). **Behaviour change** for a host that already registers a generator:
+task texts and lesson summaries start going to it on upgrade; `Embeddings = Off` is the opt-out. Records stored before,
+or under a previous embedding model (whose vectors are then `ModelMismatch`, so retrieval answers from text alone), need a
+re-index pass. The [indexing guide](indexing.md#with-the-one-call-setup) has the details, the re-index snippet, and what
+is sent to the provider.
 
 **The development identity.** `options.UseDevelopmentIdentity(tenant)` sets `ResolveIdentity` to one fixed identity:
 the tenant (`local` by default), an application and a project named after the registered `IHostEnvironment`'s

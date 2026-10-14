@@ -43,3 +43,11 @@ namespace AgentExperience.Storage.Postgres.Vectors.DependencyInjection
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresEmbeddingIndex(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
     }
 }
+namespace Microsoft.Extensions.DependencyInjection
+{
+    public static class AgentExperiencePostgresVectorsBuilderExtensions
+    {
+        public static TBuilder WithPostgresVectors<TBuilder>(this TBuilder builder)
+            where TBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
+    }
+}

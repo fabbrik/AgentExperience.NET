@@ -24,10 +24,7 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
     /// </summary>
     internal static void EnsureStorage(IServiceProvider services)
     {
-        var isService = services.GetService<IServiceProviderIsService>();
-        bool Registered(Type type) => isService?.IsService(type) ?? services.GetService(type) is not null;
-
-        if (!Registered(typeof(IExperienceRecordStore)) || !Registered(typeof(IExperienceCandidateSource)))
+        if (!HasStorage(services))
         {
             throw new InvalidOperationException(
                 "AddAgentExperience has no storage. Choose one on the builder it returns: "
@@ -104,6 +101,7 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         }
 
         Options.Capture?.Invoke(capture);
+        services.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Report(capture);
 
         if (Options.Verify is not null && capture.ResolveFinalization is not null)
         {
@@ -232,6 +230,20 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         {
             _applicationName = services.GetService<Microsoft.Extensions.Hosting.IHostEnvironment>()?.ApplicationName;
         }
+
+        // Decided now, so Required refuses when the setup is first resolved rather than on a later retrieval. Without a
+        // storage there is nothing to decide: EnsureStorage names that problem instead.
+        if (Options.Embeddings == AgentExperienceEmbeddings.Required && HasStorage(services))
+        {
+            _ = services.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Decide();
+        }
+    }
+
+    internal static bool HasStorage(IServiceProvider services)
+    {
+        var isService = services.GetService<IServiceProviderIsService>();
+        bool Registered(Type type) => isService?.IsService(type) ?? services.GetService(type) is not null;
+        return Registered(typeof(IExperienceRecordStore)) && Registered(typeof(IExperienceCandidateSource));
     }
 
     /// <summary>

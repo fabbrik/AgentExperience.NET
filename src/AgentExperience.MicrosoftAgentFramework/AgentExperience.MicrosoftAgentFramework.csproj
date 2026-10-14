@@ -51,6 +51,9 @@
     <!-- Story 21.1: the development-or-test environment rule the in-memory store uses, so the development identity
          refuses exactly the environments that store refuses. -->
     <Compile Include="..\Shared\DevelopmentEnvironment.Shared.cs" Link="Shared\DevelopmentEnvironment.Shared.cs" />
+    <!-- Story 21.3: the Microsoft.Extensions.AI embedding adapter AgentExperience.Storage.Postgres.Vectors ships, compiled
+         here as an internal type, so the one-call setup adapts a registered IEmbeddingGenerator by exactly its rules. -->
+    <Compile Include="..\Shared\AiExperienceEmbeddingGenerator.Shared.cs" Link="Shared\AiExperienceEmbeddingGenerator.Shared.cs" />
   </ItemGroup>
 
 </Project>

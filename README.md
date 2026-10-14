@@ -137,7 +137,8 @@ person's sign-off, use `ExperienceVerifiers.Check(...)` or `ExperienceVerifiers.
 `artifactRevision` (a build or commit) when the code under test changes between runs.
 The next run on a similar task gets the lesson if its task text shares at least three
 terms with the stored task ID, task summary and lesson (fewer when it has fewer; stopwords and one-letter words do not
-count, and PostgreSQL matches word stems) and the
+count, and PostgreSQL matches word stems), or, with an embedding generator registered, by meaning (see
+[Semantic retrieval](#semantic-retrieval)), and the
 lesson clears the confidence floor (0.5; a new lesson starts at 2/3). The task text is the user's latest message (joined to
 the previous one when it is a short follow-up), cleaned and cut to 512 UTF-16 code units, and is stored as the run's description, so redact sensitive prompts first
 (see [The task text](docs/guide/injection.md#the-task-text)). Each run is stored under the agent's name as its task ID
@@ -178,6 +179,33 @@ services.AddAgentExperience(options => { /* as above */ }).UsePostgres(appConnec
 The setup never migrates a schema on its own. To let reuse raise a lesson's confidence, set
 `options.ReuseEvidence = ReuseEvidenceMode.SameTask` (`AgentExperience.Core.Finalization`); add `ContradictOnFailure = true` to let a failed run lower it
 (both off by default; see [Letting reuse move confidence](docs/guide/confidence.md#letting-reuse-move-confidence)).
+
+### Semantic retrieval
+
+By default a lesson is found by its words. If your container has a `Microsoft.Extensions.AI`
+`IEmbeddingGenerator<string, Embedding<float>>` (registered before or after `AddAgentExperience`), the setup also finds
+it by meaning: each stored lesson's sanitized summary (task ID, task summary, lesson) is embedded, and so is each task
+text, so a task worded differently can still get the lesson. Without a generator nothing changes.
+
+```csharp
+// The generator must report its model ID and width; OpenAI's needs the width passed (Microsoft.Extensions.AI.OpenAI):
+services.AddEmbeddingGenerator(openAIClient.GetEmbeddingClient("text-embedding-3-small").AsIEmbeddingGenerator(1536));
+services.AddAgentExperience(options => { /* as above */ })
+    .UseInMemoryStorageForDevelopment();               // has an embedding index built in
+// PostgreSQL: .UsePostgres(appConnectionString).WithPostgresVectors(), package AgentExperience.Storage.Postgres.Vectors,
+// plus its vector schema (ExperienceVectorSchemaMigrator.MigrateAsync after the base migration).
+```
+
+A generator that reports no width (or no model ID) is not used: retrieval stays text-only and the setup reports it once,
+through `OnCaptureFailure`. A vector match counts only above a cosine similarity of 0.5
+(`options.MinimumSemanticSimilarity`), so an unrelated lesson is not shown just for being the nearest. A failing or slow
+generator never fails a run: that retrieval falls back to words and says so. **This is a behaviour change** for an app
+that already registers a generator: task texts and lesson summaries start going to it; `options.Embeddings = Off` keeps
+retrieval text-only (`Required` makes a missing generator an error). Lessons stored before the generator was added, or
+under another embedding model, need a re-index pass before they match by meaning; until then retrieval uses their words
+([how](docs/guide/indexing.md#with-the-one-call-setup)). No improvement figure is claimed yet: the retrieval
+benchmark has an opt-in hybrid column, and a number will be stated here only once a run against a real embedding model
+is committed.
 
 ## Choosing a reflector
 

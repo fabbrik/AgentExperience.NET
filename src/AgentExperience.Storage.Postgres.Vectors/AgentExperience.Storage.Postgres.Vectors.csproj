@@ -4,6 +4,8 @@
     <Description>Preview, not production ready. pgvector adapter for AgentExperience.NET: stores one derived embedding per Experience Record through the IExperienceEmbeddingIndex port, with conditional revision-and-existence-checked writes, scoped idempotent re-indexing, and a scoped nearest-neighbour search that applies the same eligibility filters as the text channel. Split out of AgentExperience.Storage.Postgres because that package's dependency boundary forbids Pgvector and the model-provider abstractions. Requires Npgsql 10.0.3, Pgvector 0.3.2, and Microsoft.Extensions.AI.Abstractions 10.10.0 or later within the same major (the same minor for Pgvector).</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Selects this package's namespace, and public visibility, in the shared embedding adapter linked below. -->
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_VECTORS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +28,12 @@
   <ItemGroup>
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors.Tests" />
     <InternalsVisibleTo Include="AgentExperience.Upgrade.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Story 21.3: the Microsoft.Extensions.AI adapter, shared with the MAF adapter's one-call setup (which compiles it
+         as an internal type), so both apply the same model, dimension and width rules. -->
+    <Compile Include="..\Shared\AiExperienceEmbeddingGenerator.Shared.cs" Link="Shared\AiExperienceEmbeddingGenerator.Shared.cs" />
   </ItemGroup>
 
   <ItemGroup>
