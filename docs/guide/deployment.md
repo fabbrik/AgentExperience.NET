@@ -129,6 +129,43 @@ under `"default"` when the agent has no usable name. Reading `options.TaskId` wh
 `"default"`, although runs use the agent's name; and distinct names can reduce to the same identifier (`Triage Bot` and
 `triage-bot`), so their runs share it. With several agents, set `TaskId` or `ResolveTaskId` explicitly.
 
+### Starting from the quick start
+
+The [README quick start](../../README.md#quick-start) is the setup above with a `run_tests` tool. What it leaves out:
+
+- **Which previews.** It needs `0.1.0-preview.11` or later. From `0.1.0-preview.7` to `0.1.0-preview.10`, set
+  `ResolveIdentity` as in the production setup above and also give the agent
+  `provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders`; earlier previews have
+  only the [explicit wiring](#explicit-wiring).
+- **What to install and supply.** `AgentExperience.MicrosoftAgentFramework` and `AgentExperience.Storage.InMemory`
+  (`--prerelease`), plus `Microsoft.Extensions.DependencyInjection` for `BuildServiceProvider` if your app does not
+  already have it. `chatClient` is any `Microsoft.Extensions.AI` `IChatClient`; `RunTestsAsync` is your own test run,
+  given to the agent as its `run_tests` tool and returning text such as `exit=0`.
+- **Where it runs.** The in-memory storage is for development and tests only: nothing survives a restart. It and
+  `UseDevelopmentIdentity()` refuse any environment but `Development`, `Test` or `Testing`, read from the host
+  environment, else `DOTNET_ENVIRONMENT`, else `ASPNETCORE_ENVIRONMENT`; a console app with none set needs nothing (see
+  *The development identity* above).
+- **When a run is stored.** Only after your own check: see
+  [Finalizing from the MAF adapter](finalization.md#finalizing-from-the-maf-adapter) for what `ToolSucceeded`
+  stores, as what, and what the next run's lesson names.
+- **How a later run finds it.** By the words (or, with an embedding generator, the meaning) of its task text, which is
+  the user's latest message and is stored as the run's description: see
+  [Which lessons a run gets](injection.md#which-lessons-a-run-gets).
+- **The task ID.** Each run is stored under the agent's name as its task ID (`triage-ticket`; `options.TaskId` or
+  `options.ResolveTaskId` sets another, and an unnamed agent's is `default`); see *The task ID* above.
+- **One block.** `UseAgentExperience` wires capture and injection both; an agent that also lists
+  `provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders` still gets exactly one
+  block, and that wiring also lets injection see the replayed chat history and a run's own tools (see
+  [Injection on the agent, or on its options](#injection-on-the-agent-or-on-its-options)).
+- **Nothing throws into the agent.** A slow store or `ResolveIdentity` means no memory for that run, reported through
+  `options.Capture` and `options.Injection` callbacks.
+- **Argument values.** No tool argument value is kept until you allowlist it
+  (`AgentExperienceDefaults.SanitizationAllowing("ticketId")`), and secret-named fields are redacted (see
+  [Sanitization happens at capture](capture.md#sanitization-happens-at-capture)).
+
+The [quick-start sample](../../samples/AgentExperience.Sample.QuickStart/README.md) runs this wiring with a scripted
+model, twice on one ticket.
+
 ### Built-in verifiers
 
 `Verify` decides whether a run is stored, and as what. Writing one by hand means building the `RequiredCheck`s, the

@@ -617,6 +617,15 @@ finalization time and the resolved identity's authorization. `context.CreateEvid
 bound to the round. Without `Verify`, runs are captured but never finalized, so nothing is stored: a lesson needs
 verification to become reusable experience. A throwing `Verify` is reported like a throwing resolver, below.
 
+**After a run, under the one-call setup.** With the [README quick start](../../README.md#quick-start)'s `options.Verify = ExperienceVerifiers.ToolSucceeded("run_tests")`,
+the first run finds nothing to inject. After it, `Verify` looks at the run's last `run_tests` call: one that returned
+stores the lesson as `Validated`, one that failed (it threw, or returned a non-zero exit code under the `ExitCode`
+classifier) as `Quarantined` (never reused), and a run that never called it is not stored. The next run's lesson names
+every call, so a run that failed with `exit=3` and then passed shows `run_tests [failed: exit 3], run_tests [returned]`.
+For a check of your own or a person's sign-off, use `ExperienceVerifiers.Check(...)` or `ExperienceVerifiers.Approval(...)`
+(combine them with `AllOf`/`AnyOf`; see [Built-in verifiers](deployment.md#built-in-verifiers)), and pass a real
+`artifactRevision` (a build or commit) when the code under test changes between runs.
+
 Wired by hand, capture alone keeps the run in memory. To turn each invocation into a durable Experience Record, give the adapter
 Core's finalization service and a resolver that supplies what only the host knows — the required checks, the
 verification evidence and the round it was closed in, the authorization context, and the storage decision:

@@ -34,9 +34,18 @@
     <Compile Include="..\Shared\SignedRecords.cs" Link="Shared\SignedRecords.cs" />
     <!-- Story 21.3: a deterministic embedding generator, for the semantic retrieval wiring; never a quality measure. -->
     <Compile Include="..\Shared\ConceptEmbeddingGenerator.cs" Link="Shared\ConceptEmbeddingGenerator.cs" />
+    <!-- The README's first screen: its length and the excerpt rule, shared with the end-to-end sample tests. -->
+    <Compile Include="..\Shared\ReadmeFirstScreen.cs" Link="Shared\ReadmeFirstScreen.cs" />
     <!-- Story 18.1: the error classifier is shared source linked into Core and the MAF adapter; its tests run
          against both copies. -->
     <Compile Include="..\AgentExperience.Core.Tests\ErrorClassTests.cs" Link="Shared\ErrorClassTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The README's first-screen setup is ReadmeQuickStart.cs, compiled here; ReadmeQuickStartTests checks that the
+         README shows it verbatim. Both are embedded so the check does not depend on where the repository is at test time. -->
+    <EmbeddedResource Include="ReadmeQuickStart.cs" LogicalName="AgentExperience.MicrosoftAgentFramework.Tests.ReadmeQuickStart.cs" />
+    <EmbeddedResource Include="..\..\README.md" LogicalName="AgentExperience.MicrosoftAgentFramework.Tests.RootREADME.md" />
   </ItemGroup>
 
 </Project>

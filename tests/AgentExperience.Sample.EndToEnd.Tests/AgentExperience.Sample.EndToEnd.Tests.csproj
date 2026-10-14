@@ -21,6 +21,8 @@
     <!-- The PostgreSQL major this run starts, from AGENTEXPERIENCE_POSTGRES_MAJOR (story 6.3). Linked, so no
          test project references another. -->
     <Compile Include="..\Shared\PostgresTestImage.cs" Link="Shared\PostgresTestImage.cs" />
+    <!-- The README's first screen, shared with the MAF adapter tests: the whole block sits below it. -->
+    <Compile Include="..\Shared\ReadmeFirstScreen.cs" Link="Shared\ReadmeFirstScreen.cs" />
   </ItemGroup>
 
   <ItemGroup>
