@@ -6,6 +6,18 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.13
+
+For .NET users, this preview carries one behaviour change: capture now refuses a tool-call argument that holds NaN,
+an infinity, or a JSON number beyond a double's range (the attempt is `SanitizationRejected`), because such a record
+could be stored but never written again. The rest of this release is the repository growing past .NET. A versioned,
+language-neutral contract (`contract/`, now 1.2) specifies how a run becomes a stored lesson and how lessons become
+the injected block, with fixtures generated from this library, and Python and Go ports implement it with Microsoft
+Agent Framework integration, so a lesson learned by an agent in one language is injected into an agent in another.
+The Python and Go packages are not published yet; nothing in the six NuGet packages' public API changed.
+
 ### Added: Go Agent Framework capture and injection (story 22.6)
 
 - **[`go/maf`](go/README.md#quick-start-with-microsoft-agent-framework)**, a third Go module
