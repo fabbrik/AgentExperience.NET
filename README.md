@@ -184,6 +184,15 @@ under another embedding model, need a re-index pass before they match by meaning
 benchmark has an opt-in hybrid column, and a number will be stated here only once a run against a real embedding model
 is committed.
 
+## Seeing what it learned
+
+After the quick start, `provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync()` lists the lessons it
+stored (`ListAsync(identity)` with your own identity in production): status, confidence, the checks that verified each,
+whether retrieval would use it and why not, and the block an agent there would be shown for it.
+`ExperienceLessonsHtml.Render(page)` turns that into one self-contained HTML page. The library maps no endpoint; serve
+it behind your own authorization, because it discloses the lessons. See
+[Seeing what it learned](docs/guide/deployment.md#seeing-what-it-learned).
+
 ## Choosing a reflector
 
 The reflector turns a finalized run into the lesson's text.

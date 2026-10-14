@@ -239,6 +239,15 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         }
     }
 
+    /// <summary>
+    /// The identity <see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> runs every invocation as, issued now by
+    /// <paramref name="clock"/>, or <see langword="null"/> when the host set its own resolver instead.
+    /// </summary>
+    internal ExperienceIdentity? DevelopmentIdentityOrNull(TimeProvider clock) =>
+        Options.UsesDevelopmentIdentity
+            ? AgentExperienceOptions.DevelopmentIdentity(Options.DevelopmentTenantName, _applicationName, clock)
+            : null;
+
     internal static bool HasStorage(IServiceProvider services)
     {
         var isService = services.GetService<IServiceProviderIsService>();

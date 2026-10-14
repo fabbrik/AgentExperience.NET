@@ -17,6 +17,11 @@
         public System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages { get; init; }
         public Microsoft.Agents.AI.AgentSession? Session { get; init; }
     }
+    public sealed class AgentExperienceLessons
+    {
+        public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListForDevelopmentIdentityAsync(AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
+    }
     public sealed class AgentExperienceOptions
     {
         public const double DefaultMinimumSemanticSimilarity = 0.5D;
@@ -101,6 +106,62 @@
         public ExperienceIdentity(AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Abstractions.Scope Scope) { }
         public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public sealed class ExperienceLesson : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceLesson>
+    {
+        public ExperienceLesson(System.Guid ExperienceId, string TaskId, AgentExperience.Abstractions.ExperienceStatus Status, double Confidence, System.DateTimeOffset CreatedAt, System.DateTimeOffset UpdatedAt, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLessonCheck> Checks, string BlockText, bool IsEligible, string? IneligibleReason, AgentExperience.MicrosoftAgentFramework.ExperienceLessonIneligibility? Ineligibility = default) { }
+        public string BlockText { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLessonCheck> Checks { get; init; }
+        public double Confidence { get; init; }
+        public System.DateTimeOffset CreatedAt { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.ExperienceLessonIneligibility? Ineligibility { get; init; }
+        public string? IneligibleReason { get; init; }
+        public bool IsEligible { get; init; }
+        public AgentExperience.Abstractions.ExperienceStatus Status { get; init; }
+        public string TaskId { get; init; }
+        public System.DateTimeOffset UpdatedAt { get; init; }
+    }
+    public sealed class ExperienceLessonCheck : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceLessonCheck>
+    {
+        public ExperienceLessonCheck(string CheckId, string EvidenceKind, AgentExperience.Abstractions.CheckResult Result) { }
+        public string CheckId { get; init; }
+        public string EvidenceKind { get; init; }
+        public AgentExperience.Abstractions.CheckResult Result { get; init; }
+    }
+    public enum ExperienceLessonIneligibility
+    {
+        Status = 0,
+        BelowConfidenceFloor = 1,
+        ModelAuthored = 2,
+        ContentUnconfirmed = 3,
+        Expired = 4,
+        OverByteBudget = 5,
+        Unrenderable = 6,
+    }
+    public static class ExperienceLessonsHtml
+    {
+        public const string DevelopmentBanner = "Development view: these are the lessons stored in this scope. It discloses them, " +
+            "so serve it only behind your own authorization.";
+        public const string NoLessons = "No lessons yet.";
+        public static string Render(AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage page) { }
+    }
+    public sealed class ExperienceLessonsPage : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage>
+    {
+        public ExperienceLessonsPage(AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLesson> Lessons, System.DateTimeOffset GeneratedAt) { }
+        public System.DateTimeOffset GeneratedAt { get; init; }
+        public bool HasMore { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLesson> Lessons { get; init; }
+        public int OutOfScopeDropped { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public sealed class ExperienceLessonsQuery : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery>
+    {
+        public ExperienceLessonsQuery() { }
+        public bool IncludeIneligible { get; init; }
+        public int Limit { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus>? Statuses { get; init; }
     }
     public sealed class ExperienceRunCompletionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceRunCompletionContext>
     {
@@ -499,5 +560,6 @@ namespace Microsoft.Extensions.DependencyInjection
     {
         public static AgentExperience.MicrosoftAgentFramework.IAgentExperienceBuilder AddAgentExperience(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<AgentExperience.MicrosoftAgentFramework.AgentExperienceOptions> configure) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceContextProvider GetAgentExperienceContextProvider(this System.IServiceProvider services) { }
+        public static AgentExperience.MicrosoftAgentFramework.AgentExperienceLessons GetAgentExperienceLessons(this System.IServiceProvider services) { }
     }
 }
