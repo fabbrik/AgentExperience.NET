@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.2, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.2. It is published to PyPI as `agentexperience`, the distribution and import name, with every
+**Status: alpha, contract 1.3, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.3. It is published to PyPI as `agentexperience`, the distribution and import name, with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agentexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -244,7 +244,7 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 ```bash
 uv sync
 uv run ruff check && uv run ruff format --check
-uv run mypy --strict src
+uv run mypy --strict src tests
 uv run pytest
 ```
 
@@ -264,10 +264,16 @@ runs the sample (`AGENTEXPERIENCE_QUICKSTART_GOLDEN_UPDATE=1` rewrites its expec
 
 - *Python writes, .NET reads.* A Python agent on a fixed clock and fixed identifiers stores two runs, and the records
   must be exactly [`tests/cross-language/python-agent-records.json`](https://github.com/fabbrik/AgentExperience.NET/blob/main/python/tests/cross-language/python-agent-records.json)
-  (checked in memory, and written to and read back from PostgreSQL in the PostgreSQL leg). The .NET contract tests'
-  `PythonAgentRecordsPostgresRoundTripTests` insert that file into a schema the .NET migrator applied and read each
-  record back through the .NET PostgreSQL store: it must come back unchanged. `AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`
-  rewrites the file on purpose.
+  (checked in memory, and written to and read back from PostgreSQL in the PostgreSQL leg). In the PostgreSQL leg the
+  rows the Python store wrote, every column it writes in PostgreSQL's own text form, must be exactly
+  [`tests/cross-language/python-agent-rows.json`](https://github.com/fabbrik/AgentExperience.NET/blob/main/python/tests/cross-language/python-agent-rows.json).
+  The .NET contract tests' `PythonAgentRecordsPostgresRoundTripTests` insert those raw rows into a schema the .NET
+  migrator applied, each value cast from its text by PostgreSQL, read every record back through the .NET PostgreSQL
+  store (it must be `python-agent-records.json`), check each initial event is the one .NET finalization derives,
+  compare every column with what the .NET store writes for the same record, and find the Python agent's lessons
+  through the .NET retrieval. So a column the Python store wrote in its own encoding fails there, even when the
+  Python reader undoes it. `AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1` rewrites both files on purpose (the rows in the
+  PostgreSQL leg).
 - *.NET writes, Python reads.* The records the .NET library finalized for the contract's finalize fixtures (generated
   from .NET and checked against it on every build) are written into PostgreSQL, and a Python agent on their scope is
   injected with the one its task matches. No .NET process runs at test time: the fixtures are the .NET-written

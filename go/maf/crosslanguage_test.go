@@ -44,7 +44,7 @@ var (
 	crossIdentity    = ae.Identity{Principal: "go-principal", Scope: crossScope}
 	crossEnvironment = ae.EnvironmentFingerprint{HostName: "go-host", RuntimeVersion: "go1", OperatingSystem: "linux",
 		ApplicationVersion: ae.Ptr("1.0.0"), Metadata: map[string]string{"region": "eu-west"}}
-	crossStart = ae.MustParseInstant("2026-03-02T09:00:00+00:00")
+	crossStart = ae.MustParseInstant("2026-03-02T09:00:00.1234567+00:00")
 )
 
 // fixedClock moves 1.25 seconds every time it is read, from a fixed start.

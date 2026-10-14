@@ -21,6 +21,37 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   is not the version `Directory.Build.props` sets; a release test holds the same. Nothing in the six NuGet packages
   changed.
 
+### Contract 1.3, and port hardening (story 22.8)
+
+- **Contract 1.3** (add-only: every 1.0, 1.1 and 1.2 file is unchanged; [what 1.3 adds](contract/README-1.3.md)).
+  Two finalize cases, `sub-microsecond-instants` and `sub-microsecond-instants-at-a-second-boundary`, hold instants
+  with 100-ns ticks below the microsecond. The finalization instant is truncated, never rounded, to whole
+  microseconds before the outcome's, the reflection's, the columns' and the initial event's instants are derived
+  from it (`…:59.9999996` becomes `…:59.999999`, never the next second), while the instants the record copies from
+  the run keep all seven fractional digits. Nothing pinned this before: every earlier case used whole seconds. A
+  search case with an erased (tombstoned) row was not added, because the search fixtures' seed format cannot hold
+  one; README-1.3 says why.
+- **Python and Go** both pass contract 1.3 (unit and PostgreSQL legs) with no change to either port, and report
+  1.0 to 1.3 as supported.
+- **The Python "Python writes, .NET reads" proof now reads the raw rows**, as Go's does: the Python PostgreSQL test
+  checks the rows its store wrote, every column in PostgreSQL's text form, against
+  `python/tests/cross-language/python-agent-rows.json`, and the .NET contract tests insert those rows as they are,
+  read them back through the .NET store, check each initial lifecycle event, and compare every column with what the
+  .NET store writes for the same record, over every column of both tables. A Python writer that encodes a column
+  differently from .NET, or leaves to the database a column .NET writes, now fails there, naming the column, even
+  when the Python reader undoes it. The Go proof runs through the same .NET harness and gains the same comparison.
+  Both agents' clocks now carry 100-ns ticks below the microsecond, so every instant in those rows goes through
+  truncation in each language. Python and Go each gain a test of their store's default `recorded_at` (now, in UTC,
+  in whole microseconds).
+- **The Python tests are type-checked**: `mypy --strict` covers `python/tests` as well as `src`, locally and in CI.
+- **A timing-sensitive .NET test is deterministic.**
+  `ExperienceCaptureTests.Background_work_settles_only_after_a_timed_out_close_abandoned_completion_has_finished`
+  failed once in CI: under load, the first invocation's own finalization could overrun the test's real 100 ms
+  timeout and complete the run a second time. Its timeouts are now manual and fire only when the test fires them.
+- The only library change: two private helpers of Core's `ExperienceFinalizationService` (the initial event's target
+  status and reason) became internal, so the contract tests derive the initial event as finalization does. No public
+  API or behaviour changed.
+
 ## 0.1.0-preview.13
 
 For .NET users, this preview carries one behaviour change: capture now refuses a tool-call argument that holds NaN,

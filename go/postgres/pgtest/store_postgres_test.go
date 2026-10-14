@@ -25,6 +25,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"testing"
@@ -499,6 +500,41 @@ func TestInsertFinalizedStoresTheRecordedAtAndRefusesABlankActor(t *testing.T) {
 	})
 	if err != nil || !stored.Equal(recordedAt) {
 		t.Fatalf("recorded_at is %v (%v), want %v", stored, err, recordedAt)
+	}
+}
+
+// With no recordedAt the store records the event now, in UTC, in whole microseconds. (The cross-language proof's
+// agent passes its own clock's instant so its rows are deterministic; this is the default path.)
+func TestInsertFinalizedRecordsTheEventNowInUTCWhenNoRecordedAtIsGiven(t *testing.T) {
+	admin := requireServer(t)
+	ctx := context.Background()
+	store := newStore(t, admin, createDatabase(t, admin, "recorded_at_default"))
+	finalized := finalizeCase(t, "verified-after-one-failed-attempt")
+	bounds := ae.BoundsOf(finalized.Record.Scope)
+
+	before := time.Now().UTC().Truncate(time.Microsecond)
+	if err := store.InsertFinalized(ctx, bounds, &finalized, actor, nil); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC()
+
+	var stored time.Time
+	var text string
+	err := inTransaction(store, ctx, bounds, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL TIME ZONE 'UTC'"); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, "SELECT recorded_at, recorded_at::text FROM agent_experience.lifecycle_events "+
+			"WHERE experience_id = $1", [16]byte(finalized.Record.ExperienceID)).Scan(&stored, &text)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$`).MatchString(text) {
+		t.Fatalf("recorded_at is %q, not UTC in whole microseconds", text)
+	}
+	if stored.Nanosecond()%1000 != 0 || stored.Before(before) || stored.After(after) {
+		t.Fatalf("recorded_at %v is not now in whole microseconds (between %v and %v)", stored, before, after)
 	}
 }
 

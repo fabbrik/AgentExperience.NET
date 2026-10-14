@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
+from _sync import run
 
 from agentexperience import (
     Attempt,
@@ -64,7 +64,7 @@ def context(*attempts: Attempt) -> VerificationContext:
 
 
 def verify(verifier: Callable[[VerificationContext], Awaitable[Verification | None]], ctx: Any = None) -> Any:
-    return asyncio.run(verifier(ctx or context()))
+    return run(verifier(ctx or context()))
 
 
 def fixed(
@@ -164,8 +164,12 @@ def test_approval_turns_a_persons_decision_into_evidence_produced_by_the_approve
 def test_approval_returning_none_stores_nothing_and_a_blank_approver_raises() -> None:
     assert verify(approval("reviewed", lambda _: None)) is None
     for approver in ("", "  "):
+
+        def approve(context: VerificationContext, who: str = approver) -> Approval:
+            return Approval(who, True)
+
         with pytest.raises(RuntimeError):
-            verify(approval("reviewed", lambda _, who=approver: Approval(who, True)))
+            verify(approval("reviewed", approve))
 
 
 def test_all_of_a_pass_and_a_fail_is_one_verification_with_both_checks() -> None:
@@ -251,6 +255,11 @@ def test_all_of_and_any_of_refuse_no_verifiers_or_a_none_one() -> None:
 
 
 def test_check_refuses_a_verdict_that_is_neither_bool_nor_none() -> None:
-    for value in ("yes", 1, 0, []):
+    verdicts: tuple[object, ...] = ("yes", 1, 0, [])
+    for value in verdicts:
+
+        def verdict(context: VerificationContext, value: object = value) -> Any:
+            return value
+
         with pytest.raises(TypeError):
-            verify(check("lint", lambda _, value=value: value))
+            verify(check("lint", verdict))

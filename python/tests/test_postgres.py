@@ -5,6 +5,8 @@ for row, and every search fixture run through the store's text search, then rank
 
 from __future__ import annotations
 
+import datetime as dt
+import re
 import uuid
 from typing import Any
 
@@ -152,6 +154,35 @@ def test_row_level_security_refuses_a_write_outside_the_bounds(pg_server: Server
     )
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         store.insert_finalized(AuthorizationBounds("another-tenant"), finalized, actor="contract-principal")
+
+
+def test_insert_finalized_records_the_event_now_in_utc_when_no_recorded_at_is_given(pg_server: Server) -> None:
+    # The cross-language proof pins recorded_at to the event's own instant so its rows are deterministic; this is the
+    # store's default path, which the Python agent integration takes.
+    conninfo = application_conninfo(pg_server, create_database(pg_server, "recorded_at_default"))
+    store = PostgresExperienceStore(conninfo)
+    finalized, _ = run_finalize_case(
+        read_json(FIXTURES / "finalize" / "verified-after-one-failed-attempt" / "input.json")
+    )
+    record = finalized.record
+    bounds = AuthorizationBounds.of(record.scope)
+
+    before = dt.datetime.now(dt.timezone.utc)
+    store.insert_finalized(bounds, finalized, actor="contract-principal")
+    after = dt.datetime.now(dt.timezone.utc)
+
+    with psycopg.connect(conninfo) as connection, connection.transaction():
+        connection.execute(to_driver_placeholders(contract_sql(DECLARE_BOUNDS_SQL)), bounds.parameters())
+        connection.execute("SET LOCAL TIME ZONE 'UTC'")
+        row = connection.execute(
+            "SELECT recorded_at, recorded_at::text FROM agent_experience.lifecycle_events WHERE experience_id = %s",
+            (record.experience_id,),
+        ).fetchone()
+    assert row is not None
+    recorded, text = row
+    assert isinstance(recorded, dt.datetime) and recorded.utcoffset() == dt.timedelta(0)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00", text), text
+    assert before <= recorded <= after
 
 
 def test_a_sealed_row_is_skipped_by_get_and_search(pg_server: Server) -> None:

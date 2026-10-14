@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
@@ -83,7 +83,7 @@ class Server:
         )
 
 
-def server() -> Iterator[Server]:
+def server() -> Generator[Server, None, None]:
     """The server the tests run against; raises ``RuntimeError`` (which the fixture turns into a skip) when none."""
     if os.environ.get("PGHOST"):
         yield Server(

@@ -108,9 +108,9 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert check_contract_version(read_json(CONTRACT / "lock.json")) == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.3", None])
+@pytest.mark.parametrize("version", ["2.0", "1.4", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2"):
+    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3"):
         check_contract_version({"contractVersion": version})
 
 
@@ -175,7 +175,7 @@ def test_argument_numbers_read_back_as_dotnet_reads_them() -> None:
         return dict(from_stored(record).attempts[0].tool_calls[0].arguments)
 
     def with_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-        changed = copy.deepcopy(stored)
+        changed: dict[str, Any] = copy.deepcopy(stored)
         changed["payload"]["attempts"][0]["toolCalls"][0]["arguments"] = arguments
         return changed
 
@@ -352,17 +352,11 @@ def _encode(kind: str, value: Any) -> str:
         return capture.run.task_id
     if kind == "experience-id":
         scope = value["scopeUtf16"]
-        return str(
-            experience_id_for(
-                uuid.UUID(value["runId"]),
-                Scope(
-                    *(
-                        _utf16(scope[name])
-                        for name in ("tenantId", "applicationId", "projectId", "teamId", "agentId", "userId")
-                    )
-                ),
-            )
-        )
+        # Passed through as the fixture gives them, a null included: Scope's own checks decide, as before.
+        fields: list[Any] = [
+            _utf16(scope[name]) for name in ("tenantId", "applicationId", "projectId", "teamId", "agentId", "userId")
+        ]
+        return str(experience_id_for(uuid.UUID(value["runId"]), Scope(*fields)))
     raise AssertionError(f"Unknown encoding kind {kind!r}.")
 
 

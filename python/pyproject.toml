@@ -4,7 +4,7 @@ name = "agentexperience"
 # alpha; "preview" would normalise to rc), and a version with no suffix is the same here. RELEASING.md bumps both, and a
 # release test and release.yml fail when they disagree.
 version = "0.1.0a14"
-description = "Verified agent experience for Python: a pure-Python core that passes the AgentExperience.NET language-neutral contract 1.2."
+description = "Verified agent experience for Python: a pure-Python core that passes the AgentExperience.NET language-neutral contract 1.3."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -58,10 +58,10 @@ addopts = "-ra"
 [tool.mypy]
 strict = true
 python_version = "3.10"
-files = ["src"]
+files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "jsonschema.*"]
+module = ["testcontainers.*", "jsonschema.*", "docker.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
