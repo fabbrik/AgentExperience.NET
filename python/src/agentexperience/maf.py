@@ -24,6 +24,10 @@ What it adds to the agent:
   searches the store in the identity's scope, ranks with the contract's weights, renders the Historical Reference block
   with the block options, and adds it as one user-role message (``message_role="system"`` sends it as a system
   message), stamped ``additional_properties["AgentExperience.HistoricalReference"] = True``.
+- **Injection tracking** (contract 1.4). Once the block is handed over, a store that records injections (the PostgreSQL
+  store, the in-memory store) is told which records it delivered, in a background task bounded by
+  ``injection_record_timeout``, so the .NET lessons view shows when each lesson was last injected. It never delays or
+  fails the invocation; the outcome is reported through ``on_injection_recorded``.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import threading
 import uuid
@@ -75,7 +80,7 @@ from .identity import (
     is_development_environment,
     reduce_name,
 )
-from .inmemory import ExperienceStore, InMemoryExperienceStore
+from .inmemory import MAX_RECORD_INJECTION_IDS, ExperienceStore, InjectionRecorder, InMemoryExperienceStore
 from .records import EnvironmentFingerprint, Provenance, RunExposure
 from .sanitization import Sanitization
 from .search import SearchParameters, rank
@@ -109,6 +114,23 @@ PROVENANCE_SOURCE = "agentexperience.maf"
 DEFAULT_TASK_ID = "default"
 DEFAULT_FINALIZATION_TIMEOUT = 5.0
 """How long, in seconds, an invocation's end waits for finalization by default: .NET's ``FinalizationTimeout``."""
+
+DEFAULT_INJECTION_RECORD_TIMEOUT = 5.0
+"""How long, in seconds, recording one injection may take by default, all chunks together: .NET's."""
+
+MAX_ABANDONED_INJECTION_RECORDS = 16
+"""How many injection writes may run at once, abandoned ones (that outlived their timeout) included, before another is
+not started and is reported ``NotRecorded``: .NET's ``ExperienceInjectionLimits.MaxAbandonedReads`` default. Each runs
+on a daemon thread of its own, never the event loop's default executor, and nothing ever waits for one at exit."""
+
+
+@dataclass
+class _Write:
+    """One injection write's state, shared with its thread under the provider's lock."""
+
+    finished: bool = False
+    abandoned: bool = False
+
 
 CANCELLED_ERROR = "CancelledError"
 """The error recorded for an invocation or a tool call that was cancelled."""
@@ -161,6 +183,22 @@ class InjectionResult:
     truncated: bool
 
 
+InjectionRecordOutcome = Literal["Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"]
+"""How recording an injection ended, as .NET reports its ``record_injection`` operation: ``Recorded``; ``NotTracked``
+(the store does not record injections); ``NotRecorded`` (the store refused or failed, a missing grant included); or
+``OutcomeUnknown`` (it ran out of time or was cancelled, and may still commit)."""
+
+
+@dataclass(frozen=True)
+class InjectionRecordResult:
+    """How recording one injected block ended: the outcome, the records the block delivered, and the exception, when
+    there was one (never record content)."""
+
+    outcome: InjectionRecordOutcome
+    experience_ids: tuple[uuid.UUID, ...]
+    exception: BaseException | None = None
+
+
 @dataclass(frozen=True)
 class IdentityContext:
     """What an identity resolver is given: the agent and the caller's session. Never model output."""
@@ -207,11 +245,15 @@ class ExperienceSettings:
     on_injection_failure: Callable[[InjectionFailure], None] | None = None
     on_injected: Callable[[InjectionResult], None] | None = None
     on_finalized: Callable[[FinalizedExperience], None] | None = None
+    on_injection_recorded: Callable[[InjectionRecordResult], None] | None = None
     clock: Callable[[], Instant] = Instant.now
     new_id: Callable[[], uuid.UUID] = uuid.uuid4
     finalization_timeout: float = DEFAULT_FINALIZATION_TIMEOUT
     """Seconds an invocation waits at its end for finalization (append, verify, finalize, store), as .NET's
     ``FinalizationTimeout``; past it the work is abandoned and reported, and the invocation returns."""
+    injection_record_timeout: float = DEFAULT_INJECTION_RECORD_TIMEOUT
+    """Seconds recording one injected block may take in the background, all chunks together; past it the write is
+    abandoned and reported ``OutcomeUnknown``. The invocation never waits for it."""
 
     def __post_init__(self) -> None:
         if self.store is None:
@@ -233,6 +275,7 @@ class ExperienceSettings:
             "on_injection_failure",
             "on_injected",
             "on_finalized",
+            "on_injection_recorded",
             "clock",
             "new_id",
         ):
@@ -241,6 +284,8 @@ class ExperienceSettings:
                 raise TypeError(f"{name} must be callable when given.")
         if not self.finalization_timeout > 0:
             raise ValueError("finalization_timeout must be a positive number of seconds.")
+        if not self.injection_record_timeout > 0:
+            raise ValueError("injection_record_timeout must be a positive number of seconds.")
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
         if self.task_id is not None and not self.task_id.strip():
@@ -266,6 +311,14 @@ class ExperienceSettings:
             return
         try:
             self.on_injection_failure(failure)
+        except Exception:
+            pass
+
+    def report_injection_recorded(self, result: InjectionRecordResult) -> None:
+        if self.on_injection_recorded is None:
+            return
+        try:
+            self.on_injection_recorded(result)
         except Exception:
             pass
 
@@ -552,11 +605,148 @@ class ExperienceContextProvider(ContextProvider):
     Injects the lessons that apply to an invocation, before the model is called: the task text from the invocation's
     messages, the text search in the identity's scope, the contract's ranking, and the rendered block as one message.
     Never raises into the agent; a failure means no block and is reported through ``on_injection_failure``.
+
+    Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a background task
+    on the running event loop, bounded by ``injection_record_timeout``; :meth:`wait_for_injection_records` awaits the
+    ones still running, for a host shutting down or a test.
     """
 
     def __init__(self, settings: ExperienceSettings, source_id: str = SOURCE_ID) -> None:
         super().__init__(source_id)
         self.settings = settings
+        self._recordings: set[asyncio.Task[None]] = set()
+        self._abandoned_records = 0
+        self._running_writes = 0
+        self._abandoned_lock = threading.Lock()
+
+    async def wait_for_injection_records(self) -> None:
+        """Completes once every injection record this provider started on the running event loop has ended. Each is
+        bounded by ``injection_record_timeout``, so this is too; it never raises."""
+        loop = asyncio.get_running_loop()
+        while pending := [task for task in self._recordings if task.get_loop() is loop and not task.done()]:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    @property
+    def abandoned_injection_records(self) -> int:
+        """How many injection writes that outlived their timeout are still running against the store."""
+        with self._abandoned_lock:
+            return self._abandoned_records
+
+    def _start_recording(self, identity: ExperienceIdentity, ids: tuple[uuid.UUID, ...], injected_at: Instant) -> None:
+        """Starts recording ``ids`` as injected at ``injected_at``, in the background; never raises, never waits."""
+        settings = self.settings
+        try:
+            recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
+            if recorder is None:
+                settings.report_injection_recorded(InjectionRecordResult("NotTracked", ids))
+                return
+            task = asyncio.get_running_loop().create_task(self._record(recorder, identity, ids, injected_at))
+        except Exception as ex:
+            settings.report_injection_recorded(InjectionRecordResult("NotRecorded", ids, ex))
+            return
+        self._recordings.add(task)
+        task.add_done_callback(self._recordings.discard)
+
+    async def _record(
+        self,
+        recorder: InjectionRecorder,
+        identity: ExperienceIdentity,
+        ids: tuple[uuid.UUID, ...],
+        injected_at: Instant,
+    ) -> None:
+        """
+        The background record: the IDs in chunks of at most 200, each a call on a worker thread of the provider's own,
+        all within ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot be stopped): it
+        is counted until it ends. At most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes run at once, so writes that
+        hang can never take more threads than that, and never the event loop's default executor, which the search and
+        capture use. Never raises, except the task's own cancellation, which is reported first.
+        """
+        settings = self.settings
+        outcome: InjectionRecordOutcome = "Recorded"
+        error: BaseException | None = None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + settings.injection_record_timeout
+        try:
+            for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS):
+                left = deadline - loop.time()
+                if left <= 0:
+                    raise TimeoutError("The injection record ran out of time.")
+                chunk = list(ids[start : start + MAX_RECORD_INJECTION_IDS])
+                write = self._start_write(
+                    loop,
+                    functools.partial(
+                        recorder.record_injection, identity.authorization, identity.scope, chunk, injected_at
+                    ),
+                )
+                if write is None:
+                    outcome = "NotRecorded"
+                    error = RuntimeError("Too many earlier injection records are still running against the store.")
+                    break
+                future, state = write
+                try:
+                    await asyncio.wait_for(asyncio.shield(future), left)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    self._abandon(state)
+                    raise
+        except (asyncio.TimeoutError, TimeoutError) as ex:
+            outcome, error = "OutcomeUnknown", ex
+        except asyncio.CancelledError as ex:
+            settings.report_injection_recorded(InjectionRecordResult("OutcomeUnknown", ids, ex))
+            raise
+        except Exception as ex:
+            outcome, error = "NotRecorded", ex
+        settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
+
+    def _start_write(
+        self, loop: asyncio.AbstractEventLoop, write: Callable[[], None]
+    ) -> tuple[asyncio.Future[None], _Write] | None:
+        """
+        Runs ``write`` on a daemon thread of its own, or answers ``None`` when :data:`MAX_ABANDONED_INJECTION_RECORDS`
+        writes are already running. The thread settles the returned future on ``loop`` (if it is still open) and keeps
+        its own count, so a write that outlives the loop, or the interpreter's shutdown, is never waited for.
+        """
+        with self._abandoned_lock:
+            if self._running_writes >= MAX_ABANDONED_INJECTION_RECORDS:
+                return None
+            self._running_writes += 1
+        state = _Write()
+        future: asyncio.Future[None] = loop.create_future()
+
+        def settle(failure: BaseException | None) -> None:
+            if future.done():
+                return
+            if failure is None:
+                future.set_result(None)
+            else:
+                future.set_exception(failure)
+
+        def run() -> None:
+            failure: BaseException | None = None
+            try:
+                write()
+            except BaseException as ex:  # reported, never raised in a thread
+                failure = ex
+            finally:
+                with self._abandoned_lock:
+                    self._running_writes -= 1
+                    state.finished = True
+                    if state.abandoned:
+                        self._abandoned_records -= 1
+            try:
+                loop.call_soon_threadsafe(settle, failure)
+            except RuntimeError:
+                pass  # the loop has closed: nobody awaits this write any more
+
+        threading.Thread(target=run, name="agentexperience-injection-record", daemon=True).start()
+        future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        return future, state
+
+    def _abandon(self, state: _Write) -> None:
+        """Counts a write that outlived its bound until its thread ends."""
+        with self._abandoned_lock:
+            if not state.finished and not state.abandoned:
+                state.abandoned = True
+                self._abandoned_records += 1
 
     async def before_run(
         self,
@@ -598,10 +788,12 @@ class ExperienceContextProvider(ContextProvider):
                 identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
             )
             rows = await asyncio.to_thread(settings.store.search, identity.authorization, parameters)
+            # The instant the block is built at: ranking's "now", and the injection's instant.
+            now = settings.clock()
             ranked = rank(
                 rows,
                 identity.scope,
-                settings.clock(),
+                now,
                 settings.preferred_environment,
                 exclude_model_authored=settings.exclude_model_authored,
             )
@@ -622,15 +814,17 @@ class ExperienceContextProvider(ContextProvider):
         # captured as. Recorded last, once nothing that could fail remains.
         if captured and scope is not None:
             scope.record_exposures([RunExposure(record.experience_id, record.revision) for record in block.included])
+        delivered = tuple(record.experience_id for record in block.included)
         if settings.on_injected is not None:
             try:
-                settings.on_injected(
-                    InjectionResult(
-                        tuple(record.experience_id for record in block.included), block.byte_count, ranked.truncated
-                    )
-                )
+                settings.on_injected(InjectionResult(delivered, block.byte_count, ranked.truncated))
             except Exception:
                 pass
+
+        # When each delivered record was injected, for the .NET lessons view: started last, in the background, so the
+        # block is handed over and the model called without waiting for the store.
+        if delivered:
+            self._start_recording(identity, delivered, now)
 
 
 # ---- Capture -----------------------------------------------------------------------------------------------------
@@ -817,9 +1011,11 @@ def use_agent_experience(
     on_injection_failure: Callable[[InjectionFailure], None] | None = None,
     on_injected: Callable[[InjectionResult], None] | None = None,
     on_finalized: Callable[[FinalizedExperience], None] | None = None,
+    on_injection_recorded: Callable[[InjectionRecordResult], None] | None = None,
     clock: Callable[[], Instant] | None = None,
     new_id: Callable[[], uuid.UUID] | None = None,
     finalization_timeout: float = DEFAULT_FINALIZATION_TIMEOUT,
+    injection_record_timeout: float = DEFAULT_INJECTION_RECORD_TIMEOUT,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -834,6 +1030,11 @@ def use_agent_experience(
     The agent keeps every provider and middleware it has. When it already holds an :class:`ExperienceContextProvider`
     (any one, deliberately by type) no second one is added, so it gets exactly one block; ``inject=False`` captures
     without injecting. Calling this twice on the same agent raises ``ValueError``.
+
+    A store with ``record_injection`` (contract 1.4) is told, in the background, which records each block delivered;
+    ``on_injection_recorded`` reports how that ended. On PostgreSQL the application role needs the grants of the
+    contract's ``sql/application-role-privileges-1.4.sql`` (or the .NET privileges call); without them every injection
+    is still made and reported ``NotRecorded``.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -860,9 +1061,11 @@ def use_agent_experience(
         on_injection_failure=on_injection_failure,
         on_injected=on_injected,
         on_finalized=on_finalized,
+        on_injection_recorded=on_injection_recorded,
         clock=clock or Instant.now,
         new_id=new_id or uuid.uuid4,
         finalization_timeout=finalization_timeout,
+        injection_record_timeout=injection_record_timeout,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.
@@ -874,7 +1077,9 @@ def use_agent_experience(
 
 
 __all__ = [
+    "DEFAULT_INJECTION_RECORD_TIMEOUT",
     "HISTORICAL_REFERENCE_KEY",
+    "MAX_ABANDONED_INJECTION_RECORDS",
     "PROVENANCE_SOURCE",
     "SOURCE_ID",
     "TOOL_REPORTED_ERROR_CLASS",
@@ -891,6 +1096,8 @@ __all__ = [
     "IdentityContext",
     "InMemoryExperienceStore",
     "InjectionFailure",
+    "InjectionRecordOutcome",
+    "InjectionRecordResult",
     "InjectionResult",
     "ToolResultContext",
     "Verification",

@@ -2,6 +2,8 @@ package maf
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 
 	"github.com/microsoft/agent-framework-go/agent"
 	"github.com/microsoft/agent-framework-go/message"
@@ -19,8 +21,17 @@ import (
 // retry") is searched joined after the previous request, as .NET's ChatClientAgent-level provider does. A block a
 // history provider replays (the SDK persists context messages with the request) is dropped, so each request carries
 // exactly one block, and the block never counts as a request.
+//
+// Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a goroutine;
+// Close awaits the ones still running.
 type ContextProvider struct {
 	settings *settings
+	// mu guards running and idle: the records started and not yet ended, and a channel closed when that count
+	// reaches zero (a fresh one each time it leaves zero), so Close may run concurrently with invocations.
+	mu        sync.Mutex
+	running   int
+	idle      chan struct{}
+	abandoned atomic.Int64
 }
 
 var _ agent.ContextProvider = (*ContextProvider)(nil)
@@ -80,7 +91,9 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		s.reportInjection(InjectionFailure{Reason: "The search failed; no block was added.", Err: err})
 		return messages
 	}
-	ranked, err := ae.Rank(rows, identity.Scope, s.Clock(), s.PreferredEnvironment, s.ExcludeModelAuthored)
+	// The instant the block is built at: ranking's "now", and the injection's instant.
+	now := s.Clock()
+	ranked, err := ae.Rank(rows, identity.Scope, now, s.PreferredEnvironment, s.ExcludeModelAuthored)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
 		return messages
@@ -121,6 +134,12 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 			defer func() { _ = recover() }()
 			s.OnInjected(InjectionResult{ExperienceIDs: ids, ByteCount: block.ByteCount, Truncated: ranked.Truncated})
 		}()
+	}
+
+	// When each delivered record was injected, for the .NET lessons view: started last, in the background, so the
+	// block is handed over and the model called without waiting for the store.
+	if len(ids) > 0 {
+		p.startRecording(ctx, identity, append([]ae.UUID(nil), ids...), now)
 	}
 	return out
 }

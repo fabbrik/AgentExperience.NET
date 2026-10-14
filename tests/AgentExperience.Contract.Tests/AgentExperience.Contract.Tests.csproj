@@ -17,6 +17,8 @@
     <!-- The search fixtures run against a schema the .NET migrator applied, in an ephemeral stock postgres container
          (Docker required; the major AGENTEXPERIENCE_POSTGRES_MAJOR selects). -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
+    <!-- The cross-language proof reads a port's injections through the lessons view, which the one-call setup builds. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>

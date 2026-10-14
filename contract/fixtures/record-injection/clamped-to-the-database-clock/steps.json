@@ -1,0 +1,37 @@
+{
+  "description": "An instant ahead of the database clock is stored as the database clock (clock_timestamp()) at the statement, and a later statement with an earlier instant does not move it back.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000062-0000-4000-8000-000000000001"
+        ],
+        "injectedAt": "9999-12-31T23:59:59.999999+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000062-0000-4000-8000-000000000001"
+        ],
+        "injectedAt": "2026-03-02T10:00:00+00:00"
+      }
+    }
+  ]
+}

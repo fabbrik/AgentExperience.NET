@@ -80,5 +80,18 @@
       "applied_revision": "1",
       "actor": "go-principal"
     }
+  ],
+  "experience_injections": [
+    {
+      "experience_id": "d387ebbe-04d6-86a4-bcf5-6ed5a932e87e",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "go-agent",
+      "user_id": null,
+      "last_injected_at": "2026-03-02 09:00:13.873456+00",
+      "injection_count": "1"
+    }
   ]
 }

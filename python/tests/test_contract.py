@@ -108,9 +108,9 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert check_contract_version(read_json(CONTRACT / "lock.json")) == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.4", None])
+@pytest.mark.parametrize("version", ["2.0", "1.5", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3"):
+    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4"):
         check_contract_version({"contractVersion": version})
 
 
@@ -129,7 +129,7 @@ def test_every_contract_file_matches_the_lock() -> None:
         assert hashlib.sha256((CONTRACT / name).read_bytes()).hexdigest() == digest, name
 
 
-@pytest.mark.parametrize("name", ["declare-bounds.sql", "search-experience-text.sql"])
+@pytest.mark.parametrize("name", ["declare-bounds.sql", "search-experience-text.sql", "record-injection.sql"])
 def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
     assert contract_sql(name) == (CONTRACT / "sql" / name).read_text(encoding="utf-8")
 
@@ -140,6 +140,7 @@ def test_every_fixture_family_has_cases() -> None:
         "error-class",
         "finalize",
         "inject",
+        "record-injection",
         "search",
         "task-text",
     }

@@ -5,26 +5,31 @@ using AgentExperience.Abstractions;
 using AgentExperience.Core.Finalization;
 using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Retrieval;
+using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.Storage.Postgres;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using NpgsqlTypes;
 
 namespace AgentExperience.Contract.Tests;
 
 /// <summary>
-/// The .NET half of a port's "the port writes, .NET reads" proof on PostgreSQL (stories 22.6 and 22.8), shared by the
-/// Go and Python ports. The port's own PostgreSQL test runs its agent through its PostgreSQL store, reads back the rows
-/// that store wrote, every column it writes in PostgreSQL's own text form, and checks them against a rows file checked
-/// in beside a records file (what the port's reader reads them as). Here:
+/// The .NET half of a port's "the port writes, .NET reads" proof on PostgreSQL, shared by the Go and Python ports. The
+/// port's own PostgreSQL test runs its agent through its PostgreSQL store, reads back the rows that store wrote (the
+/// records, their initial lifecycle events, and the injections its agent recorded), every column it writes in
+/// PostgreSQL's own text form, and checks them against a rows file checked in beside a records file (what the port's
+/// reader reads them as). Here:
 /// <list type="number">
 /// <item>The raw rows are inserted as they are, each value cast from its text by PostgreSQL (no .NET encoding in
 /// between), as the application role under declared bounds. A column the port does not write is left to the
 /// database, as the port's store leaves it.</item>
 /// <item>The .NET PostgreSQL record store must read every record back as the records file holds it.</item>
 /// <item>Each initial lifecycle event must be the one .NET finalization derives for its record.</item>
+/// <item>The .NET lessons view must read each injection the port recorded: its instant and its count.</item>
 /// <item>The .NET store then writes each record of the records file, and its initial event, the way finalization
 /// does (created as a Candidate, then the initial transition), into a database of its own. Every column of both
-/// tables -- not only the ones the port writes -- must then hold the same text in the port's row as in .NET's: a
+/// tables -- not only the ones the port writes -- must then hold the same text in the port's row as in .NET's, and so
+/// must every column of each injection row once the .NET store has recorded the same injections: a
 /// port that encodes a column differently from .NET but reads it back symmetrically, or that leaves a column to the
 /// database where .NET writes it, passes its own tests and fails here, naming the column.</item>
 /// <item>Optionally, .NET retrieval must find every record for a similar task.</item>
@@ -38,10 +43,12 @@ internal static class PortAgentRowsPostgres
 
     private const string EventsTable = "lifecycle_events";
 
+    private const string InjectionsTable = "experience_injections";
+
     /// <summary>Runs the whole proof over one port's two files; every problem is collected and reported together.</summary>
     /// <param name="database">The shared PostgreSQL server.</param>
     /// <param name="label">A short database-name-safe label for the port.</param>
-    /// <param name="rowsPath">The rows the port's store wrote: <c>experience_records</c> and <c>lifecycle_events</c>, each value as text.</param>
+    /// <param name="rowsPath">The rows the port's store wrote: <c>experience_records</c>, <c>lifecycle_events</c> and <c>experience_injections</c>, each value as text.</param>
     /// <param name="recordsPath">The records the port's reader reads those rows as, in the contract's stored form.</param>
     /// <param name="similarTask">A task the .NET retrieval must find every record for, or <see langword="null"/> to skip it.</param>
     public static async Task VerifyAsync(ContractPostgresDatabase database, string label, string rowsPath, string recordsPath, string? similarTask)
@@ -53,8 +60,10 @@ internal static class PortAgentRowsPostgres
         var problems = new List<string>();
         var recordRows = RowsOf(rows, RecordsTable, "experience_id", problems);
         var eventRows = RowsOf(rows, EventsTable, "event_id", problems);
+        var injectionRows = RowsOf(rows, InjectionsTable, "experience_id", problems);
         Assert.True(problems.Count == 0, string.Join("\n", problems));
         Assert.NotEmpty(recordRows);
+        Assert.NotEmpty(injectionRows);
         Assert.Equal(expected.Count, recordRows.Count);
         Assert.Equal(recordRows.Count, eventRows.Count);
 
@@ -67,6 +76,11 @@ internal static class PortAgentRowsPostgres
         foreach (var row in eventRows)
         {
             await InsertRawAsync(application, EventsTable, row);
+        }
+
+        foreach (var row in injectionRows)
+        {
+            await InsertRawAsync(application, InjectionsTable, row);
         }
 
         var store = new PostgresExperienceRecordStore(application);
@@ -114,6 +128,9 @@ internal static class PortAgentRowsPostgres
             }
         }
 
+        // The .NET lessons view reads each injection the port recorded.
+        var injected = await ReadThroughLessonsViewAsync(application, injectionRows, problems);
+
         // What .NET writes for the same records -- the records the port's own reader reads its rows as, so a column the
         // port writes in its own encoding and reads back symmetrically still differs here -- column for column, over
         // every column of both tables.
@@ -134,6 +151,31 @@ internal static class PortAgentRowsPostgres
             await WriteAsDotNetAsync(twin, record, Text(portEvents[0], "actor"), problems);
             await CompareAsync(RecordsTable, recordColumns, "experience_id", record.ExperienceId, record.Scope, portRecords[0], application, twin, problems);
             await CompareAsync(EventsTable, eventColumns, "event_id", IdOf(portEvents[0], "event_id"), record.Scope, portEvents[0], application, twin, problems);
+        }
+
+        // And the injections: the .NET store records each as many times as the port did, at the instant the lessons view
+        // read, and every column must match.
+        var injectionColumns = await ColumnsAsync(twin, InjectionsTable);
+        var twinStore = new PostgresExperienceRecordStore(twin);
+        foreach (var row in injectionRows)
+        {
+            var id = IdOf(row, "experience_id");
+            var scope = ScopeOf(row);
+            if (!injected.TryGetValue(id, out var lesson) || lesson.LastInjectedAt is not { } at)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < lesson.InjectionCount; i++)
+            {
+                var recorded = await twinStore.RecordInjectionAsync(SearchContractPostgresTests.Authorization(scope), scope, [id], at, CancellationToken.None);
+                if (recorded.Outcome != ExperienceStoreOutcome.Committed)
+                {
+                    problems.Add($"{InjectionsTable} {id}: the .NET store could not record it: {recorded.Outcome}.");
+                }
+            }
+
+            await CompareAsync(InjectionsTable, injectionColumns, "experience_id", id, scope, row, application, twin, problems);
         }
 
         // And the other way round: .NET's retrieval finds the port's lessons for a similar task.
@@ -157,6 +199,56 @@ internal static class PortAgentRowsPostgres
         }
 
         Assert.True(problems.Count == 0, string.Join("\n", problems));
+    }
+
+    /// <summary>
+    /// Lists each injection row's scope through the .NET lessons view (<see cref="AgentExperienceLessons"/>, over the .NET
+    /// PostgreSQL store) and checks that every row's lesson shows the row's instant and count. Returns the lessons by ID.
+    /// </summary>
+    private static async Task<Dictionary<Guid, ExperienceLesson>> ReadThroughLessonsViewAsync(
+        NpgsqlDataSource application, List<JsonObject> injectionRows, List<string> problems)
+    {
+        var services = new ServiceCollection();
+        services.AddAgentExperience(options => options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(null))
+            .UsePostgres(application);
+        await using var provider = services.BuildServiceProvider();
+        var lessons = provider.GetAgentExperienceLessons();
+        var found = new Dictionary<Guid, ExperienceLesson>();
+        foreach (var scope in injectionRows.Select(row => ScopeOf(row)).Distinct())
+        {
+            var page = await lessons.ListAsync(
+                new ExperienceIdentity(SearchContractPostgresTests.Authorization(scope), scope),
+                new ExperienceLessonsQuery { IncludeIneligible = true, Limit = ExperienceRecordQuery.MaxLimit });
+            if (page.Outcome != ExperienceStoreOutcome.Found || !page.InjectionsTracked)
+            {
+                problems.Add($"The lessons view answered {page.Outcome} (injections tracked: {page.InjectionsTracked}) for {scope}.");
+                continue;
+            }
+
+            foreach (var lesson in page.Lessons)
+            {
+                found[lesson.ExperienceId] = lesson;
+            }
+        }
+
+        foreach (var row in injectionRows)
+        {
+            var id = IdOf(row, "experience_id");
+            if (!found.TryGetValue(id, out var lesson))
+            {
+                problems.Add($"{InjectionsTable} {id}: the lessons view does not list the record.");
+                continue;
+            }
+
+            var at = lesson.LastInjectedAt is { } instant ? InjectionRecordContract.PostgresText(instant) : null;
+            var count = lesson.InjectionCount.ToString(CultureInfo.InvariantCulture);
+            if (at != Text(row, "last_injected_at") || count != Text(row, "injection_count"))
+            {
+                problems.Add($"{InjectionsTable} {id}: the lessons view shows last injected {at ?? "never"} and {count} injections, the port recorded {Text(row, "last_injected_at")} and {Text(row, "injection_count")}.");
+            }
+        }
+
+        return found;
     }
 
     /// <summary>

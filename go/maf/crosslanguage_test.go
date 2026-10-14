@@ -76,7 +76,8 @@ func fixedIDs() func() ae.UUID {
 }
 
 // runGoAgent is two runs of a Go agent, deterministic: the first fails a test run once, the second is shown the
-// lesson. It returns what was finalized, in order, and the scripted model.
+// lesson, which is recorded as injected (awaited before it returns). It returns what was finalized, in order, and the
+// scripted model.
 func runGoAgent(t *testing.T, store ae.Store) ([]ae.FinalizedExperience, *scripted) {
 	t.Helper()
 	previous := sourceVersion
@@ -96,14 +97,21 @@ func runGoAgent(t *testing.T, store ae.Store) ([]ae.FinalizedExperience, *script
 		Clock:              fixedClock(),
 		NewID:              fixedIDs(),
 	})
+	recorded := &recordings{}
+	options.OnInjectionRecorded = recorded.add
 	if err := UseAgentExperience(&config, options); err != nil {
 		t.Fatal(err)
 	}
 	a := newAgent(model, config)
 	runText(t, a, ticket)
 	runText(t, a, nextTicket)
+	closeRecordings(t, &config)
 	if len(h.captureFailures) != 0 || len(h.injectionFailures) != 0 {
 		t.Fatalf("capture %+v, injection %+v", h.captureFailures, h.injectionFailures)
+	}
+	if results := recorded.all(); len(results) != 1 || results[0].Outcome != InjectionRecorded ||
+		!reflect.DeepEqual(results[0].ExperienceIDs, []ae.UUID{h.finalized[0].Record.ExperienceID}) {
+		t.Fatalf("injection records %+v", results)
 	}
 	return h.finalized, model
 }

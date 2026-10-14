@@ -163,7 +163,7 @@ internal static class SearchContract
         Now,
         new Dictionary<string, string>(StringComparer.Ordinal));
 
-    private static ExperienceRecord Seed(
+    internal static ExperienceRecord Seed(
         int family,
         int n,
         string taskId,

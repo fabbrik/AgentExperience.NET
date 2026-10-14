@@ -1,5 +1,6 @@
 // Package inmemory is an in-memory store for development and tests: no PostgreSQL. It keeps only what the contract
-// needs (insert a finalized record, read one back, and the text search), honouring scope and the authorization
+// needs (insert a finalized record, read one back, the text search, and when each record was last injected),
+// honouring scope and the authorization
 // bounds the way the PostgreSQL store's row-level security does. Its text search is the .NET in-memory store's:
 // words normalized to Unicode form KC and lower-cased, the English stopwords PostgreSQL drops left out of a query,
 // and a record matching at least the minimum number of query terms (fewer for a shorter query), weighted 3 for the
@@ -52,21 +53,12 @@ var stopwords = func() map[string]bool {
 	return words
 }()
 
-// ErrAuthorizationDenied is a record whose scope lies outside the authorization bounds.
-var ErrAuthorizationDenied = errors.New("the record's scope lies outside the authorization bounds")
+// ErrAuthorizationDenied is a record whose scope lies outside the authorization bounds: the core's
+// agentexperience.ErrAuthorizationDenied, so errors.Is matches either.
+var ErrAuthorizationDenied = ae.ErrAuthorizationDenied
 
 // Permits reports whether bounds permit scope: the tenant always, and every bounded field exactly.
-func Permits(bounds ae.AuthorizationBounds, scope ae.Scope) bool {
-	bound := func(bound, value *string) bool {
-		return bound == nil || (value != nil && *bound == *value)
-	}
-	return bounds.TenantID == scope.TenantID &&
-		bound(bounds.ApplicationID, &scope.ApplicationID) &&
-		bound(bounds.ProjectID, &scope.ProjectID) &&
-		bound(bounds.TeamID, scope.TeamID) &&
-		bound(bounds.AgentID, scope.AgentID) &&
-		bound(bounds.UserID, scope.UserID)
-}
+func Permits(bounds ae.AuthorizationBounds, scope ae.Scope) bool { return bounds.Permits(scope) }
 
 // words are text's words: normalized to Unicode form KC and lower-cased, then split into runs of letters and
 // decimal digits; a combining mark continues the word it follows.
@@ -175,15 +167,26 @@ func index(record ae.ExperienceRecord) *indexed {
 // Store holds records in memory, for development and tests. It is safe for concurrent use. The zero value is not
 // usable: make one with New.
 type Store struct {
-	mu      sync.RWMutex
-	records map[ae.UUID]*indexed
-	order   []ae.UUID
-	events  map[ae.UUID]Event
+	// Clock is the store's own clock, which an injection's instant is clamped to, as PostgreSQL clamps it to its own;
+	// nil reads agentexperience.Now. Set it before the store is used.
+	Clock func() ae.Instant
+
+	mu         sync.RWMutex
+	records    map[ae.UUID]*indexed
+	order      []ae.UUID
+	events     map[ae.UUID]Event
+	injections map[ae.UUID]Injection
+}
+
+// Injection is when a record was last injected in its own scope, and how many injected blocks delivered it.
+type Injection struct {
+	LastInjectedAt ae.Instant
+	InjectionCount int64
 }
 
 // New is a store holding records (each experience ID once).
 func New(records ...ae.ExperienceRecord) (*Store, error) {
-	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}}
+	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}, injections: map[ae.UUID]Injection{}}
 	for _, record := range records {
 		if _, held := s.records[record.ExperienceID]; held {
 			return nil, errors.New("two records share one experience ID")
@@ -396,4 +399,73 @@ func (s *Store) Search(ctx context.Context, bounds ae.AuthorizationBounds, param
 	return rows, nil
 }
 
-var _ ae.Store = (*Store)(nil)
+// RecordInjection records that experienceIDs were injected in scope at injectedAt, as sql/record-injection.sql does:
+// only a record held in exactly scope counts, the instant (truncated to whole microseconds) is clamped to the store's
+// Clock and only moves forward, and the count rises by one and saturates at agentexperience.MaxInjectionCount. It
+// refuses a done context, more than agentexperience.MaxRecordInjectionIDs IDs or a nil one, and a scope outside the
+// bounds (ErrAuthorizationDenied).
+func (s *Store) RecordInjection(ctx context.Context, bounds ae.AuthorizationBounds, scope ae.Scope,
+	experienceIDs []ae.UUID, injectedAt ae.Instant) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ids, err := ae.InjectionIDs(experienceIDs)
+	if err != nil {
+		return err
+	}
+	if !Permits(bounds, scope) {
+		return ErrAuthorizationDenied
+	}
+	clock := s.Clock
+	if clock == nil {
+		clock = ae.Now
+	}
+	at, now := injectedAt.TruncateToMicroseconds(), clock().TruncateToMicroseconds()
+	if now.Before(at) {
+		at = now
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		held, ok := s.records[id]
+		if !ok || !held.record.Scope.Equal(scope) {
+			continue
+		}
+		current, seen := s.injections[id]
+		if !seen {
+			s.injections[id] = Injection{LastInjectedAt: at, InjectionCount: 1}
+			continue
+		}
+		if current.LastInjectedAt.Before(at) {
+			current.LastInjectedAt = at
+		}
+		if current.InjectionCount < ae.MaxInjectionCount {
+			current.InjectionCount++
+		}
+		s.injections[id] = current
+	}
+	return nil
+}
+
+// Injections are when each record was last injected and how often: for inspection in tests.
+func (s *Store) Injections() map[ae.UUID]Injection {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	copied := make(map[ae.UUID]Injection, len(s.injections))
+	for id, injection := range s.injections {
+		copied[id] = injection
+	}
+	return copied
+}
+
+// SetInjection replaces a record's injection summary: for seeding tests (a count near saturation, say).
+func (s *Store) SetInjection(id ae.UUID, injection Injection) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.injections[id] = injection
+}
+
+var (
+	_ ae.Store             = (*Store)(nil)
+	_ ae.InjectionRecorder = (*Store)(nil)
+)

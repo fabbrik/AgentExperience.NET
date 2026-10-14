@@ -80,5 +80,18 @@
       "applied_revision": "1",
       "actor": "python-principal"
     }
+  ],
+  "experience_injections": [
+    {
+      "experience_id": "1f7efef5-8534-8b3c-b399-985888b84e2b",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "python-agent",
+      "user_id": null,
+      "last_injected_at": "2026-03-02 09:00:13.873456+00",
+      "injection_count": "1"
+    }
   ]
 }

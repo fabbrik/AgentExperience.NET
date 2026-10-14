@@ -145,8 +145,6 @@
     {
         public const string DevelopmentBanner = "Development view: these are the lessons stored in this scope. It discloses them, " +
             "so serve it only behind your own authorization.";
-        public const string DotNetOnlyNote = "\"Last injected\" counts injections by .NET agents only: a lesson injected only by " +
-            "a Python or Go agent shows \"never\".";
         public const string Never = "never";
         public const string NoLessons = "No lessons yet.";
         public const string NotTracked = "not tracked";

@@ -215,3 +215,136 @@ def test_a_sealed_row_is_skipped_by_get_and_search(pg_server: Server) -> None:
     assert store.get(bounds, record.scope, sealed_id) is None
     rows = store.search(bounds, SearchParameters(record.scope, "refund stuck in pending, ticket lock"))
     assert [row.record.experience_id for row in rows] == [record.experience_id]
+
+
+# ---- Contract 1.4: recording injections ---------------------------------------------------------------------------
+
+INJECTION_COLUMNS = (
+    "experience_id",
+    "tenant_id",
+    "application_id",
+    "project_id",
+    "team_id",
+    "agent_id",
+    "user_id",
+    "last_injected_at",
+    "injection_count",
+)
+DATABASE_CLOCK = "database-clock"
+
+
+def _clock(conninfo: str) -> dt.datetime:
+    with psycopg.connect(conninfo) as connection:
+        row = connection.execute("SELECT pg_catalog.clock_timestamp()").fetchone()
+    assert row is not None and isinstance(row[0], dt.datetime)
+    return row[0]
+
+
+@pytest.mark.parametrize("name", cases("record-injection"))
+def test_record_injection(pg_server: Server, name: str) -> None:
+    """A record-injection fixture, each step through the store's record call (the packaged record-injection.sql)."""
+    directory = FIXTURES / "record-injection" / name
+    seed = read_json(directory / "seed.json")
+    steps = read_json(directory / "steps.json")["steps"]
+    expected = read_json(directory / "expected.json")
+
+    database = create_database(pg_server, "inject_" + name)
+    owner = pg_server.conninfo(database, OWNER, PASSWORD)
+    store = PostgresExperienceStore(application_conninfo(pg_server, database))
+    for stored in seed["records"]:
+        record = from_stored(stored)
+        store.insert_record(AuthorizationBounds.of(record.scope), record)
+    with psycopg.connect(owner) as connection, connection.transaction():
+        for row in seed["injections"]:
+            connection.execute(
+                "INSERT INTO agent_experience.experience_injections (experience_id, tenant_id, application_id, "
+                "project_id, team_id, agent_id, user_id, last_injected_at, injection_count) VALUES (%s::uuid, %s, %s, "
+                "%s, %s, %s, %s, %s::timestamptz, %s::bigint)",
+                tuple(row[column] for column in INJECTION_COLUMNS),
+            )
+
+    before = _clock(owner)
+    for step in steps:
+        if "record" in step:
+            scope = scope_of(step["record"]["scope"])
+            store.record_injection(
+                AuthorizationBounds.of(scope),
+                scope,
+                [uuid.UUID(text) for text in step["record"]["experienceIds"]],
+                Instant.parse(step["record"]["injectedAt"]),
+            )
+        else:
+            erase = step["erase"]
+            with psycopg.connect(owner) as connection:
+                purged = connection.execute(
+                    "SELECT purge_outcome FROM agent_experience.purge_experience_record(%s::uuid, %s, %s, %s, %s, %s, "
+                    "%s, NULL, %s::timestamptz)",
+                    (erase["experienceId"], *scope_of(erase["scope"]).fields(), erase["deletedAt"]),
+                ).fetchone()
+            assert purged == ("Deleted",)
+    after = _clock(owner)
+
+    with psycopg.connect(owner) as connection:
+        connection.execute("SET TIME ZONE 'UTC'")
+        rows = connection.execute(
+            "SELECT "
+            + ", ".join(f"{column}::text" for column in INJECTION_COLUMNS)
+            + ", last_injected_at FROM agent_experience.experience_injections ORDER BY experience_id"
+        ).fetchall()
+    clamped = {
+        item["experience_id"]
+        for item in expected["experience_injections"]
+        if item["last_injected_at"] == DATABASE_CLOCK
+    }
+    actual: list[dict[str, Any]] = []
+    for row in rows:
+        values = dict(zip(INJECTION_COLUMNS, row[:-1], strict=True))
+        if values["experience_id"] in clamped:
+            assert before <= row[-1] <= after, (values, before, after)
+            values["last_injected_at"] = DATABASE_CLOCK
+        actual.append(values)
+    difference = json_difference(expected["experience_injections"], actual, "$.experience_injections")
+    assert difference is None, difference
+
+
+def test_without_the_1_4_grants_recording_an_injection_fails_and_writes_nothing(pg_server: Server) -> None:
+    from _postgres import APPLICATION_ROLE_PRIVILEGES_1_0
+
+    database = create_database(pg_server, "inject_no_grant", privileges=APPLICATION_ROLE_PRIVILEGES_1_0)
+    store = PostgresExperienceStore(application_conninfo(pg_server, database))
+    finalized, _ = run_finalize_case(
+        read_json(FIXTURES / "finalize" / "verified-after-one-failed-attempt" / "input.json")
+    )
+    record = finalized.record
+    bounds = AuthorizationBounds.of(record.scope)
+    store.insert_finalized(bounds, finalized, actor="contract-principal")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        store.record_injection(bounds, record.scope, [record.experience_id], Instant.now())
+    with psycopg.connect(pg_server.conninfo(database, OWNER, PASSWORD)) as connection:
+        count = connection.execute("SELECT count(*) FROM agent_experience.experience_injections").fetchone()
+    assert count == (0,)
+
+
+def test_record_injection_refuses_a_scope_outside_the_bounds_and_more_than_200_ids(pg_server: Server) -> None:
+    from dataclasses import replace
+
+    from agentexperience.inmemory import AuthorizationDenied
+
+    database = create_database(pg_server, "inject_refused")
+    store = PostgresExperienceStore(application_conninfo(pg_server, database))
+    scope = scope_of(
+        {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "agentId": "a",
+        }
+    )
+    bounds = AuthorizationBounds.of(scope)
+    with pytest.raises(AuthorizationDenied):
+        store.record_injection(bounds, replace(scope, agent_id="b"), [uuid.uuid4()], Instant.now())
+    with pytest.raises(ValueError):
+        store.record_injection(bounds, scope, [uuid.uuid4() for _ in range(201)], Instant.now())
+    with pytest.raises(ValueError):
+        store.record_injection(bounds, scope, [uuid.UUID(int=0)], Instant.now())
+    store.record_injection(bounds, scope, [], Instant.now())

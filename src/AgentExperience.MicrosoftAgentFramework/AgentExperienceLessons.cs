@@ -287,10 +287,10 @@ public sealed record ExperienceLessonsPage(
     /// <summary>
     /// Whether the store tracks injections (<see cref="IExperienceRecordStore.TracksInjections"/>, and its
     /// <see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/> read them), so that a lesson's
-    /// <see cref="ExperienceLesson.LastInjectedAt"/> of <see langword="null"/> means "never injected by a .NET agent".
-    /// When <see langword="false"/> -- a store that does not track them, or a PostgreSQL schema whose application role
-    /// has not been granted <c>0026</c>'s table yet -- it means "not known". Only the .NET adapter records injections
-    /// for now: a lesson injected only by a Python or Go agent reads as never injected.
+    /// <see cref="ExperienceLesson.LastInjectedAt"/> of <see langword="null"/> means "never injected". .NET, Python and Go
+    /// agents all record their injections (the ports from contract 1.4). When <see langword="false"/> -- a store that
+    /// does not track them, or a PostgreSQL schema whose application role has not been granted <c>0026</c>'s table yet
+    /// -- it means "not known".
     /// </summary>
     public bool InjectionsTracked { get; init; }
 }
@@ -338,8 +338,8 @@ public sealed record ExperienceLesson(
     /// <summary>
     /// When an agent in this scope was last shown this lesson: the latest injected block that delivered it, by the
     /// injecting provider's clock (clamped to the store's). One of three states: an instant; <see langword="null"/>
-    /// with the page's <see cref="ExperienceLessonsPage.InjectionsTracked"/> set, meaning never injected by a .NET agent
-    /// (the Python and Go ports do not record injections yet); or <see langword="null"/> with it unset, meaning not
+    /// with the page's <see cref="ExperienceLessonsPage.InjectionsTracked"/> set, meaning never injected (by a .NET,
+    /// Python or Go agent: the ports record their injections too); or <see langword="null"/> with it unset, meaning not
     /// known. Only injections in this scope count; another scope injecting it through a sharing grant does not. It is
     /// recorded in the background after the block is handed over, so it can lag an injection by a moment.
     /// </summary>

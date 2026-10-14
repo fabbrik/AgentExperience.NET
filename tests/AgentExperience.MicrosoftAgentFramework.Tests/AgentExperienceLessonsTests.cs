@@ -118,7 +118,8 @@ public sealed class AgentExperienceLessonsTests
         Assert.Equal([2L, 1L, 0L], page.Lessons.Select(lesson => lesson.InjectionCount));
 
         var html = ExperienceLessonsHtml.Render(page);
-        Assert.Contains(System.Net.WebUtility.HtmlEncode(ExperienceLessonsHtml.DotNetOnlyNote), html, StringComparison.Ordinal);
+        // Every agent records its injections (the Python and Go ports since contract 1.4), so the page carries no caveat.
+        Assert.DoesNotContain(".NET agents", html, StringComparison.Ordinal);
         Assert.Contains(
             "<span>last injected " + t2.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + " UTC (2 times)</span>",
             html,
@@ -159,7 +160,7 @@ public sealed class AgentExperienceLessonsTests
         var page = await Lessons(new ReadOnlyForwarder(store), store).ListAsync(Eligibility.Identity);
 
         Assert.False(page.InjectionsTracked);
-        Assert.DoesNotContain(ExperienceLessonsHtml.DotNetOnlyNote, ExperienceLessonsHtml.Render(page), StringComparison.Ordinal);
+        Assert.Contains("<span>last injected not tracked</span>", ExperienceLessonsHtml.Render(page), StringComparison.Ordinal);
     }
 
     [Fact]

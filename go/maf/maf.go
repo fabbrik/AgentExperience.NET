@@ -31,6 +31,11 @@
 //     rule), searches the store in the identity's scope, ranks with the contract's weights, renders the Historical
 //     Reference block with BlockOptions, and adds it as one user-role message (MessageRole system sends it as a
 //     system message) just before the new input, stamped AdditionalProperties[HistoricalReferenceKey] = true.
+//   - Injection tracking (contract 1.4). Once the block is handed over, a store that records injections (an
+//     ae.InjectionRecorder: the PostgreSQL store, the in-memory store) is told which records it delivered, in a
+//     goroutine bounded by InjectionRecordTimeout, so the .NET lessons view shows when each lesson was last injected.
+//     It never delays or fails the invocation; the outcome is reported through OnInjectionRecorded, and
+//     ContextProviderOf(config).Close awaits the records still running, for a host shutting down.
 //
 // Nothing here returns an error or panics into the agent: a store, identity, classifier or verifier failure means no
 // block, or no stored record, and is reported through OnInjectionFailure or OnCaptureFailure. Only the invocation's
@@ -203,12 +208,14 @@ type Options struct {
 	MessageRole message.Role
 	// DisableInjection captures without injecting.
 	DisableInjection bool
-	// OnCaptureFailure, OnInjectionFailure, OnInjected and OnFinalized are told what happened; each is optional,
-	// and a panic in one is recovered and ignored.
-	OnCaptureFailure   func(CaptureFailure)
-	OnInjectionFailure func(InjectionFailure)
-	OnInjected         func(InjectionResult)
-	OnFinalized        func(ae.FinalizedExperience)
+	// OnCaptureFailure, OnInjectionFailure, OnInjected, OnFinalized and OnInjectionRecorded are told what happened;
+	// each is optional, and a panic in one is recovered and ignored. OnInjectionRecorded is called from the
+	// recording's own goroutine.
+	OnCaptureFailure    func(CaptureFailure)
+	OnInjectionFailure  func(InjectionFailure)
+	OnInjected          func(InjectionResult)
+	OnFinalized         func(ae.FinalizedExperience)
+	OnInjectionRecorded func(InjectionRecordResult)
 	// Clock is ae.Now when nil.
 	Clock func() ae.Instant
 	// NewID is ae.NewRandomUUID when nil.
@@ -217,6 +224,10 @@ type Options struct {
 	// store), on its own clock, never the caller's context: past it the work is abandoned and reported, and the
 	// invocation returns. DefaultFinalizationTimeout when 0.
 	FinalizationTimeout time.Duration
+	// InjectionRecordTimeout bounds how long recording one injected block may take in the background, all chunks
+	// together: past it the write is abandoned and reported InjectionOutcomeUnknown. The invocation never waits for
+	// it. DefaultInjectionRecordTimeout when 0.
+	InjectionRecordTimeout time.Duration
 }
 
 // DefaultEnvironment is the environment a run is recorded under by default: this host, this Go runtime, this
@@ -284,6 +295,12 @@ func newSettings(options Options) (*settings, error) {
 	}
 	if options.FinalizationTimeout == 0 {
 		options.FinalizationTimeout = DefaultFinalizationTimeout
+	}
+	if options.InjectionRecordTimeout < 0 {
+		return nil, errors.New("maf: the injection record timeout must not be negative")
+	}
+	if options.InjectionRecordTimeout == 0 {
+		options.InjectionRecordTimeout = DefaultInjectionRecordTimeout
 	}
 	if options.Clock == nil {
 		options.Clock = ae.Now

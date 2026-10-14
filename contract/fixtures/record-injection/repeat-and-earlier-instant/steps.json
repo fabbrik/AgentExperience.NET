@@ -1,0 +1,55 @@
+{
+  "description": "One row per record: the count rises by one per statement that names it (a repeated ID in one statement counts once), and the instant only moves forward. The instant is stored truncated to whole microseconds.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000060-0000-4000-8000-000000000001",
+          "00000060-0000-4000-8000-000000000002"
+        ],
+        "injectedAt": "2026-03-02T10:00:00.1234567+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000060-0000-4000-8000-000000000001"
+        ],
+        "injectedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceIds": [
+          "00000060-0000-4000-8000-000000000001",
+          "00000060-0000-4000-8000-000000000001"
+        ],
+        "injectedAt": "2026-03-02T09:30:00+00:00"
+      }
+    }
+  ]
+}
