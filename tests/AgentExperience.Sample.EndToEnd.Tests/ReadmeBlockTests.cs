@@ -1,11 +1,14 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using AgentExperience.Tests.Shared;
 
 namespace AgentExperience.Sample.EndToEnd.Tests;
 
 /// <summary>
-/// Pins the Historical Reference block the repository README shows under "What an agent sees" to
-/// the block the sample really hands run B's model, byte for byte.
+/// Pins the Historical Reference block the repository README shows under "The whole block" to
+/// the block this end-to-end sample really hands run B's model, byte for byte, below the README's first screen.
+/// (The shortened block on the first screen, under "What an agent sees", comes from the README quick start and is
+/// pinned by the MAF adapter's <c>ReadmeQuickStartTests</c>.)
 /// </summary>
 /// <remarks>
 /// <para>
@@ -52,7 +55,14 @@ public class ReadmeBlockTests
         var readme = Read(ReadmeResourceName).Replace("\r\n", "\n", StringComparison.Ordinal);
 
         // The block ends with a newline; the fence closes on the line after its last line.
-        Assert.Contains("```text\n" + golden + "```", readme, StringComparison.Ordinal);
+        var fenced = "```text\n" + golden + "```";
+        var index = readme.IndexOf(fenced, StringComparison.Ordinal);
+        Assert.True(index >= 0, "The README does not show the pinned block verbatim.");
+
+        // It is the whole block, so it sits below the first screen, under its own heading.
+        var firstLine = readme.AsSpan(0, index).Count('\n') + 1;
+        Assert.True(firstLine > ReadmeFirstScreen.Lines, $"The whole block starts on README line {firstLine}, on the first screen.");
+        Assert.Contains("\n## The whole block\n", readme, StringComparison.Ordinal);
     }
 
     private static string Read(string name)

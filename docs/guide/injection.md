@@ -74,6 +74,17 @@ var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 });
 ```
 
+## Which lessons a run gets
+
+Under the [one-call setup](deployment.md#the-one-call-setup), the next run on a similar task gets a lesson if its task
+text shares at least three terms with the stored task ID, task summary and lesson (fewer when it has fewer; stopwords
+and one-letter words do not count, and PostgreSQL matches word stems), or, with an embedding generator registered, by
+meaning (see [Semantic retrieval](../../README.md#semantic-retrieval) and [Indexing](indexing.md#with-the-one-call-setup)),
+and the lesson clears the confidence floor (0.5; a new lesson starts at 2/3). [Retrieval](retrieval.md) has the full
+rule. The task text is the user's latest message (joined to the previous one when it is a short follow-up), cleaned and
+cut to 512 UTF-16 code units, and is stored as the run's description, so redact sensitive prompts first (see
+[The task text](#the-task-text), next).
+
 ## The task text
 
 Retrieval matches on `RetrieveExperienceRequest.TaskText`, so what you put there decides which lessons come back.

@@ -1,5 +1,8 @@
 # AgentExperience.Core
 
+**Memory of what *worked*, verified by your own checks, for .NET agents**: its engine. MAF agents set it up with the
+[quick start](https://github.com/fabbrik/AgentExperience.NET#quick-start) in the repository README.
+
 > **Preview — not production ready.** This is a `0.1.0-preview` package, and it claims no production readiness.
 > Public APIs may change between previews. Read
 > [Known limits and documented boundaries](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/known-limits.md)

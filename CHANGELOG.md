@@ -6,6 +6,34 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Docs: say why, plainly (story 21.5)
+
+- **README first screen.** The first 60 lines now hold what the library is (memory of what *worked*, verified by your
+  own checks, for MAF agents), the quick-start setup (now with the version it needs, `0.1.0-preview.11`, and the
+  `Microsoft.Extensions.DependencyInjection` package named) running two tickets so the second gets the first's lesson,
+  a shortened copy of the block that second run gets, the measured result table, and a link to the new comparison page.
+- **Anchors.** `#what-an-agent-sees` is now that shortened block, from the quick start; the full block, from the
+  end-to-end sample, moved to a new `#the-whole-block` section below the first screen. "In production" is a new section
+  holding the identity and PostgreSQL setup; `#semantic-retrieval` is now a top-level section.
+- **Caveats moved to the guides**, with a pointer left in the README:
+  [Starting from the quick start](docs/guide/deployment.md#starting-from-the-quick-start) (previews, packages,
+  environments, task ID, one block, failures, argument values),
+  [Which lessons a run gets](docs/guide/injection.md#which-lessons-a-run-gets) (matching and the task text) and
+  [Finalizing from the MAF adapter](docs/guide/finalization.md#finalizing-from-the-maf-adapter) (what a run is stored
+  as). One substantive addition there: a run counts as failed through a non-zero exit code only under the `ExitCode`
+  classifier, which the finalization guide now says.
+- **[Compared with MAF memory](docs/compared-with-maf-memory.md)** (new): what MAF's session chat history,
+  `ChatHistoryMemoryProvider`, `TextSearchProvider` and `FileMemoryProvider`, the Mem0 provider (Python; .NET has only
+  an old preview package) and this library each store, what decides it, what reaches the model and what each trusts;
+  when to use which, including when this library is the wrong choice (no tools, no checkable outcome, conversational
+  personalisation, one-off tasks, needing a non-preview package); and how they compose on one agent.
+- Every package README opens with the same sentence and a link to the README quick start; the storage ones say they
+  work through the MAF adapter or with Core directly, and the in-memory one starts with "For development and tests only".
+- Tests: the README's setup block is compiled and run (`ReadmeQuickStart.cs` in the MAF adapter tests): the second run's
+  block must name `run_tests [failed: exit 3], run_tests [returned]`, and the README's shortened block must be cut from
+  it, in order, each gap one `…` line. The setup, the shortened block, the result table and the comparison link must sit
+  within the first 60 lines (one shared constant), and the end-to-end sample's whole block below them.
+
 ### Retrieval: semantic retrieval when the app already has embeddings (story 21.3)
 
 - **Behaviour change: the one-call setup now uses a registered embedding generator.** When the container has a

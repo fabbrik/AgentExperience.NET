@@ -84,6 +84,6 @@ the lessons it was given, and, if you ask, a failed one contradicts them. See
 
 ## Where to go next
 
-- The [README quick start](../../README.md#quick-start) wires all of this in about 30 lines.
+- The [README quick start](../../README.md#quick-start) wires all of this in about 20 lines.
 - [Deployment](deployment.md) covers the one-call setup, explicit wiring, and the two PostgreSQL roles.
 - [Known limits and documented boundaries](../known-limits.md) states exactly what the library cannot do.

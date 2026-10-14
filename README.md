@@ -1,16 +1,71 @@
 # AgentExperience.NET
 
-[![CI](https://github.com/fabbrik/AgentExperience.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/fabbrik/AgentExperience.NET/actions/workflows/ci.yml)
-[![NuGet](https://img.shields.io/nuget/vpre/AgentExperience.Core.svg?label=nuget%20(preview))](https://www.nuget.org/packages/AgentExperience.Core)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![CI](https://github.com/fabbrik/AgentExperience.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/fabbrik/AgentExperience.NET/actions/workflows/ci.yml) [![NuGet](https://img.shields.io/nuget/vpre/AgentExperience.Core.svg?label=nuget%20(preview))](https://www.nuget.org/packages/AgentExperience.Core) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
-**Evidence-backed experience memory for .NET agents.** A preview; not production ready.
+**Memory of what *worked*, verified by your own checks, for Microsoft Agent Framework agents.**
 
-AgentExperience.NET records what an AI agent tried, checks whether it worked against evidence you supply (test
-results, exit codes, human approvals, never the model's own claim), and stores the result as a lesson. Before a later
-run on a similar task, it finds the lessons that apply and gives them to the agent as clearly labelled reference
-material. It plugs into [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) (MAF) and stores
-everything in PostgreSQL (or in memory, for development).
+When your own code says a run worked (a test run, an exit code, a person's sign-off; never the model's word), the
+library keeps what the agent tried as a lesson and hands it to the next run on a similar task. A preview, not
+production ready. How it differs from MAF's own memory: [Compared with MAF memory](docs/compared-with-maf-memory.md).
+
+## Quick start
+
+Needs `0.1.0-preview.11` or later. Add `AgentExperience.MicrosoftAgentFramework`, `AgentExperience.Storage.InMemory`
+(`--prerelease`) and `Microsoft.Extensions.DependencyInjection`; bring `chatClient` (any `IChatClient`) and
+`RunTestsAsync` (your test run, returning text such as `exit=0`). Development and tests only: see [In production](#in-production).
+
+```csharp
+using AgentExperience.MicrosoftAgentFramework;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+
+var services = new ServiceCollection();
+services.AddAgentExperience(options =>
+{
+    options.UseDevelopmentIdentity();                                 // one local identity: development and tests only
+    options.Verify = ExperienceVerifiers.ToolSucceeded("run_tests");  // your own check decides, never the model
+    options.Capture = capture =>                                      // "exit=3" in the tool's result marks it failed
+        capture.ClassifyToolResult = ExperienceToolResultClassifiers.ExitCode("run_tests");
+}).UseInMemoryStorageForDevelopment();
+await using var provider = services.BuildServiceProvider();
+AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket", tools: [AIFunctionFactory.Create(RunTestsAsync, "run_tests")])
+    .AsBuilder().UseAgentExperience(provider).Build();
+await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
+await agent.RunAsync("Ticket #4977: a refund is stuck on a lock again. Triage it.");  // gets the lesson
+```
+
+## What an agent sees
+
+The quick start's second run gets this block (shortened; [the whole block](#the-whole-block) is from another sample):
+
+```text
+=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===
+…
+Lesson: Verified after 1 attempt. Worked: attempt 0. Checks: [run_tests].
+Tried:
+  - attempt 0: run_tests [failed: exit 3], run_tests [returned] → completed
+…
+=== END HISTORICAL REFERENCE ===
+```
+
+## Does it help?
+
+On one synthetic task, for the two models tried, yes. Mean failed attempts per task in a [live experiment](experiments/AgentExperience.LiveReuse/README.md):
+
+| Model | No memory | Memory | Placebo | Stale |
+| --- | ---: | ---: | ---: | ---: |
+| Gemini `gemini-3.1-flash-lite` ([report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md); pre-registered, confirmatory) | 2.17 | **0.00** | 2.42 | 2.75 |
+| Claude `claude-haiku-4-5` ([report](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md); exploratory replication) | 2.75 | **0.83** | 2.42 | 2.67 |
+
+The experiment (opt-in, real models) gives the model a tool with one hidden working strategy, on 12 task instances, and
+compares memory against no memory, a placebo block with the strategy withheld, and stale experience.
+
+Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
+the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
+general. A harder experiment, where the lesson has to transfer to a different system through the library's own
+retrieval, is [in progress, no live results yet](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment).
+The samples and the reuse baseline use scripted models: they show the loop works, not that it helps.
 
 ## Try it in a minute
 
@@ -34,10 +89,11 @@ The stand-in is a script that tries first whatever strategy an injected block na
 not that it helps a real model ([Does it help?](#does-it-help) is about that). Set `OPENAI_API_KEY` to run it against
 one; see [the sample's README](samples/AgentExperience.Sample.QuickStart/README.md).
 
-## What an agent sees
+## The whole block
 
-This is the block the [end-to-end sample](samples/AgentExperience.Sample.EndToEnd/README.md) hands its second run,
-verbatim (a test keeps the two identical). The first run failed once, then verified; the second run gets this:
+The excerpt above comes from the quick start. This whole block comes from the
+[end-to-end sample](samples/AgentExperience.Sample.EndToEnd/README.md), which hands it to its second run, verbatim (a test
+keeps the two identical). There the first run failed once, then verified; the second run gets this:
 
 ```text
 === BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===
@@ -66,92 +122,13 @@ Raw tool results never appear. An argument value appears only for a key kept at 
 listed in `ExperienceInjectionOptions.ApproachArguments`; error text appears only as an excerpt of a failed attempt's
 error, with `FailureDetail = Excerpt`, and never in a call's `[failed: <class>]` marker (`[failed]` under `None`). The [Injection guide](docs/guide/injection.md#what-the-agent-sees) covers the verbose layout, limits and labels.
 
-## Does it help?
+## In production
 
-On one synthetic task, for the two models tried, yes. An opt-in live experiment
-([`experiments/AgentExperience.LiveReuse`](experiments/AgentExperience.LiveReuse/README.md)) gives a real model a tool
-with one hidden working strategy, on 12 task instances, and compares memory against no memory, a placebo block with the
-strategy withheld, and stale experience. Mean failed attempts per task:
+The [quick start](#quick-start) is for development and tests. Its caveats (which previews it needs, the environments
+it runs in, when a run is stored, how a later run finds the lesson, the task text and task ID, argument values) are
+in [Starting from the quick start](docs/guide/deployment.md#starting-from-the-quick-start).
 
-| Model | No memory | Memory | Placebo | Stale |
-| --- | ---: | ---: | ---: | ---: |
-| Gemini `gemini-3.1-flash-lite` ([report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md); pre-registered, confirmatory) | 2.17 | **0.00** | 2.42 | 2.75 |
-| Claude `claude-haiku-4-5` ([report](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md); exploratory replication) | 2.75 | **0.83** | 2.42 | 2.67 |
-
-Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
-the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
-general. A harder experiment, where the lesson has to transfer to a different system through the library's own
-retrieval, is [in progress, no live results yet](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment).
-The samples and the reuse baseline use scripted models: they show the loop works, not that it helps.
-
-## Quick start
-
-This wires the loop for one MAF agent, with the in-memory storage (development and tests only, nothing survives
-a restart): inject past lessons before each run, and capture, verify and store each run after it. It needs
-`0.1.0-preview.11` or later; from `0.1.0-preview.7` to `0.1.0-preview.10`, set `ResolveIdentity` as shown under
-*In production* below and also give the agent `provider.GetAgentExperienceContextProvider()` in
-`ChatClientAgentOptions.AIContextProviders`, and earlier previews have only the
-[explicit wiring](docs/guide/deployment.md#explicit-wiring).
-Install `AgentExperience.MicrosoftAgentFramework` and `AgentExperience.Storage.InMemory` (`--prerelease`), plus
-`Microsoft.Extensions.DependencyInjection` for `BuildServiceProvider` if your app does not already have it.
-You supply `chatClient` (any `Microsoft.Extensions.AI` `IChatClient`) and `RunTestsAsync`, your own test run, given to
-the agent as its `run_tests` tool and returning text such as `exit=0`.
-The in-memory storage and `UseDevelopmentIdentity()` refuse any environment but `Development`, `Test` or `Testing`,
-read from the host environment, else `DOTNET_ENVIRONMENT`, else `ASPNETCORE_ENVIRONMENT`; a console app with none set,
-like this one, needs nothing.
-
-```csharp
-using AgentExperience.MicrosoftAgentFramework;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
-
-var services = new ServiceCollection();
-services.AddAgentExperience(options =>
-{
-    // Who the run is for: one fixed local identity, for development and tests only (see below for production).
-    options.UseDevelopmentIdentity();
-    // Your own checks, never the model's word: the run passes when its last run_tests call succeeded.
-    // Without Verify, runs are captured but nothing is stored.
-    options.Verify = ExperienceVerifiers.ToolSucceeded("run_tests");
-    // run_tests reports failure in its result ("exit=3"), not by throwing:
-    // a non-zero exit code marks the call failed.
-    options.Capture = capture =>
-        capture.ClassifyToolResult = ExperienceToolResultClassifiers.ExitCode("run_tests");
-}).UseInMemoryStorageForDevelopment();
-await using var provider = services.BuildServiceProvider();
-
-// Inject the lessons that apply before each run; capture, verify and store each run after it.
-AITool runTests = AIFunctionFactory.Create(RunTestsAsync, "run_tests");
-AIAgent agent = new ChatClientAgent(chatClient, name: "triage-ticket", tools: [runTests])
-    .AsBuilder().UseAgentExperience(provider).Build();
-var response = await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
-```
-
-The first run finds nothing to inject. After it, `Verify` looks at the run's last `run_tests` call: one that returned
-stores the lesson as `Validated`, one that failed (it threw, or returned a non-zero exit code) as `Quarantined` (never
-reused), and a run that never called it is not stored. The next run's lesson names every call, so a run that failed with
-`exit=3` and then passed shows `run_tests [failed: exit 3], run_tests [returned]`. For a check of your own or a
-person's sign-off, use `ExperienceVerifiers.Check(...)` or `ExperienceVerifiers.Approval(...)` (combine them with
-`AllOf`/`AnyOf`; see [Built-in verifiers](docs/guide/deployment.md#built-in-verifiers)), and pass a real
-`artifactRevision` (a build or commit) when the code under test changes between runs.
-The next run on a similar task gets the lesson if its task text shares at least three
-terms with the stored task ID, task summary and lesson (fewer when it has fewer; stopwords and one-letter words do not
-count, and PostgreSQL matches word stems), or, with an embedding generator registered, by meaning (see
-[Semantic retrieval](#semantic-retrieval)), and the
-lesson clears the confidence floor (0.5; a new lesson starts at 2/3). The task text is the user's latest message (joined to
-the previous one when it is a short follow-up), cleaned and cut to 512 UTF-16 code units, and is stored as the run's description, so redact sensitive prompts first
-(see [The task text](docs/guide/injection.md#the-task-text)). Each run is stored under the agent's name as its task ID
-(`triage-ticket`; `options.TaskId` or `options.ResolveTaskId` sets another, and an unnamed agent's is `default`).
-`UseAgentExperience` wires capture and injection both; an agent that also lists
-`provider.GetAgentExperienceContextProvider()` in `ChatClientAgentOptions.AIContextProviders` still gets exactly one
-block, and that wiring also lets injection see the replayed chat history and a run's own tools. Nothing throws into the agent: a slow store or `ResolveIdentity` means no memory for
-that run, reported through `options.Capture` and `options.Injection` callbacks. No tool argument value is kept until
-you allowlist it (`AgentExperienceDefaults.SanitizationAllowing("ticketId")`), and secret-named fields are redacted.
-The [one-call setup](docs/guide/deployment.md#the-one-call-setup) lists every option and default, and the
-[quick-start sample](samples/AgentExperience.Sample.QuickStart/README.md) runs this wiring.
-
-**In production**, the identity comes from your own authentication, never from model output: replace
+**Identity.** In production the identity comes from your own authentication, never from model output: replace
 `UseDevelopmentIdentity()` with a resolver (returning `null` means no memory for that run).
 
 ```csharp
@@ -180,7 +157,7 @@ The setup never migrates a schema on its own. To let reuse raise a lesson's conf
 `options.ReuseEvidence = ReuseEvidenceMode.SameTask` (`AgentExperience.Core.Finalization`); add `ContradictOnFailure = true` to let a failed run lower it
 (both off by default; see [Letting reuse move confidence](docs/guide/confidence.md#letting-reuse-move-confidence)).
 
-### Semantic retrieval
+## Semantic retrieval
 
 By default a lesson is found by its words. If your container has a `Microsoft.Extensions.AI`
 `IEmbeddingGenerator<string, Embedding<float>>` (registered before or after `AddAgentExperience`), the setup also finds
@@ -256,6 +233,7 @@ previews fixed is in [Limits history](docs/limits-history.md).
 | --- | --- |
 | [Concepts in five minutes](docs/guide/concepts.md) | The mental model, in one diagram |
 | [Guide overview and glossary](docs/guide/README.md) | Every page, and the terms used throughout |
+| [Compared with MAF memory](docs/compared-with-maf-memory.md) | MAF's memory providers and this library: what each stores and trusts, and when to use which |
 | [Deployment](docs/guide/deployment.md) | The one-call setup, explicit wiring, the two database roles, the trust boundary |
 | [Capture](docs/guide/capture.md) · [Finalization](docs/guide/finalization.md) · [Lifecycle](docs/guide/lifecycle.md) · [Confidence](docs/guide/confidence.md) | The learning loop, step by step |
 | [Retrieval](docs/guide/retrieval.md) · [Indexing](docs/guide/indexing.md) · [Injection](docs/guide/injection.md) · [Reuse feedback](docs/guide/reuse-feedback.md) | Finding, ranking, delivering and scoring lessons |
