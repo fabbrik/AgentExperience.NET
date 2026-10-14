@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](../contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: pre-release, contract 1.0, with a Microsoft Agent Framework integration (the `maf` extra).** It passes
-every fixture of contract 1.0. It is not published to PyPI. The distribution and import name `agentexperience` are
+**Status: pre-release, contract 1.1, with a Microsoft Agent Framework integration (the `maf` extra).** It passes
+every fixture of contract 1.1. It is not published to PyPI. The distribution and import name `agentexperience` are
 provisional until the package is named, and both live in one place (`pyproject.toml` and `src/agentexperience/`).
 
 ## Quick start with Microsoft Agent Framework
@@ -270,8 +270,9 @@ The PostgreSQL tests (`tests/test_postgres.py` and the cross-language tests, mar
 read it back row for row, and run every search fixture, then rank. Each test database is migrated with the .NET
 migrator's own scripts from
 [`src/AgentExperience.Storage.Postgres/Migrations`](../src/AgentExperience.Storage.Postgres/Migrations), in order;
-the application role's privileges are replayed by a small helper in `tests/_postgres.py`, whose docstring says what
-it mirrors. The server is a Testcontainers `postgres` container (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or
+the application role's privileges are the contract's
+[`sql/application-role-privileges.sql`](../contract/sql/application-role-privileges.sql), which a .NET test keeps
+identical to the statements the .NET migrator runs. The server is a Testcontainers `postgres` container (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or
 the server libpq's `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` name (a superuser). With neither, they are skipped.
 On a Mac with Rancher Desktop or Colima, Testcontainers may need:
 

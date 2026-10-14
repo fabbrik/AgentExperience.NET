@@ -1,0 +1,98 @@
+[
+  {
+    "error": "exit\u001C2",
+    "class": "unclassified error"
+  },
+  {
+    "error": "exit\u001F2",
+    "class": "unclassified error"
+  },
+  {
+    "error": "status\u001D503",
+    "class": "unclassified error"
+  },
+  {
+    "error": "x\u001CENOENT",
+    "class": "ENOENT"
+  },
+  {
+    "error": "ENOENT\u001Ex",
+    "class": "ENOENT"
+  },
+  {
+    "error": "́ENOENT",
+    "class": "unclassified error"
+  },
+  {
+    "error": "ENOENT́",
+    "class": "unclassified error"
+  },
+  {
+    "error": "⃝ENOENT",
+    "class": "ENOENT"
+  },
+  {
+    "error": "\u200DENOENT",
+    "class": "unclassified error"
+  },
+  {
+    "error": "ENOENT\u200D",
+    "class": "unclassified error"
+  },
+  {
+    "error": "ःENOENT",
+    "class": "ENOENT"
+  },
+  {
+    "error": "‿ENOENT",
+    "class": "unclassified error"
+  },
+  {
+    "error": "ENOENT‿",
+    "class": "unclassified error"
+  },
+  {
+    "error": "_ENOENT",
+    "class": "unclassified error"
+  },
+  {
+    "error": "ſtatus 503",
+    "class": "unclassified error"
+  },
+  {
+    "error": "STATUS 503",
+    "class": "status 503"
+  },
+  {
+    "error": "İTIMEDOUT",
+    "class": "unclassified error"
+  },
+  {
+    "error": "tımed out",
+    "class": "unclassified error"
+  },
+  {
+    "error": "TIMED OUT",
+    "class": "Timeout"
+  },
+  {
+    "error": "KeyNotFoundException: the Kelvin sign",
+    "class": "unclassified error"
+  },
+  {
+    "error": "KeyNotFoundExceptioń: a combining mark after the type name",
+    "class": "unclassified error"
+  },
+  {
+    "error": "System.TimeoutException\u200D: a zero-width joiner after the type name",
+    "class": "unclassified error"
+  },
+  {
+    "error": "HTTP\u00A0503",
+    "class": "HTTP 503"
+  },
+  {
+    "error": "exit\u20002",
+    "class": "exit 2"
+  }
+]

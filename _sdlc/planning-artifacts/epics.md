@@ -2169,6 +2169,14 @@ Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview sin
 
 **Acceptance Criteria:** **Given** a Python MAF agent **When** it uses the package's context provider and capture middleware with a built-in verifier **Then** it captures, verifies, stores and injects lessons through the 22.2 core. A lesson written by .NET is injected by Python and vice versa, and a runnable sample mirrors the .NET quick start.
 
-### Story 22.4: Go Capture and Injection
+### Story 22.4: Contract 1.1, the Edges Ports Get Wrong
 
-**Acceptance Criteria:** As 22.2 and 22.3, for the Go SDK.
+**Acceptance Criteria:** **Given** the edge cases the Python review found matched only by construction **When** contract 1.1 is published **Then** .NET-generated fixtures pin them, and the Python core passes 1.1. The cases: U+001C–U+001F as non-whitespace, dotless i, long s and dotted I under ordinal-ignore-case and in neutralization, -0, lone surrogates in ID derivation, out-of-range instants and durations refused, huge integers and non-finite numbers in arguments. The application-role privilege statements are published as a contract SQL file, which the .NET migrator is tested to agree with, and the Python tests use it instead of their hand-replayed grants.
+
+### Story 22.5: Go Core That Passes the Contract
+
+**Acceptance Criteria:** As 22.2, for Go: a Go module that reproduces every contract 1.1 fixture, stores and searches through PostgreSQL with the contract SQL, and runs in CI.
+
+### Story 22.6: Go MAF Capture and Injection
+
+**Acceptance Criteria:** As 22.3, for the Microsoft Agent Framework Go SDK (public preview since 2026-07-10), with the cross-language proof against .NET.

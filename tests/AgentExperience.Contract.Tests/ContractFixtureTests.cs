@@ -90,26 +90,54 @@ public sealed partial class ContractFixtureTests
     }
 
     [Fact]
-    public void The_error_class_fixture_is_what_the_classifier_returns()
+    public void The_error_class_fixtures_are_what_the_classifier_returns()
     {
-        // Inputs and answers in one file: the errors are the case definitions, the classes are the library's.
+        // Inputs and answers in one file: the errors are the case definitions, the classes are the library's. cases.json is
+        // contract 1.0's; cases-1.1.json holds the cases 1.1 added, so 1.0's file stays as it was published.
         var drift = new List<string>();
-        var path = $"fixtures/{ErrorClassContract.Family}/cases.json";
-        ContractFiles.Verify(path, ContractJson.Write(ErrorClassContract.Run()), drift);
-
-        if (ContractFiles.Read(path) is { } text)
+        foreach (var (file, cases) in new[] { ("cases.json", ErrorClassContract.Run()), (ErrorClassContract.AddedFileName, ErrorClassContract.RunAdded()) })
         {
-            foreach (var entry in ContractJson.Read<List<ErrorClassCase>>(text))
+            var path = $"fixtures/{ErrorClassContract.Family}/{file}";
+            ContractFiles.Verify(path, ContractJson.Write(cases), drift);
+
+            if (ContractFiles.Read(path) is { } text)
             {
-                var actual = AgentExperience.Core.Reflections.ErrorClass.Of(entry.Error);
-                if (actual != entry.Class)
+                foreach (var entry in ContractJson.Read<List<ErrorClassCase>>(text))
                 {
-                    drift.Add($"{path}: the class of {entry.Error?[..Math.Min(entry.Error.Length, 40)]} is now '{actual}', not '{entry.Class}'.");
+                    var actual = AgentExperience.Core.Reflections.ErrorClass.Of(entry.Error);
+                    if (actual != entry.Class)
+                    {
+                        drift.Add($"{path}: the class of {entry.Error?[..Math.Min(entry.Error.Length, 40)]} is now '{actual}', not '{entry.Class}'.");
+                    }
                 }
             }
         }
 
-        ContractFiles.VerifyNoStray(ErrorClassContract.Family, [], [], drift, "cases.json");
+        ContractFiles.VerifyNoStray(ErrorClassContract.Family, [], [], drift, "cases.json", ErrorClassContract.AddedFileName);
+        Relock(drift);
+        ContractFiles.AssertNoDrift(drift);
+    }
+
+    [Fact]
+    public void The_encoding_fixture_is_what_the_library_reads_and_derives()
+    {
+        var drift = new List<string>();
+        var path = $"fixtures/{EncodingContract.Family}/{EncodingContract.FileName}";
+        ContractFiles.Verify(path, ContractJson.Write(EncodingContract.Run()), drift);
+
+        if (ContractFiles.Read(path) is { } text)
+        {
+            foreach (var (entry, index) in ContractJson.Read<List<EncodingCase>>(text).Select((entry, index) => (entry, index)))
+            {
+                var again = EncodingContract.Rerun(entry);
+                if (again.Valid != entry.Valid || !JsonNode.DeepEquals(again.Canonical, entry.Canonical))
+                {
+                    drift.Add($"{path}[{index}]: the library now answers {again.Valid} {again.Canonical?.ToJsonString()} for this {entry.Kind}.");
+                }
+            }
+        }
+
+        ContractFiles.VerifyNoStray(EncodingContract.Family, [], [], drift, EncodingContract.FileName);
         Relock(drift);
         ContractFiles.AssertNoDrift(drift);
     }
@@ -183,11 +211,80 @@ public sealed partial class ContractFixtureTests
     }
 
     [Fact]
-    public void The_readme_names_the_version_the_fixtures_are_locked_under()
+    public void The_application_role_privileges_are_the_statements_the_migrator_runs()
     {
+        // On a schema the migrator has just applied: every non-optional table exists, and none has row-level security yet.
+        const string role = ":\"application_role\"";
+        var tables = ApplicationRolePrivileges.Tables.Where(table => !table.Optional).Select(table => table.Name).ToHashSet(StringComparer.Ordinal);
+        var fresh = tables.ToDictionary(
+            table => table,
+            _ => new ApplicationRolePrivileges.RowSecurityState(Enabled: false, Forced: false, Policies: []),
+            StringComparer.Ordinal);
+        var (always, rowLevelSecurity) = PrivilegeStatements(ContractFiles.Read("sql/application-role-privileges.sql")!);
+
+        foreach (var enable in new[] { false, true })
+        {
+            var options = new ExperienceApplicationRoleOptions("contract_app") { EnableRowLevelSecurity = enable };
+            List<string> expected =
+            [
+                .. ApplicationRolePrivileges.Statements(role, tables, options),
+                .. ApplicationRolePrivileges.RowLevelSecurityStatements(fresh, tables, enable),
+            ];
+            Assert.Equal(expected, enable ? [.. always, .. rowLevelSecurity] : always);
+        }
+    }
+
+    /// <summary>
+    /// <c>sql/application-role-privileges.sql</c>'s statements: those under <c>-- mode: always</c>, and those under
+    /// <c>-- mode: row-level-security</c>. Each is one line ending in <c>;</c>, returned without it; other comment lines are skipped.
+    /// </summary>
+    private static (List<string> Always, List<string> RowLevelSecurity) PrivilegeStatements(string sql)
+    {
+        List<string> always = [];
+        List<string> rowLevelSecurity = [];
+        List<string>? current = null;
+        foreach (var line in sql.Split('\n').Where(line => line.Length > 0))
+        {
+            if (ModeMarker().IsMatch(line))
+            {
+                current = line switch
+                {
+                    "-- mode: always" => always,
+                    "-- mode: row-level-security" => rowLevelSecurity,
+                    _ => throw new Xunit.Sdk.XunitException(
+                        $"Unknown mode marker '{line}': the markers are '-- mode: always' and '-- mode: row-level-security'."),
+                };
+                continue;
+            }
+
+            if (line.StartsWith("--", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            Assert.True(current is not null, $"A statement before any mode marker: {line}");
+            Assert.True(line.EndsWith(';') && line.IndexOf(';') == line.Length - 1, $"Not one statement on one line ending in ';': {line}");
+            current.Add(line[..^1]);
+        }
+
+        return (always, rowLevelSecurity);
+    }
+
+    [Fact]
+    public void The_readmes_name_the_major_version_and_every_minor_version_the_fixtures_are_locked_under()
+    {
+        // The README is the major version's and never changes within it; each minor version N adds README-major.N.md.
+        var parts = ContractFiles.ContractVersion.Split('.');
+        var (major, minor) = (int.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture), int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture));
         var readme = ContractFiles.Read("README.md")!;
-        Assert.Contains($"**Version: `{ContractFiles.ContractVersion}`.**", readme, StringComparison.Ordinal);
+        Assert.Contains($"**Version: `{major}.0`.**", readme, StringComparison.Ordinal);
         Assert.Contains($"`payload_version` {ExperiencePayload.CurrentVersion}", readme, StringComparison.Ordinal);
+        for (var version = 1; version <= minor; version++)
+        {
+            var additions = ContractFiles.Read($"README-{major}.{version}.md");
+            Assert.True(additions is not null, $"README-{major}.{version}.md is missing.");
+            Assert.StartsWith($"# Contract {major}.{version}: additions\n", additions, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -224,6 +321,9 @@ public sealed partial class ContractFixtureTests
     /// <summary>A SQL file's statement: its leading <c>--</c> comment lines removed, and the trailing line break.</summary>
     internal static string Statement(string sql) =>
         string.Join('\n', sql.Split('\n').SkipWhile(line => line.StartsWith("--", StringComparison.Ordinal))).TrimEnd('\n');
+
+    [GeneratedRegex(@"^--\s*mode\b", RegexOptions.IgnoreCase)]
+    private static partial Regex ModeMarker();
 
     [GeneratedRegex(@"(p_\w+) => @\w+")]
     private static partial Regex NamedArgument();

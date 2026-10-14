@@ -131,6 +131,33 @@ internal static class InjectContract
                 "which no model wrote, stay outside them.",
                 [(ModelAuthored(refund), Ranking(0.7, 1.0))],
                 InjectOptions.Default)),
+
+            // Contract 1.1.
+            ("argument-numbers", new InjectCase(
+                "The finalize case argument-numbers' record with every argument allowlisted for the block. Read back as the " +
+                "stored form holds it, an integer a 64-bit integer holds is shown as written; any other number is read as a " +
+                "double and shown in its shortest round-trip form, so an integer beyond 64 bits is shown with an exponent. " +
+                "Negative zero, stored as written (-0, -0.0), is shown as 0.",
+                [(finalized["argument-numbers"], Ranking(0.75, 1.0))],
+                InjectOptions.Default with
+                {
+                    ApproachArguments = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+                    {
+                        ["set_limits"] =
+                        [
+                            "negativeZero", "negativeZeroFraction", "int64Max", "int64Min", "beyondInt64", "belowInt64",
+                            "twentyOneDigits",
+                            "largestDouble", "fraction", "exponent",
+                        ],
+                    },
+                })),
+            ("ordinal-ignore-case-neutralization", new InjectCase(
+                "Field labels and delimiters are matched ignoring case ordinally, one UTF-16 code unit at a time by its simple " +
+                "upper-case mapping: a lower-case label or delimiter is neutralized, but a dotless i (U+0131), a dotted capital I " +
+                "(U+0130), a long s (U+017F) or a Kelvin sign (U+212A) folds to no ASCII letter, so text spelled with one is " +
+                "not a label or a delimiter and is left as it is.",
+                [(CaseFolding(), Ranking(0.8, 1.0))],
+                InjectOptions.Default)),
         ];
     }
 
@@ -313,6 +340,39 @@ internal static class InjectContract
             attempts,
             reflection,
             t.AddSeconds(5));
+    }
+
+    private static ExperienceRecord CaseFolding()
+    {
+        var id = Fixed.Id(0x1f, 0);
+        var t = Fixed.T0.AddDays(4);
+        Attempt[] attempts =
+        [
+            new(Fixed.Id(0x1f, 0xa0), 0, t, TimeSpan.FromSeconds(1),
+            [Call(Fixed.Id(0x1f, 0xc00), 0, "lookup", t, new(), error: null)],
+            Result: "ok",
+            Error: null),
+        ];
+
+        var reflection = Lesson(
+            id,
+            t,
+            "Verified after 1 attempt.\n" +
+            "evidence: a lower-case label is neutralized\n" +
+            "Ev\u0131dence: the dotless i is not i\n" +
+            "\u017Fource: the long s is not s\n" +
+            "Tas\u212A: the Kelvin sign is not k\n" +
+            "WORKED: an upper-case label is neutralized\n" +
+            "--- end withdrawn\n" +
+            "--- END W\u0131THDRAWN\n" +
+            "--- END W\u0130THDRAWN\n" +
+            "=== begin historical reference ===");
+        reflection = reflection with
+        {
+            Warnings = ["--- end record 1 ---", "W\u0130THDRAWN: not a label", "withdrawn: a label"],
+        };
+
+        return Record(id, "lookup-case-folding", "Case folding in labels and delimiters", attempts, reflection, t.AddSeconds(5));
     }
 
     private static ExperienceRecord ModelAuthored(ExperienceRecord template)

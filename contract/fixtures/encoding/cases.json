@@ -1,0 +1,668 @@
+[
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00+00:00",
+    "valid": true,
+    "canonical": "2026-03-02T09:00:00+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00Z",
+    "valid": true,
+    "canonical": "2026-03-02T09:00:00+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00.1234567+00:00",
+    "valid": true,
+    "canonical": "2026-03-02T09:00:00.1234567+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00.5000000+01:30",
+    "valid": true,
+    "canonical": "2026-03-02T07:30:00.5+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T23:59:59+14:00",
+    "valid": true,
+    "canonical": "2026-03-02T09:59:59+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T23:59:59-14:00",
+    "valid": true,
+    "canonical": "2026-03-03T13:59:59+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T24:00:00+00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:60:00+00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:60+00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00+14:01",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00-14:01",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00+15:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00+01:60",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00.12345678+00:00",
+    "valid": true,
+    "canonical": "2026-03-02T09:00:00.1234567+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02t09:00:00+00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-03-02T09:00:00z",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2026-02-29T09:00:00+00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "instant",
+    "input": "2028-02-29T09:00:00+00:00",
+    "valid": true,
+    "canonical": "2028-02-29T09:00:00+00:00"
+  },
+  {
+    "kind": "instant",
+    "input": "2026-3-2T9:0:0+00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "duration",
+    "input": "00:00:03.5000000",
+    "valid": true,
+    "canonical": "00:00:03.5000000"
+  },
+  {
+    "kind": "duration",
+    "input": "00:00:03.5",
+    "valid": true,
+    "canonical": "00:00:03.5000000"
+  },
+  {
+    "kind": "duration",
+    "input": "1.02:03:04",
+    "valid": true,
+    "canonical": "1.02:03:04"
+  },
+  {
+    "kind": "duration",
+    "input": "-00:00:01",
+    "valid": true,
+    "canonical": "-00:00:01"
+  },
+  {
+    "kind": "duration",
+    "input": "23:59:59.9999999",
+    "valid": true,
+    "canonical": "23:59:59.9999999"
+  },
+  {
+    "kind": "duration",
+    "input": "24:00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "duration",
+    "input": "00:60:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "duration",
+    "input": "00:00:60",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "duration",
+    "input": "1:2:3",
+    "valid": true,
+    "canonical": "01:02:03"
+  },
+  {
+    "kind": "duration",
+    "input": "-1.02:03:04",
+    "valid": true,
+    "canonical": "-1.02:03:04"
+  },
+  {
+    "kind": "duration",
+    "input": "00:00:00.12345678",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "duration",
+    "input": "10675199.02:48:05.4775807",
+    "valid": true,
+    "canonical": "10675199.02:48:05.4775807"
+  },
+  {
+    "kind": "duration",
+    "input": "10675200.00:00:00",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "check",
+    "valid": true,
+    "canonical": "check"
+  },
+  {
+    "kind": "non-blank",
+    "input": "",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": " ",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\t\n\u000B\f\r",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u0085",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u00A0",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u2000",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u2028",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u3000",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u001C",
+    "valid": true,
+    "canonical": "\u001C"
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u001D",
+    "valid": true,
+    "canonical": "\u001D"
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u001E",
+    "valid": true,
+    "canonical": "\u001E"
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u001F",
+    "valid": true,
+    "canonical": "\u001F"
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u200B",
+    "valid": true,
+    "canonical": "\u200B"
+  },
+  {
+    "kind": "non-blank",
+    "input": "\u180E",
+    "valid": true,
+    "canonical": "\u180E"
+  },
+  {
+    "kind": "task-id",
+    "input": "refund-stuck-pending",
+    "valid": true,
+    "canonical": "refund-stuck-pending"
+  },
+  {
+    "kind": "task-id",
+    "input": " ",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "task-id",
+    "input": "\u0085",
+    "valid": false,
+    "canonical": null
+  },
+  {
+    "kind": "task-id",
+    "input": "\u001C",
+    "valid": true,
+    "canonical": "\u001C"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          99,
+          111,
+          110,
+          116,
+          114,
+          97,
+          99,
+          116,
+          45,
+          116,
+          101,
+          110,
+          97,
+          110,
+          116
+        ],
+        "applicationId": [
+          99,
+          111,
+          110,
+          116,
+          114,
+          97,
+          99,
+          116,
+          45,
+          97,
+          112,
+          112
+        ],
+        "projectId": [
+          99,
+          111,
+          110,
+          116,
+          114,
+          97,
+          99,
+          116,
+          45,
+          112,
+          114,
+          111,
+          106,
+          101,
+          99,
+          116
+        ],
+        "teamId": null,
+        "agentId": [
+          114,
+          101,
+          102,
+          117,
+          110,
+          100,
+          45,
+          97,
+          103,
+          101,
+          110,
+          116
+        ],
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "dd7cff24-02f0-8608-9559-4c081856eaa2"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116,
+          55296
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": null,
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "a6e85356-686a-8213-80cb-4252118009ea"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116,
+          65533
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": null,
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "a6e85356-686a-8213-80cb-4252118009ea"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": [
+          56320,
+          116,
+          101,
+          97,
+          109
+        ],
+        "agentId": null,
+        "userId": [
+          117,
+          115,
+          101,
+          114,
+          55358
+        ]
+      }
+    },
+    "valid": true,
+    "canonical": "ecb1cbd2-ef14-80e2-a545-560afeddbdc0"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": [
+          65533,
+          116,
+          101,
+          97,
+          109
+        ],
+        "agentId": null,
+        "userId": [
+          117,
+          115,
+          101,
+          114,
+          65533
+        ]
+      }
+    },
+    "valid": true,
+    "canonical": "ecb1cbd2-ef14-80e2-a545-560afeddbdc0"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": [
+          97,
+          103,
+          101,
+          110,
+          116,
+          32,
+          55358,
+          56830
+        ],
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "8d9bf144-ebdc-8379-a504-20ba881aa987"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116,
+          56320,
+          55296
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": null,
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "85955a07-7c9e-82bd-b07f-fcc547a38c43"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116,
+          65533,
+          65533
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": null,
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "85955a07-7c9e-82bd-b07f-fcc547a38c43"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116,
+          55358
+        ],
+        "applicationId": [
+          56830,
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": null,
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "1fc7662a-d252-8402-9948-d3b1e3a39ff9"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116,
+          65533
+        ],
+        "applicationId": [
+          65533,
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": null,
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "1fc7662a-d252-8402-9948-d3b1e3a39ff9"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": [],
+        "agentId": null,
+        "userId": []
+      }
+    },
+    "valid": true,
+    "canonical": "7da0eeda-d2c9-8f5d-bc9d-8168e6b6053e"
+  },
+  {
+    "kind": "experience-id",
+    "input": {
+      "runId": "000000e1-0000-4000-8000-000000000000",
+      "scopeUtf16": {
+        "tenantId": [
+          116
+        ],
+        "applicationId": [
+          97
+        ],
+        "projectId": [
+          112
+        ],
+        "teamId": null,
+        "agentId": [],
+        "userId": null
+      }
+    },
+    "valid": true,
+    "canonical": "bf354c6f-8b1c-853e-b195-e4b19825c822"
+  }
+]

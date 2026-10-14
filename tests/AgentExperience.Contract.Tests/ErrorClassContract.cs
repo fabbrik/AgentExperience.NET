@@ -13,6 +13,9 @@ internal static class ErrorClassContract
 {
     public const string Family = "error-class";
 
+    /// <summary>The file of the cases contract 1.1 added.</summary>
+    public const string AddedFileName = "cases-1.1.json";
+
     /// <summary>The errors every case reduces; the class is the library's answer.</summary>
     public static IReadOnlyList<string?> Errors { get; } =
     [
@@ -43,6 +46,44 @@ internal static class ErrorClassContract
         "status 503",
         new string('y', 8_180) + " TimeoutException straddles the scanned prefix",
     ];
+
+    /// <summary>
+    /// The errors contract 1.1 adds, in <c>fixtures/error-class/cases-1.1.json</c>: the edges of .NET's regular expression
+    /// that another engine gets wrong. <c>\s</c> is not the information separators U+001C to U+001F (it is U+00A0 and
+    /// U+2000); <c>\w</c> and <c>\b</c> count non-spacing marks (Mn), connector punctuation (Pc) and the zero-width joiner
+    /// as word characters, but not an enclosing (Me) or spacing (Mc) mark; case-insensitive matching folds no non-ASCII
+    /// letter (the long s, the dotless i, the dotted capital I) to an ASCII one; and a type name opens with an ASCII
+    /// capital, which the Kelvin sign is not.
+    /// </summary>
+    public static IReadOnlyList<string?> AddedErrors { get; } =
+    [
+        "exit\u001C2",
+        "exit\u001F2",
+        "status\u001D503",
+        "x\u001CENOENT",
+        "ENOENT\u001Ex",
+        "\u0301ENOENT",
+        "ENOENT\u0301",
+        "\u20DDENOENT",
+        "\u200DENOENT",
+        "ENOENT\u200D",
+        "\u0903ENOENT",
+        "\u203FENOENT",
+        "ENOENT\u203F",
+        "_ENOENT",
+        "\u017Ftatus 503",
+        "STATUS 503",
+        "\u0130TIMEDOUT",
+        "t\u0131med out",
+        "TIMED OUT",
+        "\u212AeyNotFoundException: the Kelvin sign",
+        "KeyNotFoundException\u0301: a combining mark after the type name",
+        "System.TimeoutException\u200D: a zero-width joiner after the type name",
+        "HTTP\u00A0503",
+        "exit\u20002",
+    ];
+
+    public static IReadOnlyList<ErrorClassCase> RunAdded() => [.. AddedErrors.Select(error => new ErrorClassCase(error, ErrorClass.Of(error)))];
 
     public static IReadOnlyList<ErrorClassCase> Run() => [.. Errors.Select(error => new ErrorClassCase(error, ErrorClass.Of(error)))];
 }

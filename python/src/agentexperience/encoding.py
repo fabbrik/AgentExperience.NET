@@ -15,9 +15,12 @@ _TICKS_PER_DAY = 86_400 * TICKS_PER_SECOND
 
 _INSTANT = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})T(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})(?:\.(?P<f>\d+))?"
-    r"(?P<offset>Z|[+-]\d{2}:\d{2})$"
+    r"(?P<offset>Z|[+-]\d{2}:\d{2})\Z"
 )
-_DURATION = re.compile(r"^(?P<sign>-)?(?:(?P<d>\d+)\.)?(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})(?:\.(?P<f>\d{1,7}))?$")
+_DURATION = re.compile(
+    r"^(?P<sign>-)?(?:(?P<d>\d+)\.)?(?P<h>\d{1,2}):(?P<m>\d{1,2}):(?P<s>\d{1,2})(?:\.(?P<f>\d{1,7}))?\Z"
+)
+_TIMESPAN_MIN_TICKS, _TIMESPAN_MAX_TICKS = -(2**63), 2**63 - 1
 
 
 @dataclass(frozen=True, order=True)
@@ -37,10 +40,12 @@ class Instant:
         match = _INSTANT.match(text)
         if match is None:
             raise ValueError(f"'{text}' is not an ISO 8601 instant with an offset.")
-        date = _dt.date.fromisoformat(match["date"])
-        fraction = (match["f"] or "").ljust(7, "0")
-        if len(fraction) > 7:
-            raise ValueError(f"'{text}' has more than seven fractional digits.")
+        try:
+            date = _dt.date.fromisoformat(match["date"])
+        except ValueError as invalid:
+            raise ValueError(f"'{text}' has a date that does not exist ({invalid}).") from None
+        # As .NET reads one: more than seven fractional digits are accepted, and cut to seven (100 ns ticks).
+        fraction = (match["f"] or "")[:7].ljust(7, "0")
         _check_time(text, int(match["h"]), int(match["m"]), int(match["s"]))
         seconds = int(match["h"]) * 3600 + int(match["m"]) * 60 + int(match["s"])
         ticks = (date.toordinal() - 1) * _TICKS_PER_DAY + seconds * TICKS_PER_SECOND + int(fraction)
@@ -130,7 +135,10 @@ class Duration:
         _check_time(text, int(match["h"]), int(match["m"]), int(match["s"]))
         seconds = int(match["d"] or 0) * 86_400 + int(match["h"]) * 3600 + int(match["m"]) * 60 + int(match["s"])
         ticks = seconds * TICKS_PER_SECOND + int((match["f"] or "").ljust(7, "0"))
-        return Duration(-ticks if match["sign"] else ticks)
+        ticks = -ticks if match["sign"] else ticks
+        if not _TIMESPAN_MIN_TICKS <= ticks <= _TIMESPAN_MAX_TICKS:
+            raise ValueError(f"'{text}' is beyond the range of a .NET TimeSpan.")
+        return Duration(ticks)
 
     @staticmethod
     def from_seconds(seconds: float) -> Duration:
