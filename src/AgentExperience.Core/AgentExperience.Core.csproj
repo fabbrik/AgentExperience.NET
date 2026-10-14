@@ -32,6 +32,9 @@
          so no registration it adds ever resolves to null; the retrieval benchmark calls the merge rule itself. -->
     <InternalsVisibleTo Include="AgentExperience.MicrosoftAgentFramework" />
     <InternalsVisibleTo Include="AgentExperience.RetrievalQuality" />
+    <!-- The language-neutral contract publishes the error classifier's behaviour as fixtures, generated from this
+         copy of it (the default reflector's), so a port's lesson text and call markers name a failure the same way. -->
+    <InternalsVisibleTo Include="AgentExperience.Contract.Tests" />
   </ItemGroup>
 
   <PropertyGroup>

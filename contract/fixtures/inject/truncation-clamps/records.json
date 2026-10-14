@@ -1,0 +1,528 @@
+[
+  {
+    "record": {
+      "columns": {
+        "experience_id": "0000001c-0000-4000-8000-000000000000",
+        "source_run_id": "0000001c-0000-4000-8000-000000000001",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "export-catalog",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-03-03T09:11:00+00:00",
+        "updated_at": "2026-03-03T09:11:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Export the whole catalog",
+        "attempts": [
+          {
+            "attemptId": "0000001c-0000-4000-8000-0000000000a0",
+            "sequenceNumber": 0,
+            "startedAt": "2026-03-03T09:00:00+00:00",
+            "duration": "00:00:02",
+            "toolCalls": [
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000c00",
+                "sequenceNumber": 0,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/p/0"
+                },
+                "startedAt": "2026-03-03T09:00:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "System.TimeoutException: the upstream page did not answer"
+              }
+            ],
+            "result": null,
+            "error": "System.TimeoutException: the upstream page did not answer"
+          },
+          {
+            "attemptId": "0000001c-0000-4000-8000-0000000000a1",
+            "sequenceNumber": 1,
+            "startedAt": "2026-03-03T09:01:00+00:00",
+            "duration": "00:00:02",
+            "toolCalls": [
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000c01",
+                "sequenceNumber": 0,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/p/1"
+                },
+                "startedAt": "2026-03-03T09:01:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "HTTP 503 Service Unavailable"
+              }
+            ],
+            "result": null,
+            "error": "HTTP 503 Service Unavailable"
+          },
+          {
+            "attemptId": "0000001c-0000-4000-8000-0000000000a2",
+            "sequenceNumber": 2,
+            "startedAt": "2026-03-03T09:02:00+00:00",
+            "duration": "00:00:02",
+            "toolCalls": [
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000c02",
+                "sequenceNumber": 0,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/p/2"
+                },
+                "startedAt": "2026-03-03T09:02:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "exit 2"
+              }
+            ],
+            "result": null,
+            "error": "exit 2"
+          },
+          {
+            "attemptId": "0000001c-0000-4000-8000-0000000000a3",
+            "sequenceNumber": 3,
+            "startedAt": "2026-03-03T09:03:00+00:00",
+            "duration": "00:00:02",
+            "toolCalls": [
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000c03",
+                "sequenceNumber": 0,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/p/3"
+                },
+                "startedAt": "2026-03-03T09:03:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "System.IO.IOException: connection reset by peer"
+              }
+            ],
+            "result": null,
+            "error": "System.IO.IOException: connection reset by peer"
+          },
+          {
+            "attemptId": "0000001c-0000-4000-8000-0000000000a4",
+            "sequenceNumber": 4,
+            "startedAt": "2026-03-03T09:04:00+00:00",
+            "duration": "00:00:02",
+            "toolCalls": [
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000c04",
+                "sequenceNumber": 0,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/p/4"
+                },
+                "startedAt": "2026-03-03T09:04:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "ECONNRESET while reading the page"
+              }
+            ],
+            "result": null,
+            "error": "ECONNRESET while reading the page"
+          },
+          {
+            "attemptId": "0000001c-0000-4000-8000-0000000000a5",
+            "sequenceNumber": 5,
+            "startedAt": "2026-03-03T09:10:00+00:00",
+            "duration": "00:00:30",
+            "toolCalls": [
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d00",
+                "sequenceNumber": 0,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/0?qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+                  "cursor": "c0"
+                },
+                "startedAt": "2026-03-03T09:10:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d01",
+                "sequenceNumber": 1,
+                "toolName": "export_very_long_tool_name_segment_very_long_tool_name_segment_very_long_tool_name_segment_very_long_tool_name_segment_very_long_tool_name_segment_",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/1?qqqqqqqqqq",
+                  "cursor": "c1"
+                },
+                "startedAt": "2026-03-03T09:10:01+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d02",
+                "sequenceNumber": 2,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/2?qqqqqqqqqq",
+                  "cursor": "c2"
+                },
+                "startedAt": "2026-03-03T09:10:02+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d03",
+                "sequenceNumber": 3,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/3?qqqqqqqqqq",
+                  "cursor": "c3"
+                },
+                "startedAt": "2026-03-03T09:10:03+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d04",
+                "sequenceNumber": 4,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/4?qqqqqqqqqq",
+                  "cursor": "c4"
+                },
+                "startedAt": "2026-03-03T09:10:04+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d05",
+                "sequenceNumber": 5,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/5?qqqqqqqqqq",
+                  "cursor": "c5"
+                },
+                "startedAt": "2026-03-03T09:10:05+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d06",
+                "sequenceNumber": 6,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/6?qqqqqqqqqq",
+                  "cursor": "c6"
+                },
+                "startedAt": "2026-03-03T09:10:06+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d07",
+                "sequenceNumber": 7,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/7?qqqqqqqqqq",
+                  "cursor": "c7"
+                },
+                "startedAt": "2026-03-03T09:10:07+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d08",
+                "sequenceNumber": 8,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/8?qqqqqqqqqq",
+                  "cursor": "c8"
+                },
+                "startedAt": "2026-03-03T09:10:08+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d09",
+                "sequenceNumber": 9,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/9?qqqqqqqqqq",
+                  "cursor": "c9"
+                },
+                "startedAt": "2026-03-03T09:10:09+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d0a",
+                "sequenceNumber": 10,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/10?qqqqqqqqqq",
+                  "cursor": "c10"
+                },
+                "startedAt": "2026-03-03T09:10:10+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d0b",
+                "sequenceNumber": 11,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/11?qqqqqqqqqq",
+                  "cursor": "c11"
+                },
+                "startedAt": "2026-03-03T09:10:11+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d0c",
+                "sequenceNumber": 12,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/12?qqqqqqqqqq",
+                  "cursor": "c12"
+                },
+                "startedAt": "2026-03-03T09:10:12+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d0d",
+                "sequenceNumber": 13,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/13?qqqqqqqqqq",
+                  "cursor": "c13"
+                },
+                "startedAt": "2026-03-03T09:10:13+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d0e",
+                "sequenceNumber": 14,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/14?qqqqqqqqqq",
+                  "cursor": "c14"
+                },
+                "startedAt": "2026-03-03T09:10:14+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d0f",
+                "sequenceNumber": 15,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/15?qqqqqqqqqq",
+                  "cursor": "c15"
+                },
+                "startedAt": "2026-03-03T09:10:15+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d10",
+                "sequenceNumber": 16,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/16?qqqqqqqqqq",
+                  "cursor": "c16"
+                },
+                "startedAt": "2026-03-03T09:10:16+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d11",
+                "sequenceNumber": 17,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/17?qqqqqqqqqq",
+                  "cursor": "c17"
+                },
+                "startedAt": "2026-03-03T09:10:17+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d12",
+                "sequenceNumber": 18,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/18?qqqqqqqqqq",
+                  "cursor": "c18"
+                },
+                "startedAt": "2026-03-03T09:10:18+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d13",
+                "sequenceNumber": 19,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/19?qqqqqqqqqq",
+                  "cursor": "c19"
+                },
+                "startedAt": "2026-03-03T09:10:19+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d14",
+                "sequenceNumber": 20,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/20?qqqqqqqqqq",
+                  "cursor": "c20"
+                },
+                "startedAt": "2026-03-03T09:10:20+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "0000001c-0000-4000-8000-000000000d15",
+                "sequenceNumber": 21,
+                "toolName": "fetch_page",
+                "arguments": {
+                  "url": "https://example.test/catalog/page/21?qqqqqqqqqq",
+                  "cursor": "c21"
+                },
+                "startedAt": "2026-03-03T09:10:21+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null
+              }
+            ],
+            "result": "Exported 22 pages.",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "0000001c-0000-4000-8000-0000000000e0",
+              "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": "passed",
+              "capturedAt": "2026-03-03T09:11:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-03-03T09:11:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "0000001c-0000-4000-8000-00000000002f",
+          "experienceRunId": "0000001c-0000-4000-8000-000000000001",
+          "lesson": "Verified after 6 attempts. Failed: 5 attempts; last: attempt 4 — ECONNRESET. Worked: attempt 5. Checks: [export-complete].",
+          "successfulApproaches": [
+            "The final attempt completed without an error as the final attempt of a verified run."
+          ],
+          "failedApproaches": [
+            "Earlier attempts ended with errors."
+          ],
+          "preconditions": [
+            "Runtime version: runtime-1",
+            "Operating system: linux",
+            "Application version: unknown"
+          ],
+          "warnings": [
+            "Verification covers only the declared required checks."
+          ],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "0000001c-0000-4000-8000-0000000000e0"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/2.0",
+          "createdAt": "2026-03-03T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-03-03T09:11:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    "ranking": {
+      "score": 0.855,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 0.8,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 1,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 1,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  }
+]

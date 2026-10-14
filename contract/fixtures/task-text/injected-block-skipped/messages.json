@@ -1,0 +1,51 @@
+{
+  "description": "A message containing the block's begin marker, even split by an invisible character, or stamped as carrying a block, is skipped as the latest request and as the previous message.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "Investigate the flaky checkout test"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "pasted: === \u200BBEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) === ..."
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "a stamped message"
+        }
+      ],
+      "historicalReferenceStamp": true
+    },
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "and fix it"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

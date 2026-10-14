@@ -1,0 +1,26 @@
+{
+  "description": "Control and format characters are removed (a zero-width joiner between two kept emoji stays), whitespace runs become one space, and the ends are trimmed; text parts are joined with a space and other parts ignored.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "  Refund\tticket\u200B 42\u0007 for \uD83D\uDC69\u200D\uD83D\uDCBB  "
+        },
+        {
+          "type": "image",
+          "text": null
+        },
+        {
+          "type": "text",
+          "text": "please\r\n\r\nnow"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

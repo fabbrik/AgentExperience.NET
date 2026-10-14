@@ -38,7 +38,7 @@ the published previews' packages, into a temporary directory (see its [README](t
 `AGENTEXPERIENCE_TEST_ENCRYPTION=on`, the two storage test projects run again, unmodified, in crypto-shredding mode;
 CI runs them both ways.
 
-**Without Docker**, run the projects that need no container whole, filter the three that mix both, and skip the
+**Without Docker**, run the projects that need no container whole, filter the four that mix both, and skip the
 three built around a PostgreSQL container:
 
 ```bash
@@ -53,12 +53,13 @@ dotnet test experiments/AgentExperience.LiveReuse.Tests
 dotnet test tests/AgentExperience.CompatibilityProof --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.Sample.EndToEnd.Tests --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.RetrievalQuality --filter "FullyQualifiedName!~Postgres"
+dotnet test tests/AgentExperience.Contract.Tests --filter "FullyQualifiedName!~Postgres"
 ```
 
 Skipped without Docker: `tests/AgentExperience.Storage.Postgres.Tests`, `tests/AgentExperience.Storage.Postgres.Vectors.Tests`,
-`tests/AgentExperience.Upgrade.Tests`. In the three filtered projects every container-backed class has `Postgres` in its
+`tests/AgentExperience.Upgrade.Tests`. In the four filtered projects every container-backed class has `Postgres` in its
 name (`PostgresVectorProof`, `SamplePostgresModeTests`, `BatchReReadPostgresEquivalenceTests`,
-`PostgresRetrievalQualityTests`, ...).
+`PostgresRetrievalQualityTests`, `SearchContractPostgresTests`, ...).
 `ContributingWithoutDockerTests` fails if a test project is in neither list, or if a command here would run a class
 that uses a container. `AgentExperience.Release.Tests` needs nuget.org on its first restore: it
 downloads the last published preview's packages as the package-validation baseline.
@@ -91,6 +92,7 @@ tests/
   AgentExperience.Sample.QuickStart.Tests/  the quick-start demo in stand-in mode: run 2 fails less because of the injected lesson, and its golden output
   AgentExperience.ReuseBaseline/            the controlled reuse experiment and its golden reports
   AgentExperience.RetrievalQuality/         the retrieval benchmark: a labelled corpus, recall and precision per adapter, golden reports (docs/benchmarks.md)
+  AgentExperience.Contract.Tests/           generates the language-neutral contract's fixtures (contract/) from the library and checks them on every build; its search family needs a PostgreSQL container
   AgentExperience.Release.Tests/            release gates: the public API baseline, pin agreement, the security-suite map, workflow guards, documentation links
   AgentExperience.Upgrade.Tests/            upgrades databases the published previews created to today's schema, against a pgvector container, and reads everything back
   AgentExperience.Upgrade.Seeders/          one console program per published preview that ships a migration, pinning that preview's packages from nuget.org; built and run by the upgrade tests, not in the solution
@@ -102,6 +104,7 @@ experiments/
   AgentExperience.LiveReuse.Tests/          that experiment's harness, proven offline against scripted models
 benchmarks/
   AgentExperience.Benchmarks/               BenchmarkDotNet over the hot paths, on the in-memory store and PostgreSQL; run by hand, never by CI (docs/benchmarks.md)
+contract/                                   the language-neutral contract for ports in other languages: record schema, SQL, conformance fixtures
 eng/                                        release tooling: package verification and the dependency probes
 docs/                                       the guide, known limits, telemetry contract, security-suite map, compatibility evidence, benchmark baseline, original research
 _sdlc/                                      product brief, PRD, architecture, epics, and specs

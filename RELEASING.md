@@ -131,7 +131,7 @@ which a release test holds equal to the list the fixtures accept, so this runs e
   for major in $(echo "$majors"); do   # $(...) splits the list in zsh as well as bash
     for project in tests/AgentExperience.Storage.Postgres.Tests tests/AgentExperience.Storage.Postgres.Vectors.Tests \
                    tests/AgentExperience.CompatibilityProof tests/AgentExperience.Sample.EndToEnd.Tests \
-                   tests/AgentExperience.Upgrade.Tests; do
+                   tests/AgentExperience.Upgrade.Tests tests/AgentExperience.Contract.Tests; do
       AGENTEXPERIENCE_POSTGRES_MAJOR="$major" dotnet test "$project" --no-build --configuration Release \
         || { echo "FAILED: $project on PostgreSQL $major"; ok=false; }
     done

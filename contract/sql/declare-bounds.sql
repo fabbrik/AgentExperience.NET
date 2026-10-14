@@ -1,0 +1,12 @@
+-- contract 1.x: declares the transaction's authorization bounds. Run it first in every transaction, before any read or
+-- write of agent_experience tables; each value is transaction-local (set_config(..., true)).
+-- Parameters, all text:
+--   @auth_tenant       '=' followed by the tenant ID (the tenant is always a bound)
+--   @auth_application  '=' followed by the bound value, or '' (the empty string) for no bound
+--   @auth_project      as @auth_application
+--   @auth_team         as @auth_application
+--   @auth_agent        as @auth_application
+--   @auth_user         as @auth_application
+-- The '=' prefix keeps a bound that is the empty string from reading as "no bound". The values are the host's
+-- authorization bounds, never a request's scope. Named parameters are written @name; use your driver's syntax.
+SELECT pg_catalog.set_config('agent_experience.auth_tenant', @auth_tenant, true), pg_catalog.set_config('agent_experience.auth_application', @auth_application, true), pg_catalog.set_config('agent_experience.auth_project', @auth_project, true), pg_catalog.set_config('agent_experience.auth_team', @auth_team, true), pg_catalog.set_config('agent_experience.auth_agent', @auth_agent, true), pg_catalog.set_config('agent_experience.auth_user', @auth_user, true), pg_catalog.set_config('agent_experience.auth_set', 'on', true)

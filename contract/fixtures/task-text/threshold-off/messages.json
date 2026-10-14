@@ -1,0 +1,29 @@
+{
+  "description": "A follow-up threshold of 0 turns the join off.",
+  "maxLength": 512,
+  "followUpThreshold": 0,
+  "messages": [
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "Deploy service X to prod"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "and retry"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

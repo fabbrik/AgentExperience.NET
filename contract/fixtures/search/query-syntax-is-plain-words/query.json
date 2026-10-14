@@ -1,0 +1,23 @@
+{
+  "description": "Quotes, \"or\", a leading \"-\" and a backslash are plain words to the parser, never operators, and a hyphenated compound counts once, as the whole compound. With two required terms the second record's \"stage\" still matches through its own lexemes.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "\"multi-stage\" build or -cache \\ podman",
+  "statuses": [
+    "Validated",
+    "Reinforced"
+  ],
+  "minConfidence": 0.5,
+  "limit": 51,
+  "excludeModelAuthored": false,
+  "withGrants": false,
+  "minimumMatchedTerms": 2,
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {}
+}

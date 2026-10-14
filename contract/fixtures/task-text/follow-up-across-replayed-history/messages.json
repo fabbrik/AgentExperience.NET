@@ -1,0 +1,40 @@
+{
+  "description": "The previous user message may come from replayed chat history; the latest request may not.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "ChatHistory",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Rotate the signing keys for tenant 9"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "assistant",
+      "source": "ChatHistory",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Done."
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "now publish them"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

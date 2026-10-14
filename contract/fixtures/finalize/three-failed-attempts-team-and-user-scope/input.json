@@ -1,0 +1,149 @@
+{
+  "description": "Three failed attempts before one that worked: the lesson counts them and names the last one's class. The scope sets every optional field (team and user too), each of which takes part in the derived IDs.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "000000fa-0000-4000-8000-000000000000",
+    "taskId": "deploy-service",
+    "taskDescription": "Deploy service X to prod",
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": "payments",
+      "agentId": "refund-agent",
+      "userId": "user-17"
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T18:00:00+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [
+      {
+        "attemptId": "000000fa-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T18:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fa-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_deploy",
+            "arguments": {},
+            "startedAt": "2026-03-02T18:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "HTTP/1.1 503 Service Unavailable"
+          }
+        ],
+        "result": null,
+        "error": "HTTP/1.1 503 Service Unavailable"
+      },
+      {
+        "attemptId": "000000fa-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-02T18:00:05+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fa-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "run_deploy",
+            "arguments": {},
+            "startedAt": "2026-03-02T18:00:05+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "process exited with code 2"
+          }
+        ],
+        "result": null,
+        "error": "process exited with code 2"
+      },
+      {
+        "attemptId": "000000fa-0000-4000-8000-0000000000a2",
+        "sequenceNumber": 2,
+        "startedAt": "2026-03-02T18:00:09+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fa-0000-4000-8000-00000000c200",
+            "sequenceNumber": 0,
+            "toolName": "run_deploy",
+            "arguments": {},
+            "startedAt": "2026-03-02T18:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "ETIMEDOUT"
+          }
+        ],
+        "result": null,
+        "error": "ETIMEDOUT: the deploy timed out"
+      },
+      {
+        "attemptId": "000000fa-0000-4000-8000-0000000000a3",
+        "sequenceNumber": 3,
+        "startedAt": "2026-03-02T18:00:13+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fa-0000-4000-8000-00000000c300",
+            "sequenceNumber": 0,
+            "toolName": "run_deploy",
+            "arguments": {},
+            "startedAt": "2026-03-02T18:00:13+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": "Deployed.",
+        "error": null
+      }
+    ],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-02T18:00:00+00:00",
+    "endedAt": "2026-03-02T18:00:20+00:00"
+  },
+  "completionEventId": "000000fa-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": {
+      "roundId": "0000007e-0000-4000-8000-000000000001",
+      "artifactRevision": "rev-1"
+    },
+    "requiredChecks": [
+      {
+        "checkId": "service-healthy",
+        "expectedKind": "smoke-test"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "000000fa-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "service-healthy",
+        "kind": "smoke-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T18:00:25+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-02T18:00:30+00:00"
+  }
+}

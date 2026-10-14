@@ -1,0 +1,29 @@
+{
+  "description": "A message the framework stamps External explicitly counts exactly as one with no source.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Deploy service X to prod"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "user",
+      "source": "External",
+      "contents": [
+        {
+          "type": "text",
+          "text": "and retry"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}

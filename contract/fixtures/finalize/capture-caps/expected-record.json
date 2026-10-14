@@ -1,0 +1,789 @@
+{
+  "columns": {
+    "experience_id": "19eaa549-f12f-83a8-b7bf-a36f767404bc",
+    "source_run_id": "000000fc-0000-4000-8000-000000000000",
+    "tenant_id": "contract-tenant",
+    "application_id": "contract-app",
+    "project_id": "contract-project",
+    "team_id": null,
+    "agent_id": "refund-agent",
+    "user_id": null,
+    "task_id": "export-catalog",
+    "status": "Validated",
+    "reuse_confidence": 0.6666666666666666,
+    "supporting_validations": 1,
+    "contradictions": 0,
+    "revision": 1,
+    "created_at": "2026-03-02T20:00:30+00:00",
+    "updated_at": "2026-03-02T20:00:30+00:00",
+    "payload_version": 1
+  },
+  "payload": {
+    "taskSummary": "Export the whole catalog",
+    "attempts": [
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T20:00:00+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:00+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-02T20:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a2",
+        "sequenceNumber": 2,
+        "startedAt": "2026-03-02T20:00:02+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c200",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:02+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a3",
+        "sequenceNumber": 3,
+        "startedAt": "2026-03-02T20:00:03+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c300",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:03+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a4",
+        "sequenceNumber": 4,
+        "startedAt": "2026-03-02T20:00:04+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c400",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:04+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a5",
+        "sequenceNumber": 5,
+        "startedAt": "2026-03-02T20:00:05+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c500",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:05+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a6",
+        "sequenceNumber": 6,
+        "startedAt": "2026-03-02T20:00:06+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c600",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:06+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a7",
+        "sequenceNumber": 7,
+        "startedAt": "2026-03-02T20:00:07+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c700",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:07+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a8",
+        "sequenceNumber": 8,
+        "startedAt": "2026-03-02T20:00:08+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c800",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:08+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page timed out"
+      },
+      {
+        "attemptId": "000000fc-0000-4000-8000-0000000000a9",
+        "sequenceNumber": 9,
+        "startedAt": "2026-03-02T20:00:09+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c900",
+            "sequenceNumber": 0,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c901",
+            "sequenceNumber": 1,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c902",
+            "sequenceNumber": 2,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c903",
+            "sequenceNumber": 3,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c904",
+            "sequenceNumber": 4,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c905",
+            "sequenceNumber": 5,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c906",
+            "sequenceNumber": 6,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c907",
+            "sequenceNumber": 7,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c908",
+            "sequenceNumber": 8,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c909",
+            "sequenceNumber": 9,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c90a",
+            "sequenceNumber": 10,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c90b",
+            "sequenceNumber": 11,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c90c",
+            "sequenceNumber": 12,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c90d",
+            "sequenceNumber": 13,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c90e",
+            "sequenceNumber": 14,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c90f",
+            "sequenceNumber": 15,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c910",
+            "sequenceNumber": 16,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c911",
+            "sequenceNumber": 17,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c912",
+            "sequenceNumber": 18,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c913",
+            "sequenceNumber": 19,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c914",
+            "sequenceNumber": 20,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c915",
+            "sequenceNumber": 21,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c916",
+            "sequenceNumber": 22,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c917",
+            "sequenceNumber": 23,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c918",
+            "sequenceNumber": 24,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c919",
+            "sequenceNumber": 25,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c91a",
+            "sequenceNumber": 26,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c91b",
+            "sequenceNumber": 27,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c91c",
+            "sequenceNumber": 28,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c91d",
+            "sequenceNumber": 29,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c91e",
+            "sequenceNumber": 30,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c91f",
+            "sequenceNumber": 31,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c920",
+            "sequenceNumber": 32,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c921",
+            "sequenceNumber": 33,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c922",
+            "sequenceNumber": 34,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c923",
+            "sequenceNumber": 35,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c924",
+            "sequenceNumber": 36,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c925",
+            "sequenceNumber": 37,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c926",
+            "sequenceNumber": 38,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c927",
+            "sequenceNumber": 39,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c928",
+            "sequenceNumber": 40,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c929",
+            "sequenceNumber": 41,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c92a",
+            "sequenceNumber": 42,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c92b",
+            "sequenceNumber": 43,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c92c",
+            "sequenceNumber": 44,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c92d",
+            "sequenceNumber": 45,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c92e",
+            "sequenceNumber": 46,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c92f",
+            "sequenceNumber": 47,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c930",
+            "sequenceNumber": 48,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          },
+          {
+            "toolCallId": "000000fc-0000-4000-8000-00000000c931",
+            "sequenceNumber": 49,
+            "toolName": "fetch_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T20:00:09+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "result": "Exported.",
+        "error": null
+      }
+    ],
+    "outcome": {
+      "status": "Verified",
+      "evidence": [
+        {
+          "evidenceId": "000000fc-0000-4000-8000-00000000e100",
+          "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+          "artifactRevision": "rev-1",
+          "checkId": "export-complete",
+          "kind": "integration-test",
+          "result": "Pass",
+          "producer": "contract-ci",
+          "detail": "all assertions passed",
+          "capturedAt": "2026-03-02T20:00:25+00:00"
+        }
+      ],
+      "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+      "evaluatedAt": "2026-03-02T20:00:30+00:00"
+    },
+    "completionScore": 1,
+    "reflection": {
+      "reflectionId": "07d334a9-c42a-8262-b3bb-346ca7f529d8",
+      "experienceRunId": "000000fc-0000-4000-8000-000000000000",
+      "lesson": "Verified after 10 attempts. Failed: 9 attempts; last: attempt 8 — TimeoutException. Worked: attempt 9. Checks: [export-complete].",
+      "successfulApproaches": [
+        "Attempt 9 using tools [fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page, fetch_page] completed without an error (result: \"Exported.\") as the final attempt of a verified run."
+      ],
+      "failedApproaches": [
+        "Attempt 0 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 1 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 2 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 3 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 4 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 5 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 6 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 7 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\".",
+        "Attempt 8 using tools [fetch_page] ended with error: \"System.TimeoutException: page timed out\"."
+      ],
+      "preconditions": [
+        "Runtime version: runtime-1",
+        "Operating system: linux",
+        "Application version: 1.0.0",
+        "Environment metadata [region]: eu-west"
+      ],
+      "warnings": [
+        "Verification applies only to this run and its captured environment; reuse in another context is not itself verified."
+      ],
+      "reuseGuidance": "Reuse only where the listed preconditions match, and re-run required checks [export-complete] to confirm the outcome in the new context.",
+      "evidenceIds": [
+        "000000fc-0000-4000-8000-00000000e100"
+      ],
+      "verificationStatus": "Verified",
+      "completionScore": 1,
+      "verificationRuleVersion": "1.0.0",
+      "producer": "AgentExperience.DefaultExperienceReflector/1.1.0",
+      "createdAt": "2026-03-02T20:00:30+00:00"
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T20:00:00+00:00",
+      "correlationId": null
+    },
+    "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+    "origin": "Finalized"
+  }
+}

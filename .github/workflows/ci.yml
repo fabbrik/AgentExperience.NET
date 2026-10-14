@@ -227,7 +227,8 @@ jobs:
             tests/AgentExperience.Storage.Postgres.Vectors.Tests \
             tests/AgentExperience.CompatibilityProof \
             tests/AgentExperience.Sample.EndToEnd.Tests \
-            tests/AgentExperience.Upgrade.Tests; do
+            tests/AgentExperience.Upgrade.Tests \
+            tests/AgentExperience.Contract.Tests; do
             dotnet test "$project" --no-build --configuration Release || failed=1
           done
           exit "$failed"

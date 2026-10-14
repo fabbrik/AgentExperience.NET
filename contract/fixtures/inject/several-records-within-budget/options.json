@@ -1,0 +1,15 @@
+{
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {
+    "run_refund_check": [
+      "strategy",
+      "ticket"
+    ],
+    "run_deploy": [
+      "mode"
+    ]
+  }
+}

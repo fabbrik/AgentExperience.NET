@@ -1,0 +1,25 @@
+{
+  "description": "Four records the search cannot tell apart (equal coverage and text rank, so ID order). Ranking separates them by recency (half-life 30 days, from updated_at), status (Reinforced 1.0, Validated 0.5) and environment fit against the preferred attributes (the share that match).",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "statuses": [
+    "Validated",
+    "Reinforced"
+  ],
+  "minConfidence": 0.5,
+  "limit": 51,
+  "excludeModelAuthored": false,
+  "withGrants": false,
+  "minimumMatchedTerms": 3,
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {
+    "region": "eu-west"
+  }
+}

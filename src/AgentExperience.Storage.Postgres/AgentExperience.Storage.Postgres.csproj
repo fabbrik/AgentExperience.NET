@@ -70,6 +70,10 @@
     <!-- Only so the vectors suite can set ExperienceEncryption.TestSuiteDefault and run a second time in
          encrypted mode (AGENTEXPERIENCE_TEST_ENCRYPTION); see that property. -->
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Vectors.Tests" />
+    <!-- The language-neutral contract's conformance runner reads and writes records in the stored format through the
+         payload mapping itself (ExperiencePayload), so the published record schema cannot drift from what this adapter
+         writes and reads, and holds the contract's bounds declaration to ExperienceSessionContext.DeclareSql. -->
+    <InternalsVisibleTo Include="AgentExperience.Contract.Tests" />
   </ItemGroup>
 
   <ItemGroup>

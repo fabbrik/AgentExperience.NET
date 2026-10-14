@@ -1,0 +1,29 @@
+{
+  "description": "A replayed message after the last external one means there is no new request: the result is null.",
+  "maxLength": 512,
+  "followUpThreshold": 64,
+  "messages": [
+    {
+      "role": "user",
+      "source": null,
+      "contents": [
+        {
+          "type": "text",
+          "text": "Why is the build red on main since the dependency bump this morning?"
+        }
+      ],
+      "historicalReferenceStamp": false
+    },
+    {
+      "role": "assistant",
+      "source": "ChatHistory",
+      "contents": [
+        {
+          "type": "text",
+          "text": "a replayed answer"
+        }
+      ],
+      "historicalReferenceStamp": false
+    }
+  ]
+}
