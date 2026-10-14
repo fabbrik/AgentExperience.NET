@@ -6,6 +6,49 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added: Go Agent Framework capture and injection (story 22.6)
+
+- **[`go/maf`](go/README.md#quick-start-with-microsoft-agent-framework)**, a third Go module
+  (`.../go/maf`, Go 1.26, the floor of Microsoft Agent Framework for Go, `github.com/microsoft/agent-framework-go`
+  v0.1.1): one call, `maf.UseAgentExperience(&config, maf.Options{Store, Identity, Verify, ClassifyToolResult, ...})`,
+  wires an `agent.Config` before the agent is built from it (the Go SDK builds an agent once, so the call changes its
+  configuration). Capture is agent middleware plus function invocation middleware, both outermost: each invocation,
+  streaming or not, is one run of one attempt, with every tool call's arguments, result and error (a returned error by
+  its type name only, a panic by its value's type and re-raised, or a returned call the classifier named a class for,
+  an invalid class becoming `ToolReportedError`), parallel calls in the order they started. When it ends, `Verify`
+  decides and the run is finalized and stored through the core. Injection is a context provider: the contract's task
+  text, text search and ranking, and the rendered block as one user-role message just before the new input, stamped
+  `AgentExperience.HistoricalReference`; a block the session's history replays is dropped, so each request carries
+  one. Nothing returns an error or panics into the agent: failures go to `OnCaptureFailure` and
+  `OnInjectionFailure`. As in .NET and Python, a failed or cancelled invocation (a canceled context) ends its run
+  `Failed` or `Cancelled` and is still verified, and finalization is bounded by `FinalizationTimeout` (5 seconds) on
+  its own clock, never the caller's context. The identity is resolved once per invocation and shared with injection;
+  a second call on one configuration is `ErrAlreadyWired`.
+- **In the core (still requiring no module):** the verifiers and classifiers with the semantics of .NET's
+  `ExperienceVerifiers` and `ExperienceToolResultClassifiers` (`ToolSucceeded`, `Check`, `Approval`, `AllOf`, `AnyOf`,
+  `ExitCode`, `HTTPStatus`, their patterns run by the error class's .NET-semantics matcher), the `Identity` an
+  invocation runs under, `DevelopmentIdentity` (refused outside Development, Test or Testing:
+  `AGENTEXPERIENCE_ENVIRONMENT` first, then .NET's variables), and the `Store` interface both stores satisfy.
+- **[`go/inmemory`](go/README.md#modules)**, an in-memory store for development (its own module, Go 1.25, because
+  Unicode normalization is `golang.org/x/text`): insert, get and the .NET in-memory text search, honouring scope and
+  bounds.
+- **Cross-language proof.** The contract's .NET-finalized fixture records, written into PostgreSQL, are injected into
+  a Go agent. The other way round, the rows a Go agent writes through the Go PostgreSQL store, every column in
+  PostgreSQL's own text form, are checked in (`go/maf/testdata/cross-language/go-agent-rows.json`); the new test-only
+  `GoAgentRecordsPostgresRoundTripTests` inserts them as they are, reads every record back unchanged through the .NET
+  PostgreSQL store (`go-agent-records.json`), checks each initial event against .NET's derivation, and finds the Go
+  lessons through the .NET retrieval. The .NET library itself is unchanged.
+- **`go/postgres/pgtest`**, a test-only module (Go 1.26): the PostgreSQL server helper the Go PostgreSQL tests share,
+  and the store's PostgreSQL tests, moved there so the store's own module no longer requires testcontainers-go. On Go
+  1.26 its dependencies (testcontainers-go v0.44) have no known vulnerability, so govulncheck scans every module with
+  no exclusion.
+- **`go/maf/examples/quickstart`**, the README quick start with a scripted model: the second run is handed the lesson
+  naming `run_tests [failed: exit 3], run_tests [returned]`. A test runs it and compares its output.
+- **CI:** the `go` job adds the `inmemory` module (Go 1.25 and later), and the `maf` and `postgres/pgtest` modules
+  (Go 1.26 and later; the PostgreSQL legs run these two):
+  `go mod tidy`, gofmt, go vet, staticcheck and govulncheck, and the tests with the race detector, and the PostgreSQL
+  16 and 18 legs run the cross-language tests. No module is tagged.
+
 ### Added: a Go core that passes the contract (story 22.5)
 
 - **[`go/`](go/README.md)**, a Go core (`github.com/fabbrik/AgentExperience.NET/go`, package `agentexperience`, both

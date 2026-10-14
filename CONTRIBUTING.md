@@ -118,8 +118,9 @@ _sdlc/                                      product brief, PRD, architecture, ep
   `build-and-test`, `pack` (with package verification), the `postgres` matrix (15 to 18, plaintext and
   crypto-shredding), the MAF floor (`maf-compatibility (pinned)`), the Python port's `python` matrix (CPython 3.10 to
   3.14, plus its PostgreSQL 16 and 18 legs; [python/README.md](python/README.md#running-the-tests) says how to run it
-  locally) and the Go port's `go` matrix (the core on Go 1.24, both modules on 1.25 and the latest stable, plus
-  PostgreSQL 16 and 18 legs; [go/README.md](go/README.md#running-the-tests) says how to run it locally) must pass.
+  locally) and the Go port's `go` matrix (the core on Go 1.24, the stores from 1.25, and the Agent Framework
+  integration and the PostgreSQL tests from 1.26, each to the latest stable, plus PostgreSQL 16 and 18 legs;
+  [go/README.md](go/README.md#running-the-tests) says how to run it locally) must pass.
   The newest-MAF leg and the `floating-dependencies` probe also run, but on a pull request they only report; they gate
   pushes to `main` and the weekly schedule.
 - **Changing a public API is a reviewed diff.** `tests/AgentExperience.Release.Tests` holds an approval baseline of all
