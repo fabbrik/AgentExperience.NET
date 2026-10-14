@@ -529,6 +529,9 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
+          # Resolve to the newest patch release, not a cached manifest's older one: govulncheck reports
+          # standard-library fixes, which arrive as patch releases.
+          check-latest: true
           cache-dependency-path: go/postgres/go.sum
 
       - name: The modules' dependencies are tidy and verified
