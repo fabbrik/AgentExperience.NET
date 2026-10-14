@@ -761,6 +761,39 @@ public class ExperienceCaptureTests
         Assert.Contains(step == "append" ? nameof(AppendAttemptOutcome.SanitizationRejected) : nameof(CompleteRunOutcome.Conflict), failure.Reason, StringComparison.Ordinal);
     }
 
+    public static TheoryData<string> NonFiniteArgumentShapes() => ["double-nan", "float-infinity", "half-nan", "json-overflow", "nested-json-overflow"];
+
+    [Theory]
+    [MemberData(nameof(NonFiniteArgumentShapes))]
+    public async Task A_non_finite_allowlisted_argument_makes_the_attempt_SanitizationRejected_and_nothing_is_stored(string shape)
+    {
+        const string SecretValue = "sk-live-non-finite-0b7e";
+        using var document = JsonDocument.Parse("""{"overflow":1e400,"nested":{"note":-1e400}}""");
+        object note = shape switch
+        {
+            "double-nan" => double.NaN,
+            "float-infinity" => float.PositiveInfinity,
+            "half-nan" => Half.NaN,
+            "json-overflow" => document.RootElement.GetProperty("overflow"),
+            _ => document.RootElement.GetProperty("nested"),
+        };
+
+        // "note" is allowlisted at every depth, so the nested case reaches the number through note.note.
+        var harness = new Harness();
+        var inner = CreateAgent(new ScriptedChatClient
+        {
+            Calls = [new ScriptedCall(EchoTool, _ => new Dictionary<string, object?> { ["note"] = note, ["apiKey"] = SecretValue })],
+        });
+
+        await harness.Capture(inner).RunAsync("task-non-finite");
+
+        var failure = Assert.Single(harness.Failures);
+        Assert.Equal(ExperienceCaptureFailureStage.Finalize, failure.Stage);
+        Assert.Contains(nameof(AppendAttemptOutcome.SanitizationRejected), failure.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain(SecretValue, failure.Reason, StringComparison.Ordinal);
+        Assert.Empty(harness.SingleRun().Attempts);
+    }
+
     [Fact]
     public async Task Append_throwing_still_completes_the_run()
     {

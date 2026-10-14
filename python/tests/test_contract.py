@@ -108,9 +108,9 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert check_contract_version(read_json(CONTRACT / "lock.json")) == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.2", None])
+@pytest.mark.parametrize("version", ["2.0", "1.3", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1"):
+    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2"):
         check_contract_version({"contractVersion": version})
 
 

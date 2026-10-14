@@ -583,6 +583,150 @@ public class DefaultSanitizerTests : SanitizerConformanceTests
         Assert.Equal(FixedMaskRedactor.Mask, result.Fields["apiKey"]);
     }
 
+    public static TheoryData<object> NonFiniteClrNumbers() => new()
+    {
+        double.NaN,
+        double.PositiveInfinity,
+        double.NegativeInfinity,
+        float.NaN,
+        float.PositiveInfinity,
+        float.NegativeInfinity,
+        Half.NaN,
+        Half.PositiveInfinity,
+        Half.NegativeInfinity,
+        System.Runtime.InteropServices.NFloat.NaN,
+        System.Runtime.InteropServices.NFloat.PositiveInfinity,
+        new System.Numerics.Complex(double.NaN, 0),
+        new System.Numerics.Complex(1, double.NegativeInfinity),
+    };
+
+    [Theory]
+    [MemberData(nameof(NonFiniteClrNumbers))]
+    public async Task A_non_finite_CLR_number_in_an_allowlisted_field_rejects_the_payload(object number)
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?> { ["tool"] = "probe", ["note"] = number });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Rejected, result.Decision);
+        Assert.Contains(nameof(SanitizationFailureReason.NonFiniteNumber), result.Reason);
+        Assert.Contains("at field 'note'", result.Reason);
+        Assert.DoesNotContain("NaN", result.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("Infinity", result.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("\u221E", result.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_non_finite_CLR_number_nested_in_an_allowlisted_list_rejects_the_payload_at_its_path()
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?> { ["items"] = new List<object?> { 1.5, double.NaN } });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Rejected, result.Decision);
+        Assert.Contains("at field 'items[1]'", result.Reason);
+    }
+
+    public static TheoryData<object> FiniteClrNumbers() => new()
+    {
+        1.5,
+        0.0,
+        -0.0,
+        double.MaxValue,
+        double.MinValue,
+        double.Epsilon,
+        float.MaxValue,
+        Half.MaxValue,
+        3m,
+        System.Runtime.InteropServices.NFloat.MaxValue,
+        new System.Numerics.Complex(1, -2),
+    };
+
+    [Theory]
+    [MemberData(nameof(FiniteClrNumbers))]
+    public async Task A_finite_CLR_number_passes_through(object number)
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?> { ["note"] = number, ["items"] = new List<object?> { number, 1.5f, (Half)2, 3m } });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Allowed, result.Decision);
+        Assert.Equal(number, result.Fields["note"]);
+        var items = Assert.IsType<List<object?>>(result.Fields["items"]);
+        Assert.Equal(new object?[] { number, 1.5f, (Half)2, 3m }, items);
+    }
+
+    [Fact]
+    public async Task A_non_finite_number_in_a_secret_field_is_redacted_not_rejected()
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?> { ["apiKey"] = double.NaN, ["authToken"] = JsonElementOf("1e400") });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Allowed, result.Decision);
+        Assert.Contains("apiKey", result.RedactedFieldPaths);
+        Assert.Contains("authToken", result.RedactedFieldPaths);
+    }
+
+    [Fact]
+    public async Task A_non_finite_number_in_an_unknown_field_is_omitted_not_rejected()
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?> { ["unknown"] = double.PositiveInfinity, ["tool"] = "probe" });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Allowed, result.Decision);
+        Assert.Contains("unknown", result.OmittedFieldPaths);
+    }
+
+    [Theory]
+    [InlineData("1e400")]
+    [InlineData("-1e400")]
+    [InlineData("1E+309")]
+    public async Task A_JSON_number_beyond_a_doubles_range_rejects_the_payload_and_the_reason_never_holds_the_value(string json)
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?>
+        {
+            ["nested"] = JsonElementOf($$"""{"note":{{json}}}"""),
+        });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Rejected, result.Decision);
+        Assert.Contains(nameof(SanitizationFailureReason.NonFiniteNumber), result.Reason);
+        Assert.Contains("at field 'nested.note'", result.Reason);
+        Assert.DoesNotContain(json, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("1.5e19")]
+    [InlineData("18446744073709551616")]
+    [InlineData("-0")]
+    [InlineData("1.7976931348623157e308")]
+    public async Task A_JSON_number_a_double_holds_finitely_passes_through_as_written(string json)
+    {
+        var sanitizer = CreateSanitizer();
+        var payload = new RawPayload(ToolArgumentsKind, new Dictionary<string, object?> { ["note"] = JsonElementOf(json) });
+
+        var result = await sanitizer.SanitizeAsync(payload);
+
+        Assert.Equal(SanitizationDecision.Allowed, result.Decision);
+        var kept = Assert.IsType<JsonElement>(result.Fields["note"]);
+        Assert.Equal(json, kept.GetRawText());
+    }
+
+    private static JsonElement JsonElementOf(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
     /// <summary>A minimal custom <see cref="Redactor"/> used only to prove <see cref="DefaultSanitizer"/> composes whatever <see cref="Redactor"/> it is given.</summary>
     private sealed class FixedMaskRedactor : Redactor
     {

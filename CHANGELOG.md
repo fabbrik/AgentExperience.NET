@@ -6,6 +6,28 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Fixed: capture refuses non-finite numbers (contract 1.2)
+
+- **Behaviour change.** `DefaultSanitizer` now rejects, fail-closed, an allowlisted tool-call argument that is a
+  `double`, `float`, `Half`, `NFloat` or `Complex` holding NaN or an infinity, or a `JsonElement` number beyond a
+  double's range (such as `1e400`, or an integer literal that rounds past `double.MaxValue`). Capture answers
+  `SanitizationRejected` for the attempt, as for a depth or width violation, and stores nothing of it. Such attempts
+  were accepted before, and a record holding one could be stored but not written again: a number beyond a double's
+  range read back as an infinity that System.Text.Json refuses to write. The reason names the argument's path, never
+  its value. A secret-named argument is still redacted without being read, and a number beyond 64 bits that a double
+  holds finitely (`1.5e19`) is still kept as written.
+- **Limit:** any other value type is still kept as an opaque leaf without being looked into, so a custom struct that
+  holds a non-finite number is not detected ([Capture](docs/guide/capture.md#sanitization-happens-at-capture)). A
+  host-supplied `ISanitizer` must refuse non-finite numbers itself.
+- **[Contract](contract/README.md) 1.2** only adds files: the finalize case `argument-numbers-beyond-double-range`
+  and [`contract/README-1.2.md`](contract/README-1.2.md), which moves these numbers out of 1.1's "not pinned" list.
+  The case refuses exponent-form and integer-form literals beyond a double's range, including the integer midway
+  between `double.MaxValue` and the next power of two, and redacts such numbers under secret names at any depth. NaN
+  and the infinities have no fixture, because JSON cannot hold them; the README states the rule. Every 1.0 and 1.1
+  file is byte-identical.
+- **Python** passes contract 1.2. It already refused NaN and the infinities, and now also refuses an integer that a
+  double cannot hold finitely, as .NET does (it kept one before). Its refusal now names the field's path.
+
 ### Added: contract 1.1, the edges ports get wrong (story 22.4)
 
 - **[Contract](contract/README.md) 1.1** only adds files. Every 1.0 file, the README included, is byte-identical,

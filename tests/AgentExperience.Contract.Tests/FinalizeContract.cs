@@ -72,6 +72,9 @@ internal static class FinalizeContract
         ("argument-numbers", ArgumentNumbers()),
         ("secret-names-ordinal-ignore-case", SecretNamesOrdinalIgnoreCase()),
         ("separator-task-and-check-ids", SeparatorTaskAndCheckIds()),
+
+        // Contract 1.2.
+        ("argument-numbers-beyond-double-range", ArgumentNumbersBeyondDoubleRange()),
     ];
 
     /// <summary>The files of one finalize case.</summary>
@@ -496,16 +499,16 @@ internal static class FinalizeContract
         var t = Fixed.T0.AddHours(13);
         var arguments = new Dictionary<string, object?>
         {
-            ["negativeZero"] = Number("-0"),
-            ["negativeZeroFraction"] = Number("-0.0"),
-            ["int64Max"] = Number("9223372036854775807"),
-            ["int64Min"] = Number("-9223372036854775808"),
-            ["beyondInt64"] = Number("15000000000000000000"),
-            ["belowInt64"] = Number("-10000000000000000000"),
-            ["twentyOneDigits"] = Number("100000000000000000000"),
-            ["largestDouble"] = Number("1.7976931348623157e308"),
-            ["fraction"] = Number("0.1"),
-            ["exponent"] = Number("1E2"),
+            ["negativeZero"] = JsonValue("-0"),
+            ["negativeZeroFraction"] = JsonValue("-0.0"),
+            ["int64Max"] = JsonValue("9223372036854775807"),
+            ["int64Min"] = JsonValue("-9223372036854775808"),
+            ["beyondInt64"] = JsonValue("15000000000000000000"),
+            ["belowInt64"] = JsonValue("-10000000000000000000"),
+            ["twentyOneDigits"] = JsonValue("100000000000000000000"),
+            ["largestDouble"] = JsonValue("1.7976931348623157e308"),
+            ["fraction"] = JsonValue("0.1"),
+            ["exponent"] = JsonValue("1E2"),
         };
 
         return new FinalizeInput(
@@ -568,8 +571,44 @@ internal static class FinalizeContract
             Verified(run, t.AddSeconds(30), ("\u001F", "integration-test", CheckResult.Pass)));
     }
 
-    /// <summary>A JSON number exactly as written, as a host that deserialized a tool call's arguments holds it.</summary>
-    private static JsonElement Number(string json)
+    private static FinalizeInput ArgumentNumbersBeyondDoubleRange()
+    {
+        var run = Fixed.Id(0x120, 0);
+        var t = Fixed.T0.AddHours(16);
+
+        // double.MaxValue is (2^53 - 1) * 2^971. The integer midway between it and the next power of two, MaxValue + 2^970,
+        // rounds (to even) up to an infinity. A number just below that midpoint rounds down to MaxValue and is kept, but a
+        // stored record holding it reads back as MaxValue, so no fixture record can hold one: README-1.2 states it.
+        const string MaxValueMidpoint = "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792";
+        var integerBeyondRange = "1" + new string('0', 400);
+        return new FinalizeInput(
+            "Capture refuses a whole attempt with an allowlisted argument that is a JSON number beyond a double's range: in " +
+            "exponent form at the top level or nested, an integer literal of 401 digits, or the integer midway between " +
+            "double.MaxValue and the next power of two, which rounds to an infinity. Nothing of such an attempt is stored " +
+            "(see expected-capture.json). 1.5e19, beyond a 64-bit integer but finite as a double, is kept as written. A " +
+            "number beyond a double's range under a secret name, at the top level or nested, is redacted without being " +
+            "read, and under a name not allowlisted it is omitted.",
+            new FinalizeOptions(AllowedArgumentNames: ["limit", "limits", "ceiling"]),
+            Run(run, "set-limits", "Set the export limits", t,
+            [
+                Attempt(run, 0, t.AddSeconds(1), [Call(run, 0, 0, "set_limits", t.AddSeconds(1), new() { ["limit"] = JsonValue("1e400") }, result: "too large")], result: "rejected"),
+                Attempt(run, 1, t.AddSeconds(2), [Call(run, 1, 0, "set_limits", t.AddSeconds(2), new() { ["limits"] = JsonValue("{\"limit\":-1e400}") }, result: "too small")], result: "rejected"),
+                Attempt(run, 2, t.AddSeconds(3), [Call(run, 2, 0, "set_limits", t.AddSeconds(3), new() { ["limit"] = JsonValue(integerBeyondRange) }, result: "too large")], result: "rejected"),
+                Attempt(run, 3, t.AddSeconds(4), [Call(run, 3, 0, "set_limits", t.AddSeconds(4), new() { ["ceiling"] = JsonValue(MaxValueMidpoint) }, result: "too large")], result: "rejected"),
+                Attempt(run, 4, t.AddSeconds(5), [Call(run, 4, 0, "set_limits", t.AddSeconds(5), new()
+                {
+                    ["limit"] = JsonValue("1.5e19"),
+                    ["token"] = JsonValue("1e400"),
+                    ["limits"] = JsonValue("{\"token\":-1e400}"),
+                    ["ignored"] = JsonValue("-1e400"),
+                }, result: "limits set")], result: "Done."),
+            ]),
+            Fixed.Id(0x120, 0xe0),
+            Verified(run, t.AddSeconds(30), ("limits-applied", "integration-test", CheckResult.Pass)));
+    }
+
+    /// <summary>A JSON value exactly as written, as a host that deserialized a tool call's arguments holds it.</summary>
+    private static JsonElement JsonValue(string json)
     {
         using var document = JsonDocument.Parse(json);
         return document.RootElement.Clone();

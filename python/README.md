@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](../contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: pre-release, contract 1.1, with a Microsoft Agent Framework integration (the `maf` extra).** It passes
-every fixture of contract 1.1. It is not published to PyPI. The distribution and import name `agentexperience` are
+**Status: pre-release, contract 1.2, with a Microsoft Agent Framework integration (the `maf` extra).** It passes
+every fixture of contract 1.2. It is not published to PyPI. The distribution and import name `agentexperience` are
 provisional until the package is named, and both live in one place (`pyproject.toml` and `src/agentexperience/`).
 
 ## Quick start with Microsoft Agent Framework

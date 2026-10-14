@@ -199,12 +199,17 @@ def test_an_integer_argument_beyond_64_bits_renders_as_dotnet_reads_it(value: in
 # ---- Sanitization and capture -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+_MAX_DOUBLE = (2**53 - 1) * 2**971
+
+
+@pytest.mark.parametrize(
+    "value",
+    [math.nan, math.inf, -math.inf, 10**400, -(10**400), _MAX_DOUBLE + 2**970],
+    ids=["nan", "inf", "-inf", "401-digit-int", "-401-digit-int", "max-double-midpoint"],
+)
 def test_a_non_finite_number_is_refused_at_capture(value: float) -> None:
-    # Python's choice, not .NET's: .NET captures a NaN or an infinity (or a JSON number beyond a double's range), but
-    # cannot write the first two as JSON and reads the last back as an infinity it cannot write again. The contract
-    # leaves such numbers out (contract/README.md, numbers in tool-call arguments); refusing them stores nothing .NET
-    # would read back changed.
+    # As .NET does from contract 1.2 (contract/README-1.2.md): a NaN, an infinity, or a number a double cannot hold
+    # finitely, an integer literal included, is refused; a secret or omitted field holding one is not read.
     policy = Sanitization.allowing(["n"]).tool_arguments
     with pytest.raises(SanitizationRejected):
         policy.sanitize({"n": value})
@@ -215,6 +220,20 @@ def test_a_non_finite_number_is_refused_at_capture(value: float) -> None:
     capture = _capture(sanitization=Sanitization.allowing(["n"]))
     assert capture.append_attempt(_attempt(0, tool_calls=[_call(0, n=value)])) == "SanitizationRejected"
     assert capture.run.attempts == ()
+
+
+def test_a_non_finite_refusal_names_the_path_never_the_value() -> None:
+    policy = Sanitization.allowing(["n", "m"]).tool_arguments
+    with pytest.raises(SanitizationRejected) as refused:
+        policy.sanitize({"n": {"m": [1, 10**400]}})
+    assert "'n.m[1]'" in str(refused.value)
+    assert "1000" not in str(refused.value)
+
+
+def test_a_number_just_below_the_rounding_midpoint_above_the_largest_double_is_kept() -> None:
+    policy = Sanitization.allowing(["n"]).tool_arguments
+    assert policy.sanitize({"n": _MAX_DOUBLE + 1}) == {"n": _MAX_DOUBLE + 1}
+    assert policy.sanitize({"n": 1.7976931348623158e308}) == {"n": 1.7976931348623157e308}
 
 
 def test_capture_answers_each_outcome() -> None:

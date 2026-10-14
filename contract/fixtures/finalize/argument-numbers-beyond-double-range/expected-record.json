@@ -1,0 +1,115 @@
+{
+  "columns": {
+    "experience_id": "aff4fe23-cf10-8244-b3ab-4bcd88ed2706",
+    "source_run_id": "00000120-0000-4000-8000-000000000000",
+    "tenant_id": "contract-tenant",
+    "application_id": "contract-app",
+    "project_id": "contract-project",
+    "team_id": null,
+    "agent_id": "refund-agent",
+    "user_id": null,
+    "task_id": "set-limits",
+    "status": "Validated",
+    "reuse_confidence": 0.6666666666666666,
+    "supporting_validations": 1,
+    "contradictions": 0,
+    "revision": 1,
+    "created_at": "2026-03-03T01:00:30+00:00",
+    "updated_at": "2026-03-03T01:00:30+00:00",
+    "payload_version": 1
+  },
+  "payload": {
+    "taskSummary": "Set the export limits",
+    "attempts": [
+      {
+        "attemptId": "00000120-0000-4000-8000-0000000000a4",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-03T01:00:05+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000120-0000-4000-8000-00000000c400",
+            "sequenceNumber": 0,
+            "toolName": "set_limits",
+            "arguments": {
+              "limit": 1.5e19,
+              "token": "",
+              "limits": {
+                "token": ""
+              }
+            },
+            "startedAt": "2026-03-03T01:00:05+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "limits set",
+            "error": null
+          }
+        ],
+        "result": "Done.",
+        "error": null
+      }
+    ],
+    "outcome": {
+      "status": "Verified",
+      "evidence": [
+        {
+          "evidenceId": "00000120-0000-4000-8000-00000000e100",
+          "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+          "artifactRevision": "rev-1",
+          "checkId": "limits-applied",
+          "kind": "integration-test",
+          "result": "Pass",
+          "producer": "contract-ci",
+          "detail": "all assertions passed",
+          "capturedAt": "2026-03-03T01:00:25+00:00"
+        }
+      ],
+      "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+      "evaluatedAt": "2026-03-03T01:00:30+00:00"
+    },
+    "completionScore": 1,
+    "reflection": {
+      "reflectionId": "3618546f-8751-8b85-838a-18b9cc100ec0",
+      "experienceRunId": "00000120-0000-4000-8000-000000000000",
+      "lesson": "Verified after 1 attempt. Worked: attempt 0. Checks: [limits-applied].",
+      "successfulApproaches": [
+        "Attempt 0 using tools [set_limits] completed without an error (result: \"Done.\") as the final attempt of a verified run."
+      ],
+      "failedApproaches": [],
+      "preconditions": [
+        "Runtime version: runtime-1",
+        "Operating system: linux",
+        "Application version: 1.0.0",
+        "Environment metadata [region]: eu-west"
+      ],
+      "warnings": [
+        "Verification applies only to this run and its captured environment; reuse in another context is not itself verified."
+      ],
+      "reuseGuidance": "Reuse only where the listed preconditions match, and re-run required checks [limits-applied] to confirm the outcome in the new context.",
+      "evidenceIds": [
+        "00000120-0000-4000-8000-00000000e100"
+      ],
+      "verificationStatus": "Verified",
+      "completionScore": 1,
+      "verificationRuleVersion": "1.0.0",
+      "producer": "AgentExperience.DefaultExperienceReflector/1.1.0",
+      "createdAt": "2026-03-03T01:00:30+00:00"
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-03T01:00:00+00:00",
+      "correlationId": null
+    },
+    "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+    "origin": "Finalized"
+  }
+}

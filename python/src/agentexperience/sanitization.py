@@ -41,6 +41,24 @@ def _fold(name: str) -> str:
     return "".join(ordinal_upper(ch) for ch in name)
 
 
+def _is_finite_number(value: Any) -> bool:
+    """
+    Whether ``value`` is not a number, or a number a double holds finitely. An int is read as a double the way .NET
+    reads a JSON integer literal, rounding to nearest: one whose rounding overflows (a 401-digit integer, or one at or
+    beyond the midpoint above the largest double) is not finite.
+    """
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, int):
+        try:
+            float(value)
+        except OverflowError:
+            return False
+    return True
+
+
 @dataclass(frozen=True)
 class SanitizationPolicy:
     """Which field names are kept, which are secrets, and the limits a payload must stay within."""
@@ -56,9 +74,9 @@ class SanitizationPolicy:
     def sanitize(self, fields: Mapping[str, Any]) -> dict[str, Any]:
         """The sanitized fields. Raises :class:`SanitizationRejected` for a payload beyond the limits."""
         self._ensure_depth(1)
-        return self._fields(fields, 1)
+        return self._fields(fields, 1, None)
 
-    def _fields(self, fields: Mapping[str, Any], depth: int) -> dict[str, Any]:
+    def _fields(self, fields: Mapping[str, Any], depth: int, prefix: str | None) -> dict[str, Any]:
         self._ensure_count(len(fields))
         sanitized: dict[str, Any] = {}
         for key, value in fields.items():
@@ -76,16 +94,16 @@ class SanitizationPolicy:
                 continue
             if key not in self.allowed_field_names:
                 continue
-            keep, kept = self._value(value, depth)
+            keep, kept = self._value(value, depth, key if prefix is None else f"{prefix}.{key}")
             if keep:
                 sanitized[key] = kept
         return sanitized
 
-    def _value(self, value: Any, depth: int) -> tuple[bool, Any]:
-        if isinstance(value, float) and not math.isfinite(value):
-            # Outside the contract: no JSON number holds it, and .NET reads a number beyond a double's range back as an
-            # infinity it cannot write again. Refused, so nothing is stored that .NET would read back changed.
-            raise SanitizationRejected("A number is not finite (NaN or an infinity).")
+    def _value(self, value: Any, depth: int, path: str) -> tuple[bool, Any]:
+        if not _is_finite_number(value):
+            # Contract 1.2: .NET reads a number beyond a double's range back as an infinity it cannot write again, so it
+            # is refused, as .NET refuses it. The reason names the path, never the value.
+            raise SanitizationRejected(f"A number at field '{path}' is not finite as a double.")
         if value is None or isinstance(value, (bool, int, float)):
             return True, value
         if isinstance(value, str):
@@ -93,18 +111,18 @@ class SanitizationPolicy:
             return True, value
         if isinstance(value, Mapping):
             self._ensure_depth(depth + 1)
-            return True, self._fields(value, depth + 1)
+            return True, self._fields(value, depth + 1, path)
         if isinstance(value, (list, tuple)):
             self._ensure_depth(depth + 1)
-            return True, self._list(value, depth + 1)
+            return True, self._list(value, depth + 1, path)
         # An unrecognised shape is never passed through unexamined.
         return False, None
 
-    def _list(self, items: Iterable[Any], depth: int) -> list[Any]:
+    def _list(self, items: Iterable[Any], depth: int, path: str) -> list[Any]:
         sanitized: list[Any] = []
         for index, item in enumerate(items):
             self._ensure_count(index + 1)
-            keep, kept = self._value(item, depth)
+            keep, kept = self._value(item, depth, f"{path}[{index}]")
             if keep:
                 sanitized.append(kept)
         return sanitized
