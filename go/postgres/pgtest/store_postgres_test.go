@@ -1,10 +1,12 @@
 //go:build postgres
 
-package postgres
+package pgtest_test
 
-// The PostgreSQL leg of the conformance runner: finalize fixtures written through this store and read back row for
-// row, and every search fixture run through the store's text search, then ranked.
+// The PostgreSQL leg of the postgres store's conformance runner: finalize fixtures written through the store and read
+// back row for row, and every search fixture run through the store's text search, then ranked. It lives in the
+// pgtest module, beside the server helper, so the store's own module requires no test container library.
 //
+// The server and the databases are pgtest's (shared with the Agent Framework integration's cross-language tests).
 // The schema is never reimplemented here. Each test database is migrated by running the .NET migrator's own scripts
 // (src/AgentExperience.Storage.Postgres/Migrations/*.sql) in name order, one transaction per script, as the owner
 // role, which is what ExperienceSchemaMigrator.MigrateAsync does. The application role's privileges are the
@@ -19,19 +21,11 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,315 +33,83 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
+	"github.com/fabbrik/AgentExperience.NET/go/postgres"
+	"github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest"
 )
 
+func fixture(parts ...string) string {
+	return filepath.Join(append([]string{ct.Fixtures}, parts...)...)
+}
+
 const (
-	ownerRole       = "contract_owner"
-	applicationRole = "contract_app"
-	rolePassword    = "contract-role-password"
+	ownerRole       = pgtest.OwnerRole
+	applicationRole = pgtest.ApplicationRole
+	rolePassword    = pgtest.RolePassword
 	scoreTolerance  = 1e-9
 	actor           = "contract-principal"
 )
 
-type server struct {
-	host           string
-	port           int
-	user, password string
-}
+type server = pgtest.Server
 
-func (s server) connString(database, user, password string) string {
-	u := url.URL{
-		Scheme:   "postgres",
-		User:     url.UserPassword(user, password),
-		Host:     net.JoinHostPort(s.host, strconv.Itoa(s.port)),
-		Path:     "/" + database,
-		RawQuery: "sslmode=disable",
-	}
-	return u.String()
-}
+func TestMain(m *testing.M) { os.Exit(pgtest.Run(m)) }
 
-func (s server) admin(database string) string { return s.connString(database, s.user, s.password) }
-
-var (
-	pgServer      *server
-	pgUnavailable string
-)
-
-func TestMain(m *testing.M) {
-	code := func() int {
-		ctx := context.Background()
-		admin, stop, err := startServer(ctx)
-		if err != nil {
-			if os.Getenv("AGENTEXPERIENCE_REQUIRE_POSTGRES") == "1" {
-				// A CI leg that exists to run these tests must fail rather than skip them.
-				fmt.Fprintf(os.Stderr, "PostgreSQL is required but not available: %v\n", err)
-				return 1
-			}
-			pgUnavailable = err.Error()
-			return m.Run()
-		}
-		defer stop()
-		if err := checkMajor(ctx, admin); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		if err := prepareRoles(ctx, admin); err != nil {
-			fmt.Fprintf(os.Stderr, "preparing the roles: %v\n", err)
-			return 1
-		}
-		pgServer = &admin
-		return m.Run()
-	}()
-	os.Exit(code)
-}
-
-func startServer(ctx context.Context) (server, func(), error) {
-	if host := os.Getenv("PGHOST"); host != "" {
-		port := 5432
-		if text := os.Getenv("PGPORT"); text != "" {
-			var err error
-			if port, err = strconv.Atoi(text); err != nil {
-				return server{}, nil, fmt.Errorf("PGPORT: %w", err)
-			}
-		}
-		user := os.Getenv("PGUSER")
-		if user == "" {
-			user = "postgres"
-		}
-		return server{host, port, user, os.Getenv("PGPASSWORD")}, func() {}, nil
-	}
-	major := os.Getenv("AGENTEXPERIENCE_POSTGRES_MAJOR")
-	if major == "" {
-		major = "16"
-	}
-	container, err := runContainer(ctx, "postgres:"+major)
-	if err != nil {
-		return server{}, nil, fmt.Errorf("no PGHOST, and no Docker for a postgres:%s container: %w", major, err)
-	}
-	stop := func() { _ = testcontainers.TerminateContainer(container) }
-	host, err := container.Host(ctx)
-	if err != nil {
-		stop()
-		return server{}, nil, err
-	}
-	port, err := container.MappedPort(ctx, "5432/tcp")
-	if err != nil {
-		stop()
-		return server{}, nil, err
-	}
-	return server{host, port.Int(), "postgres", "postgres"}, stop, nil
-}
-
-func runContainer(ctx context.Context, image string) (container *tcpostgres.PostgresContainer, err error) {
-	defer func() {
-		// testcontainers-go panics, rather than failing, on some hosts without Docker.
-		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("%v", recovered)
-		}
-	}()
-	return tcpostgres.Run(ctx, image,
-		tcpostgres.WithDatabase("postgres"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("postgres"),
-		tcpostgres.BasicWaitStrategies())
-}
-
-func requireServer(t *testing.T) server {
-	t.Helper()
-	if pgServer == nil {
-		t.Skipf("PostgreSQL is not available: %s", pgUnavailable)
-	}
-	return *pgServer
-}
+func requireServer(t *testing.T) server { return pgtest.Require(t) }
 
 func connect(ctx context.Context, connString string) (*pgx.Conn, error) {
 	return pgx.Connect(ctx, connString)
 }
 
-// checkMajor makes sure a leg does not quietly run another major than the one it names.
-func checkMajor(ctx context.Context, admin server) error {
-	requested := os.Getenv("AGENTEXPERIENCE_POSTGRES_MAJOR")
-	if requested == "" {
-		return nil
-	}
-	conn, err := connect(ctx, admin.admin("postgres"))
-	if err != nil {
-		return err
-	}
-	defer conn.Close(ctx)
-	var version string
-	if err := conn.QueryRow(ctx, "SHOW server_version_num").Scan(&version); err != nil {
-		return err
-	}
-	number, err := strconv.Atoi(version)
-	if err != nil {
-		return fmt.Errorf("the server reports the version %q: %w", version, err)
-	}
-	if strconv.Itoa(number/10000) != requested {
-		return fmt.Errorf("the server is PostgreSQL %d, not the requested %s", number/10000, requested)
-	}
-	return nil
-}
-
-// prepareRoles makes the owner role that runs the migrations and the application role the stores use, as the .NET
-// tests make them.
-func prepareRoles(ctx context.Context, admin server) error {
-	conn, err := connect(ctx, admin.admin("postgres"))
-	if err != nil {
-		return err
-	}
-	defer conn.Close(ctx)
-	for _, role := range []string{ownerRole, applicationRole} {
-		var exists bool
-		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			if _, err := conn.Exec(ctx, "CREATE ROLE "+role+" LOGIN PASSWORD '"+rolePassword+"'"); err != nil {
-				return err
-			}
-		}
-	}
-	// What a non-superuser owner needs to run the migrations (the erasure scripts set these parameters).
-	_, err = conn.Exec(ctx, "GRANT SET ON PARAMETER agent_experience.purge_authorized, "+
-		"agent_experience.access_purge_authorized TO "+ownerRole)
-	return err
-}
-
-var roleName = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
-
-// applicationRolePrivileges are the statements of sql/application-role-privileges.sql for role (a plain
-// identifier): those under "-- mode: always", then those under "-- mode: row-level-security".
-func applicationRolePrivileges(t *testing.T, role string) []string {
-	t.Helper()
-	if !roleName.MatchString(role) {
-		t.Fatalf("%q is not a plain identifier", role)
-	}
-	data, err := os.ReadFile(filepath.Join(ct.Contract, "sql", "application-role-privileges.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	modes := map[string][]string{"always": nil, "row-level-security": nil}
-	current := ""
-	modeMarker := regexp.MustCompile(`(?i)^--\s*mode\b`)
-	for _, line := range strings.Split(string(data), "\n") {
-		switch {
-		case modeMarker.MatchString(line):
-			mode, ok := strings.CutPrefix(line, "-- mode: ")
-			if _, known := modes[mode]; !ok || !known {
-				t.Fatalf("unknown mode marker %q: the markers are '-- mode: always' and '-- mode: row-level-security'", line)
-			}
-			current = mode
-		case line != "" && !strings.HasPrefix(line, "--"):
-			if current == "" {
-				t.Fatalf("a statement before any mode marker: %q", line)
-			}
-			if !strings.HasSuffix(line, ";") || strings.Index(line, ";") != len(line)-1 {
-				t.Fatalf("not one statement on one line ending in ';': %q", line)
-			}
-			modes[current] = append(modes[current],
-				strings.ReplaceAll(strings.TrimSuffix(line, ";"), `:"application_role"`, role))
-		}
-	}
-	return append(modes["always"], modes["row-level-security"]...)
-}
-
-// databaseName is a unique, valid database name for a label: a readable prefix and a hash of the whole label.
-func databaseName(label string) string {
-	digest := sha256.Sum256([]byte(label))
-	prefix := regexp.MustCompile(`[^a-z0-9_]`).ReplaceAllString(strings.ToLower(label), "_")
-	if len(prefix) > 40 {
-		prefix = prefix[:40]
-	}
-	return "go_" + prefix + "_" + hex.EncodeToString(digest[:])[:12]
-}
-
 // createDatabase is a fresh database, migrated by the .NET scripts and with the application role's privileges.
 func createDatabase(t *testing.T, admin server, label string) string {
 	t.Helper()
-	ctx := context.Background()
-	name := databaseName(label)
-	conn, err := connect(ctx, admin.admin("postgres"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	identifier := pgx.Identifier{name}.Sanitize()
-	for _, statement := range []string{
-		"DROP DATABASE IF EXISTS " + identifier + " WITH (FORCE)",
-		"CREATE DATABASE " + identifier + " OWNER " + ownerRole,
-	} {
-		if _, err := conn.Exec(ctx, statement); err != nil {
-			conn.Close(ctx)
-			t.Fatal(err)
-		}
-	}
-	conn.Close(ctx)
-	t.Cleanup(func() {
-		// Every database a test made is dropped when it ends (after the stores that use it close).
-		conn, err := connect(context.Background(), admin.admin("postgres"))
-		if err != nil {
-			t.Errorf("dropping %s: %v", name, err)
-			return
-		}
-		defer conn.Close(context.Background())
-		if _, err := conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+identifier+" WITH (FORCE)"); err != nil {
-			t.Errorf("dropping %s: %v", name, err)
-		}
-	})
-
-	scripts, err := filepath.Glob(filepath.Join(ct.Migrations, "*.sql"))
-	if err != nil || len(scripts) == 0 {
-		t.Fatalf("no migration scripts under %s", ct.Migrations)
-	}
-	sort.Strings(scripts)
-	owner, err := connect(ctx, admin.connString(name, ownerRole, rolePassword))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer owner.Close(ctx)
-	for _, script := range scripts {
-		text, err := os.ReadFile(script)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = pgx.BeginFunc(ctx, owner, func(tx pgx.Tx) error {
-			return tx.Conn().PgConn().Exec(ctx, string(text)).Close()
-		})
-		if err != nil {
-			t.Fatalf("%s: %v", filepath.Base(script), err)
-		}
-	}
-	err = pgx.BeginFunc(ctx, owner, func(tx pgx.Tx) error {
-		for _, statement := range applicationRolePrivileges(t, applicationRole) {
-			if _, err := tx.Exec(ctx, statement); err != nil {
-				return fmt.Errorf("%s: %w", statement, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return name
+	return pgtest.CreateDatabase(t, admin, label)
 }
 
 // newStore is a store on a pool the test owns, as a host would give one; the pool closes when the test ends.
-func newStore(t *testing.T, admin server, database string) *Store {
+// pools are the pools the tests' stores run on, so a test can read as the application role under declared bounds.
+var pools sync.Map // *postgres.Store → *pgxpool.Pool
+
+// inTransaction runs fn in a transaction on the store's pool, as the application role, after the contract's
+// declare-bounds.sql (as the store runs it) declared bounds.
+func inTransaction(store *postgres.Store, ctx context.Context, bounds ae.AuthorizationBounds, fn func(pgx.Tx) error) error {
+	held, _ := pools.Load(store)
+	pool := held.(*pgxpool.Pool)
+	sql, err := postgres.ContractSQL("declare-bounds.sql")
+	if err != nil {
+		return err
+	}
+	statement := postgres.ToDriverPlaceholders(sql)
+	values := map[string]any{}
+	for name, value := range bounds.Parameters() {
+		values[name] = value
+	}
+	args, err := statement.Args(values)
+	if err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, statement.SQL, args...); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
+func newStore(t *testing.T, admin server, database string) *postgres.Store {
 	t.Helper()
-	pool, err := pgxpool.New(context.Background(), admin.connString(database, applicationRole, rolePassword))
+	pool, err := pgxpool.New(context.Background(), admin.ConnString(database, applicationRole, rolePassword))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	store, err := NewStore(pool)
+	store, err := postgres.NewStore(pool)
 	if err != nil {
 		t.Fatal(err)
 	}
+	pools.Store(store, pool)
 	return store
 }
 
@@ -361,10 +123,10 @@ func finalizeCase(t *testing.T, name string) ae.FinalizedExperience {
 }
 
 // events are a record's lifecycle events, read as the application role under the embedded declare-bounds.sql.
-func events(t *testing.T, store *Store, bounds ae.AuthorizationBounds, id ae.UUID) []*ae.Object {
+func events(t *testing.T, store *postgres.Store, bounds ae.AuthorizationBounds, id ae.UUID) []*ae.Object {
 	t.Helper()
 	var result []*ae.Object
-	err := store.transaction(context.Background(), bounds, func(tx pgx.Tx) error {
+	err := inTransaction(store, context.Background(), bounds, func(tx pgx.Tx) error {
 		rows, err := tx.Query(context.Background(), "SELECT event_id, experience_id, prior_status, current_status, "+
 			"reason, producer, occurred_at, expected_revision, applied_revision, actor "+
 			"FROM agent_experience.lifecycle_events WHERE experience_id = $1", [16]byte(id))
@@ -631,7 +393,7 @@ func TestASealedRowIsSkippedByGetAndSearch(t *testing.T) {
 
 	// A sealed row as the .NET sealing writes one (payload_version 2, opaque payload), inserted as the owner.
 	sealedID := ae.MustParseUUID("0000005f-0000-4000-8000-000000000001")
-	owner, err := connect(ctx, admin.connString(database, ownerRole, rolePassword))
+	owner, err := connect(ctx, admin.ConnString(database, ownerRole, rolePassword))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +411,7 @@ func TestASealedRowIsSkippedByGetAndSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if read, err := store.Get(ctx, bounds, scope, sealedID); !errors.Is(err, ErrSealed) || read != nil {
+	if read, err := store.Get(ctx, bounds, scope, sealedID); !errors.Is(err, postgres.ErrSealed) || read != nil {
 		t.Fatalf("the sealed row: %v, %v", read, err)
 	}
 	rows, err := store.Search(ctx, bounds, ae.NewSearchParameters(scope, "refund stuck in pending, ticket lock"))
@@ -691,7 +453,7 @@ func TestGetReadsOnlyTheExactScope(t *testing.T) {
 	}
 
 	// A tombstone (what the .NET purge leaves: deleted_at set, an empty payload) is not a record.
-	owner, err := connect(ctx, admin.connString(database, ownerRole, rolePassword))
+	owner, err := connect(ctx, admin.ConnString(database, ownerRole, rolePassword))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,7 +493,7 @@ func TestInsertFinalizedStoresTheRecordedAtAndRefusesABlankActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stored time.Time
-	err := store.transaction(ctx, bounds, func(tx pgx.Tx) error {
+	err := inTransaction(store, ctx, bounds, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, "SELECT recorded_at FROM agent_experience.lifecycle_events WHERE experience_id = $1",
 			[16]byte(finalized.Record.ExperienceID)).Scan(&stored)
 	})

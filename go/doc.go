@@ -3,9 +3,11 @@
 //
 // Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical
 // Reference block, derives the task text, classifies errors, and computes the text-search parameters and the
-// ranking. The postgres subpackage writes records to and searches them in a PostgreSQL schema the .NET migrator
-// applied; it is its own module, so this one requires no module at all. It has no Microsoft Agent Framework
-// dependency.
+// ranking. For an agent integration it also has the verifiers, the tool-result classifiers and the identity an
+// invocation runs under. The postgres subpackage writes records to and searches them in a PostgreSQL schema the
+// .NET migrator applied, the inmemory subpackage does the same in memory, and the maf subpackage wires all of it
+// into Microsoft Agent Framework for Go; each is its own module, so this one requires no module at all and has no
+// Microsoft Agent Framework dependency.
 //
 // The contract is generated from .NET, where a string is UTF-16: every length, cut and limit here is counted in
 // UTF-16 code units, never in bytes or runes. Whitespace, word characters and ignoring case are .NET's, not Go's

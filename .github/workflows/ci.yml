@@ -503,19 +503,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Five modules, each with its own floor: the core (.) Go 1.24; the PostgreSQL store (postgres) and the
+          # in-memory store (inmemory) 1.25 (the pgx and golang.org/x/text releases without known vulnerabilities
+          # need it); the Agent Framework integration (maf) 1.26, the Go SDK's own minimum; and the PostgreSQL test
+          # support with the store's PostgreSQL tests (postgres/pgtest) 1.26, where its container library's
+          # dependencies have no known vulnerabilities. Each leg runs every module its Go version can build; the
+          # PostgreSQL legs run the two modules with PostgreSQL tests (the postgres build tag).
           - go-version: '1.24.x'
             modules: '.'
           - go-version: '1.25.x'
-            modules: '. postgres'
+            modules: '. postgres inmemory'
           - go-version: '1.26.x'
-            modules: '. postgres'
+            modules: '. postgres postgres/pgtest inmemory maf'
           - go-version: stable
-            modules: '. postgres'
+            modules: '. postgres postgres/pgtest inmemory maf'
           - go-version: stable
-            modules: postgres
+            modules: 'postgres/pgtest maf'
             pg-major: 16
           - go-version: stable
-            modules: postgres
+            modules: 'postgres/pgtest maf'
             pg-major: 18
     name: go (${{ matrix.go-version }}${{ matrix.pg-major && format(', PostgreSQL {0}', matrix.pg-major) || '' }})
     defaults:
@@ -532,7 +538,11 @@ jobs:
           # Resolve to the newest patch release, not a cached manifest's older one: govulncheck reports
           # standard-library fixes, which arrive as patch releases.
           check-latest: true
-          cache-dependency-path: go/postgres/go.sum
+          cache-dependency-path: |
+            go/postgres/go.sum
+            go/postgres/pgtest/go.sum
+            go/inmemory/go.sum
+            go/maf/go.sum
 
       - name: The modules' dependencies are tidy and verified
         run: |
@@ -565,20 +575,31 @@ jobs:
         run: |
           set -euo pipefail
           for module in ${{ matrix.modules }}; do
-            (cd "$module" && go vet ./... && go vet -tags postgres ./...)
+            (
+              cd "$module"
+              go vet ./...
+              # Only these two modules have PostgreSQL tests (the postgres build tag).
+              case "$module" in postgres/pgtest|maf) go vet -tags postgres ./... ;; esac
+            )
           done
 
       - name: staticcheck and govulncheck
         if: ${{ !matrix.pg-major && matrix.go-version == '1.26.x' }}
         run: |
           set -euo pipefail
-          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
-          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-          cd postgres
-          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
-          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags postgres ./...
-          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -tags postgres ./...
+          for module in ${{ matrix.modules }}; do
+            (
+              cd "$module"
+              go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+              go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+              case "$module" in
+                postgres/pgtest|maf)
+                  go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 -tags postgres ./...
+                  go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -tags postgres ./...
+                  ;;
+              esac
+            )
+          done
 
       - name: Unit and conformance tests (race detector on)
         if: ${{ !matrix.pg-major }}
@@ -588,10 +609,13 @@ jobs:
             (cd "$module" && go test -race ./...)
           done
 
-      - name: PostgreSQL ${{ matrix.pg-major }} conformance tests (race detector on)
+      - name: PostgreSQL ${{ matrix.pg-major }} conformance and cross-language tests (race detector on)
         if: ${{ matrix.pg-major }}
-        working-directory: go/postgres
         env:
           AGENTEXPERIENCE_POSTGRES_MAJOR: ${{ matrix.pg-major }}
           AGENTEXPERIENCE_REQUIRE_POSTGRES: '1'
-        run: go test -race -tags postgres ./...
+        run: |
+          set -euo pipefail
+          for module in ${{ matrix.modules }}; do
+            (cd "$module" && go test -race -tags postgres ./...)
+          done

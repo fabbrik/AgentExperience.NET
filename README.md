@@ -242,9 +242,9 @@ this library (the stored record format, the injected block, the task text and th
 [what 1.2 adds](contract/README-1.2.md)): a JSON Schema, the SQL to run, and fixtures generated from and checked
 against this implementation on every build. A pure-Python core that passes contract 1.2, with a one-call Python Agent
 Framework integration, is in [`python/`](python/README.md): pre-release and not on PyPI. A lesson a .NET agent learned
-is injected into a Python agent, and the other way round. For Go there is a Go core and PostgreSQL store (Agent
-Framework integration next) in [`go/`](go/README.md): it passes contract 1.2 and is
-pre-release and untagged.
+is injected into a Python agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.2, with
+a one-call Go Agent Framework integration, are in [`go/`](go/README.md): pre-release and untagged. A lesson a .NET
+agent learned is injected into a Go agent, and the other way round.
 
 ## Documentation
 
