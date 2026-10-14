@@ -16,8 +16,10 @@ internal static class ApplicationRolePrivileges
     internal const string EmbeddingsTable = "experience_embeddings";
 
     /// <summary>
-    /// <c>0026</c>'s table: when each record was last injected. .NET-only, like the lifecycle after
-    /// finalization: a contract 1.x port never reads or writes it, so it is out of the contract's privileges file.
+    /// <c>0026</c>'s table: when each record was last injected. Optional, so the privileges call still succeeds on a
+    /// schema not yet migrated to <c>0026</c> (and grants it once it is). .NET-only, like the lifecycle after
+    /// finalization: a contract 1.x port never reads or writes it, so it is out of the contract's privileges file, which
+    /// leaves out optional tables.
     /// </summary>
     internal const string InjectionsTable = "experience_injections";
 
@@ -49,7 +51,7 @@ internal static class ApplicationRolePrivileges
         // Story 21.8: the injection upsert. UPDATE is column-level, the two its ON CONFLICT DO UPDATE sets: never the
         // record or the scope columns, which the upsert copies from the record and the policies match on. No DELETE:
         // erasure removes a row through 0026's trigger, as the owner.
-        new(InjectionsTable, Delete: false, ["injection_count", "last_injected_at"], InContract: false),
+        new(InjectionsTable, Delete: false, ["injection_count", "last_injected_at"], Optional: true),
 
         // Derived, rebuildable data owned by the vectors package: the index upserts and removes vectors.
         // UPDATE is column-level, the columns the upsert's ON CONFLICT DO UPDATE sets: never experience_id,
@@ -1013,8 +1015,7 @@ internal static class ApplicationRolePrivileges
         string Name,
         bool Delete,
         IReadOnlyList<string> UpdateColumns,
-        bool Optional = false,
-        bool InContract = true);
+        bool Optional = false);
 
     private sealed record RoleFacts(uint Oid, string QuotedName);
 

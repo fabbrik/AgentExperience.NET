@@ -297,7 +297,12 @@ public class ContractShapeTests
     [Fact]
     public void Store_port_operations_take_authorization_and_a_required_cancellation_token()
     {
-        var methods = typeof(IExperienceRecordStore).GetMethods().OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
+        var methods = typeof(IExperienceRecordStore).GetMethods().Where(m => !m.IsSpecialName).OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
+
+        // The one property: whether the store tracks injections, false unless a store says otherwise (story 21.8).
+        var tracks = Assert.Single(typeof(IExperienceRecordStore).GetProperties());
+        Assert.Equal(nameof(IExperienceRecordStore.TracksInjections), tracks.Name);
+        Assert.False(tracks.GetMethod!.IsAbstract);
 
         // Two GetAsync overloads: the plain read, and the one that also says what the caller will do
         // with the record. Only auditing looks at the difference, so the second has a default
@@ -310,7 +315,7 @@ public class ContractShapeTests
             methods.Select(m => m.Name));
 
         // The lessons view's injection read and the provider's injection write both have default implementations, so an
-        // existing store keeps compiling (and reads as not tracking injections).
+        // existing store keeps compiling (and reads as not tracking injections); override all three or none.
         Assert.All(methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync"), method => Assert.False(method.IsAbstract));
         Assert.All(methods, method =>
         {

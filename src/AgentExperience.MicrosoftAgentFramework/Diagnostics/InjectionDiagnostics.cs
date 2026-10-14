@@ -9,7 +9,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Diagnostics;
 /// <summary>
 /// The MAF adapter's one emission seam: the <see cref="ActivitySource"/> and <see cref="Meter"/>
 /// named <c>AgentExperience.MicrosoftAgentFramework</c>, the same three instruments Core emits, and
-/// the one operation this assembly owns -- <c>inject</c>.
+/// the operations this assembly owns: <c>inject</c>, and <c>record_injection</c>, which records an injection after the
+/// block was handed over and emits measurements only, never a span.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -132,6 +133,25 @@ internal static class InjectionDiagnostics
 
     /// <summary>The name of the counter only a thrown operation increments.</summary>
     internal const string OperationFailuresInstrument = "agentexperience.operation.failures";
+
+    /// <summary>
+    /// The second operation this assembly owns: recording, after an injected block was handed over, when its records
+    /// were injected. It opens no span -- it runs in the background, after the injection's span has closed -- and is
+    /// counted and timed on the same instruments, with one of the outcomes below.
+    /// </summary>
+    internal const string RecordInjection = "record_injection";
+
+    /// <summary>The store recorded the injection.</summary>
+    internal const string RecordedOutcome = "Recorded";
+
+    /// <summary>The store does not track injections (<c>IExperienceRecordStore.TracksInjections</c> is false, or it said so).</summary>
+    internal const string NotTrackedOutcome = "NotTracked";
+
+    /// <summary>The store refused or failed the write: nothing was recorded.</summary>
+    internal const string NotRecordedOutcome = "NotRecorded";
+
+    /// <summary>The write timed out or was cancelled: it may or may not have been recorded.</summary>
+    internal const string OutcomeUnknownOutcome = "OutcomeUnknown";
 
     /// <summary>
     /// The assembly's informational version, carried by both the source and the meter so a host can
@@ -354,6 +374,50 @@ internal static class InjectionDiagnostics
                 { ErrorClassDimension, Name(errorClass) },
                 { NestedDimension, NotNested },
             });
+        }
+    }
+
+    /// <summary>
+    /// Counts and times one background injection record (<see cref="RecordInjection"/>), and counts a failure when
+    /// <paramref name="errorClass"/> is set. Never throws.
+    /// </summary>
+    /// <param name="outcome">One of the record outcomes above.</param>
+    /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
+    /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>
+    internal static void InjectionRecorded(string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass)
+    {
+        try
+        {
+            var tags = new TagList
+            {
+                { OperationDimension, RecordInjection },
+                { OutcomeDimension, outcome },
+                { NestedDimension, NotNested },
+            };
+
+            if (Operations.Enabled)
+            {
+                Operations.Add(1, tags);
+            }
+
+            if (Durations.Enabled)
+            {
+                Durations.Record(Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds, tags);
+            }
+
+            if (errorClass is { } failed && Failures.Enabled)
+            {
+                Failures.Add(1, new TagList
+                {
+                    { OperationDimension, RecordInjection },
+                    { ErrorClassDimension, Name(failed) },
+                    { NestedDimension, NotNested },
+                });
+            }
+        }
+        catch (Exception)
+        {
+            // Frozen rule 6.
         }
     }
 

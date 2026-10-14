@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentExperience.MicrosoftAgentFramework.Tests" />
+    <!-- Story 21.8: the PostgreSQL end-to-end gate test waits for the background injection record. -->
+    <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Tests" />
   </ItemGroup>
 
   <ItemGroup>

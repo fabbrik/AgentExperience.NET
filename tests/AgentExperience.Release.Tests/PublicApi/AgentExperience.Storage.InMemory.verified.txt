@@ -15,6 +15,7 @@ namespace AgentExperience.Storage.InMemory
     public sealed class InMemoryExperienceRecordStore : AgentExperience.Abstractions.IExperienceRecordStore
     {
         public InMemoryExperienceRecordStore(System.TimeProvider? timeProvider = null) { }
+        public bool TracksInjections { get; }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken) { }

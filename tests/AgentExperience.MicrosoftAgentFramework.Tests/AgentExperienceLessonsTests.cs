@@ -48,6 +48,8 @@ public sealed class AgentExperienceLessonsTests
         Assert.Equal([first.ExperienceId!.Value], host.Injections[1].InjectedExperienceIds);
         var injected = Assert.Single(model.FirstCalls[1], IsHistoricalReference).Text;
 
+        // Story 21.8: the injection is recorded in the background, after the block is handed over.
+        await services.GetAgentExperienceContextProvider().InjectionRecordsSettledAsync();
         var page = await services.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync();
 
         Assert.Equal(ExperienceStoreOutcome.Found, page.Outcome);
@@ -102,8 +104,8 @@ public sealed class AgentExperienceLessonsTests
                 (await store.CreateAsync(authorization, Eligibility.Ok(n) with { CreatedAt = InjectionRecords.Now.AddMinutes(-n) }, CancellationToken.None)).Outcome);
         }
 
-        var t1 = InjectionRecords.Now.AddHours(1);
-        var t2 = InjectionRecords.Now.AddHours(2);
+        var t1 = InjectionRecords.Now.AddHours(-2);
+        var t2 = InjectionRecords.Now.AddHours(-1);
         await store.RecordInjectionAsync(authorization, scope, [InjectionRecords.Id(1)], t1, CancellationToken.None);
         await store.RecordInjectionAsync(authorization, scope, [InjectionRecords.Id(1), InjectionRecords.Id(2)], t2, CancellationToken.None);
 
@@ -116,8 +118,11 @@ public sealed class AgentExperienceLessonsTests
         Assert.Equal([2L, 1L, 0L], page.Lessons.Select(lesson => lesson.InjectionCount));
 
         var html = ExperienceLessonsHtml.Render(page);
-        Assert.Contains("<span>last injected 2026", html, StringComparison.Ordinal);
-        Assert.Contains(" UTC (2 times)</span>", html, StringComparison.Ordinal);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode(ExperienceLessonsHtml.DotNetOnlyNote), html, StringComparison.Ordinal);
+        Assert.Contains(
+            "<span>last injected " + t2.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + " UTC (2 times)</span>",
+            html,
+            StringComparison.Ordinal);
         Assert.Equal(1, Count(html, "<span>last injected never</span>"));
         Assert.DoesNotContain(ExperienceLessonsHtml.NotTracked, html, StringComparison.Ordinal);
     }
@@ -137,6 +142,24 @@ public sealed class AgentExperienceLessonsTests
         var html = ExperienceLessonsHtml.Render(page);
         Assert.Contains("<span>last injected not tracked</span>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("<span>last injected never</span>", html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Story 21.8: a decorator that forwards the injection read but not the capability reads as not tracked, never as
+    /// "never": the view takes "tracked" from the store's capability as well as from its read.
+    /// </summary>
+    [Fact]
+    public async Task A_decorator_that_does_not_forward_the_capability_reads_as_not_tracked()
+    {
+        var store = new Storage.InMemory.InMemoryExperienceRecordStore(new FrozenTimeProvider(InjectionRecords.Now));
+        Assert.Equal(
+            ExperienceStoreOutcome.Created,
+            (await store.CreateAsync(Eligibility.Identity.Authorization, Eligibility.Ok(1), CancellationToken.None)).Outcome);
+
+        var page = await Lessons(new ReadOnlyForwarder(store), store).ListAsync(Eligibility.Identity);
+
+        Assert.False(page.InjectionsTracked);
+        Assert.DoesNotContain(ExperienceLessonsHtml.DotNetOnlyNote, ExperienceLessonsHtml.Render(page), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -451,6 +474,31 @@ public sealed class AgentExperienceLessonsTests
         return new AgentExperienceLessons(store, provider, clock);
     }
 
+    /// <summary>A decorator that forwards the reads, the injection read included, but not <see cref="IExperienceRecordStore.TracksInjections"/>.</summary>
+    private sealed class ReadOnlyForwarder(IExperienceRecordStore inner) : IExperienceRecordStore
+    {
+        public Task<ExperienceRecordCreateResult> CreateAsync(AuthorizationContext authorization, ExperienceRecord record, CancellationToken cancellationToken) =>
+            inner.CreateAsync(authorization, record, cancellationToken);
+
+        public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+            inner.GetAsync(authorization, scope, experienceId, cancellationToken);
+
+        public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+            inner.QueryAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceRecordQueryResult> QueryWithInjectionsAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+            inner.QueryWithInjectionsAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AuthorizationContext authorization, Scope scope, LifecycleEvent lifecycleEvent, CancellationToken cancellationToken) =>
+            inner.CommitLifecycleEventAsync(authorization, scope, lifecycleEvent, cancellationToken);
+
+        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
+            inner.GetHistoryAsync(authorization, query, cancellationToken);
+
+        public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
+            inner.CheckSupersessionAsync(authorization, scope, experienceId, replacementExperienceId, cancellationToken);
+    }
+
     /// <summary>A store that counts every call the lessons view makes, and forwards each.</summary>
     private sealed class CountingStore(IExperienceRecordStore inner) : IExperienceRecordStore
     {
@@ -481,6 +529,8 @@ public sealed class AgentExperienceLessonsTests
 
         public Task<ExperienceRecordQueryResult> QueryWithInjectionsAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
             Count(inner.QueryWithInjectionsAsync(authorization, query, cancellationToken));
+
+        public bool TracksInjections => inner.TracksInjections;
 
         public Task<ExperienceInjectionRecordResult> RecordInjectionAsync(AuthorizationContext authorization, Scope scope, IReadOnlyList<Guid> experienceIds, DateTimeOffset injectedAt, CancellationToken cancellationToken) =>
             Count(inner.RecordInjectionAsync(authorization, scope, experienceIds, injectedAt, cancellationToken));

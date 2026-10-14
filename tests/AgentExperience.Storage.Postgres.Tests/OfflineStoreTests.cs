@@ -1370,18 +1370,28 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
 
-        // The manifest grants the upsert's two columns and nothing else, and keeps the table out of the contract's
-        // privileges file: a contract 1.x port never touches it.
+        // The manifest grants the upsert's two columns and nothing else, only when the table exists (so the privileges call
+        // still runs before the migration), which also keeps it out of the contract's privileges file: a contract 1.x port
+        // never touches it.
         var manifest = Assert.Single(ApplicationRolePrivileges.Tables, t => t.Name == ApplicationRolePrivileges.InjectionsTable);
         Assert.Equal(["injection_count", "last_injected_at"], manifest.UpdateColumns);
         Assert.False(manifest.Delete);
-        Assert.False(manifest.Optional);
-        Assert.False(manifest.InContract);
+        Assert.True(manifest.Optional);
+        Assert.Contains(
+            "FOREIGN KEY (experience_id)\n        REFERENCES agent_experience.experience_records (experience_id) ON DELETE CASCADE",
+            statements,
+            StringComparison.Ordinal);
+        Assert.All(
+            RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.InjectionsTable && p.Command != "SELECT"),
+            policy => Assert.Contains("AND r.deleted_at IS NULL)", policy.Check, StringComparison.Ordinal));
 
         // The upsert copies the scope from the record, in exactly the caller's scope, and only moves forward.
         Assert.Contains(ExperienceRecordSql.RecordScopePredicate, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
         Assert.Contains(ExperienceRecordSql.RecordLivePredicate, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
         Assert.Contains("GREATEST(i.last_injected_at, EXCLUDED.last_injected_at)", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
+        Assert.Contains("LEAST(@injected_at, pg_catalog.clock_timestamp())", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
+        Assert.Contains("WHEN i.injection_count = 9223372036854775807 THEN i.injection_count", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
         // The last script.
         Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);

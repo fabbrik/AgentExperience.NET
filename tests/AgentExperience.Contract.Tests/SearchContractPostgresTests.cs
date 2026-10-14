@@ -247,6 +247,12 @@ public sealed class ContractPostgresDatabase : IAsyncLifetime
         return Source(name, Application);
     }
 
+    /// <summary>The owner's data source on <paramref name="caseName"/>'s database, which <see cref="CreateAsync"/> made.</summary>
+    public NpgsqlDataSource OwnerOf(string caseName) => Source("contract_" + caseName.Replace('-', '_'), Owner);
+
+    /// <summary>The application role's name, as the privileges statements name it.</summary>
+    public static string ApplicationRole => Application;
+
     public async Task DisposeAsync()
     {
         foreach (var source in _sources)

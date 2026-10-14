@@ -215,8 +215,7 @@ public sealed partial class ContractFixtureTests
     {
         // On a schema the migrator has just applied: every non-optional table exists, and none has row-level security yet.
         const string role = ":\"application_role\"";
-        // Contract tables only: not the optional vectors table, nor the .NET-only injection table (story 21.8).
-        var tables = ApplicationRolePrivileges.Tables.Where(table => !table.Optional && table.InContract).Select(table => table.Name).ToHashSet(StringComparer.Ordinal);
+        var tables = ApplicationRolePrivileges.Tables.Where(table => !table.Optional).Select(table => table.Name).ToHashSet(StringComparer.Ordinal);
         var fresh = tables.ToDictionary(
             table => table,
             _ => new ApplicationRolePrivileges.RowSecurityState(Enabled: false, Forced: false, Policies: []),

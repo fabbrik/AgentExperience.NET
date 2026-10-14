@@ -45,7 +45,7 @@ telemetry, such as a listener callback that throws, is swallowed and never reach
 | Name | Kind | Emitted by | Operations |
 | --- | --- | --- | --- |
 | `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the thirteen Core operations below |
-| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject` only |
+| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, and `record_injection` (measurements only, no span) |
 | `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention) and `record.seal` (the crypto-shredding upgrade) only |
 
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
@@ -226,6 +226,7 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `reindex` | `ExperienceIndexingService.ReindexAsync` | `ExperienceReindexOutcome`: `Completed`, `Denied`, `Invalid`, `Failed` | none (a pass has no single record) | — |
 | `reuse_feedback` | `ExperienceReuseFeedbackService.RecordAsync` | `ExperienceReuseFeedbackOutcome`: `Recorded`, `AlreadyRecorded`, `Conflict`, `Denied`, `Invalid` | `feedback_id`, `run_id` | `confidence.apply` (once per attributed exposed record) |
 | `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed`, `Retracted` (a block of withdrawal notices only), `SessionBudgetExhausted` | `correlation_id`, `omitted_count`, `retracted_count`, `history_read` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
+| `record_injection` | `ExperienceContextProvider`, in the background after an injected block is handed over: it records when the block's records were injected, for the lessons view. No span (the injection's has closed); counted, timed and failure-counted on the same instruments | `Recorded`; `NotTracked` (the store does not track injections, `IExperienceRecordStore.TracksInjections`); `NotRecorded` (the store refused or failed the write; `error.class` `Infrastructure` or `Unexpected` when it threw, `Timeout` when too many earlier writes are still running); `OutcomeUnknown` (the write overran its few-second bound, `Timeout`, or was cancelled, `Cancelled`: it may have landed) | — | — |
 | `delete` | `PostgresExperienceRecordStore.DeleteAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `StaleRevision`, `NotFound`, `Denied`, `Invalid` | `experience_id` | — |
 | `retention.sweep` | `PostgresExperienceRecordStore.SweepExpiredAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count`, `interrupted`, `scope_match` | — (one span per batch, never one per record, whether `Exact` or `Subtree`) |
 | `grant.purge` | `PostgresExperienceGrantStore.PurgeExpiredAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count` | — |

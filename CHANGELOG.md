@@ -48,28 +48,36 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ### Added: the lessons view shows when each lesson was last injected (story 21.8)
 
-- **`ExperienceLesson.LastInjectedAt` and `InjectionCount`**, and `ExperienceLessonsPage.InjectionsTracked`: when an
-  agent in the scope was last shown each lesson, and how many injected blocks delivered it. `ExperienceLessonsHtml`
-  shows it on every lesson ("last injected 2026-10-14 09:30:00 UTC (3 times)", "never", or "not tracked" when the store
-  cannot say). A lesson never injected is the first thing to look at: a dead lesson, or a retrieval miss.
+- **`ExperienceLesson.LastInjectedAt` and `InjectionCount`**, a field on each lesson, and
+  `ExperienceLessonsPage.InjectionsTracked`. The field has three states: when an agent in the scope was last shown the
+  lesson (and how many injected blocks delivered it); never; or not tracked, when the store cannot say.
+  `ExperienceLessonsHtml` shows it on every lesson ("last injected 2026-10-14 09:30:00 UTC (3 times)", "never", "not
+  tracked"). A lesson never injected is the first thing to look at: a dead lesson, or a retrieval miss. **Only .NET
+  agents record injections for now**; the Python and Go ports do not yet, so in a mixed fleet "never" can mean "injected
+  only by a Python or Go agent", and the page says so.
 - **Where it comes from.** No stored fact answered it reliably: a run's record names what it was exposed to only when
   the run was captured and finalized, inside a payload that is sealed in encrypted mode, and reuse feedback names
-  exposures only when a host submits it. So the context provider now records it: one store write per injected block,
-  never per record, never failing the injection. When the write fails, the block is injected anyway and the new
-  `ExperienceInjectionResult.InjectionNotRecorded` says why.
-- **Two port methods, both with default implementations** so existing stores keep compiling:
-  `IExperienceRecordStore.RecordInjectionAsync` (counts only records live in exactly the injecting scope; the default
-  records nothing) and `QueryWithInjectionsAsync` (the query plus each record's `ExperienceInjectionSummary` in one
-  bounded read, on the new `ExperienceRecordQueryResult.Injections`; the default is `QueryAsync`, read as not tracked).
-  A lesson another scope borrows through a grant and injects there is counted in neither scope; the owner sees those
-  deliveries in the grant access log. The in-memory and PostgreSQL stores implement both; the store conformance
-  suite covers them.
+  exposures only when a host submits it. So the context provider now records it, **after the block is handed over, in
+  the background**: one store write per injected block, bounded by its own timeout of a few seconds, never delaying or
+  failing the invocation. The outcome is the new `record_injection` operation in telemetry: `Recorded`, `NotTracked`,
+  `NotRecorded`, or `OutcomeUnknown` (a timeout or cancellation, which may have landed).
+- **A capability and two port methods, all with default implementations** so existing stores keep compiling:
+  `IExperienceRecordStore.TracksInjections`, `RecordInjectionAsync` (counts only records live in exactly the injecting
+  scope; clamps the instant to the store's clock; saturates the count) and `QueryWithInjectionsAsync` (the query plus
+  each record's `ExperienceInjectionSummary` in one bounded read, on the new `ExperienceRecordQueryResult.Injections`).
+  Override all three or none, and forward all three from a decorator: the defaults read as not tracked, and the store
+  conformance suite fails a store that overrides only some. A lesson another scope borrows through a grant and injects
+  there is counted in neither scope; the owner sees those deliveries in the grant access log. The in-memory and
+  PostgreSQL stores implement them.
 - **Migration `0026_experience_injections.sql`** creates `agent_experience.experience_injections` (one row per record:
-  scope, `last_injected_at`, `injection_count`; no content), a trigger that deletes a record's row when it is erased,
-  and the table's row-level security policies. The application role gets `SELECT`, `INSERT` and `UPDATE` on the two
-  moving columns. **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**: until then every injection reports
-  `InjectionNotRecorded` and the view reads as not tracked, and nothing else changes. The table is .NET-only, so the
-  contract (still 1.3) and its privileges file are unchanged.
+  scope, `last_injected_at`, `injection_count`; no content; a foreign key to the record), a trigger that deletes a
+  record's row when it is erased, and the table's row-level security policies, which admit a written row only for a live
+  record in exactly its scope. The application role gets `SELECT`, `INSERT` and `UPDATE` on the two moving columns,
+  once the table exists. **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**: until then injections report
+  `NotRecorded`, the view reads as not tracked (reported once through the new
+  `PostgresExperienceRecordStore.OnInjectionTrackingUnavailable`), and nothing else changes. The table is .NET-only,
+  so the contract (still 1.3) and its privileges file are unchanged; in a mixed fleet, run the .NET privileges call
+  after the contract's privileges file, whose `REVOKE ALL` removes the injection table's grants.
 - **The 20.8 capability gate, end to end on PostgreSQL**: a new test runs the provider over the real candidate source
   and record store with grant auditing on. A borrowed record whose grant shows the approach and whose tool the agent
   lacks takes no slot, the reader's own record backfills it, and the only access row is the search's.

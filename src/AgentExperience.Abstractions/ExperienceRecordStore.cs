@@ -170,6 +170,14 @@ public interface IExperienceRecordStore
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Whether this store records injections (<see cref="RecordInjectionAsync"/>) and reads them back
+    /// (<see cref="QueryWithInjectionsAsync"/>). <see langword="false"/> by default; a store that overrides those two
+    /// overrides this to <see langword="true"/>, and a decorator forwards it. The injection adapter skips the write and
+    /// reports "not tracked" when it is <see langword="false"/>, and the lessons view reads every lesson as not tracked.
+    /// </summary>
+    bool TracksInjections => false;
+
+    /// <summary>
     /// Records that the named records were just injected into a model's context in <paramref name="scope"/>: for each
     /// one that is a live record in exactly that scope, its last injection becomes the later of the one stored and
     /// <paramref name="injectedAt"/>, and its injection count rises by one. An ID that names nothing in that scope -- a
@@ -183,12 +191,17 @@ public interface IExperienceRecordStore
     /// injection: a failure is reported with the injection's own telemetry, and the block is delivered anyway.
     /// </para>
     /// <para>
-    /// <b>A default implementation is provided</b>, which records nothing and reports
-    /// <see cref="ExperienceInjectionRecordResult.Tracked"/> as <see langword="false"/>, so an existing implementation
-    /// keeps compiling; its lessons view then says injections are not tracked rather than "never". An implementation
-    /// should override it with one bounded write, and override <see cref="QueryWithInjectionsAsync"/> to read it back.
+    /// <b>Override all three of <see cref="TracksInjections"/>, this method and <see cref="QueryWithInjectionsAsync"/>,
+    /// or none of them.</b> The defaults record nothing, report <see cref="ExperienceInjectionRecordResult.Tracked"/> as
+    /// <see langword="false"/> and read back as not tracked, so an existing implementation keeps compiling and its lessons
+    /// view says "not tracked" rather than "never". A decorator must forward all three. The store conformance suite
+    /// fails a store that overrides only some of them.
+    /// </para>
+    /// <para>
     /// It is the only write on this port that is not an <see cref="ExperienceRecord"/>'s own state: it never changes a
-    /// record, its revision or its <see cref="ExperienceRecord.UpdatedAt"/>.
+    /// record, its revision or its <see cref="ExperienceRecord.UpdatedAt"/>. A store clamps <paramref name="injectedAt"/>
+    /// to its own clock, so a caller's clock running ahead cannot pin a lesson's last injection in the future, and
+    /// saturates the count at <see cref="long.MaxValue"/>.
     /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>
@@ -227,6 +240,7 @@ public interface IExperienceRecordStore
     /// <para>
     /// <b>A default implementation is provided</b>: <see cref="QueryAsync"/>, with
     /// <see cref="ExperienceRecordQueryResult.Injections"/> left <see langword="null"/>, which means "not tracked".
+    /// Override all three of <see cref="TracksInjections"/>, <see cref="RecordInjectionAsync"/> and this method, or none.
     /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>

@@ -169,6 +169,36 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task A_hand_written_injection_row_claiming_another_scopes_record_is_refused()
+    {
+        await using var world = await RlsWorldAsync("rls_inj_claims");
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var a = await world.CreateAsync(tenantA, Scope(tenantA));
+        var b = await world.CreateAsync(tenantB, Scope(tenantB));
+        const string Insert =
+            "INSERT INTO agent_experience.experience_injections (experience_id, tenant_id, application_id, project_id, team_id, " +
+            "agent_id, user_id, last_injected_at, injection_count) VALUES (@id, @tenant_id, @application_id, @project_id, " +
+            "@team_id, @agent_id, @user_id, now(), 1)";
+
+        // Tenant B's record ID under tenant A's own scope columns, inside tenant A's bounds: no live record with that ID
+        // in that scope, so the policy refuses it.
+        var claimed = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(world.App, Authorize(tenantA), Insert, ("id", b), Scope(tenantA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, claimed.SqlState);
+        Assert.Contains("row-level security", claimed.MessageText, StringComparison.Ordinal);
+
+        // Nor can tenant A move its own row onto tenant B's record.
+        Assert.Equal(1, await ExecuteAsync(world.App, Authorize(tenantA), Insert, ("id", a), Scope(tenantA)));
+        var moved = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "UPDATE agent_experience.experience_injections SET experience_id = @b WHERE experience_id = @a",
+            [("a", a), ("b", b)], scope: null));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, moved.SqlState);
+
+        // The same row for its own live record, in its own scope, is admitted.
+        Assert.Equal(1L, await ScalarAsync<long>(world.Owner, null, "SELECT count(*) FROM agent_experience.experience_injections WHERE experience_id = @id", ("id", a)));
+    }
+
+    [Fact]
     public async Task A_database_before_0026_reads_injections_as_untracked_until_migrated_and_granted_and_never_fails_the_page()
     {
         await using var world = await RlsWorldAsync("rls_inj_upgrade");
@@ -190,8 +220,15 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
             await ExecuteAsync(world.Owner, declare: null, sql);
         }
 
-        // No table: the page reads, untracked, and the write fails loudly for the adapter to report.
+        // The privileges call still runs on this schema: the table is optional, granted once it exists.
+        await world.ApplyAsync(enable: true);
+
+        // No table: the page reads, untracked, reported once, and the write fails loudly for the adapter to report.
+        var notices = new List<ExperienceInjectionTrackingNotice>();
+        store = new PostgresExperienceRecordStore(world.App) { OnInjectionTrackingUnavailable = notices.Add };
         var before = await store.QueryWithInjectionsAsync(Authorize(tenant), query, CancellationToken.None);
+        await store.QueryWithInjectionsAsync(Authorize(tenant), query, CancellationToken.None);
+        Assert.Equal(ExperienceInjectionTrackingReason.TableMissing, Assert.Single(notices).Reason);
         Assert.Equal([id], before.Records.Select(r => r.ExperienceId));
         Assert.Null(before.Injections);
         await Assert.ThrowsAsync<ExperienceStoreException>(() => store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow, CancellationToken.None));
@@ -199,7 +236,10 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         // Migrated: 0026 alone is applied; the table exists but the application role holds nothing on it yet.
         var applied = await ExperienceSchemaMigrator.MigrateAsync(world.Owner, CancellationToken.None);
         Assert.Equal([PostgresExperienceRecordSchema.ExperienceInjectionsScriptName], applied.AppliedScripts);
+        var notGranted = new List<ExperienceInjectionTrackingNotice>();
+        store = new PostgresExperienceRecordStore(world.App) { OnInjectionTrackingUnavailable = notGranted.Add };
         var migrated = await store.QueryWithInjectionsAsync(Authorize(tenant), query, CancellationToken.None);
+        Assert.Equal(ExperienceInjectionTrackingReason.NotPermitted, Assert.Single(notGranted).Reason);
         Assert.Equal([id], migrated.Records.Select(r => r.ExperienceId));
         Assert.Null(migrated.Injections);
         await Assert.ThrowsAsync<ExperienceStoreException>(() => store.RecordInjectionAsync(Authorize(tenant), scope, [id], DateTimeOffset.UtcNow, CancellationToken.None));

@@ -60,7 +60,8 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     private readonly HashSet<(Guid ExperienceId, Guid AssessmentId)> _spentAssessments = [];
 
     /// <summary>Each record's last injection in its own scope, and how many were recorded.</summary>
-    private readonly Dictionary<Guid, ExperienceInjectionSummary> _injections = [];
+    /// <remarks>Internal for tests, which seed a count near its maximum to prove it saturates.</remarks>
+    internal Dictionary<Guid, ExperienceInjectionSummary> Injections { get; } = [];
 
     /// <summary>
     /// Creates an empty store. <b>For development and tests only</b>: data is lost when the process ends, and none
@@ -246,6 +247,14 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <inheritdoc />
+    public bool TracksInjections => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The instant is clamped to this store's clock (its <see cref="TimeProvider"/>), as the PostgreSQL store clamps it to
+    /// the database's, and the count saturates at <see cref="long.MaxValue"/>. Every record this store holds is live: it
+    /// has no erasure, so there is no tombstone to skip and no entry to drop.
+    /// </remarks>
     public Task<ExperienceInjectionRecordResult> RecordInjectionAsync(
         AuthorizationContext authorization,
         Scope scope,
@@ -273,7 +282,13 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
             return Task.FromCanceled<ExperienceInjectionRecordResult>(cancellationToken);
         }
 
+        var now = StoredSnapshots.Timestamp(_timeProvider.GetUtcNow());
         var at = StoredSnapshots.Timestamp(injectedAt);
+        if (at > now)
+        {
+            at = now;
+        }
+
         lock (_gate)
         {
             foreach (var id in experienceIds.Distinct())
@@ -284,8 +299,10 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
                     continue;
                 }
 
-                _injections[id] = _injections.TryGetValue(id, out var current)
-                    ? new ExperienceInjectionSummary(current.LastInjectedAt >= at ? current.LastInjectedAt : at, current.Count + 1)
+                Injections[id] = Injections.TryGetValue(id, out var current)
+                    ? new ExperienceInjectionSummary(
+                        current.LastInjectedAt >= at ? current.LastInjectedAt : at,
+                        current.Count == long.MaxValue ? long.MaxValue : current.Count + 1)
                     : new ExperienceInjectionSummary(at, 1);
             }
         }
@@ -310,7 +327,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         {
             foreach (var record in result.Records)
             {
-                if (_injections.TryGetValue(record.ExperienceId, out var summary))
+                if (Injections.TryGetValue(record.ExperienceId, out var summary))
                 {
                     injections[record.ExperienceId] = summary;
                 }

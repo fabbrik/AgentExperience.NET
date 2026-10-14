@@ -828,6 +828,7 @@
     }
     public interface IExperienceRecordStore
     {
+        bool TracksInjections { get; }
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken);

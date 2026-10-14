@@ -355,6 +355,13 @@ public abstract class RecordStoreConformanceTests
     // ---------------------------------------------------------------- injections (story 21.8)
 
     [Fact]
+    public void The_store_tracks_injections_and_overrides_all_three_injection_members()
+    {
+        AssertInjectionTrackingIsConsistent(Store);
+        Assert.True(Store.TracksInjections);
+    }
+
+    [Fact]
     public async Task Query_with_injections_answers_the_query_with_each_record_s_latest_injection_and_none_for_one_never_injected()
     {
         var tenant = NewTenant();
@@ -1462,5 +1469,34 @@ public abstract class RecordStoreConformanceTests
         Assert.Equal(ExperienceStoreOutcome.Found, history.Outcome);
         Assert.Equal(revision, history.Revision);
         Assert.Equal(events, history.Events.Count);
+    }
+
+    /// <summary>
+    /// Story 21.8: fails unless <paramref name="store"/> overrides all three of
+    /// <see cref="IExperienceRecordStore.TracksInjections"/>, <see cref="IExperienceRecordStore.RecordInjectionAsync"/> and
+    /// <see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/>, or none of them, and its capability says which. A
+    /// store (or a decorator) that overrides only some would record injections the view never reads back, or read back
+    /// injections it never claims to track.
+    /// </summary>
+    /// <param name="store">The store, or decorator, to check.</param>
+    public static void AssertInjectionTrackingIsConsistent(IExperienceRecordStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var map = store.GetType().GetInterfaceMap(typeof(IExperienceRecordStore));
+        bool Overrides(string name)
+        {
+            var index = Array.FindIndex(map.InterfaceMethods, method => method.Name == name);
+            Assert.True(index >= 0, $"IExperienceRecordStore has no member {name}.");
+            return map.TargetMethods[index].DeclaringType != typeof(IExperienceRecordStore);
+        }
+
+        var capability = Overrides("get_" + nameof(IExperienceRecordStore.TracksInjections));
+        var record = Overrides(nameof(IExperienceRecordStore.RecordInjectionAsync));
+        var query = Overrides(nameof(IExperienceRecordStore.QueryWithInjectionsAsync));
+        Assert.True(
+            capability == record && record == query,
+            $"{store.GetType().Name} overrides TracksInjections: {capability}, RecordInjectionAsync: {record}, "
+            + $"QueryWithInjectionsAsync: {query}. Override all three or none of them.");
+        Assert.Equal(capability, store.TracksInjections);
     }
 }

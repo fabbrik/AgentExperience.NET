@@ -725,20 +725,28 @@ as the store's own statement now does (see [How the text channel matches](retrie
 `0026_experience_injections.sql` backs the lessons view's "last injected" (see
 [Seeing what it learned](deployment.md#seeing-what-it-learned)):
 
-- `agent_experience.experience_injections`: one row per record injected in its own scope, keyed on `experience_id`,
-  with the record's six scope columns, `last_injected_at` and `injection_count`. The store writes it with one
-  `INSERT … SELECT … ON CONFLICT DO UPDATE` per injected block, which copies the scope from the record (live, in exactly
-  the caller's scope, locked `FOR KEY SHARE` in ID order), moves `last_injected_at` only forward (`GREATEST`) and adds
-  one to the count. It holds no content, so nothing in it is sealed in encrypted mode.
+- `agent_experience.experience_injections`: one row per record injected in its own scope, keyed on `experience_id`
+  (with a foreign key to `experience_records`, `ON DELETE CASCADE`), with the record's six scope columns,
+  `last_injected_at` and `injection_count`. The store writes it with one `INSERT … SELECT … ON CONFLICT DO UPDATE` per
+  injected block, which copies the scope from the record (live, in exactly the caller's scope), clamps the instant to
+  `clock_timestamp()` (`LEAST`) and then moves it only forward (`GREATEST`), and adds one to the count, saturating at the
+  `bigint` maximum. In encrypted mode the store skips a record whose key is destroyed. It holds no content.
+- **Concurrency.** The upsert locks its records `FOR KEY SHARE` in ID order, as every adapter write that checks a
+  record does; the purge locks its one record `FOR UPDATE` first. So an upsert that started first holds an erasure until
+  it commits (and the tombstone's trigger then deletes its row), and one that starts second waits and writes nothing for
+  the tombstone. No deadlock is possible: an injection row is locked only after its record, by both sides, and the purge
+  locks one record per transaction. Tests race both orders and run concurrent upserts and erasures.
 - A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes a record's row when the
-  record is tombstoned, so every erasure path removes it without `0010`'s purge function being restated.
+  record is tombstoned, so every erasure path (delete, sweep, encrypted delete) removes it without `0010`'s purge
+  function being restated. A record row is never deleted (`0010` refuses it); the foreign key covers one removed by hand.
 - Its row-level security policies (`rls_injections_select`, `_insert`, `_update`): the row's scope inside the declared
-  bounds. A grant never admits one.
-- The application role gets `SELECT`, `INSERT` and `UPDATE` on the two moving columns. **Re-run
-  `ApplyApplicationRolePrivilegesAsync` after migrating**; until then injections are reported as not recorded and the
-  lessons view reads as not tracked. The table is .NET-only: it is not in the contract's privileges file, and a
-  contract 1.x port never reads or writes it.
-- No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
+  bounds, and, for a write, a live record with that ID in exactly those scope columns. A grant never admits one.
+- The application role gets `SELECT`, `INSERT` and `UPDATE` on the two moving columns, once the table exists (the
+  privileges call still runs before this migration). **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**;
+  until then injections are reported as not recorded and the lessons view reads as not tracked. The table is .NET-only:
+  it is not in the contract's privileges file, a contract 1.x port never reads or writes it, and in a mixed fleet the
+  .NET privileges call must run after that file, whose `REVOKE ALL` removes the grants.
+- No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
 

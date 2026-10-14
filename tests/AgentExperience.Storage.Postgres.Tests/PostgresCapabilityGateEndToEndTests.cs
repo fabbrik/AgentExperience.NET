@@ -54,7 +54,6 @@ public sealed class PostgresCapabilityGateEndToEndTests(PostgresFixture fixture)
 
         Assert.Empty(failures);
         Assert.Equal(InjectionOutcome.Injected, result.Outcome);
-        Assert.Null(result.InjectionNotRecorded);
         if (level == ExperienceGrantDisclosure.LessonAndApproach)
         {
             // Gated before the limit: omitted as ToolUnavailable, and the reader's own record backfills the one slot.
@@ -109,6 +108,9 @@ public sealed class PostgresCapabilityGateEndToEndTests(PostgresFixture fixture)
 
         var agent = new ChatClientAgent(client, new ChatClientAgentOptions { AIContextProviders = [provider] });
         await agent.RunAsync(TaskText);
+
+        // The injection is recorded in the background, after the block is handed over.
+        await provider.InjectionRecordsSettledAsync();
 
         var block = client.LastMessages?
             .FirstOrDefault(m => m.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true)?

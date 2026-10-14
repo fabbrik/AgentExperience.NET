@@ -78,6 +78,9 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - `QueryWithInjectionsAsync` answers exactly what `QueryAsync` answers, plus an injection summary for every returned
   record that was injected and none for one that was not, and refuses exactly what `QueryAsync` refuses. A store that
   keeps the port's default implementations of these two (recording nothing, reading as not tracked) does not pass.
+- `TracksInjections` is `true`, and a store overrides it, `RecordInjectionAsync` and `QueryWithInjectionsAsync`
+  together. `RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent(store)` checks the "all three or none" rule
+  for any store or decorator, including one that does not track injections at all.
 
 **Candidate source**
 

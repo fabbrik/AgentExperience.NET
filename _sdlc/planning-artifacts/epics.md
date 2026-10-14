@@ -2153,6 +2153,14 @@ Verifiers compose with all-of and any-of. Each produces the same `ExperienceVeri
 **When** each public type is checked for an outside caller (samples, docs, a plausible host)
 **Then** types no host needs become internal, and advanced ones move to clearly named namespaces. The breaks are declared in the CHANGELOG with migration notes, and the public API line count is reported before and after.
 
+### Story 21.7: Single-Call Injection Sees the Chat History and Run-Only Tools
+
+**Acceptance Criteria:** **Given** the five-line setup on a `ChatClientAgent` **When** a follow-up turn or a run-only tool is involved **Then** the injected block equals the explicit wiring's, byte for byte, using public MAF APIs on the existing floor, with any remaining difference documented.
+
+### Story 21.8: The Lessons View Shows When Each Lesson Was Last Injected
+
+**Acceptance Criteria:** **Given** lessons injected at different times **When** the lessons view is rendered **Then** each lesson shows its latest injection instant (or "never") from one bounded, scope-isolated query; and an end-to-end PostgreSQL test shows 20.8's gate leaving a borrowed record out before the limit with only its search-time access row written.
+
 ## Epic 22: Beyond .NET
 
 Microsoft Agent Framework ships in .NET, Python and Go (Go in public preview since 2026-07-10). The maintainer approved supporting Python and Go after Epic 21. The PostgreSQL schema, its search functions, row-level security and grants are already language-neutral, so ports are thin clients: capture as MAF middleware, injection as a context provider, both over the same tables, so that a lesson learned in one language can help an agent in another.

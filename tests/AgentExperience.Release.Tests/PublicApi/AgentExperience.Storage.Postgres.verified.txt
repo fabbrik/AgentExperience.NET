@@ -69,6 +69,17 @@ namespace AgentExperience.Storage.Postgres
         TableMissing = 0,
         NotPermitted = 1,
     }
+    public sealed class ExperienceInjectionTrackingNotice : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceInjectionTrackingNotice>
+    {
+        public ExperienceInjectionTrackingNotice(string Operation, AgentExperience.Storage.Postgres.ExperienceInjectionTrackingReason Reason) { }
+        public string Operation { get; init; }
+        public AgentExperience.Storage.Postgres.ExperienceInjectionTrackingReason Reason { get; init; }
+    }
+    public enum ExperienceInjectionTrackingReason
+    {
+        TableMissing = 0,
+        NotPermitted = 1,
+    }
     public sealed class ExperienceRecordDeleteResult : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceRecordDeleteResult>
     {
         public ExperienceRecordDeleteResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, long Revision, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
@@ -174,6 +185,8 @@ namespace AgentExperience.Storage.Postgres
         public const int MaxSweepBatchSize = 500;
         public const int MinSweepBatchSize = 1;
         public PostgresExperienceRecordStore(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
+        public System.Action<AgentExperience.Storage.Postgres.ExperienceInjectionTrackingNotice>? OnInjectionTrackingUnavailable { get; init; }
+        public bool TracksInjections { get; }
         public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Guid? startAfter, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken) { }

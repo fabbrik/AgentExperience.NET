@@ -42,6 +42,9 @@ public sealed class AgentExperienceLessons
         _registration = registration;
     }
 
+    /// <summary>The context provider whose writer and options render the blocks. For tests.</summary>
+    internal ExperienceContextProvider Provider => _provider;
+
     /// <summary>
     /// Lists the lessons in <paramref name="identity"/>'s scope, newest first.
     /// </summary>
@@ -97,7 +100,9 @@ public sealed class AgentExperienceLessons
         }
 
         var records = result.Records ?? [];
-        var injections = result.Injections;
+        // Tracked only when the store says so on both sides: a decorator that forwards the read but not the capability
+        // (or the reverse) reads as not tracked rather than as "never".
+        var injections = _store.TracksInjections ? result.Injections : null;
         var lessons = new List<ExperienceLesson>(Math.Min(records.Count, query.Limit));
         var outOfScope = 0;
         var hasMore = false;
@@ -280,10 +285,12 @@ public sealed record ExperienceLessonsPage(
     public int OutOfScopeDropped { get; init; }
 
     /// <summary>
-    /// Whether the store tracks injections (<see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/>), so that a
-    /// lesson's <see cref="ExperienceLesson.LastInjectedAt"/> of <see langword="null"/> means "never injected". When
-    /// <see langword="false"/> -- a store that does not implement it, or a PostgreSQL schema whose application role has
-    /// not been granted <c>0026</c>'s table yet -- it means "not known".
+    /// Whether the store tracks injections (<see cref="IExperienceRecordStore.TracksInjections"/>, and its
+    /// <see cref="IExperienceRecordStore.QueryWithInjectionsAsync"/> read them), so that a lesson's
+    /// <see cref="ExperienceLesson.LastInjectedAt"/> of <see langword="null"/> means "never injected by a .NET agent".
+    /// When <see langword="false"/> -- a store that does not track them, or a PostgreSQL schema whose application role
+    /// has not been granted <c>0026</c>'s table yet -- it means "not known". Only the .NET adapter records injections
+    /// for now: a lesson injected only by a Python or Go agent reads as never injected.
     /// </summary>
     public bool InjectionsTracked { get; init; }
 }
@@ -330,9 +337,11 @@ public sealed record ExperienceLesson(
 
     /// <summary>
     /// When an agent in this scope was last shown this lesson: the latest injected block that delivered it, by the
-    /// injecting provider's clock. <see langword="null"/> when it was never injected -- or, when the page's
-    /// <see cref="ExperienceLessonsPage.InjectionsTracked"/> is <see langword="false"/>, when that is not known. Only
-    /// injections in this scope count; another scope injecting it through a sharing grant does not.
+    /// injecting provider's clock (clamped to the store's). One of three states: an instant; <see langword="null"/>
+    /// with the page's <see cref="ExperienceLessonsPage.InjectionsTracked"/> set, meaning never injected by a .NET agent
+    /// (the Python and Go ports do not record injections yet); or <see langword="null"/> with it unset, meaning not
+    /// known. Only injections in this scope count; another scope injecting it through a sharing grant does not. It is
+    /// recorded in the background after the block is handed over, so it can lag an injection by a moment.
     /// </summary>
     public DateTimeOffset? LastInjectedAt { get; init; }
 

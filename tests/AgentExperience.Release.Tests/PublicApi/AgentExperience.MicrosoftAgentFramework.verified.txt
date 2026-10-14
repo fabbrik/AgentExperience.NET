@@ -145,6 +145,8 @@
     {
         public const string DevelopmentBanner = "Development view: these are the lessons stored in this scope. It discloses them, " +
             "so serve it only behind your own authorization.";
+        public const string DotNetOnlyNote = "\"Last injected\" counts injections by .NET agents only: a lesson injected only by " +
+            "a Python or Go agent shows \"never\".";
         public const string Never = "never";
         public const string NoLessons = "No lessons yet.";
         public const string NotTracked = "not tracked";
@@ -327,7 +329,6 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool Injected { get; }
         public int InjectedCount { get; }
         public System.Collections.Generic.IReadOnlyList<System.Guid> InjectedExperienceIds { get; init; }
-        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure? InjectionNotRecorded { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.InjectionOutcome Outcome { get; init; }
         public int PayloadBytes { get; init; }
