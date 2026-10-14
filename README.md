@@ -87,8 +87,8 @@ The samples and the reuse baseline use scripted models: they show the loop works
 ## Quick start
 
 This wires the loop for one MAF agent, with the in-memory storage (development and tests only, nothing survives
-a restart): inject past lessons before each run, and capture, verify and store each run after it. It needs the
-next preview (unreleased); from `0.1.0-preview.7` to `0.1.0-preview.10`, set `ResolveIdentity` as shown under
+a restart): inject past lessons before each run, and capture, verify and store each run after it. It needs
+`0.1.0-preview.11` or later; from `0.1.0-preview.7` to `0.1.0-preview.10`, set `ResolveIdentity` as shown under
 *In production* below and also give the agent `provider.GetAgentExperienceContextProvider()` in
 `ChatClientAgentOptions.AIContextProviders`, and earlier previews have only the
 [explicit wiring](docs/guide/deployment.md#explicit-wiring).
@@ -214,7 +214,7 @@ Read [Concepts in five minutes](docs/guide/concepts.md) for the whole model and 
 
 ## Status
 
-`0.1.0-preview.10` is a preview: it claims no production readiness, and public APIs may change between previews (each
+`0.1.0-preview.11` is a preview: it claims no production readiness, and public APIs may change between previews (each
 change is a reviewed diff against a checked-in API baseline). Stable enough to evaluate: the capture, verify, store,
 retrieve and inject loop, the PostgreSQL schema (with journaled migrations and upgrade tests from every published
 preview), and the tenant-isolation and sanitization rules. Supported: .NET 10, PostgreSQL 15 to 18, and
