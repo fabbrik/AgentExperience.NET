@@ -51,6 +51,9 @@ namespace AgentExperience.Core.Confidence;
 /// the independence rule guarantees is narrower than it first looks, and worth stating plainly: a host
 /// that establishes them honestly cannot have its own observations counted twice.
 /// </para>
+/// <para>
+/// Public so a host engine that decorates the default can reuse its formula and independence keys.
+/// </para>
 /// </remarks>
 public static class ReuseConfidenceHeuristic
 {
@@ -231,6 +234,9 @@ public static class ReuseConfidenceHeuristic
 /// deliberately stated twice, here and in migration <c>0007</c>, and pinned by a test, so neither side
 /// can drift into counting an observation the other would have deduplicated. A reviewer identity is
 /// carried through verbatim and compared ordinally; nothing here folds case.
+/// </para>
+/// <para>
+/// Public so a host engine that decorates the default can compute the same keys the store deduplicates on.
 /// </para>
 /// </remarks>
 /// <param name="Source">Which keying rule produced <paramref name="Value"/>.</param>

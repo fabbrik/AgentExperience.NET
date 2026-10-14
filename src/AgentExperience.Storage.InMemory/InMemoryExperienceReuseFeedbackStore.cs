@@ -23,7 +23,7 @@ namespace AgentExperience.Storage.InMemory;
 /// ledger, and checks nothing about the exposed records.
 /// </para>
 /// </remarks>
-public sealed class InMemoryExperienceReuseFeedbackStore : IExperienceReuseFeedbackStore
+internal sealed class InMemoryExperienceReuseFeedbackStore : IExperienceReuseFeedbackStore
 {
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 

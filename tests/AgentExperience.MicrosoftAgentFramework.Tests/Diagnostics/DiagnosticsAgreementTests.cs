@@ -1,5 +1,5 @@
 using System.Reflection;
-using AgentExperience.Core.Diagnostics;
+using AgentExperience.Core.Sanitization;
 using AgentExperience.MicrosoftAgentFramework.Diagnostics;
 
 namespace AgentExperience.MicrosoftAgentFramework.Tests.Diagnostics;
@@ -49,7 +49,14 @@ public class DiagnosticsAgreementTests
     ];
 
     private static readonly Type CoreHolder =
-        typeof(ExperienceOperationErrorClass).Assembly.GetType("AgentExperience.Core.Diagnostics.ExperienceDiagnostics", throwOnError: true)!;
+        typeof(DefaultSanitizer).Assembly.GetType("AgentExperience.Core.Diagnostics.ExperienceDiagnostics", throwOnError: true)!;
+
+    /// <summary>Core's internal error-class enum, reached by reflection like its holder.</summary>
+    private static readonly Type CoreErrorClass =
+        typeof(DefaultSanitizer).Assembly.GetType("AgentExperience.Core.Diagnostics.ExperienceOperationErrorClass", throwOnError: true)!;
+
+    /// <summary>The <c>error.class</c> values docs/telemetry.md documents: the strings are the contract, not the enum.</summary>
+    private static readonly string[] DocumentedErrorClasses = ["Cancelled", "Timeout", "Infrastructure", "Unexpected"];
 
     private static readonly Type AdapterHolder = typeof(InjectionDiagnostics);
 
@@ -122,20 +129,30 @@ public class DiagnosticsAgreementTests
             _ => new InvalidOperationException("something nobody classified"),
         };
 
-        var core = Classify(failure, operationCancellation.Token, host.Token);
-        var adapter = InjectionDiagnostics.Classify(failure, operationCancellation.Token, host.Token);
+        var core = Name(Classify(failure, operationCancellation.Token, host.Token));
+        var adapterClassified = typeof(InjectionDiagnostics)
+            .GetMethod("Classify", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [failure, operationCancellation.Token, host.Token])!;
+        var adapter = (string)typeof(InjectionDiagnostics)
+            .GetMethod("Name", BindingFlags.Static | BindingFlags.NonPublic, [CoreErrorClass])!
+            .Invoke(null, [adapterClassified])!;
 
+        Assert.Contains(core, DocumentedErrorClasses);
         Assert.Equal(core, adapter);
-        Assert.Equal(Name(core), InjectionDiagnostics.Name(adapter));
     }
 
     [Fact]
     public void The_two_holders_name_every_error_class_identically()
     {
-        foreach (var errorClass in Enum.GetValues<ExperienceOperationErrorClass>())
+        Assert.Equal(
+            DocumentedErrorClasses.Order(StringComparer.Ordinal),
+            Enum.GetNames(CoreErrorClass).Order(StringComparer.Ordinal));
+
+        var adapterName = typeof(InjectionDiagnostics).GetMethod("Name", BindingFlags.Static | BindingFlags.NonPublic, [CoreErrorClass])!;
+        foreach (var errorClass in Enum.GetValues(CoreErrorClass))
         {
-            Assert.Equal(errorClass.ToString(), InjectionDiagnostics.Name(errorClass));
-            Assert.Equal(Name(errorClass), InjectionDiagnostics.Name(errorClass));
+            Assert.Equal(errorClass.ToString(), (string)adapterName.Invoke(null, [errorClass])!);
+            Assert.Equal(Name(errorClass), (string)adapterName.Invoke(null, [errorClass])!);
         }
     }
 
@@ -144,15 +161,15 @@ public class DiagnosticsAgreementTests
             .GetField(name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
             .GetValue(null)!;
 
-    private static ExperienceOperationErrorClass Classify(
+    private static object Classify(
         Exception exception,
         CancellationToken operationToken,
         CancellationToken hostToken) =>
-        (ExperienceOperationErrorClass)CoreHolder
+        CoreHolder
             .GetMethod("Classify", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
             .Invoke(null, [exception, operationToken, hostToken])!;
 
-    private static string Name(ExperienceOperationErrorClass errorClass) =>
+    private static string Name(object errorClass) =>
         (string)CoreHolder
             .GetMethod("Name", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
             .Invoke(null, [errorClass])!;

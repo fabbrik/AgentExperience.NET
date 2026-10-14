@@ -24,11 +24,6 @@ namespace AgentExperience.Storage.InMemory
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken) { }
     }
-    public sealed class InMemoryExperienceReuseFeedbackStore : AgentExperience.Abstractions.IExperienceReuseFeedbackStore
-    {
-        public InMemoryExperienceReuseFeedbackStore() { }
-        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken) { }
-    }
     public sealed class InMemoryStorageOptions
     {
         public InMemoryStorageOptions() { }

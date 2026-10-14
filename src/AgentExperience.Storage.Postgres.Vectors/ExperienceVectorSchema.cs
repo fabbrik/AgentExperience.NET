@@ -11,6 +11,7 @@ namespace AgentExperience.Storage.Postgres.Vectors;
 /// list would have made that privilege a startup requirement for every host, including text-only ones
 /// that never enable the vector channel at all.
 /// </summary>
+/// <remarks>Public so a DBA can review the SQL with <see cref="GetScript"/> before <see cref="ExperienceVectorSchemaMigrator"/> applies it, as with <c>PostgresExperienceRecordSchema.GetScript</c>.</remarks>
 public static class ExperienceVectorSchema
 {
     /// <summary>

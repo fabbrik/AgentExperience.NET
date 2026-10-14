@@ -1,7 +1,7 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using AgentExperience.Core.Diagnostics;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Diagnostics;
 using AgentExperience.MicrosoftAgentFramework.Injection;
@@ -136,13 +136,13 @@ public class InjectionTelemetryTests
 
         var span = Assert.Single(probe.LibraryActivities, activity => activity.OperationName == InjectSpan);
         Assert.Equal(ActivityStatusCode.Error, span.Status);
-        Assert.Equal(nameof(ExperienceOperationErrorClass.Cancelled), span.GetTagItem("agentexperience.error.class"));
+        Assert.Equal("Cancelled", span.GetTagItem("agentexperience.error.class"));
         Assert.Equal("System.OperationCanceledException", span.GetTagItem("error.type"));
         Assert.Equal("Faulted", span.GetTagItem("agentexperience.outcome"));
 
         var failure = Assert.Single(probe.For(FailuresInstrument, "inject"));
         Assert.Equal("inject", failure.Tags["operation"]);
-        Assert.Equal(nameof(ExperienceOperationErrorClass.Cancelled), failure.Tags["error.class"]);
+        Assert.Equal("Cancelled", failure.Tags["error.class"]);
         Assert.Equal(false, failure.Tags["nested"]);
 
         // Faulted is still counted and timed, and the host callback never ran.
@@ -479,12 +479,12 @@ public class InjectionTelemetryTests
     /// <param name="operationCancelled">Whether the token this operation itself was handed was cancelled.</param>
     /// <param name="expected">The bounded class the adapter must report.</param>
     [Theory]
-    [InlineData("cancelled-by-caller", true, true, nameof(ExperienceOperationErrorClass.Cancelled))]
-    [InlineData("cancelled-by-a-library-budget", false, true, nameof(ExperienceOperationErrorClass.Timeout))]
-    [InlineData("cancelled-by-nobody", false, false, nameof(ExperienceOperationErrorClass.Infrastructure))]
-    [InlineData("timeout", false, false, nameof(ExperienceOperationErrorClass.Timeout))]
-    [InlineData("store", false, false, nameof(ExperienceOperationErrorClass.Infrastructure))]
-    [InlineData("anything-else", false, false, nameof(ExperienceOperationErrorClass.Unexpected))]
+    [InlineData("cancelled-by-caller", true, true, "Cancelled")]
+    [InlineData("cancelled-by-a-library-budget", false, true, "Timeout")]
+    [InlineData("cancelled-by-nobody", false, false, "Infrastructure")]
+    [InlineData("timeout", false, false, "Timeout")]
+    [InlineData("store", false, false, "Infrastructure")]
+    [InlineData("anything-else", false, false, "Unexpected")]
     public void The_adapter_classification_table(string kind, bool hostCancelled, bool operationCancelled, string expected)
     {
         // Two tokens, because a cancelled token is not automatically the caller's: an inner step can
@@ -504,10 +504,14 @@ public class InjectionTelemetryTests
         }
 
         var failure = Failure(kind, operationCancellation.Token);
-        var classified = InjectionDiagnostics.Classify(failure, operationCancellation.Token, host.Token);
+        // Core's error-class enum is internal (story 21.6), so the adapter's classifier is invoked by reflection; the
+        // documented strings are the contract.
+        var classify = typeof(InjectionDiagnostics).GetMethod("Classify", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var classified = classify.Invoke(null, [failure, operationCancellation.Token, host.Token])!;
+        var name = typeof(InjectionDiagnostics).GetMethod("Name", BindingFlags.Static | BindingFlags.NonPublic, [classify.ReturnType])!;
 
         Assert.Equal(expected, classified.ToString());
-        Assert.Equal(expected, InjectionDiagnostics.Name(classified));
+        Assert.Equal(expected, (string)name.Invoke(null, [classified])!);
     }
 
     /// <summary>
@@ -525,11 +529,11 @@ public class InjectionTelemetryTests
 
         var span = Assert.Single(probe.LibraryActivities, activity => activity.OperationName == InjectSpan);
         Assert.Equal(ActivityStatusCode.Error, span.Status);
-        Assert.Equal(nameof(ExperienceOperationErrorClass.Timeout), span.GetTagItem("agentexperience.error.class"));
+        Assert.Equal("Timeout", span.GetTagItem("agentexperience.error.class"));
         Assert.Equal("System.TimeoutException", span.GetTagItem("error.type"));
 
         Assert.Equal(
-            nameof(ExperienceOperationErrorClass.Timeout),
+            "Timeout",
             Assert.Single(probe.For(FailuresInstrument, "inject")).Tags["error.class"]);
         Assert.Equal("Faulted", Assert.Single(probe.For(CountInstrument, "inject")).Tags["outcome"]);
         Assert.Single(probe.For(DurationInstrument, "inject"));
@@ -555,7 +559,7 @@ public class InjectionTelemetryTests
 
         // An exit with no outcome is this library's bug, not a dependency's, and no exception was
         // involved -- so the class is Unexpected and there is no error.type to report.
-        Assert.Equal(nameof(ExperienceOperationErrorClass.Unexpected), span.GetTagItem("agentexperience.error.class"));
+        Assert.Equal("Unexpected", span.GetTagItem("agentexperience.error.class"));
         Assert.Null(span.GetTagItem("error.type"));
 
         Assert.Single(probe.For(CountInstrument, "inject"));

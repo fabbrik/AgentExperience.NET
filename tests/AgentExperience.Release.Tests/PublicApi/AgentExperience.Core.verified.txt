@@ -253,16 +253,6 @@ namespace AgentExperience.Core.DependencyInjection
         public static AgentExperience.Core.Sanitization.SanitizationOptions SanitizationAllowing(params string[] argumentNames) { }
     }
 }
-namespace AgentExperience.Core.Diagnostics
-{
-    public enum ExperienceOperationErrorClass
-    {
-        Cancelled = 0,
-        Timeout = 1,
-        Infrastructure = 2,
-        Unexpected = 3,
-    }
-}
 namespace AgentExperience.Core.Feedback
 {
     public sealed class ExperienceReuseFeedbackService
@@ -920,23 +910,6 @@ namespace AgentExperience.Core.Sanitization
     {
         public DefaultSanitizer(AgentExperience.Core.Sanitization.SanitizationOptions options, Microsoft.Extensions.Compliance.Redaction.Redactor? redactor = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.SanitizedPayload> SanitizeAsync(AgentExperience.Abstractions.RawPayload payload, System.Threading.CancellationToken cancellationToken = default) { }
-    }
-    public sealed class SanitizationFailureException : System.Exception
-    {
-        public SanitizationFailureException(string kind, AgentExperience.Core.Sanitization.SanitizationFailureReason failureReason, string? fieldPath = null) { }
-        public AgentExperience.Core.Sanitization.SanitizationFailureReason FailureReason { get; }
-        public string? FieldPath { get; }
-        public string Kind { get; }
-    }
-    public enum SanitizationFailureReason
-    {
-        NoPolicyConfigured = 0,
-        DepthLimitExceeded = 1,
-        FieldCountLimitExceeded = 2,
-        ValueLengthLimitExceeded = 3,
-        FieldNameLengthExceeded = 4,
-        UnsafeFieldName = 5,
-        RedactorFailed = 6,
     }
     public static class SanitizationKinds
     {

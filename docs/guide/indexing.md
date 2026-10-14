@@ -126,6 +126,8 @@ extension, so that statement ordinarily needs a superuser (on a managed service,
 designates). A text-only deployment never calls the second line and therefore never needs that privilege. If your
 operators install the extension out of band, this call runs fine as an ordinary role — `CREATE EXTENSION IF NOT
 EXISTS` is a no-op once it exists. Run the base migration first: `0004` has a foreign key to `experience_records`.
+To review the SQL before applying it, read each script with `ExperienceVectorSchema.GetScript(name)` for every name
+in `ExperienceVectorSchema.ScriptNames`.
 
 `ApplyApplicationRolePrivilegesAsync` gives the application role `SELECT`, `INSERT` and `DELETE` on
 `agent_experience.experience_embeddings` — the table is derived and rebuildable, not a ledger, and removing a vector

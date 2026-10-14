@@ -6,6 +6,36 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Breaking: a smaller public surface before 1.0 (story 21.6)
+
+Every public type is a 1.0 compatibility promise. An audit of all 309 public types found four that were public only
+by accident; they are now `internal`, so the public surface goes from **309 types to 305**. The library behaves as before;
+what changes is how a host reaches the in-memory feedback ledger (below). The
+package validation baseline (`0.1.0-preview.11`) reports each one as a removed type (`CP0001`), declared in the
+project's `CompatibilitySuppressions.xml` and scoped to exactly these types.
+
+- **Breaking: `AgentExperience.Core.Sanitization.SanitizationFailureException` and `SanitizationFailureReason` are
+  internal.** `DefaultSanitizer` threw and caught them inside `SanitizeAsync`; neither ever reached a host. Migration:
+  check the returned `SanitizedPayload` for `Decision == SanitizationDecision.Rejected`, as before. Its `Reason` is
+  human-readable free text for logs: do not parse it, because no typed failure categories are offered.
+- **Breaking: `AgentExperience.Core.Diagnostics.ExperienceOperationErrorClass` is internal.** No public method took or
+  returned it; it only named the `error.class` metric and span tag values. Migration: match on the tag strings
+  `Cancelled`, `Timeout`, `Infrastructure` and `Unexpected`, which are unchanged and still listed in
+  [the telemetry contract](docs/telemetry.md#errorclass).
+- **Breaking: `AgentExperience.Storage.InMemory.InMemoryExperienceReuseFeedbackStore` is internal.** Migration:
+  register it with `AddAgentExperienceInMemoryStorageForDevelopment()` (or the one-call setup's
+  `UseInMemoryStorageForDevelopment()`) and resolve `IExperienceReuseFeedbackStore`. Resolving it goes through that
+  registration's environment guard, which `new` did not: a test process that may run under another environment name
+  passes `options => options.AllowProductionEnvironment = true`, as the package README's test example now does.
+  Pairing the in-memory ledger with a different record store, or wrapping it, by constructing it is no longer
+  possible; implement your own `IExperienceReuseFeedbackStore` and register it first, which the registration keeps.
+  Its guarantees are now stated on `AddAgentExperienceInMemoryStorageForDevelopment` and in the package README.
+- **Kept public on purpose:** `ReuseConfidenceHeuristicEngine`, `ReuseConfidenceHeuristic`, `ConfidenceIndependenceKey`
+  and `AttributeMatchEnvironmentScorer`, because a host that decorates the default confidence engine or environment
+  scorer needs them; `ExperienceRecordStoreExtensions`, because store implementers use it; and
+  `ExperienceVectorSchema`, so a DBA can review the embedding schema's SQL (`GetScript`) before applying it, as with
+  `PostgresExperienceRecordSchema.GetScript`.
+
 ### Added: see what it learned (story 21.4)
 
 - **`AgentExperienceLessons`**, a read-only view of the lessons stored in one scope, registered by the one-call setup.

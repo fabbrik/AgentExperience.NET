@@ -8,6 +8,7 @@ namespace AgentExperience.Core.Confidence;
 /// It is what the lifecycle service scores with when no host engine is supplied, and it reproduces the
 /// library's behaviour before the engine was replaceable bit for bit: the same scores, and the plain
 /// <c>"1.0.0"</c> recorded as each update's rule version.
+/// <para>Public so a host engine can decorate the default: wrap it and delegate to it rather than reimplement it.</para>
 /// </remarks>
 public sealed class ReuseConfidenceHeuristicEngine : IExperienceConfidenceEngine
 {

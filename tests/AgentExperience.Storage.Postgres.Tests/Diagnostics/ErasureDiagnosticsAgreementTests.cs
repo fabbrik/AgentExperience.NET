@@ -1,5 +1,5 @@
 using System.Reflection;
-using AgentExperience.Core.Diagnostics;
+using AgentExperience.Core.Sanitization;
 using AgentExperience.Storage.Postgres.Diagnostics;
 
 namespace AgentExperience.Storage.Postgres.Tests.Diagnostics;
@@ -37,7 +37,14 @@ public class ErasureDiagnosticsAgreementTests
     ];
 
     private static readonly Type CoreHolder =
-        typeof(ExperienceOperationErrorClass).Assembly.GetType("AgentExperience.Core.Diagnostics.ExperienceDiagnostics", throwOnError: true)!;
+        typeof(DefaultSanitizer).Assembly.GetType("AgentExperience.Core.Diagnostics.ExperienceDiagnostics", throwOnError: true)!;
+
+    /// <summary>Core's internal error-class enum, reached by reflection like its holder.</summary>
+    private static readonly Type CoreErrorClass =
+        typeof(DefaultSanitizer).Assembly.GetType("AgentExperience.Core.Diagnostics.ExperienceOperationErrorClass", throwOnError: true)!;
+
+    /// <summary>The <c>error.class</c> values docs/telemetry.md documents: the strings are the contract, not the enum.</summary>
+    private static readonly string[] DocumentedErrorClasses = ["Cancelled", "Timeout", "Infrastructure", "Unexpected"];
 
     /// <summary>The adapter's own names: everything else it declares as a constant must be a restatement.</summary>
     private static readonly string[] AdapterOnly =
@@ -90,7 +97,7 @@ public class ErasureDiagnosticsAgreementTests
 
         // The three operation values are this assembly's alone: none may collide with a value Core
         // emits, or two meters would report different things under one operation name.
-        var coreOperations = typeof(ExperienceOperationErrorClass).Assembly
+        var coreOperations = typeof(DefaultSanitizer).Assembly
             .GetType("AgentExperience.Core.Diagnostics.ExperienceOperationNames", throwOnError: true)!
             .GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
             .Select(field => (string)field.GetValue(null)!)
@@ -157,10 +164,11 @@ public class ErasureDiagnosticsAgreementTests
             _ => new InvalidOperationException("something nobody classified"),
         };
 
-        var core = (ExperienceOperationErrorClass)CoreHolder
+        var core = CoreHolder
             .GetMethod("Classify", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
             .Invoke(null, [failure, operation.Token, host.Token])!;
 
+        Assert.Contains(core.ToString(), DocumentedErrorClasses);
         Assert.Equal(core.ToString(), ErasureDiagnostics.Classify(failure, operation.Token, host.Token));
     }
 
@@ -168,7 +176,10 @@ public class ErasureDiagnosticsAgreementTests
     public void The_adapter_names_every_error_class_exactly_as_Core_does()
     {
         Assert.Equal(
-            Enum.GetNames<ExperienceOperationErrorClass>().Order(StringComparer.Ordinal),
+            DocumentedErrorClasses.Order(StringComparer.Ordinal),
+            Enum.GetNames(CoreErrorClass).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            DocumentedErrorClasses.Order(StringComparer.Ordinal),
             new[] { ErasureDiagnostics.Cancelled, ErasureDiagnostics.Timeout, ErasureDiagnostics.Infrastructure, ErasureDiagnostics.Unexpected }
                 .Order(StringComparer.Ordinal));
     }
