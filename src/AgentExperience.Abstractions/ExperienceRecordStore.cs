@@ -317,6 +317,7 @@ public interface IExperienceRecordStore
 /// Convenience overloads over <see cref="IExperienceRecordStore"/> that name a common default rather
 /// than adding anything an implementation has to provide.
 /// </summary>
+/// <remarks>Public for store implementers and their callers: these overloads apply to every <see cref="IExperienceRecordStore"/>.</remarks>
 public static class ExperienceRecordStoreExtensions
 {
     /// <summary>

@@ -110,9 +110,9 @@ also reuse member names such as `Denied`, `Conflict` or `Failed`. `Deleted` even
 
 ### `error.class`
 
-`error.class` is the public enum `AgentExperience.Core.Diagnostics.ExperienceOperationErrorClass`. It is public
-because it is this contract's documented set of dimension values, and it is part of the checked-in public API
-baseline. The library emits it; no public method consumes it.
+`error.class` is a tag string with exactly the four values below. The strings in this table are the contract. They
+are the member names of Core's `ExperienceOperationErrorClass` enum, which is internal: no public API takes or returns
+it. Dashboards and alert rules consume the strings, so match on them.
 
 | Value | When | Alert? |
 | --- | --- | --- |

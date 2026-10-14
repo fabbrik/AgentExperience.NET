@@ -21,7 +21,7 @@ namespace AgentExperience.Core.Diagnostics;
 /// looks for that, and they are available with no exporter and no listener registered at all.
 /// </para>
 /// </remarks>
-public enum ExperienceOperationErrorClass
+internal enum ExperienceOperationErrorClass
 {
     /// <summary>
     /// The caller's own cancellation token was cancelled. Expected under load shedding and shutdown,

@@ -18,8 +18,8 @@ In-memory storage for [AgentExperience.NET](https://github.com/fabbrik/AgentExpe
 finalization, retrieval, injection and reuse feedback without provisioning PostgreSQL. It implements the three core
 storage ports: the Experience Record store with its audited lifecycle (`InMemoryExperienceRecordStore`,
 `IExperienceRecordStore`), word search over that same store (`InMemoryExperienceCandidateSource`,
-`IExperienceCandidateSource`), and the reuse-feedback ledger (`InMemoryExperienceReuseFeedbackStore`,
-`IExperienceReuseFeedbackStore`). All three are thread-safe.
+`IExperienceCandidateSource`), and the reuse-feedback ledger (`IExperienceReuseFeedbackStore`, registered for you; its implementation is
+internal). All three are thread-safe.
 
 Requires `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12** and
 `Microsoft.Extensions.Hosting.Abstractions` **10.0.3**, or any later release in the same major. Targets
@@ -55,13 +55,29 @@ of the stores throws `InvalidOperationException`. A demo that really must run el
 builder.Services.AddAgentExperienceInMemoryStorageForDevelopment(options => options.AllowProductionEnvironment = true);
 ```
 
-In tests, construct the stores directly; direct construction is not guarded:
+In tests, construct the record store and candidate source directly; direct construction is not guarded. The
+reuse-feedback ledger has no public constructor, so resolve it from the registration. That goes through the
+environment guard, so a test process that may run under another environment name (`DOTNET_ENVIRONMENT=Staging`, say)
+opts out as below. `ServiceCollection` comes from the `Microsoft.Extensions.DependencyInjection` package, which this
+package does not reference:
 
 ```csharp
+using AgentExperience.Abstractions;
+using AgentExperience.Storage.InMemory;
+using AgentExperience.Storage.InMemory.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
+
 var records = new InMemoryExperienceRecordStore();
 var candidates = new InMemoryExperienceCandidateSource(records);
-var feedback = new InMemoryExperienceReuseFeedbackStore();
+
+using var provider = new ServiceCollection()
+    .AddAgentExperienceInMemoryStorageForDevelopment(options => options.AllowProductionEnvironment = true) // a test process only
+    .BuildServiceProvider();
+var feedback = provider.GetRequiredService<IExperienceReuseFeedbackStore>();
 ```
+
+To pair a feedback ledger with a different record store, or to wrap this one, implement `IExperienceReuseFeedbackStore`
+yourself and register it before this call; the registration keeps yours.
 
 ## What it guarantees
 
@@ -72,6 +88,12 @@ optimistic revision, prior-status and supersession guards, under concurrency too
 idempotency. It validates every request with the PostgreSQL store's own rules, compiled from the same source file, so
 it refuses exactly the requests that store refuses. The confidence ledger's rules hold as well: an evidence ID is
 idempotent, independent evidence is counted once per independence key, and an assessment lands once per record.
+
+The reuse-feedback ledger keeps the PostgreSQL ledger's rules. The feedback ID is the idempotency key: an identical
+resubmission is `AlreadyRecorded`, and one differing in any stored field is `Conflict` with nothing written. A
+submission's exposures are sorted by record ID before it is stored or compared, so their order never causes a
+conflict. The conflicting stored submission is handed back only when the caller has authority over its scope. Each
+submission is recorded atomically under one lock.
 
 Everything is copied on write: a record or feedback submission is stored as a deep copy whose collections are
 read-only, so changing your instance afterwards changes nothing stored, and what a read returns is safe to share. As

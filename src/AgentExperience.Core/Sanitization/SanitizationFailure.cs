@@ -4,7 +4,7 @@ namespace AgentExperience.Core.Sanitization;
 /// Classifies why <see cref="DefaultSanitizer"/> rejected a payload. Every member names a
 /// structural policy violation, never a value -- see <see cref="SanitizationFailureException"/>.
 /// </summary>
-public enum SanitizationFailureReason
+internal enum SanitizationFailureReason
 {
     /// <summary>No <see cref="SanitizationPolicy"/> is configured for the payload's <c>Kind</c>; fail-closed rejects it rather than falling back to a default policy.</summary>
     NoPolicyConfigured,
@@ -48,7 +48,7 @@ public enum SanitizationFailureReason
 /// <see cref="AgentExperience.Abstractions.SanitizedPayload.RedactedFieldPaths"/> and
 /// <see cref="AgentExperience.Abstractions.SanitizedPayload.OmittedFieldPaths"/>), never a value.
 /// </remarks>
-public sealed class SanitizationFailureException : Exception
+internal sealed class SanitizationFailureException : Exception
 {
     /// <summary>The <c>Kind</c> of the payload that was rejected.</summary>
     public string Kind { get; }

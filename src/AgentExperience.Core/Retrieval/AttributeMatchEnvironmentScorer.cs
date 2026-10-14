@@ -11,6 +11,7 @@ namespace AgentExperience.Core.Retrieval;
 /// (1.0), which keeps retrieval's results identical to a request that never heard of preferences. A
 /// missing key or a different value simply does not count as a match: there is no version-range or
 /// semantic matching here, which a host scorer may add.
+/// <para>Public so a host scorer can decorate the default: wrap it and delegate to it rather than reimplement it.</para>
 /// </remarks>
 public sealed class AttributeMatchEnvironmentScorer : IEnvironmentCompatibilityScorer
 {

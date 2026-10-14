@@ -15,7 +15,7 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="InMemoryExperienceRecordStore"/> as the singleton <see cref="IExperienceRecordStore"/>,
     /// <see cref="InMemoryExperienceCandidateSource"/> over that same store as the singleton
-    /// <see cref="IExperienceCandidateSource"/>, and <see cref="InMemoryExperienceReuseFeedbackStore"/> as the singleton
+    /// <see cref="IExperienceCandidateSource"/>, and an in-memory reuse-feedback ledger as the singleton
     /// <see cref="IExperienceReuseFeedbackStore"/>. <b>For development and tests only.</b>
     /// </summary>
     /// <remarks>
@@ -37,6 +37,16 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
     /// with <c>TryAdd</c>, so ones the host registered first are kept. Calling this again with no
     /// <paramref name="configure"/> changes nothing; calling it again with one throws, because the first call's options
     /// are already in force.
+    /// </para>
+    /// <para>
+    /// <b>The reuse-feedback ledger keeps the PostgreSQL ledger's rules</b> and passes the same conformance suite. The
+    /// feedback ID is the idempotency key: an identical resubmission is
+    /// <see cref="ExperienceReuseFeedbackStoreOutcome.AlreadyRecorded"/>, and one differing in any stored field is
+    /// <see cref="ExperienceReuseFeedbackStoreOutcome.Conflict"/> with nothing written. A submission's exposures are
+    /// sorted by record ID before it is stored or compared, so their order never causes a conflict. The conflicting
+    /// stored submission is handed back only when the caller has authority over its scope. Each submission is recorded
+    /// atomically under one lock. Its implementation is internal; to combine a feedback ledger with a different record
+    /// store, or to wrap it, register your own <see cref="IExperienceReuseFeedbackStore"/> first.
     /// </para>
     /// <para>
     /// Sharing grants, the grant access log, deletion, retention and encryption are not provided. Neither is an embedding
