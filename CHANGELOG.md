@@ -6,6 +6,16 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.14
+
+This is the first preview that publishes the Python and Go ports. The same tag now releases the six NuGet packages, the
+Python distribution `agenticexperience` (PyPI) and the five Go modules, all at one version. For .NET users it adds the
+last-injected instant to the lessons view (database migration `0026`; apply it with the usual migrator), makes the
+one-call setup see the chat history and a run's own tools exactly as the explicit wiring does, and adds contract 1.3
+to 1.5 fixtures that the ports pass. Everything else below is port hardening and release plumbing.
+
 ### Contract 1.5: erased records are never read (story 22.10)
 
 - **Contract 1.5** (add-only: every earlier file is unchanged; [what 1.5 adds](contract/README-1.5.md)) adds a
