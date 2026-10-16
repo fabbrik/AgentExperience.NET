@@ -375,7 +375,7 @@ jobs:
   # The Python port (python/): a pure-Python core that implements the language-neutral contract (contract/), and its
   # Microsoft Agent Framework integration (the maf extra, story 22.3). Lint, strict typing, the unit, conformance and
   # MAF tests (the quick-start sample included), and the built wheel on every supported CPython (3.10 to 3.14), with the
-  # MAF tests repeated on the lowest agent-framework-core the maf extra allows; then the PostgreSQL leg, which writes
+  # MAF tests repeated on the lowest and on the newest agent-framework-core the maf extra allows; then the PostgreSQL leg, which writes
   # the finalize fixtures through the Python store, runs every search fixture, and runs the cross-language proof (a
   # .NET-finalized lesson injected into a Python agent, and the raw rows a Python agent wrote checked; the .NET half
   # of that proof is AgentExperience.Contract.Tests' PythonAgentRecordsPostgresRoundTripTests), on the oldest and newest
@@ -441,6 +441,17 @@ jobs:
           test -n "$floor"
           uv pip install "agent-framework-core==$floor"
           uv run --no-sync python -c "import importlib.metadata as m; v = m.version('agent-framework-core'); assert v == '$floor', v; print('agent-framework-core', v)"
+          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_quickstart.py tests/test_cross_language.py
+
+      # The maf extra's ceiling: the same tests on the newest agent-framework-core PyPI serves, so a MAF release that breaks
+      # the integration is seen in the next CI run (or the weekly one) and not by a user. The extra claims every later
+      # release, so the newest one has to pass. Installed over the floor leg's environment, without re-syncing the lock.
+      - name: MAF tests on the newest agent-framework-core
+        if: ${{ !matrix.pg-major }}
+        run: |
+          set -euo pipefail
+          uv pip install --upgrade "agent-framework-core"
+          uv run --no-sync python -c "import importlib.metadata as m; print('agent-framework-core', m.version('agent-framework-core'))"
           uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_quickstart.py tests/test_cross_language.py
 
       # The wheel, not the source tree: built, installed into a clean environment outside the checkout, and imported,
