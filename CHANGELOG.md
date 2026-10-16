@@ -69,13 +69,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 ### Added: Python and Go packages are published with each release
 
 - **Python and Go packages are published with each release**, from the same tag and the same verified commit as the
-  six NuGet packages, at the same version. The Python distribution `agentexperience` goes to PyPI, through PyPI
+  six NuGet packages, at the same version. The Python distribution `agenticexperience` goes to PyPI, through PyPI
   Trusted Publishing, as the PEP 440 alpha of the NuGet version (`0.1.0-preview.N` is `0.1.0aN`):
-  `pip install "agentexperience[maf]"` or `"agentexperience[postgres]"`. The five Go modules
+  `pip install "agenticexperience[maf]"` or `"agenticexperience[postgres]"`. The five Go modules
   (`github.com/fabbrik/AgentExperience.NET/go`, `.../go/inmemory`, `.../go/postgres`, `.../go/postgres/pgtest` and
   `.../go/maf`) are tagged `go/v0.1.0-preview.N`, `go/maf/v0.1.0-preview.N`, and so on:
-  `go get github.com/fabbrik/AgentExperience.NET/go/maf@latest`. The name is final: the distribution and import name
-  is `agentexperience`, and the Go module paths stay under this repository.
+  `go get github.com/fabbrik/AgentExperience.NET/go/maf@latest`. The name is final: the PyPI distribution is
+  `agenticexperience` (PyPI refuses `agentexperience` as too similar to the unrelated `agent-experience`), the Python import
+  name stays `agentexperience`, and the Go module paths stay under this repository.
 - The release workflow's verify job also builds and checks the Python sdist and wheel and runs the Python and Go
   tests on the tagged commit, and fails when `python/pyproject.toml` or a Go module's requirement on its siblings
   is not the version `Directory.Build.props` sets; a release test holds the same. Nothing in the six NuGet packages

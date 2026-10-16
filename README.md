@@ -250,7 +250,7 @@ the other way round. Both are published with each release, at the same version a
 `0.1.0aN`, for `0.1.0-preview.N`), and are previews in the same sense:
 
 ```bash
-pip install "agentexperience[maf]"
+pip install "agenticexperience[maf]"
 go get github.com/fabbrik/AgentExperience.NET/go/maf@latest
 ```
 

@@ -24,7 +24,7 @@ too. The first release that carries a package ID nuget.org has never seen needs 
 
 The same tag also releases the two ports, at the same version, from the same verified commit:
 
-- **Python:** the distribution `agentexperience` (`python/`), an sdist and a wheel, on PyPI. The first release that
+- **Python:** the distribution `agenticexperience` (`python/`), an sdist and a wheel, on PyPI. The first release that
   carries it is described under [First publish to PyPI](#first-publish-to-pypi).
 - **Go:** the five modules under `go/`: `github.com/fabbrik/AgentExperience.NET/go`, `.../go/inmemory`, `.../go/postgres`, `.../go/postgres/pgtest` and `.../go/maf`. A Go module is released by a tag
   named after its directory, `go/vX`, `go/inmemory/vX`, and so on, which the Go module proxy serves from then on.
@@ -375,7 +375,7 @@ not repeated there: they are what you ran locally, and CI's `postgres`, `maf-com
 `floating-dependencies` jobs on `main`), pack and package verification (step 7), and the production-readiness gate
 (step 9). It also checks that `python/pyproject.toml` and every Go module's requirement on its siblings carry the
 version derived from `Directory.Build.props` (see [What a release is today](#what-a-release-is-today)); builds the
-Python sdist and wheel with a pinned `uv`, checks that they are `agentexperience` at that version (`twine check
+Python sdist and wheel with a pinned `uv`, checks that they are `agenticexperience` at that version (`twine check
 --strict` and the wheel's metadata), and runs the Python tests; and runs `go vet` and `go test` in each Go module (the
 PostgreSQL legs of both ports are not repeated: CI on `main` ran them). It builds the release notes from this
 version's `CHANGELOG.md` section, and fails if there is none. Last, it uploads what it verified: the NuGet packages,
@@ -434,7 +434,7 @@ publish job cannot log in; without an environment's reviewers, its job would run
   **Selected branches and tags** and add the tag rule `v*`, so no other ref can reach the environment. Add no
   environment secrets: the workflow needs none.
 - **The PyPI pending Trusted Publisher.** Signed in to pypi.org as the maintainer, open **Your account → Publishing**
-  and add a pending GitHub publisher: PyPI project name `agentexperience`, owner `fabbrik`, repository
+  and add a pending GitHub publisher: PyPI project name `agenticexperience`, owner `fabbrik`, repository
   `AgentExperience.NET`, workflow name `release.yml`, environment name `pypi-release`. A pending publisher lets the
   workflow create the project on its first upload; from then on it is an ordinary trusted publisher of that project,
   and only that file, in that environment, in this repository, can publish it.
@@ -447,7 +447,7 @@ first time anyone asks for it.
 
 #### First publish to PyPI
 
-The first release that carries the Python distribution creates the `agentexperience` project on PyPI, through the
+The first release that carries the Python distribution creates the `agenticexperience` project on PyPI, through the
 pending publisher above.
 
 1. Before tagging, confirm on pypi.org that the pending publisher exists with exactly the values above, and that
@@ -457,7 +457,7 @@ pending publisher above.
    `invalid-publisher` error). nuget.org, the Go tags and the GitHub release already stand, and nothing reached
    PyPI. Add or correct the publisher on pypi.org, then re-run the failed `publish-pypi` job from the Actions tab (it
    needs approving again).
-4. Afterwards, `https://pypi.org/project/agentexperience/` lists the version, and the project's **Publishing** page
+4. Afterwards, `https://pypi.org/project/agenticexperience/` lists the version, and the project's **Publishing** page
    shows the publisher as active rather than pending.
 
 #### First publish of a new package ID
@@ -519,7 +519,7 @@ That key lives with the maintainer, never in this repository or its secrets. Rev
 been used.
 
 The ports, by hand, from the same verified working copy and only once the version tag exists (so they ship the
-commit the tag names). The Python distribution needs a PyPI API token scoped to the `agentexperience` project, which
+commit the tag names). The Python distribution needs a PyPI API token scoped to the `agenticexperience` project, which
 the maintainer creates for this upload and deletes straight after; `uv publish` reads it from `UV_PUBLISH_TOKEN`. The
 Go modules need only their tags, at the verified commit: a tag that already exists there is kept, and one that exists
 at any other commit stops the command.
@@ -539,7 +539,7 @@ echo "NuGet $version, Python $python, Go $go"
     echo "FAILED: python/pyproject.toml says $declared, but Directory.Build.props versions this commit as $version (expected $python)"; false
   else
     cd python && rm -rf dist && uv build --out-dir dist && rm -f dist/.gitignore && ls dist \
-      && echo "Built agentexperience $python" || { echo "FAILED: see above"; false; }
+      && echo "Built agenticexperience $python" || { echo "FAILED: see above"; false; }
   fi )
 ```
 
@@ -547,17 +547,17 @@ Then the upload and the Go tags. This uploads the files just built, never a rebu
 partial failure: `--check-url` skips the files PyPI already has, and tags already at the commit are kept.
 
 ```bash
-( if [ ! -f "python/dist/agentexperience-$python.tar.gz" ] || [ ! -f "python/dist/agentexperience-$python-py3-none-any.whl" ]; then
-    echo "FAILED: python/dist does not hold agentexperience $python; run the build above first"; false
+( if [ ! -f "python/dist/agenticexperience-$python.tar.gz" ] || [ ! -f "python/dist/agenticexperience-$python-py3-none-any.whl" ]; then
+    echo "FAILED: python/dist does not hold agenticexperience $python; run the build above first"; false
   else
-    uv publish --check-url https://pypi.org/simple/ "python/dist/agentexperience-$python.tar.gz" "python/dist/agentexperience-$python-py3-none-any.whl" \
+    uv publish --check-url https://pypi.org/simple/ "python/dist/agenticexperience-$python.tar.gz" "python/dist/agenticexperience-$python-py3-none-any.whl" \
       && for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
            tag="$module/$go"
            git rev-parse -q --verify "refs/tags/$tag" > /dev/null || git tag "$tag" "$verified" || exit 1
            [ "$(git rev-parse "$tag^{commit}")" = "$verified" ] || { echo "FAILED: $tag exists at another commit"; exit 1; }
            git push origin "refs/tags/$tag" || exit 1
          done \
-      && echo "Published agentexperience $python and tagged the Go modules at $go" || { echo "FAILED: see above; running this again skips what is already done"; false; }
+      && echo "Published agenticexperience $python and tagged the Go modules at $go" || { echo "FAILED: see above; running this again skips what is already done"; false; }
   fi )
 ```
 
