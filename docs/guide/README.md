@@ -2,7 +2,8 @@
 
 These pages explain each part of the library in depth. Start with the [root README](../../README.md) for what the
 project is and a quick start; come here when you need the exact behaviour, the options, or the caveats. New to the
-library? Read [Concepts in five minutes](concepts.md) first: the whole model in one diagram.
+library? Read [Concepts in five minutes](concepts.md) first: the whole model in one diagram. If a lesson you
+expected did not reach the agent, [Troubleshooting](troubleshooting.md) is the ordered checklist for why.
 
 AgentExperience.NET is a **preview**. Read [Known limits and documented boundaries](../known-limits.md) before you
 rely on any guarantee described here.
@@ -34,6 +35,7 @@ And around the loop:
 | Letting another team read one record, for a bounded time, with an audit trail | [Sharing and grants](sharing.md) |
 | Deleting a record, and expiring old data on your own schedule | [Deletion and retention](deletion-and-retention.md) |
 | Making erasure reach backups, replicas and WAL | [Crypto-shredding](crypto-shredding.md) |
+| Why a lesson you expected never reached the agent | [Troubleshooting](troubleshooting.md) |
 | Wiring the services, the two database roles, and the trust boundary | [Deployment](deployment.md) |
 | The PostgreSQL schema, script by script, and how it is applied | [PostgreSQL schema](postgres-schema.md) |
 | What a Python or Go port must match to share lessons: the record format, the block, the task text and the search, with conformance fixtures | [The language-neutral contract](../../contract/README.md) |
