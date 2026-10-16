@@ -354,7 +354,7 @@ Only after steps 1–9 have passed on the exact commit being released, in the sa
 and only once that commit is on `main`. Tag it and push the tag:
 
 ```bash
-( version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+( version="$(scripts/release-version.sh dotnet)"
   git fetch origin main
   if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
     echo "FAILED: HEAD is not the commit steps 1-9 verified ($verified); re-run the checks"; false
@@ -507,7 +507,7 @@ boundaries tables pasted into its notes.
 ( if [ -z "${verified:-}" ] || [ "$(git rev-parse HEAD)" != "$verified" ]; then
     echo "FAILED: HEAD is not the commit steps 1-9 verified ($verified); re-run the checks"; false
   else
-    version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+    version="$(scripts/release-version.sh dotnet)"
     dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate \
       && git tag -a "v$version" -m "AgentExperience.NET $version (preview)" "$verified" \
       && git push origin "v$version" \
@@ -525,14 +525,11 @@ Go modules need only their tags, at the verified commit: a tag that already exis
 at any other commit stops the command.
 
 First, in the same shell, the versions, derived from `Directory.Build.props` as `release.yml`'s `derive_versions`
-derives them (no suffix: the same version in every language; `preview.N`: Python `aN`), then the distribution, built
+derives them (`scripts/release-version.sh`; no suffix: the same version in every language; `preview.N`: Python `aN`), then the distribution, built
 once and refused unless `pyproject.toml` carries the derived version:
 
 ```bash
-prefix="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)"
-suffix="$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
-version="$prefix${suffix:+-$suffix}"; go="v$version"
-case "$suffix" in '') python="$prefix" ;; preview.*) python="${prefix}a${suffix#preview.}" ;; *) python="(no Python version for $suffix)" ;; esac
+version="$(scripts/release-version.sh dotnet)"; python="$(scripts/release-version.sh python)"; go="$(scripts/release-version.sh go)"
 echo "NuGet $version, Python $python, Go $go"
 
 ( declared="$(sed -nE 's/^version = "([^"]+)"$/\1/p' python/pyproject.toml | head -n 1)"
@@ -581,7 +578,7 @@ release between the baseline and the version being built, and `release.yml` runs
 
 ```bash
 # Run before the move: the version just published is still the one Directory.Build.props builds.
-( version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+( version="$(scripts/release-version.sh dotnet)"
   ok=true
   for project in src/*/*.csproj; do
     id="$(basename "$project" .csproj | tr '[:upper:]' '[:lower:]')"
@@ -592,7 +589,7 @@ release between the baseline and the version being built, and `release.yml` runs
 
 # Run after the move, before opening the pull request.
 ( baseline="$(sed -nE 's/.*<AgentExperiencePackageValidationBaseline>([^<]+)<.*/\1/p' Directory.Build.props)"
-  version="$(sed -nE 's/.*<VersionPrefix>([^<]+)<.*/\1/p' Directory.Build.props)-$(sed -nE 's/.*<VersionSuffix>([^<]+)<.*/\1/p' Directory.Build.props)"
+  version="$(scripts/release-version.sh dotnet)"
   left="$(find src -mindepth 2 -maxdepth 2 -name CompatibilitySuppressions.xml; grep -l DisablePackageBaselineValidation src/*/*.csproj)"
   if [ "$baseline" != "$version" ]; then echo "FAILED: the baseline is $baseline, the published version $version"
   elif [ -n "$left" ]; then echo "FAILED: still declared against the previous release: $left"
