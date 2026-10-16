@@ -1,0 +1,115 @@
+{
+  "description": "Missing, and no row: a write for an unknown ID, for a record named in another scope (its own scope, one agent away), and for an erased record (whose row the erasure removed).",
+  "steps": [
+    {
+      "write": {
+        "experienceId": "00000072-0000-4000-8000-000000000009",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000072-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000072-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "00000072-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T10:01:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000072-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:02:00+00:00"
+      }
+    }
+  ]
+}

@@ -391,6 +391,14 @@
           "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
         }
       },
+      "Pgvector": {
+        "type": "Transitive",
+        "resolved": "0.3.2",
+        "contentHash": "n7M5LuNejHUmtWky3zCbNO+tP1Gnjiuv9Qtu4LyvB1602dD8RiBxxCQp9jEjM0ZFDxAZF1oOWkNIkXw46KT00Q==",
+        "dependencies": {
+          "Npgsql": "8.0.5"
+        }
+      },
       "SharpZipLib": {
         "type": "Transitive",
         "resolved": "1.4.2",
@@ -497,6 +505,16 @@
           "Npgsql": "[10.0.3, )",
           "dbup-core": "[6.1.1, )",
           "dbup-postgresql": "[7.0.1, )"
+        }
+      },
+      "agentexperience.storage.postgres.vectors": {
+        "type": "Project",
+        "dependencies": {
+          "AgentExperience.Storage.Postgres": "[0.1.0-preview.14, )",
+          "Microsoft.Extensions.AI.Abstractions": "[10.10.0, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
+          "Npgsql": "[10.0.3, )",
+          "Pgvector": "[0.3.2, )"
         }
       }
     }

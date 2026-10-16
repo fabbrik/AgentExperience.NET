@@ -1,0 +1,129 @@
+{
+  "description": "Query [1,0,0,0] over [1,1,0,0], [1,0.1,0,0] and [1,0,0,0]: nearest first, whatever the ID order, each with its cosine distance and relevance = 1 - distance / 2. A limit of 2 keeps the two nearest.",
+  "steps": [
+    {
+      "write": {
+        "experienceId": "00000073-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000073-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0.1,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000073-0000-4000-8000-000000000003",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 2,
+        "excludeModelAuthored": false
+      }
+    }
+  ]
+}

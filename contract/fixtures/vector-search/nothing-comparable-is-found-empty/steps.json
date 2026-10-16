@@ -1,0 +1,81 @@
+{
+  "description": "Found and empty: no embedding is stored in the scope; and later the only one stored belongs to a record the search leaves out (Quarantined), which the compatibility probe leaves out too.",
+  "steps": [
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000077-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "97d21f6f3272b82d750452dde9ed88913dad12bff056879ae3f334d25a11d6bc",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    }
+  ]
+}

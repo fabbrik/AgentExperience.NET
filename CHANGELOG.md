@@ -6,7 +6,23 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Contract 1.6: vector search calls (story 23.1)
+
+- **Contract 1.6** (add-only: every earlier file is unchanged; [what 1.6 adds](contract/README-1.6.md)) brings
+  retrieval by meaning into the contract, so the Python and Go ports can match .NET's recall on reworded queries. It
+  publishes the .NET embedding index's statements line for line: the conditional embedding write and its revision probe
+  (`contract/sql/write-experience-embedding.sql`), and the nearest-neighbour search, with and without the model-authored
+  exclusion, and its two compatibility probes (`contract/sql/search-experience-vector.sql`, the dimension written in as
+  `vector({dim})`). It also publishes the application role's grants on `agent_experience.experience_embeddings`
+  (`contract/sql/application-role-privileges-1.6.sql`, applied after the 1.0 and 1.4 files), and states the text that
+  is embedded and its content hash, the validation rules, the relevance formula, the text-only fallbacks, and how the two
+  channels merge before the existing ranking. Four fixture families, generated from .NET with fixed vectors and no
+  embedding model: `embedding-summary` and `hybrid-merge` (no database), and `embedding-write` and `vector-search`
+  (PostgreSQL with pgvector). The .NET index and the contract statements run as written must give the same results. A
+  contract test keeps the .NET privileges call equal to the 1.0, 1.4 and 1.6 files together. No library behaviour or
+  public API changed.
+- **The Python and Go ports still pass contract 1.5**, not 1.6. Their suites accept a 1.6 lock and skip the four vector
+  families by name until stories 23.2 and 23.3 implement them.
 
 ## 0.1.0-preview.14
 

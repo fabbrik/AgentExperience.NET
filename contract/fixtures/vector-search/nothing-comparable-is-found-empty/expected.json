@@ -1,0 +1,33 @@
+{
+  "steps": [
+    {
+      "outcome": "Found",
+      "rows": []
+    },
+    {
+      "outcome": "Written"
+    },
+    {
+      "outcome": "Found",
+      "rows": []
+    }
+  ],
+  "experience_embeddings": [
+    {
+      "experience_id": "00000077-0000-4000-8000-000000000002",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "model_id": "contract-embedding",
+      "dimension": "4",
+      "content_hash": "97d21f6f3272b82d750452dde9ed88913dad12bff056879ae3f334d25a11d6bc",
+      "source_revision": "1",
+      "embedding": "[1,0,0,0]",
+      "created_at": "2026-03-02 10:00:00+00",
+      "updated_at": "2026-03-02 10:00:00+00"
+    }
+  ]
+}
