@@ -73,6 +73,86 @@ public sealed class VersionAgreementTests
         Assert.NotEqual(0, exitCode);
     }
 
+    /// <summary>
+    /// Story 23.6: <c>scripts/release-version.sh</c> is the one rule <c>RELEASING.md</c> calls. It agrees with the C#
+    /// rule in every language's spelling, and with a props file that sets no suffix (1.0) it yields <c>1.0.0</c>, never
+    /// <c>1.0.0-</c>.
+    /// </summary>
+    [UnixTheory]
+    [InlineData("0.1.0", "preview.14")]
+    [InlineData("1.0.0", "")]
+    [InlineData("0.2.3", "preview.1")]
+    [InlineData("0.1.0", "preview.99999999999999999999")]
+    public void The_release_script_derives_the_same_versions(string prefix, string suffix)
+    {
+        var expected = ReleaseVersions.Derive(prefix, suffix);
+        var props = WriteProps(prefix, suffix);
+        try
+        {
+            Assert.Equal($"{expected.DotNet} {expected.Python} {expected.Go}", RunVersionScript(props, "all").Output.Trim());
+            Assert.Equal(expected.DotNet, RunVersionScript(props, "dotnet").Output.Trim());
+            Assert.Equal(expected.Python, RunVersionScript(props, "python").Output.Trim());
+            Assert.Equal(expected.Go, RunVersionScript(props, "go").Output.Trim());
+        }
+        finally
+        {
+            File.Delete(props);
+        }
+    }
+
+    [UnixTheory]
+    [InlineData("0.1.0", "rc.1")]
+    [InlineData("0.1.0", "preview.1x")]
+    [InlineData("0.1", "preview.1")]
+    public void The_release_script_refuses_what_the_rule_refuses(string prefix, string suffix)
+    {
+        var props = WriteProps(prefix, suffix);
+        try
+        {
+            Assert.NotEqual(0, RunVersionScript(props, "all").ExitCode);
+        }
+        finally
+        {
+            File.Delete(props);
+        }
+    }
+
+    /// <summary>The script, the workflow's function and the C# rule give one answer for this commit's props.</summary>
+    [UnixFact]
+    public void The_release_script_agrees_with_this_commits_props()
+    {
+        var expected = ReleaseVersions.FromProps();
+        var (exitCode, output, error) = RunBash("\"$1\" all", [Path.Combine(RepositoryRoot.Path, "scripts", "release-version.sh")], new Dictionary<string, string>());
+        Assert.True(exitCode == 0, error);
+        Assert.Equal($"{expected.DotNet} {expected.Python} {expected.Go}", output.Trim());
+    }
+
+    /// <summary>RELEASING.md keeps no copy of the rule: no block extracts the props file's version itself.</summary>
+    [Fact]
+    public void RELEASING_derives_no_version_itself()
+    {
+        var releasing = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "RELEASING.md"));
+        Assert.DoesNotContain("<VersionPrefix>([^<]+)<", releasing, StringComparison.Ordinal);
+        Assert.DoesNotContain("<VersionSuffix>([^<]+)<", releasing, StringComparison.Ordinal);
+        Assert.Contains("scripts/release-version.sh", releasing, StringComparison.Ordinal);
+    }
+
+    private static string WriteProps(string prefix, string suffix)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"release-version-{Guid.NewGuid():N}.props");
+        File.WriteAllText(path, $"<Project><PropertyGroup><VersionPrefix>{prefix}</VersionPrefix>{(suffix.Length == 0 ? string.Empty : $"<VersionSuffix>{suffix}</VersionSuffix>")}</PropertyGroup></Project>");
+        return path;
+    }
+
+    private static (int ExitCode, string Output) RunVersionScript(string props, string which)
+    {
+        var (exitCode, output, _) = RunBash(
+            "\"$1\" \"$2\"",
+            [Path.Combine(RepositoryRoot.Path, "scripts", "release-version.sh"), which],
+            new Dictionary<string, string> { ["PROPS"] = props });
+        return (exitCode, output);
+    }
+
     /// <summary>The tag-time check's sibling sets (<c>siblings_of</c> in <c>release.yml</c>) are this test's.</summary>
     [UnixFact]
     public void The_release_workflow_expects_the_same_Go_sibling_sets()
