@@ -137,6 +137,10 @@ nothing is written. The sample does not exercise either; it records once.
 
 ## How the sample is held to all of this
 
+To export this sample's real spans and metrics from a separate host, follow the
+[runnable console exporter example](../../docs/telemetry.md#run-the-console-exporter-with-the-end-to-end-sample).
+It uses the same in-memory run without adding OpenTelemetry dependencies to any library project.
+
 `tests/AgentExperience.Sample.EndToEnd.Tests` runs the sample and then reads its **stores**, not its
 printed lines: the Experience Run capture holds, the Experience Record the store returns, the
 ledger row reuse feedback wrote, and the run ID the capture middleware put in run B's session state
