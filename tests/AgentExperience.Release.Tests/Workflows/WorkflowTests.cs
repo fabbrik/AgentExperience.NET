@@ -679,7 +679,7 @@ public sealed class WorkflowTests
             ("if [ \"$wheels\" -ne 1 ] || [ \"$sdists\" -ne 1 ]; then", "require exactly one wheel and one sdist"),
             ("            python/dist/*.whl\n            python/dist/*.tar.gz\n", "upload only the wheel and the sdist"),
             ("retention-days: 90\n", "keep the Python distribution as long as GitHub allows"),
-            ("grep -qx \"Name: agentexperience\"", "check the wheel names agentexperience"),
+            ("grep -qx \"Name: agenticexperience\"", "check the wheel names agenticexperience"),
             ("grep -qx \"Version: $PYTHON_VERSION\"", "check the wheel carries the derived version"),
             ("PYTHON_VERSION: ${{ steps.version.outputs.python-version }}", "check the distribution against the derived Python version"),
             ("for module in . inmemory postgres postgres/pgtest maf; do", "check every Go module"),

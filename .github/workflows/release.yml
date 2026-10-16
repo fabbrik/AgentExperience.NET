@@ -281,7 +281,7 @@ jobs:
           (cd dist && sha256sum -- *.whl *.tar.gz) > "$RUNNER_TEMP/python-dist.sha256"
           cat "$RUNNER_TEMP/python-dist.sha256"
 
-      # Exactly one sdist and one wheel, named agentexperience at the derived version, whose metadata says the same,
+      # Exactly one sdist and one wheel, named agenticexperience at the derived version, whose metadata says the same,
       # and which twine accepts as PyPI would (--strict fails on any warning, such as a README PyPI cannot render).
       - name: Check the Python distribution
         working-directory: python
@@ -290,8 +290,8 @@ jobs:
         run: |
           set -euo pipefail
           ls -la dist
-          test -f "dist/agentexperience-$PYTHON_VERSION.tar.gz" || { echo "::error::No sdist agentexperience-$PYTHON_VERSION.tar.gz"; exit 1; }
-          test -f "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" || { echo "::error::No wheel agentexperience-$PYTHON_VERSION-py3-none-any.whl"; exit 1; }
+          test -f "dist/agenticexperience-$PYTHON_VERSION.tar.gz" || { echo "::error::No sdist agenticexperience-$PYTHON_VERSION.tar.gz"; exit 1; }
+          test -f "dist/agenticexperience-$PYTHON_VERSION-py3-none-any.whl" || { echo "::error::No wheel agenticexperience-$PYTHON_VERSION-py3-none-any.whl"; exit 1; }
           wheels="$(find dist -type f -name '*.whl' | wc -l)"
           sdists="$(find dist -type f -name '*.tar.gz' | wc -l)"
           if [ "$wheels" -ne 1 ] || [ "$sdists" -ne 1 ]; then
@@ -299,10 +299,10 @@ jobs:
             exit 1
           fi
           uvx --no-cache twine==7.0.0 check --strict dist/*.whl dist/*.tar.gz
-          metadata="$(unzip -p "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" "agentexperience-$PYTHON_VERSION.dist-info/METADATA")"
-          grep -qx "Name: agentexperience" <<< "$metadata" || { echo "::error::The wheel's METADATA does not name agentexperience"; exit 1; }
+          metadata="$(unzip -p "dist/agenticexperience-$PYTHON_VERSION-py3-none-any.whl" "agenticexperience-$PYTHON_VERSION.dist-info/METADATA")"
+          grep -qx "Name: agenticexperience" <<< "$metadata" || { echo "::error::The wheel's METADATA does not name agenticexperience"; exit 1; }
           grep -qx "Version: $PYTHON_VERSION" <<< "$metadata" || { echo "::error::The wheel's METADATA is not version $PYTHON_VERSION"; exit 1; }
-          echo "agentexperience $PYTHON_VERSION: sdist and wheel OK"
+          echo "agenticexperience $PYTHON_VERSION: sdist and wheel OK"
 
       # The Go modules (go/), on Go 1.26, which every module builds with (the CI matrix tests each floor): go vet and
       # the tests in every module. No module cache is restored. The PostgreSQL tests are the files behind the
@@ -530,8 +530,8 @@ jobs:
           set -euo pipefail
           ls -l dist
           total="$(find dist -type f | wc -l)"
-          if [ ! -f "dist/agentexperience-$PYTHON_VERSION.tar.gz" ] || [ ! -f "dist/agentexperience-$PYTHON_VERSION-py3-none-any.whl" ] || [ "$total" -ne 2 ]; then
-            echo "::error::Expected agentexperience-$PYTHON_VERSION.tar.gz and agentexperience-$PYTHON_VERSION-py3-none-any.whl and nothing else; found $total files"
+          if [ ! -f "dist/agenticexperience-$PYTHON_VERSION.tar.gz" ] || [ ! -f "dist/agenticexperience-$PYTHON_VERSION-py3-none-any.whl" ] || [ "$total" -ne 2 ]; then
+            echo "::error::Expected agenticexperience-$PYTHON_VERSION.tar.gz and agenticexperience-$PYTHON_VERSION-py3-none-any.whl and nothing else; found $total files"
             exit 1
           fi
 

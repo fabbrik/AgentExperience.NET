@@ -259,11 +259,11 @@ public sealed class VersionAgreementTests
 
         // The lock file records the project's own version; CI's `uv sync --locked` fails when it is stale.
         var lockFile = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "python", "uv.lock")).ReplaceLineEndings("\n");
-        var locked = Regex.Match(lockFile, "\n\\[\\[package\\]\\]\nname = \"agentexperience\"\nversion = \"(?<v>[^\"]+)\"\n", RegexOptions.CultureInvariant);
-        Assert.True(locked.Success, "python/uv.lock has no agentexperience package.");
+        var locked = Regex.Match(lockFile, "\n\\[\\[package\\]\\]\nname = \"agenticexperience\"\nversion = \"(?<v>[^\"]+)\"\n", RegexOptions.CultureInvariant);
+        Assert.True(locked.Success, "python/uv.lock has no agenticexperience package.");
         Assert.True(
             locked.Groups["v"].Value == expected.Python,
-            $"python/uv.lock records agentexperience {locked.Groups["v"].Value}, but Directory.Build.props versions this commit as {expected.DotNet} (expected {expected.Python}).");
+            $"python/uv.lock records agenticexperience {locked.Groups["v"].Value}, but Directory.Build.props versions this commit as {expected.DotNet} (expected {expected.Python}).");
     }
 
     [Fact]
@@ -285,12 +285,12 @@ public sealed class VersionAgreementTests
     [Fact]
     public void The_checks_catch_a_drifted_pyproject_and_a_pseudo_version()
     {
-        var pyproject = "[project]\nname = \"agentexperience\"\nversion = \"0.1.0.dev0\"\n";
+        var pyproject = "[project]\nname = \"agenticexperience\"\nversion = \"0.1.0.dev0\"\n";
         var python = Assert.Single(PythonViolations(pyproject, "0.1.0a14"));
         Assert.Contains("python/pyproject.toml", python, StringComparison.Ordinal);
         Assert.Contains("0.1.0a14", python, StringComparison.Ordinal);
 
-        Assert.NotEmpty(PythonViolations("[project]\nname = \"agentexperience-preview\"\nversion = \"0.1.0a14\"\n", "0.1.0a14"));
+        Assert.NotEmpty(PythonViolations("[project]\nname = \"agenticexperience-preview\"\nversion = \"0.1.0a14\"\n", "0.1.0a14"));
 
         var goMod = $"module {ModulePrefix}/inmemory\n\ngo 1.25.0\n\nrequire {ModulePrefix} v0.0.0-00010101000000-000000000000\n\nreplace {ModulePrefix} => ../\n";
         var go = Assert.Single(GoViolations("go/inmemory/go.mod", goMod, "v0.1.0-preview.14", ["go"]));
@@ -307,9 +307,9 @@ public sealed class VersionAgreementTests
     {
         var violations = new List<string>();
         var name = Regex.Match(pyproject, "^name = \"(?<v>[^\"]+)\"$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
-        if (!name.Success || name.Groups["v"].Value != "agentexperience")
+        if (!name.Success || name.Groups["v"].Value != "agenticexperience")
         {
-            violations.Add("python/pyproject.toml must name the distribution agentexperience.");
+            violations.Add("python/pyproject.toml must name the distribution agenticexperience.");
         }
 
         var version = Regex.Match(pyproject, "^version = \"(?<v>[^\"]+)\"$", RegexOptions.Multiline | RegexOptions.CultureInvariant);

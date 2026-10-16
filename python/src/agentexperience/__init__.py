@@ -45,7 +45,7 @@ from .task_text import Message, MessagePart, derive_task_text
 from .verification import ClosedVerificationRound, RequiredCheck
 
 try:
-    __version__ = _metadata.version("agentexperience")
+    __version__ = _metadata.version("agenticexperience")
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
