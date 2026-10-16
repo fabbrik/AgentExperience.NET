@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -42,7 +43,7 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != ae.ContractVersion {
+	if version != ae.ContractVersion && !slices.Contains(ct.PendingContractVersions, version) {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
 	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5" {
@@ -51,7 +52,7 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 }
 
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
-	for _, version := range []any{"2.0", "1.6", nil} {
+	for _, version := range []any{"2.0", "1.7", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
 		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5") {
 			t.Fatalf("version %v: %v", version, err)
@@ -112,13 +113,27 @@ func TestEveryFixtureFamilyHasCases(t *testing.T) {
 			families = append(families, entry.Name())
 		}
 	}
-	if strings.Join(families, ",") != "encoding,erased,error-class,finalize,inject,record-injection,search,task-text" {
+	if strings.Join(families, ",") != "embedding-summary,embedding-write,encoding,erased,error-class,finalize,hybrid-merge,inject,"+
+		"record-injection,search,task-text,vector-search" {
 		t.Fatalf("families: %v", families)
 	}
 	for _, family := range []string{"erased", "finalize", "inject", "record-injection", "search", "task-text"} {
 		if len(ct.Cases(family)) == 0 {
 			t.Fatalf("%s has no cases", family)
 		}
+	}
+}
+
+// TestPendingVectorFamilies skips contract 1.6's vector families by name: this package does not implement them yet
+// (stories 23.2 and 23.3 do, and remove ct.PendingVectorFamilies). Each must exist, so a renamed family fails here.
+func TestPendingVectorFamilies(t *testing.T) {
+	for _, family := range ct.PendingVectorFamilies {
+		t.Run(family, func(t *testing.T) {
+			if _, err := os.Stat(fixture(family)); err != nil {
+				t.Fatal(err)
+			}
+			t.Skipf("%s: a contract 1.6 vector family, pending in this package", family)
+		})
 	}
 }
 

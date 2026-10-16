@@ -1,0 +1,105 @@
+{
+  "description": "A model-authored record is returned by the search, and left out by the search that excludes model-written lessons (before the limit), as the text search leaves it out.",
+  "steps": [
+    {
+      "write": {
+        "experienceId": "00000076-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0.5,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000076-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "6aa867511ff2a5cdb06b6f30489ca811d35636dda1e16e55961afa5d649fe898",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 1,
+        "excludeModelAuthored": true
+      }
+    }
+  ]
+}

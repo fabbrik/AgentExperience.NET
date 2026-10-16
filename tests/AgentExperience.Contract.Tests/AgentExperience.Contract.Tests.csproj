@@ -37,6 +37,8 @@
     <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <!-- Contract 1.6: the embedding write and the vector search the contract publishes are this package's statements. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres.Vectors\AgentExperience.Storage.Postgres.Vectors.csproj" />
   </ItemGroup>
 
 </Project>

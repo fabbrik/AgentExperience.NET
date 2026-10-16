@@ -1,0 +1,132 @@
+{
+  "description": "A record moves from revision 1 to 2. A write computed at revision 1 is then Stale, with the current revision, and leaves the stored row as it was; a write at revision 2 replaces it (created_at kept, updated_at the new clock), including with another model and dimension.",
+  "steps": [
+    {
+      "write": {
+        "experienceId": "00000071-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "setRevision": {
+        "experienceId": "00000071-0000-4000-8000-000000000001",
+        "revision": 2
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000071-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:01:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000071-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 2,
+        "vector": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "now": "2026-03-02T10:02:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000071-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 4,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "now": "2026-03-02T10:03:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000071-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding-v2",
+        "dimension": 5,
+        "contentHash": "315a04c8783712bdba16399da796a251d5ea5fdc8db781d6c62cc151122d2395",
+        "sourceRevision": 2,
+        "vector": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "now": "2026-03-02T10:04:00+00:00"
+      }
+    }
+  ]
+}

@@ -205,18 +205,36 @@ public sealed class ContractPostgresCollection : ICollectionFixture<ContractPost
 /// One stock PostgreSQL container for the search family and the stored-record round trip, with an owner role that runs the migrator and an application
 /// role the privileges call grants, row-level security on.
 /// </summary>
-public sealed class ContractPostgresDatabase : IAsyncLifetime
+public class ContractPostgresDatabase : IAsyncLifetime
 {
     private const string Owner = "contract_owner";
     private const string Application = "contract_app";
     private const string Password = "contract-role-password";
 
     private readonly List<NpgsqlDataSource> _sources = [];
+    private readonly string _image;
+    private readonly bool _vectors;
     private PostgreSqlContainer? _container;
+
+    public ContractPostgresDatabase()
+        : this(AgentExperience.Tests.Shared.PostgresTestImage.Stock, vectors: false)
+    {
+    }
+
+    /// <summary>
+    /// A container of <paramref name="image"/>; with <paramref name="vectors"/>, every case's database also gets the
+    /// <c>vector</c> extension (created by the superuser, as pgvector requires) and the vectors package's migrations, before
+    /// the application role's privileges are applied.
+    /// </summary>
+    protected ContractPostgresDatabase(string image, bool vectors)
+    {
+        _image = image;
+        _vectors = vectors;
+    }
 
     public async Task InitializeAsync()
     {
-        _container = new PostgreSqlBuilder(AgentExperience.Tests.Shared.PostgresTestImage.Stock).Build();
+        _container = new PostgreSqlBuilder(_image).Build();
         await _container.StartAsync();
         await ExecuteAsync(_container.GetConnectionString(), $"CREATE ROLE {Owner} LOGIN PASSWORD '{Password}'");
         await ExecuteAsync(_container.GetConnectionString(), $"CREATE ROLE {Application} LOGIN PASSWORD '{Password}'");
@@ -238,6 +256,13 @@ public sealed class ContractPostgresDatabase : IAsyncLifetime
         await using (var owner = NpgsqlDataSource.Create(ConnectionString(name, Owner)))
         {
             await ExperienceSchemaMigrator.MigrateAsync(owner, CancellationToken.None);
+            if (_vectors)
+            {
+                var superuser = new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = name }.ConnectionString;
+                await ExecuteAsync(superuser, "CREATE EXTENSION IF NOT EXISTS vector");
+                await AgentExperience.Storage.Postgres.Vectors.ExperienceVectorSchemaMigrator.MigrateAsync(owner, CancellationToken.None);
+            }
+
             await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
                 owner,
                 new ExperienceApplicationRoleOptions(Application) { EnableRowLevelSecurity = true },

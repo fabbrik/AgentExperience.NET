@@ -1,0 +1,44 @@
+{
+  "steps": [
+    {
+      "outcome": "Written"
+    },
+    {
+      "outcome": "Written"
+    }
+  ],
+  "experience_embeddings": [
+    {
+      "experience_id": "00000070-0000-4000-8000-000000000001",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "model_id": "contract-embedding",
+      "dimension": "4",
+      "content_hash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+      "source_revision": "1",
+      "embedding": "[1,0,0,0]",
+      "created_at": "2026-03-02 10:00:00+00",
+      "updated_at": "2026-03-02 10:00:00+00"
+    },
+    {
+      "experience_id": "00000070-0000-4000-8000-000000000002",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": "payments",
+      "agent_id": null,
+      "user_id": "user-7",
+      "model_id": "contract-embedding",
+      "dimension": "4",
+      "content_hash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+      "source_revision": "1",
+      "embedding": "[0,1,0,0]",
+      "created_at": "2026-03-02 10:01:00+00",
+      "updated_at": "2026-03-02 10:01:00+00"
+    }
+  ]
+}

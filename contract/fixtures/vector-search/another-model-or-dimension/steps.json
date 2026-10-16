@@ -1,0 +1,134 @@
+{
+  "description": "Embeddings stored under the model at dimension 5 only (the one dimension-5 case). A dimension-4 query under another model is ModelMismatch; under this model it is DimensionMismatch; a dimension-5 query under this model finds them. No rows come back with a mismatch.",
+  "steps": [
+    {
+      "write": {
+        "experienceId": "00000078-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 5,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "write": {
+        "experienceId": "00000078-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "dimension": 5,
+        "contentHash": "e0e1482d74952dab40a932bb4e82e0e5f6fca002cad91d51086954c155b38f02",
+        "sourceRevision": 1,
+        "vector": [
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "now": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "another-model",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    },
+    {
+      "search": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "modelId": "contract-embedding",
+        "vector": [
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "statuses": [
+          "Validated",
+          "Reinforced"
+        ],
+        "minConfidence": 0.5,
+        "limit": 51,
+        "excludeModelAuthored": false
+      }
+    }
+  ]
+}

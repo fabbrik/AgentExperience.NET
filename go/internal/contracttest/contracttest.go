@@ -72,12 +72,21 @@ func Cases(family string) []string {
 // ErrUnsupportedContractVersion is a lock naming a contract version this package does not support.
 var ErrUnsupportedContractVersion = errors.New("unsupported contract version")
 
-// CheckContractVersion is the lock's contract version, when this package supports it; a clear failure otherwise.
+// PendingContractVersions are the contract versions the lock may name although this package does not pass them yet:
+// contract 1.6 only adds PendingVectorFamilies, so every 1.0 to 1.5 fixture still runs under its lock.
+var PendingContractVersions = []string{"1.6"}
+
+// PendingVectorFamilies are contract 1.6's vector fixture families, which this package does not implement yet. They
+// are skipped by name (TestPendingVectorFamilies), never ignored. Stories 23.2 and 23.3 implement them and remove this.
+var PendingVectorFamilies = []string{"embedding-summary", "embedding-write", "hybrid-merge", "vector-search"}
+
+// CheckContractVersion is the lock's contract version, when this package supports it or it is pending; a clear
+// failure otherwise.
 func CheckContractVersion(lock any) (string, error) {
 	object, _ := lock.(*ae.Object)
 	value, _ := object.Get("contractVersion")
 	version, _ := value.(string)
-	for _, supported := range ae.SupportedContractVersions {
+	for _, supported := range append(append([]string{}, ae.SupportedContractVersions...), PendingContractVersions...) {
 		if version == supported {
 			return version, nil
 		}

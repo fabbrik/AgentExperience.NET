@@ -59,7 +59,7 @@ public sealed class ContractPrivilegesOrderPostgresTests(ContractPostgresDatabas
     }
 
     /// <summary>A contract privileges file, both modes, in one transaction, as a port's setup runs it.</summary>
-    private static async Task ApplyContractFileAsync(NpgsqlDataSource owner, string file)
+    internal static async Task ApplyContractFileAsync(NpgsqlDataSource owner, string file)
     {
         var role = "\"" + ContractPostgresDatabase.ApplicationRole + "\"";
         await using var connection = await owner.OpenConnectionAsync();

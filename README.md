@@ -238,10 +238,11 @@ previews fixed is in [Limits history](docs/limits-history.md).
 
 **Beyond .NET.** Microsoft Agent Framework also ships in Python and Go. What a port must match to share lessons with
 this library (the stored record format, the injected block, the task text, the text search, and recording when a
-lesson was injected) is published as [a language-neutral contract](contract/README.md), version `1.5`
+lesson was injected) is published as [a language-neutral contract](contract/README.md), version `1.6`
 ([what 1.1 adds](contract/README-1.1.md), [what 1.2 adds](contract/README-1.2.md),
 [what 1.3 adds](contract/README-1.3.md), [what 1.4 adds](contract/README-1.4.md),
-[what 1.5 adds](contract/README-1.5.md)): a JSON Schema, the SQL to run, and
+[what 1.5 adds](contract/README-1.5.md), [what 1.6 adds](contract/README-1.6.md): retrieval by meaning, with
+embeddings): a JSON Schema, the SQL to run, and
 fixtures generated from and checked against this implementation on every build. A pure-Python core that passes
 contract 1.5, with a one-call Python Agent Framework integration, is in [`python/`](python/README.md). A lesson a .NET
 agent learned is injected into a Python agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.5, with a one-call Go Agent

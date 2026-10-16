@@ -1,0 +1,345 @@
+[
+  {
+    "description": "Disjoint channels: the text candidates in their order, then the vector candidates in theirs.",
+    "minimumVectorRelevance": null,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.6
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.4
+      }
+    ],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000004",
+        "relevance": 0.9
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.7
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.6,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.4,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000004",
+        "relevance": 0.9,
+        "from": "vector"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.7,
+        "from": "vector"
+      }
+    ]
+  },
+  {
+    "description": "A record in both channels is one entry, at its text position, with the higher relevance (here the vector's) and the text channel's snapshot.",
+    "minimumVectorRelevance": null,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.3
+      }
+    ],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.8
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.6
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.8,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.6,
+        "from": "vector"
+      }
+    ]
+  },
+  {
+    "description": "The text relevance is the higher: it is kept, with the text channel's snapshot.",
+    "minimumVectorRelevance": null,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.9
+      }
+    ],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.9,
+        "from": "text"
+      }
+    ]
+  },
+  {
+    "description": "Equal relevances: the text channel's entry is kept unchanged.",
+    "minimumVectorRelevance": null,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5
+      }
+    ],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5,
+        "from": "text"
+      }
+    ]
+  },
+  {
+    "description": "A floor drops vector candidates below it before the merge (a candidate exactly at it is kept); text candidates are never floored, so a record whose vector relevance is below the floor keeps its text relevance.",
+    "minimumVectorRelevance": 0.75,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.2
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.6
+      }
+    ],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.9
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.8
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000004",
+        "relevance": 0.7
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.74
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000005",
+        "relevance": 0.75
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.2,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.9,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.8,
+        "from": "vector"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000005",
+        "relevance": 0.75,
+        "from": "vector"
+      }
+    ]
+  },
+  {
+    "description": "No text candidates: the vector candidates, in their order.",
+    "minimumVectorRelevance": null,
+    "text": [],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.9
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.4
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.9,
+        "from": "vector"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.4,
+        "from": "vector"
+      }
+    ]
+  },
+  {
+    "description": "No vector candidates (the vector channel fell back, or matched nothing): the text candidates.",
+    "minimumVectorRelevance": null,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.4
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.3
+      }
+    ],
+    "vector": [],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.4,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.3,
+        "from": "text"
+      }
+    ]
+  },
+  {
+    "description": "Relevances are compared clamped to [0, 1], NaN as 0, but the raw value is kept: a NaN text relevance takes the vector's 0.5; a text 1.2 beats a vector 0.9 and stays 1.2; a vector 1.5 beats a text 0.9 and is kept as 1.5; with no floor a NaN vector candidate is kept.",
+    "minimumVectorRelevance": null,
+    "text": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": "NaN"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 1.2
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.4
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000005",
+        "relevance": 0.9
+      }
+    ],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0.9
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000004",
+        "relevance": "NaN"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000005",
+        "relevance": 1.5
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": 0.5,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 1.2,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.4,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000005",
+        "relevance": 1.5,
+        "from": "text"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000004",
+        "relevance": "NaN",
+        "from": "vector"
+      }
+    ]
+  },
+  {
+    "description": "A floor of 0 keeps every vector candidate with a number for a relevance, 0 included, and drops a NaN one.",
+    "minimumVectorRelevance": 0,
+    "text": [],
+    "vector": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000001",
+        "relevance": "NaN"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.3
+      }
+    ],
+    "merged": [
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000002",
+        "relevance": 0,
+        "from": "vector"
+      },
+      {
+        "experienceId": "0000006a-0000-4000-8000-000000000003",
+        "relevance": 0.3,
+        "from": "vector"
+      }
+    ]
+  }
+]

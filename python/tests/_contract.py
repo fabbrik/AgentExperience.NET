@@ -43,14 +43,23 @@ def cases(family: str) -> list[str]:
     return sorted(entry.name for entry in (FIXTURES / family).iterdir() if entry.is_dir())
 
 
+PENDING_CONTRACT_VERSIONS: tuple[str, ...] = ("1.6",)
+"""Contract versions the lock may name although this package does not pass them yet: contract 1.6 only adds
+``PENDING_VECTOR_FAMILIES``, so every 1.0 to 1.5 fixture still runs under its lock."""
+
+PENDING_VECTOR_FAMILIES: tuple[str, ...] = ("embedding-summary", "embedding-write", "hybrid-merge", "vector-search")
+"""Contract 1.6's vector fixture families, which this package does not implement yet. They are skipped by name
+(``test_pending_vector_family``), never ignored. Stories 23.2 and 23.3 implement them and remove this."""
+
+
 class UnsupportedContractVersion(Exception):
     pass
 
 
 def check_contract_version(lock: dict[str, Any]) -> str:
-    """The lock's contract version, when this package supports it; a clear failure otherwise."""
+    """The lock's contract version, when this package supports it or it is pending; a clear failure otherwise."""
     version = lock.get("contractVersion")
-    if version not in SUPPORTED_CONTRACT_VERSIONS:
+    if version not in SUPPORTED_CONTRACT_VERSIONS + PENDING_CONTRACT_VERSIONS:
         raise UnsupportedContractVersion(
             f"contract/lock.json is contract version {version!r}, but this package supports only "
             f"{', '.join(SUPPORTED_CONTRACT_VERSIONS)}. Implement the new version before running its fixtures."
