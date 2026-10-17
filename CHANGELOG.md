@@ -6,6 +6,15 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.15
+
+The Python and Go ports now retrieve by meaning as well as by text. Register an embedder and a reworded query finds a
+lesson it shares no words with; without one, nothing changes. Both ports pass contract 1.6, which this preview adds
+(add-only; for .NET users no library behaviour or public API changed). The same tag releases the six NuGet packages, the
+Python distribution `agenticexperience` and the five Go modules at one version.
+
 ### Contract 1.6: vector search calls (story 23.1)
 
 - **Contract 1.6** (add-only: every earlier file is unchanged; [what 1.6 adds](contract/README-1.6.md)) brings
@@ -21,8 +30,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   (PostgreSQL with pgvector). The .NET index and the contract statements run as written must give the same results. A
   contract test keeps the .NET privileges call equal to the 1.0, 1.4 and 1.6 files together. No library behaviour or
   public API changed.
-- **The Python and Go ports still pass contract 1.5**, not 1.6. Their suites accept a 1.6 lock and skip the four vector
-  families by name until stories 23.2 and 23.3 implement them (23.2, Python, and 23.3, Go, below).
+- **The Python and Go ports pass contract 1.6** (23.2, Python, and 23.3, Go, below).
 
 ### Python semantic retrieval (story 23.2)
 
