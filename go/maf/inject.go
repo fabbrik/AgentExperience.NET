@@ -86,14 +86,37 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	}
 	parameters := ae.NewSearchParameters(identity.Scope, taskText)
 	parameters.ExcludeModelAuthored = s.ExcludeModelAuthored
+	// Both channels run together; the vector channel never fails (it answers with a fallback instead), and is bounded
+	// by VectorTimeout, so waiting for it after the text search is bounded too.
+	type vectorAnswer struct {
+		rows     []ae.SearchRow
+		fallback *ae.VectorFallback
+	}
+	vectorDone := make(chan vectorAnswer, 1)
+	if _, fallback := s.indexOf(); fallback != nil {
+		vectorDone <- vectorAnswer{fallback: fallback}
+	} else {
+		go func() {
+			vectorRows, fallback := s.vectorChannel(ctx, identity, taskText)
+			vectorDone <- vectorAnswer{vectorRows, fallback}
+		}()
+	}
 	rows, err := s.Store.Search(ctx, identity.Authorization(), parameters)
+	vector := <-vectorDone
+	s.reportVectorFallback(vector.fallback)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "The search failed; no block was added.", Err: err})
 		return messages
 	}
 	// The instant the block is built at: ranking's "now", and the injection's instant.
 	now := s.Clock()
-	ranked, err := ae.Rank(rows, identity.Scope, now, s.PreferredEnvironment, s.ExcludeModelAuthored)
+	var ranked ae.RankedResult
+	if len(vector.rows) > 0 {
+		ranked, err = ae.RankHybrid(rows, vector.rows, identity.Scope, now, s.PreferredEnvironment,
+			s.MinVectorRelevance, s.ExcludeModelAuthored)
+	} else {
+		ranked, err = ae.Rank(rows, identity.Scope, now, s.PreferredEnvironment, s.ExcludeModelAuthored)
+	}
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
 		return messages
@@ -132,7 +155,8 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	if s.OnInjected != nil {
 		func() {
 			defer func() { _ = recover() }()
-			s.OnInjected(InjectionResult{ExperienceIDs: ids, ByteCount: block.ByteCount, Truncated: ranked.Truncated})
+			s.OnInjected(InjectionResult{ExperienceIDs: ids, ByteCount: block.ByteCount, Truncated: ranked.Truncated,
+				VectorFallback: vector.fallback})
 		}()
 	}
 

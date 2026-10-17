@@ -290,6 +290,8 @@ func (c *captureScope) finishWork(ctx context.Context, status ae.RunExecutionSta
 	if err != nil {
 		return report(StageStore, "Storing the record failed; the run is not stored.", err)
 	}
+	// The embedding is derived data: written after the record's own commit, in the background, never failing it.
+	c.startIndex(ctx, finalized.Record)
 	// Stored. Told only while the invocation still waits: an abandoned work was reported as such.
 	if ctx.Err() != nil {
 		return false

@@ -22,7 +22,7 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   contract test keeps the .NET privileges call equal to the 1.0, 1.4 and 1.6 files together. No library behaviour or
   public API changed.
 - **The Python and Go ports still pass contract 1.5**, not 1.6. Their suites accept a 1.6 lock and skip the four vector
-  families by name until stories 23.2 and 23.3 implement them.
+  families by name until stories 23.2 and 23.3 implement them (23.2, Python, and 23.3, Go, below).
 
 ### Python semantic retrieval (story 23.2)
 
@@ -39,7 +39,26 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   stored, its summary's embedding is written in the background, outside the record's own commit; a failure is reported
   to `on_capture_failure` as the new stage `Index` and never fails capture.
 - Without an embedder nothing changes. The Python test suite now needs a pgvector image (`pgvector/pgvector`) for its
-  PostgreSQL leg. The Go port still passes contract 1.5.
+  PostgreSQL leg.
+
+### Go semantic retrieval (story 23.3)
+
+- **The Go port passes contract 1.6.** `maf.Options.Embedder` takes your embedding object (an `ae.Embedder`:
+  `ModelID`, `Dimension` and `Embed(ctx, text)`; no model is a dependency). With one, injection runs the text and the
+  vector channel together and merges them as contract 1.6 says, then ranks with the unchanged `Rank`, so a reworded
+  query finds a lesson it shares no words with. Without one, or when the vector channel fails, it answers from text
+  alone and reports why: `NotConfigured`, `ProviderUnavailable`, `ModelMismatch`, `DimensionMismatch` or
+  `VectorSearchFailed`, through `OnVectorFallback` and `InjectionResult.VectorFallback`. The vector channel never fails
+  the call and is bounded by `VectorTimeout` (500 ms by default); the text channel's failure still fails it.
+  Embedder and vector-store calls are bounded too: at most 16 in flight, abandoned ones included, so a hung provider
+  cannot starve the text search. `MinVectorRelevance` drops weak vector candidates, never text ones.
+- **Stores.** `inmemory.Store` and `postgres.Store` (PostgreSQL with pgvector, running the contract's two new SQL files
+  as written) both serve the channel through `WriteEmbedding` and `SearchVectors` (the new optional `ae.EmbeddingIndex`).
+  After a record is stored, its summary's embedding is written in the background, outside the record's own commit; a
+  failure is reported to `OnCaptureFailure` as the new stage `Index` and never fails capture
+  (`maf.WaitForIndexWrites` awaits the writes still running).
+- Without an embedder nothing changes. The Go PostgreSQL tests now need a pgvector image (`pgvector/pgvector`). All
+  three ports (.NET, Python, Go) now pass contract 1.6.
 
 ## 0.1.0-preview.14
 
