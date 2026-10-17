@@ -1,0 +1,252 @@
+{
+  "generatedFrom": "tests/AgentExperience.MicrosoftAgentFramework.Tests/Diagnostics/TelemetryNamesFileTests.cs",
+  "sources": [
+    "AgentExperience.Core",
+    "AgentExperience.MicrosoftAgentFramework"
+  ],
+  "spanNamePrefix": "agentexperience.",
+  "faultedOutcome": "Faulted",
+  "instruments": [
+    {
+      "name": "agentexperience.operation.count",
+      "kind": "counter",
+      "unit": "{operation}"
+    },
+    {
+      "name": "agentexperience.operation.duration",
+      "kind": "histogram",
+      "unit": "s"
+    },
+    {
+      "name": "agentexperience.operation.failures",
+      "kind": "counter",
+      "unit": "{failure}"
+    }
+  ],
+  "dimensions": [
+    "operation",
+    "outcome",
+    "error.class",
+    "nested"
+  ],
+  "errorClasses": [
+    "Cancelled",
+    "Timeout",
+    "Infrastructure",
+    "Unexpected"
+  ],
+  "attributes": [
+    "agentexperience.attempt_id",
+    "agentexperience.confidence.admission",
+    "agentexperience.correlation_id",
+    "agentexperience.error.class",
+    "agentexperience.event_id",
+    "agentexperience.experience_id",
+    "agentexperience.feedback_id",
+    "agentexperience.history_read",
+    "agentexperience.independence.refusal",
+    "agentexperience.omitted_count",
+    "agentexperience.operation",
+    "agentexperience.outcome",
+    "agentexperience.reflection.screening_refusal",
+    "agentexperience.reflection_id",
+    "agentexperience.retracted_count",
+    "agentexperience.reuse_evidence.submitted",
+    "agentexperience.run_id",
+    "agentexperience.stage",
+    "error.type"
+  ],
+  "operations": [
+    {
+      "operation": "capture.start_run",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Started",
+        "Continued",
+        "Conflict",
+        "CapacityExceeded"
+      ]
+    },
+    {
+      "operation": "capture.append_attempt",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Recorded",
+        "DuplicateNoOp",
+        "Conflict",
+        "SanitizationRejected",
+        "RunNotFound",
+        "CapacityExceeded"
+      ]
+    },
+    {
+      "operation": "capture.complete_run",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Recorded",
+        "DuplicateNoOp",
+        "Conflict",
+        "RunNotFound"
+      ]
+    },
+    {
+      "operation": "verify",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Unknown",
+        "Verified",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "reflect",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Unknown",
+        "Verified",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "finalize",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Validated",
+        "Quarantined",
+        "AlreadyFinalized",
+        "StorageDenied",
+        "NotAuthorized",
+        "RunNotFound",
+        "RunNotFinished",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "lifecycle.commit",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Committed",
+        "TransitionNotAllowed",
+        "ReplacementNotAllowed",
+        "StaleRevision",
+        "StatusMismatch",
+        "Conflict",
+        "NotFound",
+        "Denied",
+        "Invalid",
+        "Deleted"
+      ]
+    },
+    {
+      "operation": "confidence.apply",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Applied",
+        "Ineligible",
+        "StaleRevision",
+        "StatusMismatch",
+        "Conflict",
+        "NotFound",
+        "Denied",
+        "Invalid",
+        "Deleted",
+        "Unverified"
+      ]
+    },
+    {
+      "operation": "retrieve",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Completed",
+        "TimedOut",
+        "Denied",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "index",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Indexed",
+        "Skipped",
+        "Stale",
+        "Missing",
+        "Denied",
+        "Ineligible",
+        "ProviderFailed",
+        "IndexFailed"
+      ]
+    },
+    {
+      "operation": "deindex",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Removed",
+        "NotIndexed",
+        "Denied",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "reindex",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Completed",
+        "Denied",
+        "Invalid",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "reuse_feedback",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Recorded",
+        "AlreadyRecorded",
+        "Conflict",
+        "Denied",
+        "Invalid"
+      ]
+    },
+    {
+      "operation": "inject",
+      "source": "AgentExperience.MicrosoftAgentFramework",
+      "span": true,
+      "outcomes": [
+        "Injected",
+        "NothingToInject",
+        "Skipped",
+        "RetrievalTimedOut",
+        "RetrievalDenied",
+        "RetrievalFailed",
+        "Failed",
+        "Retracted",
+        "SessionBudgetExhausted"
+      ]
+    },
+    {
+      "operation": "record_injection",
+      "source": "AgentExperience.MicrosoftAgentFramework",
+      "span": false,
+      "outcomes": [
+        "Recorded",
+        "NotTracked",
+        "NotRecorded",
+        "OutcomeUnknown"
+      ]
+    }
+  ]
+}

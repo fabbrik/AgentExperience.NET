@@ -166,6 +166,26 @@ for lesson in page.lessons:                             # newest first
 - **Stores.** `InMemoryExperienceStore` and `PostgresExperienceStore` have `list_lessons_page`; PostgreSQL runs the
   contract's `sql/list-experience-lessons.sql` as written and needs no grants beyond 1.0 and 1.4.
 
+### Telemetry: the same spans and metrics as .NET
+
+With the `otel` extra (`pip install "agenticexperience[otel]"`, which depends on `opentelemetry-api` only), one call
+reports the operations the port performs to OpenTelemetry, under the names, dimensions and attributes
+[`docs/telemetry.md`](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/telemetry.md#the-python-and-go-ports)
+documents for .NET, so one dashboard serves a mixed fleet:
+
+```python
+from agentexperience import telemetry
+
+telemetry.enable()  # the global tracer and meter providers your application configured (or pass tracer_provider=, meter_provider=)
+```
+
+It emits `inject`, `retrieve`, `record_injection`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
+`verify`, `reflect`, `finalize` and `index` (the background embedding write): the operations this port performs, and no
+other. The core and the agent integration import no OpenTelemetry; they call the small hook in `agentexperience.observer`
+(one `None` check when nothing is registered), and `agentexperience.telemetry` is the adapter. It configures no SDK and
+no exporter, and a provider, exporter or observer that raises is swallowed and never reaches the agent. Attributes
+carry identifiers and counts only, never record content, task text, scopes or exception messages.
+
 ### In production
 
 The identity must come from your own authentication, never from model output: pass a function of an

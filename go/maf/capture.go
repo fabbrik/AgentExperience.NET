@@ -70,7 +70,7 @@ func (c *captureScope) captured() bool {
 }
 
 // start opens the run, its task text the invocation's own input.
-func (c *captureScope) start(messages []*message.Message) {
+func (c *captureScope) start(ctx context.Context, messages []*message.Message) {
 	if c.identity == nil {
 		return
 	}
@@ -95,7 +95,7 @@ func (c *captureScope) start(messages []*message.Message) {
 			StartedAt:       now,
 		}
 		var capture *ae.RunCapture
-		capture, err = ae.StartRun(run, s.Sanitization, ae.CaptureLimits{})
+		capture, err = ae.StartRunContext(ctx, run, s.Sanitization, ae.CaptureLimits{})
 		if err != nil {
 			return
 		}
@@ -221,7 +221,7 @@ func (c *captureScope) finishWork(ctx context.Context, status ae.RunExecutionSta
 	}
 
 	ended := s.Clock()
-	outcome, err := capture.AppendAttempt(ae.RawAttempt{AttemptID: s.NewID(), StartedAt: started,
+	outcome, err := capture.AppendAttemptContext(ctx, ae.RawAttempt{AttemptID: s.NewID(), StartedAt: started,
 		Duration: elapsed(started, ended), ToolCalls: calls, Result: result, Error: failure})
 	if err != nil {
 		return report(StageAppendAttempt, "Appending the attempt failed; the run is not stored.", err)
@@ -230,9 +230,9 @@ func (c *captureScope) finishWork(ctx context.Context, status ae.RunExecutionSta
 		return report(StageAppendAttempt, "Capture answered "+string(outcome)+"; the run is not stored.", nil)
 	}
 	if !ended.Before(started) {
-		_, err = capture.Complete(status, ended)
+		_, err = capture.CompleteContext(ctx, status, ended)
 	} else {
-		_, err = capture.Complete(status, started)
+		_, err = capture.CompleteContext(ctx, status, started)
 	}
 	if err != nil {
 		return report(StageCompleteRun, "Completing the run failed; the run is not stored.", err)
@@ -266,7 +266,7 @@ func (c *captureScope) finishWork(ctx context.Context, status ae.RunExecutionSta
 	}
 
 	finalizedAt := s.Clock()
-	finalized, err := ae.Finalize(run, ae.Verification{
+	finalized, err := ae.FinalizeContext(ctx, run, ae.Verification{
 		ClosedRound:             &ae.ClosedVerificationRound{RoundID: roundID, ArtifactRevision: verdict.ArtifactRevision},
 		RequiredChecks:          verdict.RequiredChecks,
 		Evidence:                verdict.Evidence,
@@ -332,7 +332,7 @@ func (m *captureMiddleware) Run(next agent.RunFunc, ctx context.Context, message
 			scope.report(StageResolveIdentity, "Resolving the identity failed; the invocation runs with no memory.",
 				err)
 		}
-		scope.start(messages)
+		scope.start(ctx, messages)
 		ctx = context.WithValue(ctx, scopeKey{}, scope)
 
 		var response agent.Response

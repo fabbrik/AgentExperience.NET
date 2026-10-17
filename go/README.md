@@ -25,6 +25,7 @@ That brings the core (`.../go`) with it; add `.../go/postgres` or `.../go/inmemo
 | `.../go/inmemory` (`inmemory/`) | 1.25 | `golang.org/x/text` | An in-memory store, for development |
 | `.../go/maf` (`maf/`) | 1.26 | [Agent Framework for Go](https://github.com/microsoft/agent-framework-go) v0.1.1 | The one-call Agent Framework integration |
 | `.../go/postgres/pgtest` (`postgres/pgtest/`) | 1.26 | testcontainers-go, the PostgreSQL store | Test support only: the PostgreSQL server the tests share, and the store's PostgreSQL tests |
+| `.../go/telemetry` (`telemetry/`) | 1.26 | the OpenTelemetry API | Optional: reports spans and metrics to OpenTelemetry, as [`docs/telemetry.md`](../docs/telemetry.md#the-python-and-go-ports) documents. Nothing else requires it |
 
 The core's `go.mod` has no `require`, and a test checks that no file of it, tests included, imports anything but the
 standard library. Each other module is its own, so a program pays only for what it imports: the stores' Go 1.25 is
@@ -225,6 +226,29 @@ core) have the semantics of `ExperienceToolResultClassifiers`: `ExitCode(tools..
 JSON object's top-level members, else the last match in the text, with .NET's `\b`, `\s` and case rules (they run on
 the error class's matcher, not Go's RE2). A blank tool name or check ID panics, as an invalid pattern does in
 `regexp.MustCompile`.
+
+### Telemetry: the same spans and metrics as .NET
+
+The optional module `.../go/telemetry` (the OpenTelemetry API only; no SDK, no exporter) reports the operations the port
+performs to OpenTelemetry, under the names, dimensions and attributes
+[`docs/telemetry.md`](../docs/telemetry.md#the-python-and-go-ports) documents for .NET, so one dashboard serves a
+mixed fleet:
+
+```go
+import "github.com/fabbrik/AgentExperience.NET/go/telemetry"
+
+disable := telemetry.Enable() // the global providers your application configured; WithTracerProvider and WithMeterProvider override
+defer disable()
+```
+
+It emits `inject`, `retrieve`, `record_injection`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
+`verify`, `reflect`, `finalize` and `index` (the background embedding write): the operations this port performs, and no
+other. The core and the integration import no OpenTelemetry: they call the observer hook (`ae.SetObserver`, one atomic
+load when nothing is registered), and `go/telemetry` is the adapter. A provider, exporter or observer that fails or
+panics is recovered and never reaches the agent. Spans parent under the context you pass: `ae.StartRunContext`,
+`(*RunCapture).AppendAttemptContext`, `CompleteContext` and `FinalizeContext` take the context (the integration passes
+the invocation's); the forms without one report root spans. Attributes carry identifiers and counts only, never record
+content, task text, scopes or error messages.
 
 ### In production
 

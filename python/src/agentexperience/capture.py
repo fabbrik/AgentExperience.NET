@@ -17,6 +17,7 @@ from typing import Any, Literal
 from ._text import is_null_or_whitespace, utf16_len, utf16_prefix
 from .encoding import Duration, Instant
 from .limits import DEFAULT_CAPTURE_LIMITS, MAX_EXPOSURES_PER_RUN, TRUNCATION_PLACEHOLDER, CaptureLimits
+from .observer import observe
 from .records import Attempt, EnvironmentFingerprint, Provenance, RunExposure, Scope, ToolCall
 from .sanitization import VALUE_FIELD, Sanitization, SanitizationPolicy, SanitizationRejected
 
@@ -91,6 +92,28 @@ class RunCapture:
         limits: CaptureLimits | None = None,
     ) -> RunCapture:
         """Starts a run. It starts exposed to nothing: exposures are recorded with :meth:`record_exposure`."""
+        with observe("capture.start_run") as op:
+            if op is not None:
+                op.set("agentexperience.run_id", str(run_id))
+            started = RunCapture._start(
+                run_id, task_id, task_description, scope, environment, provenance, started_at, sanitization, limits
+            )
+            if op is not None:
+                op.outcome("Started")
+            return started
+
+    @staticmethod
+    def _start(
+        run_id: uuid.UUID,
+        task_id: str,
+        task_description: str | None,
+        scope: Scope,
+        environment: EnvironmentFingerprint,
+        provenance: Provenance,
+        started_at: Instant,
+        sanitization: Sanitization | None,
+        limits: CaptureLimits | None,
+    ) -> RunCapture:
         if run_id == _EMPTY:
             raise ValueError("A run must be named by a non-empty UUID.")
         if is_null_or_whitespace(task_id):
@@ -131,6 +154,16 @@ class RunCapture:
 
     def append_attempt(self, attempt: RawAttempt) -> AppendOutcome:
         """Sanitizes and records one attempt; returns capture's answer."""
+        with observe("capture.append_attempt") as op:
+            if op is not None:
+                op.set("agentexperience.run_id", str(self.run.run_id))
+                op.set("agentexperience.attempt_id", str(attempt.attempt_id))
+            outcome = self._append_attempt(attempt)
+            if op is not None:
+                op.outcome(outcome)
+            return outcome
+
+    def _append_attempt(self, attempt: RawAttempt) -> AppendOutcome:
         if self.run.execution_status is not None:
             return "Conflict"
         previous = self._seen.get(attempt.attempt_id)
@@ -175,9 +208,15 @@ class RunCapture:
 
     def complete(self, execution_status: RunExecutionStatus, ended_at: Instant) -> CapturedRun:
         """Ends the run; no attempt or exposure is recorded after this."""
-        if self.run.execution_status is None:
-            self.run = replace(self.run, execution_status=execution_status, ended_at=ended_at)
-        return self.run
+        with observe("capture.complete_run") as op:
+            if op is not None:
+                op.set("agentexperience.run_id", str(self.run.run_id))
+            held = self.run.execution_status
+            if held is None:
+                self.run = replace(self.run, execution_status=execution_status, ended_at=ended_at)
+            if op is not None:
+                op.outcome("Recorded" if held is None else "DuplicateNoOp" if held == execution_status else "Conflict")
+            return self.run
 
 
 def _comparable(attempt: RawAttempt) -> RawAttempt:

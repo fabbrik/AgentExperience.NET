@@ -5,7 +5,7 @@ name: Release
 # three languages at one version, from one verified commit. The verify job re-runs the release checks on the tagged
 # commit and uploads what it verified: the six NuGet packages, and the Python sdist and wheel. After a reviewer
 # approves the `nuget-release` environment, the publish job pushes exactly those NuGet files to nuget.org, then tags
-# the five Go modules at the tagged commit and creates the GitHub release. After a reviewer approves the
+# the six Go modules at the tagged commit and creates the GitHub release. After a reviewer approves the
 # `pypi-release` environment, the publish-pypi job uploads exactly the verified Python files to PyPI.
 #
 # No API key or token is stored anywhere. The publish job exchanges its GitHub OIDC token for a short-lived nuget.org
@@ -100,11 +100,12 @@ jobs:
               go/inmemory | go/postgres) echo "go" ;;
               go/postgres/pgtest) echo "go go/postgres" ;;
               go/maf) echo "go go/inmemory go/postgres go/postgres/pgtest" ;;
+              go/telemetry) echo "go go/inmemory go/maf" ;;
               *) echo "::error::No sibling set for the Go module in $1" >&2; return 1 ;;
             esac
           }
           mismatched=0
-          for dir in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+          for dir in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do
             mod="$dir/go.mod"
             test -f "$mod" || { echo "::error::$mod is missing"; exit 1; }
             requires="$(grep -v '=>' "$mod" | sed -nE 's#^[[:space:]]*(require[[:space:]]+)?(github\.com/fabbrik/AgentExperience\.NET/go[^[:space:]]*)[[:space:]]+([^[:space:]]+).*#\2 \3#p')"
@@ -318,7 +319,7 @@ jobs:
         working-directory: go
         run: |
           set -euo pipefail
-          for module in . inmemory postgres postgres/pgtest maf; do
+          for module in . inmemory postgres postgres/pgtest maf telemetry; do
             (
               cd "$module"
               go mod verify
@@ -435,7 +436,7 @@ jobs:
           # tag-go-modules:begin
           set -euo pipefail
           error="$(mktemp)"
-          for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+          for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do
             tag="$module/$GO_VERSION"
             if existing="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha' 2> "$error")"; then
               read -r type sha <<< "$existing"
@@ -458,14 +459,14 @@ jobs:
       # The Go module proxy must know every module at the new version before the release is announced. Asking for a
       # version makes the proxy fetch it; a module path is case-escaped as the proxy protocol requires (each upper-case
       # letter becomes ! and the letter in lower case: AgentExperience is !agent!experience). Each module gets ten
-      # attempts of at most 30 seconds, 30 seconds apart: at worst 9.5 minutes a module, 47.5 for all five, which the
+      # attempts of at most 30 seconds, 30 seconds apart: at worst 9.5 minutes a module, 57 for all six, which the
       # job's 75-minute timeout covers with the push to nuget.org.
       - name: Check the Go module proxy has every module
         env:
           GO_VERSION: ${{ needs.verify.outputs.go-version }}
         run: |
           set -euo pipefail
-          for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+          for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do
             path="github.com/fabbrik/AgentExperience.NET/$module"
             escaped="$(sed -E 's/([A-Z])/!\L\1/g' <<< "$path")"
             url="https://proxy.golang.org/$escaped/@v/$GO_VERSION.info"

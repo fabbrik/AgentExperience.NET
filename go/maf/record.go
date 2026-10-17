@@ -114,6 +114,8 @@ func (p *ContextProvider) startRecording(ctx context.Context, identity *ae.Ident
 	s := p.settings
 	recorder, ok := s.Store.(ae.InjectionRecorder)
 	if !ok {
+		_, op := ae.Observe(ctx, "record_injection", false)
+		op.Done(string(InjectionNotTracked))
 		s.reportInjectionRecorded(InjectionRecordResult{Outcome: InjectionNotTracked, ExperienceIDs: ids})
 		return
 	}
@@ -135,10 +137,12 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 	ids []ae.UUID, injectedAt ae.Instant) {
 	s := p.settings
 	result := InjectionRecordResult{Outcome: InjectionRecorded, ExperienceIDs: ids}
+	_, op := ae.Observe(ctx, "record_injection", false)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result.Outcome, result.Err = InjectionNotRecorded, panicError{recovered}
 		}
+		op.DoneWithClass(string(result.Outcome), recordErrorClass(result))
 		s.reportInjectionRecorded(result)
 	}()
 	ctx, cancel := context.WithTimeout(ctx, s.InjectionRecordTimeout)
@@ -177,6 +181,34 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 			return
 		}
 	}
+}
+
+// recordErrorClass is the error.class a record_injection that failed counts, as .NET's table has it: a timeout or a
+// cancellation is OutcomeUnknown (Timeout, Cancelled); too many earlier writes still running is NotRecorded (Timeout);
+// a store that failed is Infrastructure, or Unexpected for anything else; a refusal is an answer and counts nothing.
+func recordErrorClass(result InjectionRecordResult) string {
+	switch result.Outcome {
+	case InjectionRecorded, InjectionNotTracked:
+		return ""
+	case InjectionOutcomeUnknown:
+		if errors.Is(result.Err, context.Canceled) {
+			return ae.ErrorClassCancelled
+		}
+		return ae.ErrorClassTimeout
+	}
+	switch {
+	case result.Err == nil || errors.Is(result.Err, ae.ErrAuthorizationDenied):
+		return ""
+	case errors.Is(result.Err, errTooManyAbandoned):
+		return ae.ErrorClassTimeout
+	}
+	if _, panicked := result.Err.(panicError); panicked {
+		return ae.ErrorClassUnexpected
+	}
+	if class := ae.ClassifyError(result.Err); class == ae.ErrorClassUnexpected {
+		return class
+	}
+	return ae.ErrorClassInfrastructure
 }
 
 // reportInjectionRecorded tells OnInjectionRecorded, recovering a panic in it.

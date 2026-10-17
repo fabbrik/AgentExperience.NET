@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from ._text import is_null_or_whitespace
 from .encoding import Instant
+from .observer import observe
 from .records import CheckResult, Evidence, Outcome
 
 RULE_VERSION = "1.0.0"
@@ -50,6 +51,20 @@ def aggregate(
     evaluated_at: Instant,
 ) -> VerificationResult:
     """Aggregates the evidence of the closed round and the current artifact revision into an outcome."""
+    with observe("verify") as op:
+        result = _aggregate(evidence, required_checks, closed_round, current_artifact_revision, evaluated_at)
+        if op is not None:
+            op.outcome(result.outcome.status)
+        return result
+
+
+def _aggregate(
+    evidence: Sequence[Evidence],
+    required_checks: Sequence[RequiredCheck],
+    closed_round: ClosedVerificationRound | None,
+    current_artifact_revision: str,
+    evaluated_at: Instant,
+) -> VerificationResult:
     if is_null_or_whitespace(current_artifact_revision):
         raise ValueError("The current artifact revision must not be blank.")
     checks = tuple(required_checks)
