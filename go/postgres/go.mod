@@ -3,7 +3,7 @@ module github.com/fabbrik/AgentExperience.NET/go/postgres
 go 1.25.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.14
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.15
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
