@@ -924,3 +924,23 @@ func sortStable[T any](items []T, less func(a, b *T) bool) {
 		}
 	}
 }
+
+// RenderAlone is the Historical Reference block for one record alone, as the lessons view shows it: numbered 1, with
+// no ranking (a compact "Matched:" line reads "no ranking data"; a verbose record's score is unavailable and its
+// components none) and no record or byte limit, whatever the record's status and size. Its bytes are .NET's
+// (ExperienceContextProvider.RenderAlone). The options are validated, MaxRecords and MaxBytes aside, which it
+// ignores. It may panic on a record it cannot render; the lessons view recovers.
+func RenderAlone(record *ExperienceRecord, options BlockOptions) (string, error) {
+	if err := options.Validate(); err != nil {
+		return "", err
+	}
+	options = options.withDefaults()
+	ranked := &RankedRecord{Record: *record, Score: math.NaN()}
+	header := BlockBegin + "\n" + preamble
+	text := renderVerbose(ranked, 1, &options)
+	if options.Rendering == RenderingCompact {
+		header = BlockBegin + "\n" + compactPreamble
+		text = renderCompact(ranked, 1, &options)
+	}
+	return header + text + BlockEnd + "\n", nil
+}

@@ -32,7 +32,15 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience
-from .inmemory import AuthorizationDenied, injection_ids, permits
+from .inmemory import (
+    AuthorizationDenied,
+    InjectionSummary,
+    LessonRow,
+    LessonsRead,
+    check_lessons_read,
+    injection_ids,
+    permits,
+)
 from .records import COLUMN_NAMES, PAYLOAD_VERSION, ExperienceRecord, Scope, from_columns, to_payload
 from .search import AuthorizationBounds, SearchParameters, SearchRow, widen_real
 
@@ -147,6 +155,9 @@ SEARCH_SQL = "search-experience-text.sql"
 RECORD_INJECTION_SQL = "record-injection.sql"
 WRITE_EMBEDDING_SQL = "write-experience-embedding.sql"
 SEARCH_VECTOR_SQL = "search-experience-vector.sql"
+LIST_LESSONS_SQL = "list-experience-lessons.sql"
+
+_INJECTIONS_UNREADABLE = frozenset({"42P01", "42501"})  # undefined_table, insufficient_privilege
 
 _INSERT_RECORD = (
     f"INSERT INTO {TABLE} ({', '.join(COLUMN_NAMES)}) VALUES ({', '.join(f'%({name})s' for name in COLUMN_NAMES)})"
@@ -208,6 +219,9 @@ class PostgresExperienceStore:
         }
         # The vector search statements keep their ``{dim}`` until the query vector's length is known.
         self._vector_statements = contract_statements(SEARCH_VECTOR_SQL)
+        self._lessons_statements = {
+            key: to_driver_placeholders(text) for key, text in contract_statements(LIST_LESSONS_SQL).items()
+        }
 
     @contextmanager
     def _transaction(self, bounds: AuthorizationBounds) -> Iterator[psycopg.Cursor[Any]]:
@@ -318,6 +332,72 @@ class PostgresExperienceStore:
                 )
             )
         return result
+
+    def list_lessons_page(
+        self, bounds: AuthorizationBounds, scope: Scope, statuses: Sequence[str] | None, limit: int
+    ) -> LessonsRead:
+        """
+        The lessons page (contract 1.7): in one transaction that declared the bounds, ``page`` (``page-with-statuses``
+        when ``statuses`` is given) from ``sql/list-experience-lessons.sql`` with ``limit`` as ``@limit``: the scope's
+        live records newest first, each with its last injection. When that fails with ``undefined_table`` or
+        ``insufficient_privilege`` (the injections table is not migrated, or the role lacks the 1.4 grants), the
+        transaction is rolled back and a new one runs ``page-without-injections`` (``...-with-statuses``) and the
+        result says the injections are not tracked. A sealed row (``payload_version`` 2) is skipped. Any other failure
+        raises. Raises :class:`~agentexperience.inmemory.AuthorizationDenied` outside the bounds (no statement runs),
+        and ``ValueError`` for an invalid ``limit`` or ``statuses``. Reads only.
+        """
+        from psycopg import Error
+        from psycopg.types.numeric import Int4
+
+        check_lessons_read(statuses, limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        parameters: dict[str, Any] = {
+            "tenant_id": scope.tenant_id,
+            "application_id": scope.application_id,
+            "project_id": scope.project_id,
+            "team_id": scope.team_id,
+            "agent_id": scope.agent_id,
+            "user_id": scope.user_id,
+            "limit": Int4(limit),
+        }
+        if statuses is not None:
+            parameters["statuses"] = list(dict.fromkeys(statuses))
+        suffix = "" if statuses is None else "-with-statuses"
+        tracked = True
+        try:
+            names, rows = self._run_lessons(bounds, "page" + suffix, parameters)
+        except Error as failure:
+            if failure.sqlstate not in _INJECTIONS_UNREADABLE:
+                raise
+            tracked = False
+            names, rows = self._run_lessons(bounds, "page-without-injections" + suffix, parameters)
+        count = len(COLUMN_NAMES)
+        expected_tail = ["last_injected_at", "injection_count"] if tracked else []
+        if names != [*COLUMN_NAMES, *expected_tail]:
+            raise RuntimeError("The lessons page returned columns in an unexpected order.")
+        result: list[LessonRow] = []
+        for row in rows:
+            columns = dict(zip(names, row, strict=True))
+            if columns["payload_version"] != PAYLOAD_VERSION:
+                continue
+            injection = None
+            if tracked and columns["last_injected_at"] is not None:
+                injection = InjectionSummary(
+                    Instant.from_datetime(columns["last_injected_at"]), int(columns["injection_count"])
+                )
+            result.append(
+                LessonRow(from_columns({name: columns[name] for name in names[:count]}, columns["payload"]), injection)
+            )
+        return LessonsRead(tuple(result), tracked, len(rows))
+
+    def _run_lessons(
+        self, bounds: AuthorizationBounds, statement: str, parameters: dict[str, Any]
+    ) -> tuple[list[str], list[tuple[Any, ...]]]:
+        with self._transaction(bounds) as cursor:
+            cursor.execute(self._lessons_statements[statement], parameters)
+            names = [column.name for column in cursor.description or ()]
+            return names, cursor.fetchall()
 
     def write_embedding(self, bounds: AuthorizationBounds, write: EmbeddingWrite) -> EmbeddingWriteResult:
         """

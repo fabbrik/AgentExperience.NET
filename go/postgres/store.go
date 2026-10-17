@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
@@ -35,6 +36,9 @@ const (
 	// "-- statement: <name>" line (ContractStatements).
 	WriteEmbeddingSQL = "write-experience-embedding.sql"
 	SearchVectorSQL   = "search-experience-vector.sql"
+	// ListLessonsSQL is contract 1.7's: four statements (page, page-with-statuses, page-without-injections,
+	// page-without-injections-with-statuses), each starting at its "-- statement: <name>" line (ContractStatements).
+	ListLessonsSQL = "list-experience-lessons.sql"
 )
 
 const (
@@ -43,7 +47,7 @@ const (
 )
 
 //go:embed sql/declare-bounds.sql sql/search-experience-text.sql sql/record-injection.sql
-//go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql
+//go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql sql/list-experience-lessons.sql
 var contractFiles embed.FS
 
 // ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
@@ -263,6 +267,8 @@ type Store struct {
 	probeRevision  Statement
 	vectorSQL      map[string]string
 	probes         map[string]Statement
+	// Contract 1.7's: the lessons view's four statements, by name.
+	lessons map[string]Statement
 }
 
 // NewStore is a store that runs its transactions on db, which the host controls (and closes).
@@ -290,7 +296,19 @@ func NewStore(db Beginner) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{db: db, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
+	lessonStatements, err := ContractStatements(ListLessonsSQL)
+	if err != nil {
+		return nil, err
+	}
+	lessons := map[string]Statement{}
+	for _, name := range []string{"page", "page-with-statuses", "page-without-injections",
+		"page-without-injections-with-statuses"} {
+		if lessonStatements[name] == "" {
+			return nil, fmt.Errorf("%s has no %q statement", ListLessonsSQL, name)
+		}
+		lessons[name] = ToDriverPlaceholders(lessonStatements[name])
+	}
+	store := &Store{db: db, lessons: lessons, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
 		record: ToDriverPlaceholders(record), writeEmbedding: ToDriverPlaceholders(writes["write"]),
 		probeRevision: ToDriverPlaceholders(writes["probe-revision"]), vectorSQL: vectors,
 		probes: map[string]Statement{}}
@@ -754,6 +772,119 @@ func (s *Store) SearchVectors(ctx context.Context, bounds ae.AuthorizationBounds
 }
 
 var _ ae.EmbeddingIndex = (*Store)(nil)
+
+// ListLessonRecords is the lessons view's read (contract 1.7): in one transaction that declared bounds, "page" (or
+// "page-with-statuses") from sql/list-experience-lessons.sql, the scope's live records newest first, each with its last
+// injection. When that fails with undefined_table (42P01) or insufficient_privilege (42501), the injections cannot be
+// read: the transaction is rolled back, a new one declares the same bounds and runs "page-without-injections" (or
+// "...-with-statuses"), and the answer says its injections are not tracked. Any other failure is the call's. A scope
+// outside bounds is ErrAuthorizationDenied and runs no statement; a limit outside 1 to 500 and empty or undefined
+// statuses are refused first. A sealed row (payload_version 2) is left out. It never writes.
+func (s *Store) ListLessonRecords(ctx context.Context, bounds ae.AuthorizationBounds, scope ae.Scope,
+	statuses []ae.ExperienceStatus, limit int) (ae.LessonRecords, error) {
+	if err := ae.ValidateLessonsRead(statuses, limit); err != nil {
+		return ae.LessonRecords{}, err
+	}
+	if !bounds.Permits(scope) {
+		return ae.LessonRecords{}, ae.ErrAuthorizationDenied
+	}
+	values := map[string]any{
+		"tenant_id":      scope.TenantID,
+		"application_id": scope.ApplicationID,
+		"project_id":     scope.ProjectID,
+		"team_id":        scope.TeamID,
+		"agent_id":       scope.AgentID,
+		"user_id":        scope.UserID,
+		"limit":          int32(limit),
+	}
+	suffix := ""
+	if statuses != nil {
+		names := make([]string, len(statuses))
+		for i, status := range statuses {
+			names[i] = string(status)
+		}
+		values["statuses"] = names
+		suffix = "-with-statuses"
+	}
+	read := func(name string, injections bool) (ae.LessonRecords, error) {
+		statement := s.lessons[name+suffix]
+		args, err := statement.Args(values)
+		if err != nil {
+			return ae.LessonRecords{}, err
+		}
+		result := ae.LessonRecords{InjectionsTracked: injections}
+		err = s.transaction(ctx, bounds, func(tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, statement.SQL, args...)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			fields := rows.FieldDescriptions()
+			if len(fields) == 0 {
+				// The statement failed (the driver reports it once the rows are closed, not when it sends them).
+				rows.Close()
+				if err := rows.Err(); err != nil {
+					return err
+				}
+			}
+			count := len(ae.ColumnNames)
+			want := count
+			if injections {
+				want += 2
+			}
+			if len(fields) != want {
+				return errors.New("the lessons read returned columns in an unexpected order")
+			}
+			for i, name := range ae.ColumnNames {
+				if fields[i].Name != name {
+					return errors.New("the lessons read returned columns in an unexpected order")
+				}
+			}
+			for rows.Next() {
+				result.Answered++
+				var row recordRow
+				var lastInjectedAt *time.Time
+				var injectionCount *int64
+				targets := row.targets()
+				if injections {
+					targets = append(targets, &lastInjectedAt, &injectionCount)
+				}
+				if err := rows.Scan(targets...); err != nil {
+					return err
+				}
+				if row.payloadVersion != ae.PayloadVersion {
+					continue
+				}
+				record, err := row.record()
+				if err != nil {
+					return err
+				}
+				lesson := ae.LessonRecord{Record: record}
+				if lastInjectedAt != nil && injectionCount != nil {
+					at, err := ae.InstantFromTime(*lastInjectedAt)
+					if err != nil {
+						return err
+					}
+					lesson.Injection = &ae.InjectionSummary{LastInjectedAt: at, InjectionCount: *injectionCount}
+				}
+				result.Records = append(result.Records, lesson)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			return ae.LessonRecords{}, err
+		}
+		return result, nil
+	}
+	result, err := read("page", true)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == "42P01" || pgErr.Code == "42501") {
+		return read("page-without-injections", false)
+	}
+	return result, err
+}
+
+var _ ae.LessonsReader = (*Store)(nil)
 
 // recordRow is the eighteen record columns as the driver reads them.
 type recordRow struct {

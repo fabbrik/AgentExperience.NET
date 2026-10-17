@@ -1,0 +1,332 @@
+"""
+The lessons view (contract 1.7): a read-only list of what the library has learned in one scope, as the .NET
+``AgentExperienceLessons`` lists it. Each lesson carries its status, confidence and checks (never the evidence's
+detail), the block text an agent in that scope would be shown for it, whether and why retrieval would not use it, and
+when it was last injected.
+
+It reads through a store's ``list_lessons_page`` under the caller's own authorization bounds and in the caller's own
+scope only (a sharing grant is outside contract 1.x), and never writes. A scope outside the bounds is an empty page with
+the outcome ``Denied``, not an exception. A record that cannot be rendered is listed as ``Unrenderable`` and the rest
+are still listed. Listing lessons discloses them: serve the view only behind the host's own authorization.
+
+Two of .NET's ineligibility codes do not exist here: ``Expired`` (this port has no maximum-age policy) and
+``ContentUnconfirmed`` (no provenance signing). The port decides ``Status``, ``BelowConfidenceFloor`` (the floor is
+retrieval's minimum confidence, 0.5), ``ModelAuthored`` (when the settings exclude model-authored lessons),
+``OverByteBudget`` (the block options' ``max_bytes``) and ``Unrenderable``. It renders no HTML.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import math
+import uuid
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from typing import Any, Literal
+
+from ._text import format_fixed
+from .block import Block, BlockOptions, RankedRecord, render_block
+from .encoding import Instant
+from .identity import ExperienceIdentity
+from .inmemory import (
+    MAX_LESSONS_LIMIT,
+    MIN_LESSONS_LIMIT,
+    AuthorizationDenied,
+    InjectionSummary,
+    LessonsReader,
+    permits,
+)
+from .records import EXPERIENCE_STATUSES, CheckResult, ExperienceRecord, ExperienceStatus, Scope
+from .reflector import is_model_authored
+from .search import DEFAULT_MIN_CONFIDENCE, ELIGIBLE_STATUSES, AuthorizationBounds
+
+DEFAULT_LESSONS_LIMIT = 50
+"""How many lessons a query lists by default (.NET's ``ExperienceRecordQuery.DefaultLimit``)."""
+
+LessonsOutcome = Literal["Found", "Denied"]
+"""``Found``, or why the page is empty: the scope lies outside the authorization bounds."""
+
+Ineligibility = Literal["Status", "BelowConfidenceFloor", "ModelAuthored", "OverByteBudget", "Unrenderable"]
+"""Why retrieval would not use a lesson. .NET's ``Expired`` and ``ContentUnconfirmed`` do not exist in this port."""
+
+_UNAVAILABLE = "(unavailable)"
+_UNBOUNDED_BYTES = 2**62
+
+
+@dataclass(frozen=True)
+class LessonsQuery:
+    """
+    What to list. ``statuses`` is ``None`` for every status, or at least one known status (a repeat counts once).
+    ``limit`` is 1 to 500 (default 50); with ``include_ineligible`` off, the lessons left out still count against it.
+    ``ValueError`` for an invalid ``limit`` or ``statuses``.
+    """
+
+    statuses: Sequence[ExperienceStatus] | None = None
+    limit: int = DEFAULT_LESSONS_LIMIT
+    include_ineligible: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.limit, bool) or not isinstance(self.limit, int):
+            raise ValueError("limit must be an integer.")
+        if not MIN_LESSONS_LIMIT <= self.limit <= MAX_LESSONS_LIMIT:
+            raise ValueError(f"limit must be from {MIN_LESSONS_LIMIT} to {MAX_LESSONS_LIMIT}.")
+        if self.statuses is not None:
+            if isinstance(self.statuses, (str, bytes)) or not self.statuses:
+                raise ValueError("statuses must be None, for every status, or hold at least one status.")
+            unknown = [status for status in self.statuses if status not in EXPERIENCE_STATUSES]
+            if unknown:
+                raise ValueError(f"statuses holds an unknown status: {unknown[0]!r}.")
+            object.__setattr__(self, "statuses", tuple(dict.fromkeys(self.statuses)))
+
+
+@dataclass(frozen=True)
+class LessonCheck:
+    """One check a lesson's outcome was verified by: its ID, the evidence's kind and the result. No evidence detail."""
+
+    check_id: str
+    evidence_kind: str
+    result: CheckResult
+
+
+@dataclass(frozen=True)
+class Lesson:
+    """One stored lesson, as the view shows it."""
+
+    experience_id: uuid.UUID
+    task_id: str
+    status: ExperienceStatus
+    confidence: float
+    created_at: Instant
+    updated_at: Instant
+    checks: tuple[LessonCheck, ...]
+    block_text: str
+    """The Historical Reference block for this record alone, numbered 1, with no ranking (its ``Matched:`` line says
+    so), whatever its status and size. Empty when it could not be rendered. Untrusted text: encode it before use."""
+    is_eligible: bool
+    ineligible_reason: str | None
+    ineligibility: Ineligibility | None
+    last_injected_at: Instant | None = None
+    """When an agent in this scope was last shown this lesson. ``None`` means never injected when the page's
+    ``injections_tracked`` is true, and not known when it is false."""
+    injection_count: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        """The lesson in the contract's ``expected.json`` form (camelCase, instants as ISO 8601 text)."""
+        return {
+            "experienceId": str(self.experience_id),
+            "taskId": self.task_id,
+            "status": self.status,
+            "confidence": self.confidence,
+            "createdAt": self.created_at.format(),
+            "updatedAt": self.updated_at.format(),
+            "checks": [
+                {"checkId": check.check_id, "evidenceKind": check.evidence_kind, "result": check.result}
+                for check in self.checks
+            ],
+            "blockText": self.block_text,
+            "isEligible": self.is_eligible,
+            "ineligibility": self.ineligibility,
+            "ineligibleReason": self.ineligible_reason,
+            "lastInjectedAt": None if self.last_injected_at is None else self.last_injected_at.format(),
+            "injectionCount": self.injection_count,
+        }
+
+
+@dataclass(frozen=True)
+class LessonsPage:
+    """One page of lessons from one scope, newest first."""
+
+    outcome: LessonsOutcome
+    scope: Scope
+    lessons: tuple[Lesson, ...]
+    generated_at: Instant
+    has_more: bool = False
+    """More lessons matching the query exist past ``lessons``, or may: at most 500 records are read."""
+    out_of_scope_dropped: int = 0
+    injections_tracked: bool = False
+    """True when the page was read with its injections; false when the store tracks none or they could not be read
+    (the application role lacks the 1.4 grants, say), and then a ``None`` ``last_injected_at`` means not known."""
+
+    def to_json(self) -> dict[str, Any]:
+        """The page in the contract's ``expected.json`` form."""
+        return {
+            "outcome": self.outcome,
+            "generatedAt": self.generated_at.format(),
+            "hasMore": self.has_more,
+            "outOfScopeDropped": self.out_of_scope_dropped,
+            "injectionsTracked": self.injections_tracked,
+            "lessons": [lesson.to_json() for lesson in self.lessons],
+        }
+
+
+def render_alone(record: ExperienceRecord, options: BlockOptions | None = None) -> Block:
+    """
+    ``record`` rendered alone as an injected block would carry it: the same writer and options, numbered 1, with no
+    ranking (its ``Matched:`` line says ``no ranking data``) and no record or byte limit, whatever its status and size.
+    Compare ``byte_count`` with the options' ``max_bytes``.
+    """
+    options = replace(options or BlockOptions(), max_records=1, max_bytes=_UNBOUNDED_BYTES)
+    return render_block([RankedRecord(record, math.nan, ())], options)
+
+
+def format_number(value: float) -> str:
+    """.NET's ``ToString("0.00")``: the double taken to 15 significant digits, then rounded half away from zero;
+    ``(unavailable)`` for a number that is not finite."""
+    if not math.isfinite(value):
+        return _UNAVAILABLE
+    return format_fixed(value, 2)
+
+
+class ExperienceLessons:
+    """
+    Lists what has been learned in a scope. Build one from the agent returned by ``use_agent_experience``
+    (:func:`agentexperience.maf.agent_experience_lessons`), or directly from a store that has ``list_lessons_page``
+    (the in-memory and PostgreSQL stores do) and the block options and exclusion flag the injection uses.
+
+    ``render`` renders one record's block (default :func:`render_alone`); a test can pass one that fails. ``identity``
+    is the default for :meth:`list` and :meth:`list_async`.
+    """
+
+    def __init__(
+        self,
+        store: LessonsReader,
+        *,
+        block_options: BlockOptions | None = None,
+        exclude_model_authored: bool = False,
+        clock: Callable[[], Instant] = Instant.now,
+        identity: ExperienceIdentity | None = None,
+        render: Callable[[ExperienceRecord, BlockOptions], Block] | None = None,
+    ) -> None:
+        if not isinstance(store, LessonsReader):
+            raise TypeError("The store must have a list_lessons_page method (contract 1.7).")
+        if not callable(clock):
+            raise TypeError("clock must be callable.")
+        self._store = store
+        self._options = block_options or BlockOptions()
+        self._exclude_model_authored = exclude_model_authored
+        self._clock = clock
+        self._identity = identity
+        self._render = render or render_alone
+
+    def list(self, identity: ExperienceIdentity | None = None, query: LessonsQuery | None = None) -> LessonsPage:
+        """Lists the lessons in the identity's scope under its authorization bounds (see :meth:`list_scope`)."""
+        identity = identity or self._identity
+        if identity is None:
+            raise ValueError("An identity is required: pass one, or build the view with identity=.")
+        return self.list_scope(identity.authorization, identity.scope, query)
+
+    async def list_async(
+        self, identity: ExperienceIdentity | None = None, query: LessonsQuery | None = None
+    ) -> LessonsPage:
+        """:meth:`list` on a worker thread, so a PostgreSQL read does not block the event loop."""
+        return await asyncio.to_thread(self.list, identity, query)
+
+    def list_scope(self, bounds: AuthorizationBounds, scope: Scope, query: LessonsQuery | None = None) -> LessonsPage:
+        """
+        Lists the lessons in ``scope``, newest first, reading under ``bounds`` (never a request's scope: take both from
+        the host's own authentication). A scope outside the bounds runs no read and answers an empty page with the
+        outcome ``Denied``. ``has_more`` is set when more lessons matching the query exist or may exist. A store failure
+        other than the unreadable injections raises. Never writes.
+        """
+        query = query or LessonsQuery()
+        if not permits(bounds, scope):
+            return LessonsPage("Denied", scope, (), self._clock())
+        # One record past the limit tells "exactly the limit" from "more exist". Leaving ineligible lessons out may skip
+        # any number of records, so then as many as the store answers are read.
+        probe = min(query.limit + 1, MAX_LESSONS_LIMIT) if query.include_ineligible else MAX_LESSONS_LIMIT
+        try:
+            read = self._store.list_lessons_page(bounds, scope, query.statuses, probe)
+        except AuthorizationDenied:
+            return LessonsPage("Denied", scope, (), self._clock())
+        generated_at = self._clock()
+
+        lessons: list[Lesson] = []
+        out_of_scope = 0
+        has_more = False
+        for row in read.rows:
+            if row.record.scope != scope:
+                out_of_scope += 1
+                continue
+            lesson = self._describe(row.record)
+            if read.injections_tracked and row.injection is not None:
+                lesson = _with_injection(lesson, row.injection)
+            if not lesson.is_eligible and not query.include_ineligible:
+                continue
+            if len(lessons) == query.limit:
+                has_more = True
+                break
+            lessons.append(lesson)
+        # A store that answered as many records as were asked for may hold more than were read.
+        has_more = has_more or read.answered >= probe
+        return LessonsPage(
+            "Found", scope, tuple(lessons), generated_at, has_more, out_of_scope, read.injections_tracked
+        )
+
+    def _describe(self, record: ExperienceRecord) -> Lesson:
+        """One record as a lesson. A record that cannot be rendered is a lesson marked so, never an exception."""
+        try:
+            block = self._render(record, self._options)
+            ineligibility, reason = self._eligibility(record, block.byte_count)
+            return Lesson(
+                record.experience_id,
+                record.task_id or "",
+                record.status,
+                record.reuse_confidence,
+                record.created_at,
+                record.updated_at,
+                tuple(LessonCheck(item.check_id, item.kind, item.result) for item in record.outcome.evidence),
+                block.text,
+                ineligibility is None,
+                reason,
+                ineligibility,
+            )
+        except Exception as failure:  # One record that cannot be rendered must not hide the rest.
+            return Lesson(
+                record.experience_id,
+                record.task_id or "",
+                record.status,
+                record.reuse_confidence,
+                record.created_at,
+                record.updated_at,
+                (),
+                "",
+                False,
+                f"it could not be rendered ({type(failure).__name__})",
+                "Unrenderable",
+            )
+
+    def _eligibility(self, record: ExperienceRecord, byte_count: int) -> tuple[Ineligibility | None, str | None]:
+        if record.status not in ELIGIBLE_STATUSES:
+            return "Status", f"status {record.status} is never retrieved"
+        if not record.reuse_confidence >= DEFAULT_MIN_CONFIDENCE:
+            return (
+                "BelowConfidenceFloor",
+                f"confidence {format_number(record.reuse_confidence)} is below the retrieval floor "
+                f"{format_number(DEFAULT_MIN_CONFIDENCE)}",
+            )
+        if self._exclude_model_authored and is_model_authored(record.reflection):
+            return "ModelAuthored", "model-authored lessons are excluded"
+        if byte_count > self._options.max_bytes:
+            return (
+                "OverByteBudget",
+                f"its block ({byte_count} bytes) is larger than the {self._options.max_bytes}-byte injection budget",
+            )
+        return None, None
+
+
+def _with_injection(lesson: Lesson, summary: InjectionSummary) -> Lesson:
+    return replace(lesson, last_injected_at=summary.last_injected_at, injection_count=summary.injection_count)
+
+
+__all__ = [
+    "DEFAULT_LESSONS_LIMIT",
+    "ExperienceLessons",
+    "Ineligibility",
+    "Lesson",
+    "LessonCheck",
+    "LessonsOutcome",
+    "LessonsPage",
+    "LessonsQuery",
+    "format_number",
+    "render_alone",
+]

@@ -1,0 +1,15 @@
+{
+  "description": "The scope holds no lesson (another agent's is not listed): an empty page that was found, with injections tracked.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00"
+}

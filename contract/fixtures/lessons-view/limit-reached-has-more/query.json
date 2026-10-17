@@ -1,0 +1,15 @@
+{
+  "description": "The limit is 4: the read is limit + 1 records, the fifth proves more exist, and only four are listed.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 4,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00"
+}

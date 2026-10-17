@@ -27,7 +27,7 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience, InitialLifecycleEvent
-from .records import ExperienceRecord, Scope
+from .records import EXPERIENCE_STATUSES, ExperienceRecord, Scope
 from .reflector import is_model_authored
 from .search import AuthorizationBounds, SearchParameters, SearchRow
 
@@ -76,6 +76,18 @@ class InjectionRecorder(Protocol):
 
 
 @runtime_checkable
+class LessonsReader(Protocol):
+    """
+    A store that reads a scope's records newest first, each with its last injection (contract 1.7), for the lessons
+    view. Reads only; raises :class:`AuthorizationDenied` when the scope lies outside the bounds.
+    """
+
+    def list_lessons_page(
+        self, bounds: AuthorizationBounds, scope: Scope, statuses: Sequence[str] | None, limit: int
+    ) -> LessonsRead: ...
+
+
+@runtime_checkable
 class EmbeddingIndex(Protocol):
     """
     A store that keeps embeddings and searches them by cosine distance (contract 1.6). Optional: the agent integration
@@ -114,6 +126,45 @@ class InjectionSummary:
 
     last_injected_at: Instant
     injection_count: int
+
+
+@dataclass(frozen=True)
+class LessonRow:
+    """One record of a lessons page, with its injection summary (``None``: never injected, or not tracked)."""
+
+    record: ExperienceRecord
+    injection: InjectionSummary | None = None
+
+
+@dataclass(frozen=True)
+class LessonsRead:
+    """
+    A store's answer to :meth:`LessonsReader.list_lessons_page`: the records newest first, whether the injections
+    could be read (``injections_tracked``), and how many rows the read answered (``answered``, including any a store
+    skipped), which the lessons view compares with its probe.
+    """
+
+    rows: tuple[LessonRow, ...]
+    injections_tracked: bool
+    answered: int = -1
+
+    def __post_init__(self) -> None:
+        if self.answered < 0:
+            object.__setattr__(self, "answered", len(self.rows))
+
+
+MIN_LESSONS_LIMIT = 1
+MAX_LESSONS_LIMIT = 500
+
+
+def check_lessons_read(statuses: Sequence[str] | None, limit: int) -> None:
+    """``ValueError`` for a ``limit`` outside 1 to 500, or ``statuses`` that is empty or names an unknown status."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not MIN_LESSONS_LIMIT <= limit <= MAX_LESSONS_LIMIT:
+        raise ValueError(f"The limit must be from {MIN_LESSONS_LIMIT} to {MAX_LESSONS_LIMIT}.")
+    if statuses is not None and (
+        isinstance(statuses, str) or not statuses or any(status not in EXPERIENCE_STATUSES for status in statuses)
+    ):
+        raise ValueError("statuses must be None, for every status, or hold at least one known status.")
 
 
 class AuthorizationDenied(PermissionError):
@@ -289,6 +340,29 @@ class InMemoryExperienceStore:
         """When each record was last injected and how often, for inspection in tests."""
         with self._lock:
             return dict(self._injections)
+
+    def list_lessons_page(
+        self, bounds: AuthorizationBounds, scope: Scope, statuses: Sequence[str] | None, limit: int
+    ) -> LessonsRead:
+        """
+        The lessons page (contract 1.7): the records held in exactly ``scope`` (all statuses, or those named), newest
+        first (``created_at`` descending, then ``experience_id`` ascending), at most ``limit``, each with its last
+        injection. This store tracks injections, so the page always reports them tracked. Raises
+        :class:`AuthorizationDenied` outside the bounds, and ``ValueError`` for an invalid ``limit`` or ``statuses``.
+        """
+        check_lessons_read(statuses, limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        wanted = None if statuses is None else set(statuses)
+        with self._lock:
+            held = [
+                (indexed.record, self._injections.get(experience_id))
+                for experience_id, indexed in self._records.items()
+                if indexed.record.scope == scope and (wanted is None or indexed.record.status in wanted)
+            ]
+        held.sort(key=lambda item: str(item[0].experience_id))
+        held.sort(key=lambda item: item[0].created_at.truncate_to_microseconds(), reverse=True)
+        return LessonsRead(tuple(LessonRow(record, summary) for record, summary in held[:limit]), True)
 
     def search(self, bounds: AuthorizationBounds, parameters: SearchParameters) -> list[SearchRow]:
         """The text search: records in exactly the requested scope, of an eligible status and confidence, matching

@@ -1,0 +1,15 @@
+{
+  "description": "Lessons retrieval would not return are left out; the probe is the store's largest page, so hasMore is false.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": false,
+  "now": "2026-03-02T15:00:00+00:00"
+}

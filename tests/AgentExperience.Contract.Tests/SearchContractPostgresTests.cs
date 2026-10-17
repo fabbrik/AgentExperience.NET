@@ -172,7 +172,7 @@ public sealed class SearchContractPostgresTests(ContractPostgresDatabase databas
         return (ranked, result.Truncated);
     }
 
-    private static async Task DeclareAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Scope bounds)
+    internal static async Task DeclareAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Scope bounds)
     {
         await using var declare = new NpgsqlCommand(ContractFiles.Read("sql/declare-bounds.sql"), connection, transaction);
         declare.Parameters.Add(new("auth_tenant", NpgsqlDbType.Text) { Value = "=" + bounds.TenantId });

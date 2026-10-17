@@ -46,6 +46,12 @@
 //     one, implement ae.Embedder (ModelID, Dimension, Embed) over your provider's client and set Options.Embedder; no
 //     embedding model is a dependency of this module.
 //
+//   - The lessons view (contract 1.7), read-only. LessonsOf(&config) (or the provider's Lessons method, or NewLessons for
+//     the options alone) lists what has been learned in a scope: each lesson's status, confidence and checks, the
+//     block text an agent would be shown for it, why retrieval would not use it, and when it was last injected, from
+//     the same store, block options and model-authored flag the injection uses. It reads only, in the caller's own
+//     scope and authorization, and renders no HTML.
+//
 // Nothing here returns an error or panics into the agent: a store, identity, classifier or verifier failure means no
 // block, or no stored record, and is reported through OnInjectionFailure or OnCaptureFailure. Only the invocation's
 // own errors and cancellation, and the tool's own errors and panics, reach the caller, unchanged. A panic through the

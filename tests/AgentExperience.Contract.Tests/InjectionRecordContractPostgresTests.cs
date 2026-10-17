@@ -131,7 +131,7 @@ public sealed class InjectionRecordContractPostgresTests(ContractPostgresDatabas
     }
 
     /// <summary>A seeded row, inserted as the owner, each column cast from its text by PostgreSQL.</summary>
-    private static async Task InsertInjectionAsync(NpgsqlDataSource owner, JsonObject row)
+    internal static async Task InsertInjectionAsync(NpgsqlDataSource owner, JsonObject row)
     {
         var columns = InjectionRecordContract.Columns;
         await using var command = owner.CreateCommand(

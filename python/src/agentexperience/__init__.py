@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.6.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.7.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -30,6 +30,13 @@ from .encoding import Duration, Instant
 from .error_class import error_class
 from .finalize import FinalizedExperience, InitialLifecycleEvent, finalize
 from .ids import experience_id_for, initial_event_id_for, reflection_id_for
+from .lessons import (
+    ExperienceLessons,
+    Lesson,
+    LessonCheck,
+    LessonsPage,
+    LessonsQuery,
+)
 from .limits import CaptureLimits, SanitizationLimits
 from .records import (
     Attempt,
@@ -62,11 +69,11 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.6"
-"""The contract version this package passes: every fixture of contract 1.6, and so every 1.0, 1.1, 1.2, 1.3, 1.4 and
-1.5 fixture."""
+CONTRACT_VERSION = "1.7"
+"""The contract version this package passes: every fixture of contract 1.7, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5
+and 1.6 fixture."""
 
-SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
+SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7")
 """Every contract version whose fixtures this package passes."""
 
 __all__ = [
@@ -85,11 +92,16 @@ __all__ = [
     "EmbeddingWriteResult",
     "EnvironmentFingerprint",
     "Evidence",
+    "ExperienceLessons",
     "ExperienceRecord",
     "FallbackReason",
     "FinalizedExperience",
     "InitialLifecycleEvent",
     "Instant",
+    "Lesson",
+    "LessonCheck",
+    "LessonsPage",
+    "LessonsQuery",
     "Message",
     "MessagePart",
     "Outcome",

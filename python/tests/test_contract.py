@@ -113,9 +113,11 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert version == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.7", None])
+@pytest.mark.parametrize("version", ["2.0", "1.8", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6"):
+    with pytest.raises(
+        UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6, 1\.7"
+    ):
         check_contract_version({"contractVersion": version})
 
 
@@ -142,6 +144,7 @@ def test_every_contract_file_matches_the_lock() -> None:
         "record-injection.sql",
         "write-experience-embedding.sql",
         "search-experience-vector.sql",
+        "list-experience-lessons.sql",
     ],
 )
 def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
@@ -158,6 +161,7 @@ def test_every_fixture_family_has_cases() -> None:
         "finalize",
         "hybrid-merge",
         "inject",
+        "lessons-view",
         "record-injection",
         "search",
         "task-text",

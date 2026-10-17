@@ -1,6 +1,6 @@
 // Package inmemory is an in-memory store for development and tests: no PostgreSQL. It keeps only what the contract
-// needs (insert a finalized record, read one back, the text search, when each record was last injected, and the
-// embeddings of contract 1.6 with their nearest-neighbour search),
+// needs (insert a finalized record, read one back, the text search, when each record was last injected, the
+// embeddings of contract 1.6 with their nearest-neighbour search, and the lessons view's read of contract 1.7),
 // honouring scope and the authorization
 // bounds the way the PostgreSQL store's row-level security does. Its text search is the .NET in-memory store's:
 // words normalized to Unicode form KC and lower-cased, the English stopwords PostgreSQL drops left out of a query,
@@ -461,6 +461,48 @@ func (s *Store) RecordInjection(ctx context.Context, bounds ae.AuthorizationBoun
 	return nil
 }
 
+// ListLessonRecords is the lessons view's read (contract 1.7): the live records held in exactly scope, newest first
+// (created_at descending, then experience ID ascending), filtered to statuses (nil: every status), at most limit,
+// each with when it was last injected. Injections are always tracked here. It never writes, honours the bounds
+// (ErrAuthorizationDenied for a scope outside them) and refuses a limit outside 1 to 500 and empty or undefined
+// statuses.
+func (s *Store) ListLessonRecords(ctx context.Context, bounds ae.AuthorizationBounds, scope ae.Scope,
+	statuses []ae.ExperienceStatus, limit int) (ae.LessonRecords, error) {
+	if err := ctx.Err(); err != nil {
+		return ae.LessonRecords{}, err
+	}
+	if err := ae.ValidateLessonsRead(statuses, limit); err != nil {
+		return ae.LessonRecords{}, err
+	}
+	if !Permits(bounds, scope) {
+		return ae.LessonRecords{}, ErrAuthorizationDenied
+	}
+	wanted := map[ae.ExperienceStatus]bool{}
+	for _, status := range statuses {
+		wanted[status] = true
+	}
+	s.mu.RLock()
+	var records []ae.LessonRecord
+	for _, id := range s.order {
+		held := s.records[id]
+		if !held.record.Scope.Equal(scope) || (statuses != nil && !wanted[held.record.Status]) {
+			continue
+		}
+		lesson := ae.LessonRecord{Record: mustClone(held.record)}
+		if injection, ok := s.injections[id]; ok {
+			lesson.Injection = &ae.InjectionSummary{LastInjectedAt: injection.LastInjectedAt,
+				InjectionCount: injection.InjectionCount}
+		}
+		records = append(records, lesson)
+	}
+	s.mu.RUnlock()
+	ae.SortLessonRecords(records)
+	if len(records) > limit {
+		records = records[:limit]
+	}
+	return ae.LessonRecords{Records: records, Answered: len(records), InjectionsTracked: true}, nil
+}
+
 // Injections are when each record was last injected and how often: for inspection in tests.
 func (s *Store) Injections() map[ae.UUID]Injection {
 	s.mu.RLock()
@@ -613,4 +655,5 @@ var (
 	_ ae.Store             = (*Store)(nil)
 	_ ae.InjectionRecorder = (*Store)(nil)
 	_ ae.EmbeddingIndex    = (*Store)(nil)
+	_ ae.LessonsReader     = (*Store)(nil)
 )

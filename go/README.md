@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.6, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.6 (and so every 1.0, 1.1, 1.2, 1.3, 1.4 and 1.5 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.7, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.7 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5 and 1.6 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -122,6 +122,42 @@ err := maf.UseAgentExperience(&config, maf.Options{Store: store, Identity: ident
   Records stored before an embedder was registered have no vector until one is written; the .NET library's re-index
   does it for a shared database.
 
+### See what it learned: the lessons view
+
+A .NET developer can list what the library learned (`AgentExperienceLessons`); so can a Go one (contract 1.7). The view
+is read-only and lists the caller's own scope, newest first, under the caller's authorization bounds:
+
+```go
+lessons, err := maf.LessonsOf(&config) // after UseAgentExperience; or maf.NewLessons(options), or ae.NewLessons(store, ae.LessonsOptions{...})
+if err != nil {
+	return err
+}
+page, err := lessons.ListFor(ctx, identity, ae.LessonQuery{Limit: 20}) // identity from your own authentication
+for _, lesson := range page.Lessons {
+	fmt.Println(lesson.Status, lesson.Confidence, lesson.IsEligible, lesson.IneligibleReason, lesson.LastInjectedAt)
+}
+```
+
+- **What a lesson shows.** Its status, confidence, creation and update instants, its checks (check ID, evidence kind
+  and result, never the evidence's detail), `BlockText` (the Historical Reference block an agent would be shown for it
+  alone, numbered 1, with no ranking and no limit: `ae.RenderAlone`, byte-equal to .NET's), whether retrieval would
+  use it and why not, and when it was last injected and how often. Listing lessons discloses them: serve the view only
+  behind your own authorization. It renders no HTML and maps no endpoint.
+- **The query.** `Statuses` (nil: every status), `Limit` (1 to 500, 50 by default, like .NET) and `IncludeIneligible`
+  (nil: true). An invalid limit, or empty or undefined statuses, is an error before anything is read. A scope outside
+  the bounds is an empty page with the outcome `Denied`, never an error and never a statement. `HasMore` is set when
+  more lessons match, or may (the store answers at most 500 records).
+- **Why a lesson is ineligible**, decided in this order: `Status` (not Validated or Reinforced), `BelowConfidenceFloor`
+  (below the retrieval minimum, 0.5; a NaN is below it), `ModelAuthored` (the setup's `ExcludeModelAuthored`),
+  `OverByteBudget` (its block is larger than `BlockOptions.MaxBytes`) and `Unrenderable` (the block could not be
+  rendered; it is listed, and the others still are). .NET's `Expired` and `ContentUnconfirmed` do not exist here: this
+  port has no maximum-age policy and no provenance signing, so it never answers them.
+- **Injections.** `LastInjectedAt` and `InjectionCount` come from the same read as the page. When the injections table
+  cannot be read (not migrated, or the role lacks the 1.4 grants) the page is read without them and says
+  `InjectionsTracked` false: a nil `LastInjectedAt` then means "not known", not "never".
+- **Stores.** The PostgreSQL store runs the contract's `list-experience-lessons.sql` as written (a bounded read, at
+  most 500 records, never a write) and the in-memory store holds the same data; both are an `ae.LessonsReader`.
+
 ### What the one call wires
 
 - **Capture**: agent middleware and function invocation middleware, each put first so it wraps everything else on
@@ -225,9 +261,12 @@ Python agents on the same database.
   `ContentHash` are what is embedded and how it is hashed; `EmbeddingWrite` and `VectorQuery` validate before any
   statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list (`Rank` itself is
   unchanged, and ranks every merged candidate, up to 100).
+- **The lessons view** (contract 1.7). `NewLessons` over any `LessonsReader`, `Lessons.List` and `ListFor`, `RenderAlone`;
+  see [See what it learned](#see-what-it-learned-the-lessons-view).
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
-  1.4) and writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6), every transaction first declaring its bounds. The contract's three statement files are embedded and run as
+  1.4), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
+  page (`ListLessonRecords`, contract 1.7), every transaction first declaring its bounds. The contract's statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
@@ -319,7 +358,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.6 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.7 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The

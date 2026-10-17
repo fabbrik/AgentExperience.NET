@@ -1,0 +1,15 @@
+{
+  "description": "Leaving ineligible lessons out, the limit counts the lessons listed: two of the five eligible ones are listed, and hasMore is true.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 2,
+  "includeIneligible": false,
+  "now": "2026-03-02T15:00:00+00:00"
+}
