@@ -682,11 +682,21 @@ def test_hung_vector_calls_fail_fast_and_never_take_the_default_executor() -> No
     import asyncio
     import threading
 
+    from agentexperience import embedding as embedding_module
     from agentexperience.embedding import MAX_VECTOR_THREADS, run_on_vector_thread
 
     release = threading.Event()
 
     async def scenario() -> None:
+        # Threads that earlier tests abandoned (a timed-out embedder) may still hold slots: wait for them to end.
+        for _ in range(200):
+            free = [embedding_module._vector_threads.acquire(blocking=False) for _ in range(MAX_VECTOR_THREADS)]
+            for taken in free:
+                if taken:
+                    embedding_module._vector_threads.release()
+            if all(free):
+                break
+            await asyncio.sleep(0.05)
         hung = [asyncio.ensure_future(run_on_vector_thread(release.wait)) for _ in range(MAX_VECTOR_THREADS)]
         await asyncio.sleep(0.05)
         with pytest.raises(RuntimeError):
