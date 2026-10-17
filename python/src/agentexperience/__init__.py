@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.5.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.6.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -13,6 +13,19 @@ from importlib import metadata as _metadata
 
 from .block import Block, BlockOptions, RankedRecord, RankingComponent, render_block
 from .capture import CapturedRun, RawAttempt, RawToolCall, RunCapture
+from .embedding import (
+    Embedder,
+    EmbeddingWrite,
+    EmbeddingWriteResult,
+    FallbackReason,
+    VectorFallback,
+    VectorHit,
+    VectorQuery,
+    VectorSearchResult,
+    content_hash,
+    merge_channels,
+    retrieval_summary,
+)
 from .encoding import Duration, Instant
 from .error_class import error_class
 from .finalize import FinalizedExperience, InitialLifecycleEvent, finalize
@@ -49,11 +62,11 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.5"
-"""The contract version this package passes: every fixture of contract 1.5, and so every 1.0, 1.1, 1.2, 1.3 and 1.4
-fixture."""
+CONTRACT_VERSION = "1.6"
+"""The contract version this package passes: every fixture of contract 1.6, and so every 1.0, 1.1, 1.2, 1.3, 1.4 and
+1.5 fixture."""
 
-SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5")
+SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
 """Every contract version whose fixtures this package passes."""
 
 __all__ = [
@@ -67,9 +80,13 @@ __all__ = [
     "CapturedRun",
     "ClosedVerificationRound",
     "Duration",
+    "Embedder",
+    "EmbeddingWrite",
+    "EmbeddingWriteResult",
     "EnvironmentFingerprint",
     "Evidence",
     "ExperienceRecord",
+    "FallbackReason",
     "FinalizedExperience",
     "InitialLifecycleEvent",
     "Instant",
@@ -95,14 +112,21 @@ __all__ = [
     "SearchRow",
     "SearchSafetyError",
     "ToolCall",
+    "VectorFallback",
+    "VectorHit",
+    "VectorQuery",
+    "VectorSearchResult",
+    "content_hash",
     "derive_task_text",
     "error_class",
     "experience_id_for",
     "finalize",
     "from_stored",
     "initial_event_id_for",
+    "merge_channels",
     "rank",
     "reflection_id_for",
     "render_block",
+    "retrieval_summary",
     "to_stored",
 ]

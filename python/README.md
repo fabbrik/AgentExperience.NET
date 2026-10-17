@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.5, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.5. It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.6, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.6. It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -64,6 +64,9 @@ prints each run and the block. Its output is checked in as
   `additional_properties["AgentExperience.HistoricalReference"] = True` (`message_role="system"` sends it as a system
   message). An agent that already holds an `ExperienceContextProvider` gets no second one; `inject=False` captures
   without injecting.
+- **Semantic retrieval** (contract 1.6), with an embedder you register (below). Injection then runs the text and the
+  vector channel together, merges them and ranks as before; each stored record's summary is embedded in the
+  background.
 - **Injection tracking** (contract 1.4). Once a block is handed over, a store with `record_injection` (the PostgreSQL
   and in-memory stores) is told which records it delivered, so the .NET lessons view shows when each lesson was last
   injected, by a Python agent too. It runs in a background task on the event loop, bounded by
@@ -95,6 +98,40 @@ prints each run and the block. Its output is checked in as
 `all_of(...)` (every check; stops at the first `None`) and `any_of(...)` (the first that passes). **Classifiers**
 (`agentexperience.classifiers`) have the semantics of `ExperienceToolResultClassifiers`: `exit_code(*tools)` and
 `http_status(*tools)` read a JSON object's top-level fields, else the last match in the text.
+
+### Semantic retrieval: registering an embedder
+
+Without an embedder retrieval is text only, and a reworded query finds nothing it shares no words with. Register an
+embedding callable (any model: none is a dependency) and retrieval becomes hybrid:
+
+```python
+class Embedder:
+    model_id = "my-embedding-model"  # stored with every vector; vectors of another model are never compared
+    dimension = 1536                 # the vector's length, known without calling the provider
+
+    def embed(self, text: str) -> list[float]:  # or `async def`; exactly `dimension` finite numbers
+        return my_provider.embed(text)
+
+agent = use_agent_experience(agent, store=store, identity=identity, verify=verify, embedder=Embedder())
+```
+
+- **In-memory and PostgreSQL stores.** `InMemoryExperienceStore` compares 32-bit floats by cosine distance.
+  `PostgresExperienceStore` needs PostgreSQL with pgvector, the .NET vectors package's migrations (`0004`, `0020`) and
+  the grants of `sql/application-role-privileges-1.6.sql` after the 1.0 and 1.4 files (or the .NET privileges call).
+- **Fail-open.** The vector channel never fails or delays past `vector_timeout` (seconds, default 0.5, covering the
+  embedding and the search) the text answer. When it does not contribute the injection answers from text and reports
+  the reason through `on_vector_fallback(VectorFallback)` and `InjectionResult.vector_fallback`: `NotConfigured` (no
+  embedder, or a store without `write_embedding` and `search_vectors`), `ProviderUnavailable` (the embedder raised, ran
+  out of time, or returned a blank model ID or an empty, wrong-length or non-finite vector; no statement runs),
+  `ModelMismatch` or `DimensionMismatch` (every stored vector is of another model or width) and `VectorSearchFailed`.
+  A failure of the text search still fails the injection, as without an embedder. `min_vector_relevance` (0 to 1) drops
+  vector candidates below it; text candidates are never dropped.
+- **Writing embeddings.** After a record is stored, a background task embeds its summary (task ID, task summary and
+  lesson) and writes it, only while the record is still at that revision. It never runs inside the record's own commit
+  and never fails capture: a failure is reported to `on_capture_failure` with the stage `Index`.
+  `await settings.wait_for_index_writes()` (also on the provider) awaits the ones still running. Records stored before
+  an embedder was registered have no vector until one is written; the .NET library's re-index does it for a shared
+  database.
 
 ### In production
 
@@ -128,7 +165,7 @@ which shares lessons with .NET agents on the same database.
   `sql/application-role-privileges.sql`, then `sql/application-role-privileges-1.4.sql` (without the second, every
   injection is still made and its record is reported `NotRecorded`).
 
-It does nothing outside contract 1.x: no grants, crypto-shredding, provenance signing or vectors, and no lifecycle
+It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, and no lifecycle
 after finalization (reuse evidence, reinforcement, contest, revocation). It writes no logs at all, so no record
 content is ever logged.
 
@@ -258,7 +295,7 @@ uv run mypy --strict src tests
 uv run pytest
 ```
 
-`uv run pytest` runs the unit tests and the conformance runner (`tests/test_contract.py`), which loads every fixture
+`uv run pytest` (its PostgreSQL leg uses a `pgvector/pgvector` image) runs the unit tests and the conformance runner (`tests/test_contract.py`), which loads every fixture
 family from [`../contract/fixtures`](https://github.com/fabbrik/AgentExperience.NET/tree/main/contract/fixtures) and compares this package's output exactly: blocks and task
 text byte for byte, JSON by value. It validates every record against the contract's JSON Schema, checks every
 contract file against `contract/lock.json`, and fails with a clear message if the lock names a contract version this

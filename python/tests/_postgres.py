@@ -35,6 +35,8 @@ SCHEMA = "agent_experience"
 
 PRIVILEGES_SQL = CONTRACT / "sql" / "application-role-privileges.sql"
 PRIVILEGES_1_4_SQL = CONTRACT / "sql" / "application-role-privileges-1.4.sql"
+PRIVILEGES_1_6_SQL = CONTRACT / "sql" / "application-role-privileges-1.6.sql"
+VECTOR_MIGRATIONS = MIGRATIONS.parent.parent / "AgentExperience.Storage.Postgres.Vectors" / "Migrations"
 _ROLE_PLACEHOLDER = ':"application_role"'
 
 
@@ -73,7 +75,13 @@ APPLICATION_ROLE_PRIVILEGES_1_0 = application_role_privileges(APPLICATION)
 APPLICATION_ROLE_PRIVILEGES = APPLICATION_ROLE_PRIVILEGES_1_0 + application_role_privileges(
     APPLICATION, path=PRIVILEGES_1_4_SQL
 )
-"""The 1.0 file, then the 1.4 file: what the .NET privileges call grants."""
+"""The 1.0 file, then the 1.4 file: what the .NET privileges call grants on the base schema."""
+
+APPLICATION_ROLE_PRIVILEGES_1_6 = APPLICATION_ROLE_PRIVILEGES + application_role_privileges(
+    APPLICATION, path=PRIVILEGES_1_6_SQL
+)
+"""The 1.0 file, then the 1.4 file, then the 1.6 file (the embeddings table's): what the .NET privileges call grants
+on a schema with the vectors migrations applied."""
 
 
 @dataclass(frozen=True)
@@ -119,7 +127,8 @@ def server() -> Generator[Server, None, None]:
         from testcontainers.postgres import PostgresContainer
 
     major = os.environ.get("AGENTEXPERIENCE_POSTGRES_MAJOR") or "16"
-    image = _apply_hub_image_prefix(f"postgres:{major}")
+    # pgvector's image: the vector channel (contract 1.6) needs the extension.
+    image = _apply_hub_image_prefix(f"pgvector/pgvector:pg{major}")
     with PostgresContainer(image, username="postgres", password="postgres", dbname="postgres") as pg:
         yield Server(pg.get_container_host_ip(), int(pg.get_exposed_port(5432)), "postgres", "postgres")
 
@@ -168,8 +177,9 @@ def database_name(label: str) -> str:
 
 
 def create_database(admin: Server, label: str, *, privileges: list[str] | None = None) -> str:
-    """A fresh database, migrated by the .NET scripts and with the application role's privileges (both contract
-    files unless ``privileges`` says otherwise); its name."""
+    """A fresh database, migrated by the .NET scripts (the vectors package's too, after ``CREATE EXTENSION vector`` as a
+    superuser) and with the application role's privileges (the three contract files unless ``privileges`` says
+    otherwise); its name."""
     import psycopg
     from psycopg import sql
 
@@ -180,12 +190,17 @@ def create_database(admin: Server, label: str, *, privileges: list[str] | None =
 
     scripts = sorted(MIGRATIONS.glob("*.sql"), key=lambda path: path.name)
     assert scripts, f"No migration scripts under {MIGRATIONS}."
+    vector_scripts = sorted(VECTOR_MIGRATIONS.glob("*.sql"), key=lambda path: path.name)
+    assert vector_scripts, f"No migration scripts under {VECTOR_MIGRATIONS}."
+    with psycopg.connect(admin.conninfo(name), autocommit=True) as superuser:
+        # pgvector is not a trusted extension: a superuser installs it, as an operator does (contract 1.6).
+        superuser.execute("CREATE EXTENSION IF NOT EXISTS vector")
     with psycopg.connect(admin.conninfo(name, OWNER, PASSWORD)) as owner:
-        for script in scripts:
+        for script in [*scripts, *vector_scripts]:
             with owner.transaction():
                 owner.execute(script.read_text(encoding="utf-8").encode("utf-8"))
         with owner.transaction():
-            for statement in APPLICATION_ROLE_PRIVILEGES if privileges is None else privileges:
+            for statement in APPLICATION_ROLE_PRIVILEGES_1_6 if privileges is None else privileges:
                 owner.execute(statement.encode("utf-8"))
     return name
 
