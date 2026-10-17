@@ -6,6 +6,23 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Port telemetry: Python and Go emit what .NET emits (story 23.5)
+
+- **Python and Go report the same spans and metrics as .NET** for the operations they perform: `inject`, `retrieve`,
+  `record_injection`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`, `verify`, `reflect`,
+  `finalize` and `index`, under the same two sources and meters, span names, three instruments, four dimensions and span
+  attributes as [the telemetry contract](docs/telemetry.md#the-python-and-go-ports), so one dashboard and one alert serve
+  a mixed fleet. Neither core imports OpenTelemetry: they call a small observer hook that costs a `None`/`nil` check
+  when nothing is registered. Python: the optional `otel` extra (`pip install "agenticexperience[otel]"`, the
+  OpenTelemetry API only), `agentexperience.telemetry.enable()`. Go: the new module `go/telemetry` (the OpenTelemetry API
+  only), `telemetry.Enable()`; it is released with the other Go modules, now six, and nothing requires it. No
+  OpenTelemetry SDK or exporter is a dependency, and an observer, exporter or provider that raises is swallowed.
+- **A pin for the names.** A .NET test generates [`docs/telemetry-names.json`](docs/telemetry-names.json) from the .NET
+  definitions (`AGENTEXPERIENCE_TELEMETRY_NAMES_UPDATE=1` rewrites it) and fails on drift; the Python and Go tests load it
+  and fail when a name or value a port can emit is not in it. No .NET library behaviour or public API changed.
+- **Go: `...Context` forms.** `StartRunContext`, `(*RunCapture).AppendAttemptContext`, `CompleteContext` and
+  `FinalizeContext` take the context the operation's span parents under; the existing forms are unchanged.
+
 ### Contract 1.7: the lessons view in Python and Go (story 23.4)
 
 - **Contract 1.7** (add-only: every earlier file is unchanged; [what 1.7 adds](contract/README-1.7.md)) publishes what

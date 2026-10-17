@@ -266,7 +266,15 @@ func (c *captureScope) writeEmbedding(ctx context.Context, index ae.EmbeddingInd
 	}()
 	ctx, cancel := context.WithTimeout(ctx, s.FinalizationTimeout)
 	defer cancel()
+	ctx, op := ae.Observe(ctx, "index", false)
+	defer op.End()
+	if op != nil {
+		op.Set(ae.AttributeExperienceID, record.ExperienceID.String())
+	}
+	// What the index reports if it stops early: the provider failed, then (past the embedding) the store did.
+	stopped := "ProviderFailed"
 	fail := func(err error) {
+		op.Done(stopped)
 		if errors.Is(err, context.DeadlineExceeded) {
 			c.report(StageIndex, fmt.Sprintf("Embedding the record did not finish within %v.", s.FinalizationTimeout), err)
 			return
@@ -282,13 +290,24 @@ func (c *captureScope) writeEmbedding(ctx context.Context, index ae.EmbeddingInd
 		fail(err)
 		return
 	}
+	stopped = "IndexFailed"
 	write := ae.EmbeddingWrite{ExperienceID: record.ExperienceID, Scope: record.Scope, ModelID: e.modelID,
 		Dimension: len(e.vector), ContentHash: ae.ContentHash(e.modelID, summary), SourceRevision: record.Revision,
 		Vector: e.vector, Now: s.Clock()}
-	_, err = callBounded(ctx, s.vectorSlots, func(ctx context.Context) (ae.EmbeddingWriteResult, error) {
+	written, err := callBounded(ctx, s.vectorSlots, func(ctx context.Context) (ae.EmbeddingWriteResult, error) {
 		return index.WriteEmbedding(ctx, c.identity.Authorization(), write)
 	})
 	if err != nil {
 		fail(err)
+		return
 	}
+	outcome := string(written.Outcome)
+	switch outcome {
+	case "Written":
+		outcome = "Indexed"
+	case "Stale", "Missing":
+	default:
+		outcome = "IndexFailed" // a custom index's own word never becomes a metric label
+	}
+	op.Done(outcome)
 }

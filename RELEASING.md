@@ -26,7 +26,7 @@ The same tag also releases the two ports, at the same version, from the same ver
 
 - **Python:** the distribution `agenticexperience` (`python/`), an sdist and a wheel, on PyPI. The first release that
   carries it is described under [First publish to PyPI](#first-publish-to-pypi).
-- **Go:** the five modules under `go/`: `github.com/fabbrik/AgentExperience.NET/go`, `.../go/inmemory`, `.../go/postgres`, `.../go/postgres/pgtest` and `.../go/maf`. A Go module is released by a tag
+- **Go:** the six modules under `go/`: `github.com/fabbrik/AgentExperience.NET/go`, `.../go/inmemory`, `.../go/postgres`, `.../go/postgres/pgtest`, `.../go/maf` and `.../go/telemetry` (the optional OpenTelemetry adapter; nothing else requires it). A Go module is released by a tag
   named after its directory, `go/vX`, `go/inmemory/vX`, and so on, which the Go module proxy serves from then on.
 
 Every release from this repository is a **preview** — `0.1.0-preview.N`, set once in `Directory.Build.props` — and
@@ -388,11 +388,11 @@ deployments**, select `nuget-release`, and approve. The `publish` job then:
 2. exchanges the job's GitHub OIDC token for a short-lived nuget.org key through `NuGet/login`;
 3. runs `dotnet nuget push "artifacts/packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate`, with the short-lived key from step 2,
    which uploads each `.snupkg` alongside its `.nupkg`;
-4. tags the five Go modules at the tagged commit, through the GitHub API with the job's own token: `go/vX`,
-   `go/inmemory/vX`, `go/postgres/vX`, `go/postgres/pgtest/vX` and `go/maf/vX`, where `vX` is the tag. A tag that
+4. tags the six Go modules at the tagged commit, through the GitHub API with the job's own token: `go/vX`,
+   `go/inmemory/vX`, `go/postgres/vX`, `go/postgres/pgtest/vX`, `go/maf/vX` and `go/telemetry/vX`, where `vX` is the tag. A tag that
    already points at that commit is kept; one that points anywhere else fails the job here, before the GitHub release.
    It then asks `proxy.golang.org` for each module at that version, and fails if the proxy does not know one after
-   ten attempts, 30 seconds apart (at worst about 48 minutes for all five; the job's timeout is 75 minutes);
+   ten attempts, 30 seconds apart (at worst about 57 minutes for all six; the job's timeout is 75 minutes);
 5. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
    version's `CHANGELOG.md` section, the Known limits table (or "None currently.") and the Documented boundaries
    table from `docs/known-limits.md` as its notes. A preview's release notes say what it does not promise.
@@ -551,7 +551,7 @@ partial failure: `--check-url` skips the files PyPI already has, and tags alread
     echo "FAILED: python/dist does not hold agenticexperience $python; run the build above first"; false
   else
     uv publish --check-url https://pypi.org/simple/ "python/dist/agenticexperience-$python.tar.gz" "python/dist/agenticexperience-$python-py3-none-any.whl" \
-      && for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do
+      && for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do
            tag="$module/$go"
            git rev-parse -q --verify "refs/tags/$tag" > /dev/null || git tag "$tag" "$verified" || exit 1
            [ "$(git rev-parse "$tag^{commit}")" = "$verified" ] || { echo "FAILED: $tag exists at another commit"; exit 1; }

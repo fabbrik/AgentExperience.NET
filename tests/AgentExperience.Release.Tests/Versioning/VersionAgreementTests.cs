@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace AgentExperience.Release.Tests.Versioning;
 
 /// <summary>
-/// Story 22.7: one tag releases the six NuGet packages, the Python distribution and the five Go modules at one version.
+/// Story 22.7: one tag releases the six NuGet packages, the Python distribution and the six Go modules at one version.
 /// <c>Directory.Build.props</c> sets it; <c>python/pyproject.toml</c> (and the lock file's record of it) and every Go
 /// module's requirement on another of this repository's modules carry the version derived from it, never a
 /// pseudo-version. <c>release.yml</c>'s verify job runs the same check on the tagged commit.
@@ -21,6 +21,7 @@ public sealed class VersionAgreementTests
         ["go/postgres"] = ["go"],
         ["go/postgres/pgtest"] = ["go", "go/postgres"],
         ["go/maf"] = ["go", "go/inmemory", "go/postgres", "go/postgres/pgtest"],
+        ["go/telemetry"] = ["go", "go/inmemory", "go/maf"],
     };
 
     [Theory]
@@ -174,12 +175,12 @@ public sealed class VersionAgreementTests
 
     /// <summary>
     /// The publish job's "Tag the Go modules" script, run for real against a stub <c>gh</c> first on PATH: an absent tag
-    /// (a 404) is created at the release commit for all five modules; a tag already at that commit, directly or through
+    /// (a 404) is created at the release commit for all six modules; a tag already at that commit, directly or through
     /// an annotated tag, is kept; a tag at another commit, or any lookup error but a 404, fails before anything is
     /// created.
     /// </summary>
     [UnixTheory]
-    [InlineData("absent", "", 0, 5)]
+    [InlineData("absent", "", 0, 6)]
     [InlineData("commit " + ReleaseSha, "", 0, 0)]
     [InlineData("tag 2222222222222222222222222222222222222222", ReleaseSha, 0, 0)]
     [InlineData("commit 3333333333333333333333333333333333333333", "", 1, 0)]

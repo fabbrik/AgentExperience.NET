@@ -21,6 +21,7 @@ from ._text import (
 from .capture import CapturedRun
 from .encoding import Instant
 from .error_class import error_class
+from .observer import observe
 from .records import Attempt, Reflection
 from .verification import VerificationResult
 
@@ -116,6 +117,22 @@ def reflect(
 ) -> Reflection:
     """The deterministic reflection of a finished run. No tool name, argument or error text beyond its class reaches
     the lesson."""
+    with observe("reflect") as op:
+        if op is not None:
+            op.set("agentexperience.run_id", str(run.run_id))
+            op.set("agentexperience.reflection_id", str(reflection_id))
+        reflection = _reflect(run, evaluation, reflection_id, created_at)
+        if op is not None:
+            op.outcome(evaluation.outcome.status)
+        return reflection
+
+
+def _reflect(
+    run: CapturedRun,
+    evaluation: VerificationResult,
+    reflection_id: uuid.UUID,
+    created_at: Instant,
+) -> Reflection:
     outcome = evaluation.outcome
     status = outcome.status
     evidence_ids = _distinct([item.evidence_id for item in outcome.evidence])

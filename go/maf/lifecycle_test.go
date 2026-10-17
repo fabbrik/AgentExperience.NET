@@ -296,7 +296,7 @@ func startedScope(t *testing.T, h *host) *captureScope {
 	identity := s.Identity
 	scope := &captureScope{settings: s, agent: agent.New(agent.ProviderConfig{Run: newScripted(0).run}, agent.Config{}),
 		identity: &identity, reported: map[CaptureStage]bool{}}
-	scope.start([]*message.Message{message.NewText(ticket)})
+	scope.start(context.Background(), []*message.Message{message.NewText(ticket)})
 	if !scope.captured() {
 		t.Fatal("the run did not start")
 	}

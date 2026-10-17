@@ -1,6 +1,7 @@
 package agentexperience
 
 import (
+	"context"
 	"errors"
 )
 
@@ -68,6 +69,33 @@ type Verification struct {
 // Finalize finalizes a finished run: verification, the deterministic reflection (only for a Verified run), the
 // stored record (Validated with a reflection, else Quarantined) and its initial lifecycle event.
 func Finalize(run CapturedRun, verification Verification) (FinalizedExperience, error) {
+	return FinalizeContext(context.Background(), run, verification)
+}
+
+// FinalizeContext is Finalize reporting to the observer (SetObserver) under ctx. Its verification and reflection are
+// reported as nested operations of its own.
+func FinalizeContext(ctx context.Context, run CapturedRun, verification Verification) (FinalizedExperience, error) {
+	ctx, op := Observe(ctx, "finalize", false)
+	defer op.End()
+	if op != nil {
+		op.Set(AttributeRunID, run.RunID.String())
+		op.Set(AttributeStage, "Load")
+	}
+	finalized, err := finalize(ctx, op, run, verification)
+	if err != nil {
+		op.Fail(err)
+		return finalized, err
+	}
+	if op != nil {
+		op.Set(AttributeExperienceID, finalized.Record.ExperienceID.String())
+	}
+	op.Done(string(finalized.Record.Status))
+	return finalized, nil
+}
+
+// finalize is the finalization; the stage it has reached is on the operation, also when it fails.
+func finalize(ctx context.Context, op *Operation, run CapturedRun, verification Verification) (FinalizedExperience,
+	error) {
 	if run.ExecutionStatus == "" {
 		return FinalizedExperience{}, errors.New("the run has not finished and cannot be finalized")
 	}
@@ -81,7 +109,10 @@ func Finalize(run CapturedRun, verification Verification) (FinalizedExperience, 
 		return FinalizedExperience{}, errors.New("the finalization instant must be set")
 	}
 	at := verification.FinalizedAt.TruncateToMicroseconds()
-	evaluation, err := Aggregate(verification.Evidence, verification.RequiredChecks, verification.ClosedRound,
+	if op != nil {
+		op.Set(AttributeStage, "Evaluate")
+	}
+	evaluation, err := aggregate(ctx, true, verification.Evidence, verification.RequiredChecks, verification.ClosedRound,
 		verification.CurrentArtifactRevision, at)
 	if err != nil {
 		return FinalizedExperience{}, err
@@ -90,7 +121,10 @@ func Finalize(run CapturedRun, verification Verification) (FinalizedExperience, 
 	var reflection *Reflection
 	var refusal error
 	if evaluation.Outcome.Status == VerificationVerified {
-		screened, err := Screen(Reflect(&run, &evaluation, ReflectionIDFor(run.RunID), at))
+		if op != nil {
+			op.Set(AttributeStage, "Reflect")
+		}
+		screened, err := Screen(reflectObserved(ctx, true, &run, &evaluation, ReflectionIDFor(run.RunID), at))
 		if err != nil {
 			refusal = err
 		} else {
@@ -98,6 +132,9 @@ func Finalize(run CapturedRun, verification Verification) (FinalizedExperience, 
 		}
 	}
 
+	if op != nil {
+		op.Set(AttributeStage, "CreateRecord")
+	}
 	status := StatusQuarantined
 	confidence, validations := 0.0, int64(0)
 	if reflection != nil {

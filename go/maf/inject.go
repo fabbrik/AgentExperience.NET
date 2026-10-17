@@ -55,6 +55,8 @@ func (p *ContextProvider) Invoked(context.Context, agent.InvokedContext) error {
 
 func (p *ContextProvider) inject(ctx context.Context, messages []*message.Message,
 	options []agent.Option) []*message.Message {
+	ctx, op := ae.Observe(ctx, "inject", false)
+	defer op.End()
 	s := p.settings
 	scope := scopeFrom(ctx)
 	captured := scope != nil && scope.settings == s
@@ -69,19 +71,23 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		identity, err = s.resolveIdentity(ctx, IdentityContext{Agent: running, Session: session})
 		if err != nil {
 			s.reportInjection(InjectionFailure{Reason: "Resolving the identity failed; no block was added.", Err: err})
+			op.Done("Failed")
 			return messages
 		}
 	}
 	if identity == nil {
+		op.Done("Skipped")
 		return messages
 	}
 
 	taskText, ok, err := ae.DeriveTaskText(taskMessages(messages), ae.DefaultTaskTextMaxLength, ae.FollowUpThreshold)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Deriving the task text failed; no block was added.", Err: err})
+		op.Done("Failed")
 		return messages
 	}
 	if !ok {
+		op.Done("NothingToInject")
 		return messages
 	}
 	parameters := ae.NewSearchParameters(identity.Scope, taskText)
@@ -101,11 +107,16 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 			vectorDone <- vectorAnswer{vectorRows, fallback}
 		}()
 	}
-	rows, err := s.Store.Search(ctx, identity.Authorization(), parameters)
+	retrieveCtx, retrieval := ae.Observe(ctx, "retrieve", false)
+	defer retrieval.End()
+	rows, err := s.Store.Search(retrieveCtx, identity.Authorization(), parameters)
 	vector := <-vectorDone
 	s.reportVectorFallback(vector.fallback)
 	if err != nil {
+		// Retrieval reports its failure as its outcome, as .NET does; it is not an error it raised.
+		retrieval.Done("Failed")
 		s.reportInjection(InjectionFailure{Reason: "The search failed; no block was added.", Err: err})
+		op.Done("RetrievalFailed")
 		return messages
 	}
 	// The instant the block is built at: ranking's "now", and the injection's instant.
@@ -118,15 +129,23 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		ranked, err = ae.Rank(rows, identity.Scope, now, s.PreferredEnvironment, s.ExcludeModelAuthored)
 	}
 	if err != nil {
+		retrieval.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
+		op.Done("Failed")
 		return messages
 	}
+	retrieval.Done("Completed")
 	block, err := ae.RenderBlock(ranked.Ranked, s.BlockOptions)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Rendering the block failed; no block was added.", Err: err})
+		op.Done("Failed")
 		return messages
 	}
+	if op != nil {
+		op.Set(ae.AttributeOmittedCount, len(block.Omitted))
+	}
 	if block.IsEmpty() {
+		op.Done("NothingToInject")
 		return messages
 	}
 	injected := &message.Message{
@@ -165,6 +184,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	if len(ids) > 0 {
 		p.startRecording(ctx, identity, append([]ae.UUID(nil), ids...), now)
 	}
+	op.Done("Injected")
 	return out
 }
 

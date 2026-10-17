@@ -483,11 +483,21 @@ jobs:
               print("agentexperience.maf needs the maf extra, as it should")
           else:
               raise AssertionError("agentexperience.maf imported without agent-framework-core")
+
+          # Nor does the core import OpenTelemetry: the adapter needs the otel extra, and says so.
+          try:
+              import agentexperience.telemetry
+          except ImportError:
+              print("agentexperience.telemetry needs the otel extra, as it should")
+          else:
+              raise AssertionError("agentexperience.telemetry imported without opentelemetry-api")
           PY
           wheels=("$out"/dist/*.whl)
           test "${#wheels[@]}" -eq 1 || { echo "::error::expected exactly one wheel, found ${#wheels[@]}"; exit 1; }
           uv pip install --python "$out/venv/bin/python" "${wheels[0]}[maf]"
           "$out/venv/bin/python" -c "import agentexperience.maf as maf; print('agentexperience.maf imports with the maf extra:', maf.use_agent_experience.__name__)"
+          uv pip install --python "$out/venv/bin/python" "${wheels[0]}[otel]"
+          "$out/venv/bin/python" -c "import agentexperience.telemetry as t; print('agentexperience.telemetry imports with the otel extra:', t.enable.__name__)"
 
       - name: PostgreSQL ${{ matrix.pg-major }} conformance tests
         if: ${{ matrix.pg-major }}
@@ -515,20 +525,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Five modules, each with its own floor: the core (.) Go 1.24; the PostgreSQL store (postgres) and the
+          # Six modules, each with its own floor: the core (.) Go 1.24; the PostgreSQL store (postgres) and the
           # in-memory store (inmemory) 1.25 (the pgx and golang.org/x/text releases without known vulnerabilities
-          # need it); the Agent Framework integration (maf) 1.26, the Go SDK's own minimum; and the PostgreSQL test
+          # need it); the Agent Framework integration (maf) 1.26, the Go SDK's own minimum; the PostgreSQL test
           # support with the store's PostgreSQL tests (postgres/pgtest) 1.26, where its container library's
-          # dependencies have no known vulnerabilities. Each leg runs every module its Go version can build; the
+          # dependencies have no known vulnerabilities; and the optional OpenTelemetry adapter (telemetry) 1.26,
+          # which the OpenTelemetry API's own releases need. Each leg runs every module its Go version can build; the
           # PostgreSQL legs run the two modules with PostgreSQL tests (the postgres build tag).
           - go-version: '1.24.x'
             modules: '.'
           - go-version: '1.25.x'
             modules: '. postgres inmemory'
           - go-version: '1.26.x'
-            modules: '. postgres postgres/pgtest inmemory maf'
+            modules: '. postgres postgres/pgtest inmemory maf telemetry'
           - go-version: stable
-            modules: '. postgres postgres/pgtest inmemory maf'
+            modules: '. postgres postgres/pgtest inmemory maf telemetry'
           - go-version: stable
             modules: 'postgres/pgtest maf'
             pg-major: 16
@@ -555,6 +566,7 @@ jobs:
             go/postgres/pgtest/go.sum
             go/inmemory/go.sum
             go/maf/go.sum
+            go/telemetry/go.sum
 
       - name: The modules' dependencies are tidy and verified
         run: |

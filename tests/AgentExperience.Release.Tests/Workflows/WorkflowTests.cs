@@ -414,7 +414,7 @@ public sealed class WorkflowTests
     [InlineData("          name: python-dist\n          path: dist\n", "          name: packages\n          path: dist\n")]
     // Story 22.7: the Go tags.
     [InlineData("if [ \"$sha\" != \"$GITHUB_SHA\" ]; then", "if false; then")]
-    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do", "for module in go; do")]
+    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do", "for module in go; do")]
     [InlineData("https://proxy.golang.org/$escaped/@v/$GO_VERSION.info", "https://example.invalid/$escaped")]
     [InlineData("-f \"sha=$GITHUB_SHA\"", "-f \"sha=$(git rev-parse HEAD)\"")]
     // Story 22.7: the verify job's version agreement, Python and Go checks, and that it publishes nothing.
@@ -436,8 +436,8 @@ public sealed class WorkflowTests
     [InlineData("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0\n        with:\n          name: packages", "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n        with:\n          name: packages")]
     [InlineData("actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0", "actions/setup-dotnet@v5")]
     // Story 22.7: the Go tags and the proxy check.
-    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do\n            tag=", "for module in go go/maf; do\n            tag=")]
-    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do\n            path=", "for module in go; do\n            path=")]
+    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do\n            tag=", "for module in go go/maf; do\n            tag=")]
+    [InlineData("for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do\n            path=", "for module in go; do\n            path=")]
     [InlineData("elif grep -q 'HTTP 404' \"$error\"; then", "elif true; then")]
     [InlineData("--connect-timeout 10 --max-time 30 ", "")]
     [InlineData("if [ \"$attempt\" -lt 10 ]; then sleep 30; fi", "sleep 30")]
@@ -601,14 +601,14 @@ public sealed class WorkflowTests
         // The Go tags: after the push, before the GitHub release, one per module at the verified version, created at the
         // tagged commit through the API (no checkout, no git push), idempotent only for a tag already at that commit, and
         // confirmed by the Go module proxy.
-        const string GoModules = "for module in go go/inmemory go/postgres go/postgres/pgtest go/maf; do";
+        const string GoModules = "for module in go go/inmemory go/postgres go/postgres/pgtest go/maf go/telemetry; do";
         const string CreateTag = "gh api \"repos/$GH_REPO/git/refs\" -f \"ref=refs/tags/$tag\" -f \"sha=$GITHUB_SHA\"";
         var tagsAt = publish.IndexOf(CreateTag, StringComparison.Ordinal);
         var proxyAt = publish.IndexOf("https://proxy.golang.org/$escaped/@v/$GO_VERSION.info", StringComparison.Ordinal);
         foreach (var (text, rule) in new[]
         {
             ("GO_VERSION: ${{ needs.verify.outputs.go-version }}", "take the Go version verify derived"),
-            (GoModules, "tag exactly the five Go modules"),
+            (GoModules, "tag exactly the six Go modules"),
             ("tag=\"$module/$GO_VERSION\"", "name each tag module/version"),
             ("gh api \"repos/$GH_REPO/git/ref/tags/$tag\"", "look each tag up first"),
             ("if [ \"$sha\" != \"$GITHUB_SHA\" ]; then", "refuse a tag that exists at another commit"),
@@ -621,7 +621,7 @@ public sealed class WorkflowTests
             ("path=\"github.com/fabbrik/AgentExperience.NET/$module\"", "ask the proxy for the repository's module paths"),
             ("curl -fsS --connect-timeout 10 --max-time 30 \"$url\"", "bound each request to the proxy"),
             ("if [ \"$attempt\" -lt 10 ]; then sleep 30; fi", "not sleep after the last attempt"),
-            // Worst case, the push to nuget.org plus 47.5 minutes of proxy retries.
+            // Worst case, the push to nuget.org plus 57 minutes of proxy retries.
             ("\n    timeout-minutes: 75\n", "allow the push and the whole proxy wait"),
         })
         {
@@ -630,7 +630,7 @@ public sealed class WorkflowTests
 
         Require(
             Regex.Matches(publish, Regex.Escape(GoModules), RegexOptions.CultureInvariant).Count == 2,
-            "The publish job must loop over exactly the five Go modules twice: once to tag them and once to ask the proxy.");
+            "The publish job must loop over exactly the six Go modules twice: once to tag them and once to ask the proxy.");
 
         Require(Regex.Matches(workflow, @"git/refs", RegexOptions.CultureInvariant).Count == 1, "Only the publish job's Go tag step may create a ref.");
 
@@ -682,7 +682,7 @@ public sealed class WorkflowTests
             ("grep -qx \"Name: agenticexperience\"", "check the wheel names agenticexperience"),
             ("grep -qx \"Version: $PYTHON_VERSION\"", "check the wheel carries the derived version"),
             ("PYTHON_VERSION: ${{ steps.version.outputs.python-version }}", "check the distribution against the derived Python version"),
-            ("for module in . inmemory postgres postgres/pgtest maf; do", "check every Go module"),
+            ("for module in . inmemory postgres postgres/pgtest maf telemetry; do", "check every Go module"),
             ("go vet ./...\n", "vet the Go modules"),
             ("go test ./...\n", "test the Go modules"),
         })

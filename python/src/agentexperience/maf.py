@@ -77,6 +77,7 @@ from .classifiers import (
 from .embedding import (
     Embedder,
     EmbeddingWrite,
+    EmbeddingWriteResult,
     VectorFallback,
     VectorQuery,
     VectorSearchResult,
@@ -101,6 +102,7 @@ from .identity import (
 )
 from .inmemory import (
     MAX_RECORD_INJECTION_IDS,
+    AuthorizationDenied,
     EmbeddingIndex,
     ExperienceStore,
     InjectionRecorder,
@@ -108,6 +110,8 @@ from .inmemory import (
     LessonsReader,
 )
 from .lessons import ExperienceLessons
+from .observer import classify as _classify_error
+from .observer import observe
 from .records import EnvironmentFingerprint, Provenance, RunExposure
 from .sanitization import Sanitization
 from .search import SearchParameters, SearchRow, rank
@@ -602,27 +606,37 @@ class _CaptureScope:
 
     async def _index(self, finalized: FinalizedExperience, identity: ExperienceIdentity) -> None:
         settings = self.settings
-        try:
-            await asyncio.wait_for(self._write_embedding(finalized, identity), settings.finalization_timeout)
-        except (asyncio.TimeoutError, TimeoutError) as ex:
-            self.report(
-                "Index", f"Embedding the record did not finish within {settings.finalization_timeout} seconds.", ex
-            )
-        except asyncio.CancelledError as ex:
-            self.report("Index", "Embedding the record was cancelled.", ex)
-            raise
-        except Exception as ex:
-            self.report("Index", f"Embedding the record raised {_type_name(ex)}; its text retrieval is unaffected.", ex)
+        with observe("index") as op:
+            if op is not None:
+                op.set("agentexperience.experience_id", str(finalized.record.experience_id))
+            try:
+                await asyncio.wait_for(self._write_embedding(finalized, identity, op), settings.finalization_timeout)
+            except (asyncio.TimeoutError, TimeoutError) as ex:
+                self.report(
+                    "Index", f"Embedding the record did not finish within {settings.finalization_timeout} seconds.", ex
+                )
+            except asyncio.CancelledError as ex:
+                self.report("Index", "Embedding the record was cancelled.", ex)
+                raise
+            except Exception as ex:
+                self.report(
+                    "Index", f"Embedding the record raised {_type_name(ex)}; its text retrieval is unaffected.", ex
+                )
 
-    async def _write_embedding(self, finalized: FinalizedExperience, identity: ExperienceIdentity) -> None:
+    async def _write_embedding(self, finalized: FinalizedExperience, identity: ExperienceIdentity, op: Any) -> None:
         settings = self.settings
         embedder, store = settings.embedder, settings.store
         assert embedder is not None and isinstance(store, EmbeddingIndex)
         record = finalized.record
         summary = record_summary(record)
+        # What the index reports if it stops here: the provider failed, then (past the embedding) the store did.
+        if op is not None:
+            op.outcome("ProviderFailed")
         model_id, dimension = embedder.model_id, embedder.dimension
         validate_model_id(model_id)
         vector = validate_vector(await embed_text(embedder, summary), dimension)
+        if op is not None:
+            op.outcome("IndexFailed")
         write = EmbeddingWrite(
             record.experience_id,
             record.scope,
@@ -633,7 +647,18 @@ class _CaptureScope:
             vector,
             settings.clock(),
         )
-        await run_on_vector_thread(store.write_embedding, identity.authorization, write)
+        written = cast(
+            EmbeddingWriteResult, await run_on_vector_thread(store.write_embedding, identity.authorization, write)
+        )
+        if op is not None:
+            # Only the contract's outcomes become a label; a custom index's own word never does.
+            op.outcome(
+                "Indexed"
+                if written.outcome == "Written"
+                else written.outcome
+                if written.outcome in ("Stale", "Missing")
+                else "IndexFailed"
+            )
 
 
 _current_scope: ContextVar[_CaptureScope | None] = ContextVar("agentexperience_capture_scope", default=None)
@@ -758,10 +783,16 @@ class ExperienceContextProvider(ContextProvider):
         try:
             recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
             if recorder is None:
+                with observe("record_injection") as op:
+                    if op is not None:
+                        op.outcome("NotTracked")
                 settings.report_injection_recorded(InjectionRecordResult("NotTracked", ids))
                 return
             task = asyncio.get_running_loop().create_task(self._record(recorder, identity, ids, injected_at))
         except Exception as ex:
+            with observe("record_injection") as op:
+                if op is not None:
+                    op.outcome("NotRecorded", "Unexpected")
             settings.report_injection_recorded(InjectionRecordResult("NotRecorded", ids, ex))
             return
         self._recordings.add(task)
@@ -781,9 +812,21 @@ class ExperienceContextProvider(ContextProvider):
         hang can never take more threads than that, and never the event loop's default executor, which the search and
         capture use. Never raises, except the task's own cancellation, which is reported first.
         """
+        with observe("record_injection") as op:
+            await self._record_observed(recorder, identity, ids, injected_at, op)
+
+    async def _record_observed(
+        self,
+        recorder: InjectionRecorder,
+        identity: ExperienceIdentity,
+        ids: tuple[uuid.UUID, ...],
+        injected_at: Instant,
+        op: Any,
+    ) -> None:
         settings = self.settings
         outcome: InjectionRecordOutcome = "Recorded"
         error: BaseException | None = None
+        error_class: str | None = None
         loop = asyncio.get_running_loop()
         deadline = loop.time() + settings.injection_record_timeout
         try:
@@ -800,6 +843,7 @@ class ExperienceContextProvider(ContextProvider):
                 )
                 if write is None:
                     outcome = "NotRecorded"
+                    error_class = "Timeout"
                     error = RuntimeError("Too many earlier injection records are still running against the store.")
                     break
                 future, state = write
@@ -809,12 +853,19 @@ class ExperienceContextProvider(ContextProvider):
                     self._abandon(state)
                     raise
         except (asyncio.TimeoutError, TimeoutError) as ex:
-            outcome, error = "OutcomeUnknown", ex
+            outcome, error, error_class = "OutcomeUnknown", ex, "Timeout"
         except asyncio.CancelledError as ex:
+            if op is not None:
+                op.outcome("OutcomeUnknown", "Cancelled")
+                op.close()
             settings.report_injection_recorded(InjectionRecordResult("OutcomeUnknown", ids, ex))
             raise
         except Exception as ex:
+            # A refusal (the grant is missing) is an answer, not a failure: only a store or unexpected failure counts.
             outcome, error = "NotRecorded", ex
+            error_class = None if isinstance(ex, AuthorizationDenied) else _classify_error(ex)
+        if op is not None:
+            op.outcome(outcome, error_class)
         settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
 
     def _start_write(
@@ -934,6 +985,14 @@ class ExperienceContextProvider(ContextProvider):
         context: Any,
         state: dict[str, Any],
     ) -> None:
+        with observe("inject") as op:
+            outcome = await self._inject(agent, session, context, op)
+            if op is not None:
+                op.outcome(outcome)
+
+    async def _inject(self, agent: Any, session: Any, context: Any, op: Any) -> str:
+        """The injection; answers its outcome (``InjectionOutcome``'s member name). A raise is the invocation's own
+        cancellation, which the observer reports as ``Faulted``/``Cancelled``."""
         settings = self.settings
         scope = _current_scope.get()
         captured = scope is not None and scope.agent is agent
@@ -945,10 +1004,11 @@ class ExperienceContextProvider(ContextProvider):
                 identity = await settings.resolve_identity(agent, session)
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Resolving the identity raised {_type_name(ex)}.", ex))
-            return
+            return "Failed"
         if identity is None:
-            return
+            return "Skipped"
 
+        retrieval_failed = False
         try:
             history = {
                 provider.source_id
@@ -961,48 +1021,63 @@ class ExperienceContextProvider(ContextProvider):
             ]
             task_text = derive_task_text(_task_messages(context.input_messages, earlier))
             if task_text is None:
-                return
+                return "NothingToInject"
             parameters = SearchParameters(
                 identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
             )
-            text_search = asyncio.ensure_future(
-                asyncio.to_thread(settings.store.search, identity.authorization, parameters)
-            )
-            vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
-            # Both channels run together; the vector channel never raises (it answers with a fallback instead).
-            text_found, vector_found = await asyncio.gather(text_search, vector_search, return_exceptions=True)
-            if isinstance(vector_found, BaseException):
-                vector_found = ([], VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."))
-            vector_rows, fallback = vector_found
-            if fallback is not None:
-                settings.report_vector_fallback(fallback)
-            if isinstance(text_found, BaseException):
-                # The text channel's failure fails the call, whatever the vector channel found.
+            with observe("retrieve") as retrieval:
+                text_search = asyncio.ensure_future(
+                    asyncio.to_thread(settings.store.search, identity.authorization, parameters)
+                )
+                vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
+                # Both channels run together; the vector channel never raises (it answers with a fallback instead).
+                text_found, vector_found = await asyncio.gather(text_search, vector_search, return_exceptions=True)
+                if isinstance(vector_found, BaseException):
+                    vector_found = (
+                        [],
+                        VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."),
+                    )
+                vector_rows, fallback = vector_found
+                if fallback is not None:
+                    settings.report_vector_fallback(fallback)
+                if isinstance(text_found, BaseException):
+                    # The text channel's failure fails the call, whatever the vector channel found. Retrieval reports
+                    # it as its outcome, as .NET does; it is not thrown.
+                    if retrieval is not None:
+                        retrieval.outcome("Failed")
+                    retrieval_failed = True
+                else:
+                    rows = text_found
+                    # The instant the block is built at: ranking's "now", and the injection's instant.
+                    now = settings.clock()
+                    if vector_rows:
+                        ranked = rank_hybrid(
+                            rows,
+                            vector_rows,
+                            identity.scope,
+                            now,
+                            settings.preferred_environment,
+                            minimum_vector_relevance=settings.min_vector_relevance,
+                            exclude_model_authored=settings.exclude_model_authored,
+                        )
+                    else:
+                        ranked = rank(
+                            rows,
+                            identity.scope,
+                            now,
+                            settings.preferred_environment,
+                            exclude_model_authored=settings.exclude_model_authored,
+                        )
+                    if retrieval is not None:
+                        retrieval.outcome("Completed")
+            if retrieval_failed:
+                assert isinstance(text_found, BaseException)
                 raise text_found
-            rows = text_found
-            # The instant the block is built at: ranking's "now", and the injection's instant.
-            now = settings.clock()
-            if vector_rows:
-                ranked = rank_hybrid(
-                    rows,
-                    vector_rows,
-                    identity.scope,
-                    now,
-                    settings.preferred_environment,
-                    minimum_vector_relevance=settings.min_vector_relevance,
-                    exclude_model_authored=settings.exclude_model_authored,
-                )
-            else:
-                ranked = rank(
-                    rows,
-                    identity.scope,
-                    now,
-                    settings.preferred_environment,
-                    exclude_model_authored=settings.exclude_model_authored,
-                )
             block = render_block(ranked.ranked, settings.block_options)
+            if op is not None:
+                op.set("agentexperience.omitted_count", len(block.omitted))
             if block.is_empty:
-                return
+                return "NothingToInject"
             message = Message(
                 role=settings.message_role,
                 contents=[block.text],
@@ -1011,7 +1086,7 @@ class ExperienceContextProvider(ContextProvider):
             context.extend_messages(self, [message])
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
-            return
+            return "RetrievalFailed" if retrieval_failed else "Failed"
 
         # The records this block delivers, at the revision each was rendered from, on the run the invocation is
         # captured as. Recorded last, once nothing that could fail remains.
@@ -1028,6 +1103,7 @@ class ExperienceContextProvider(ContextProvider):
         # block is handed over and the model called without waiting for the store.
         if delivered:
             self._start_recording(identity, delivered, now)
+        return "Injected"
 
 
 # ---- Capture -----------------------------------------------------------------------------------------------------

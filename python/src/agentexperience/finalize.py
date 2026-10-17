@@ -14,6 +14,7 @@ from ._text import format_round_trip
 from .capture import CapturedRun
 from .encoding import Instant, format_uuid
 from .ids import experience_id_for, initial_event_id_for, reflection_id_for
+from .observer import observe
 from .records import Evidence, ExperienceRecord, ExperienceStatus, Reflection
 from .reflector import ScreeningRefused, reflect, screen
 from .verification import ClosedVerificationRound, RequiredCheck, VerificationResult, aggregate
@@ -82,20 +83,47 @@ def finalize(
     Finalizes a finished run: verification, the deterministic reflection (only for a ``Verified`` run), the stored
     record (``Validated`` with a reflection, else ``Quarantined``) and its initial lifecycle event.
     """
+    with observe("finalize") as op:
+        if op is not None:
+            op.set("agentexperience.run_id", str(run.run_id))
+            op.set("agentexperience.stage", "Load")
+        finalized = _finalize(run, closed_round, required_checks, evidence, current_artifact_revision, finalized_at, op)
+        if op is not None:
+            op.set("agentexperience.experience_id", str(finalized.record.experience_id))
+            op.outcome(finalized.record.status)
+        return finalized
+
+
+def _finalize(
+    run: CapturedRun,
+    closed_round: ClosedVerificationRound | None,
+    required_checks: Sequence[RequiredCheck],
+    evidence: Sequence[Evidence],
+    current_artifact_revision: str,
+    finalized_at: Instant,
+    op: Any,
+) -> FinalizedExperience:
+    """The stage the finalization has reached is on the span (``agentexperience.stage``), also when it throws."""
     if run.execution_status is None:
         raise ValueError("The run has not finished and cannot be finalized.")
 
     at = finalized_at.truncate_to_microseconds()
+    if op is not None:
+        op.set("agentexperience.stage", "Evaluate")
     evaluation = aggregate(evidence, required_checks, closed_round, current_artifact_revision, at)
 
     reflection: Reflection | None = None
     refusal: str | None = None
     if evaluation.outcome.status == "Verified":
+        if op is not None:
+            op.set("agentexperience.stage", "Reflect")
         try:
             reflection = screen(reflect(run, evaluation, reflection_id_for(run.run_id), at))
         except ScreeningRefused as refused:
             refusal = str(refused)
 
+    if op is not None:
+        op.set("agentexperience.stage", "CreateRecord")
     status: ExperienceStatus = "Validated" if reflection is not None else "Quarantined"
     round_id = closed_round.round_id if closed_round is not None and closed_round.round_id.int != 0 else None
     record = ExperienceRecord(

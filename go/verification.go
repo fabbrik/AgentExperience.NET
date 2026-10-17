@@ -1,6 +1,7 @@
 package agentexperience
 
 import (
+	"context"
 	"errors"
 	"strings"
 )
@@ -40,6 +41,26 @@ type VerificationResult struct {
 
 // Aggregate aggregates the evidence of the closed round and the current artifact revision into an outcome.
 func Aggregate(evidence []Evidence, requiredChecks []RequiredCheck, closedRound *ClosedVerificationRound,
+	currentArtifactRevision string, evaluatedAt Instant) (VerificationResult, error) {
+	return aggregate(context.Background(), false, evidence, requiredChecks, closedRound, currentArtifactRevision,
+		evaluatedAt)
+}
+
+func aggregate(ctx context.Context, nested bool, evidence []Evidence, requiredChecks []RequiredCheck,
+	closedRound *ClosedVerificationRound, currentArtifactRevision string, evaluatedAt Instant) (VerificationResult,
+	error) {
+	_, op := Observe(ctx, "verify", nested)
+	defer op.End()
+	result, err := aggregateEvidence(evidence, requiredChecks, closedRound, currentArtifactRevision, evaluatedAt)
+	if err != nil {
+		op.Fail(err)
+		return result, err
+	}
+	op.Done(string(result.Outcome.Status))
+	return result, nil
+}
+
+func aggregateEvidence(evidence []Evidence, requiredChecks []RequiredCheck, closedRound *ClosedVerificationRound,
 	currentArtifactRevision string, evaluatedAt Instant) (VerificationResult, error) {
 	if isNullOrWhitespace(currentArtifactRevision) {
 		return VerificationResult{}, errors.New("the current artifact revision must not be blank")

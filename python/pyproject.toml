@@ -25,6 +25,8 @@ dependencies = []
 postgres = ["psycopg[binary]>=3.2"]
 # Microsoft Agent Framework for Python: 1.0.0 is the lowest release whose APIs agentexperience.maf uses (CI tests it).
 maf = ["agent-framework-core>=1.0.0"]
+# OpenTelemetry API only (agentexperience.telemetry): the host brings the SDK and the exporters.
+otel = ["opentelemetry-api>=1.27"]
 
 [project.urls]
 Repository = "https://github.com/fabbrik/AgentExperience.NET"
@@ -38,6 +40,8 @@ dev = [
     "testcontainers[postgres]>=4.8",
     "psycopg[binary]>=3.2",
     "agent-framework-core>=1.0.0",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
 ]
 
 [build-system]

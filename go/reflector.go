@@ -1,6 +1,7 @@
 package agentexperience
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -135,6 +136,23 @@ func bound(items []string, noun string) []string {
 // Reflect is the deterministic reflection of a finished run. No tool name, argument or error text beyond its class
 // reaches the lesson.
 func Reflect(run *CapturedRun, evaluation *VerificationResult, reflectionID UUID, createdAt Instant) Reflection {
+	return reflectObserved(context.Background(), false, run, evaluation, reflectionID, createdAt)
+}
+
+func reflectObserved(ctx context.Context, nested bool, run *CapturedRun, evaluation *VerificationResult,
+	reflectionID UUID, createdAt Instant) Reflection {
+	_, op := Observe(ctx, "reflect", nested)
+	defer op.End()
+	if op != nil {
+		op.Set(AttributeRunID, run.RunID.String())
+		op.Set(AttributeReflectionID, reflectionID.String())
+	}
+	reflection := reflectRun(run, evaluation, reflectionID, createdAt)
+	op.Done(string(evaluation.Outcome.Status))
+	return reflection
+}
+
+func reflectRun(run *CapturedRun, evaluation *VerificationResult, reflectionID UUID, createdAt Instant) Reflection {
 	outcome := evaluation.Outcome
 	status := outcome.Status
 	var evidenceIDs []UUID

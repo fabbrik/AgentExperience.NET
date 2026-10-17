@@ -2,6 +2,7 @@ package agentexperience
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sort"
 )
@@ -82,6 +83,28 @@ type RunCapture struct {
 // be strictly positive. The ToolResult policy must keep the "value" field (allowlisted, not a secret name): one that
 // dropped it would silently store every result and error as null, so it is refused.
 func StartRun(run CapturedRun, sanitization Sanitization, limits CaptureLimits) (*RunCapture, error) {
+	return StartRunContext(context.Background(), run, sanitization, limits)
+}
+
+// StartRunContext is StartRun reporting to the observer (SetObserver) under ctx, so the operation's span is a child of
+// the span ctx carries.
+func StartRunContext(ctx context.Context, run CapturedRun, sanitization Sanitization,
+	limits CaptureLimits) (*RunCapture, error) {
+	_, op := Observe(ctx, "capture.start_run", false)
+	defer op.End()
+	if op != nil {
+		op.Set(AttributeRunID, run.RunID.String())
+	}
+	capture, err := startRun(run, sanitization, limits)
+	if err != nil {
+		op.Fail(err)
+		return nil, err
+	}
+	op.Done("Started")
+	return capture, nil
+}
+
+func startRun(run CapturedRun, sanitization Sanitization, limits CaptureLimits) (*RunCapture, error) {
 	if run.RunID.IsZero() {
 		return nil, errors.New("a run must be named by a non-empty UUID")
 	}
@@ -168,10 +191,25 @@ func (c *RunCapture) RecordExposure(exposures ...RunExposure) (AppendOutcome, er
 // AppendAttempt sanitizes and records one attempt, and returns capture's answer. An attempt with an empty
 // AttemptID is an error: it could never be told apart from another.
 func (c *RunCapture) AppendAttempt(attempt RawAttempt) (AppendOutcome, error) {
-	if attempt.AttemptID.IsZero() {
-		return "", errors.New("an attempt must be named by a non-empty UUID")
+	return c.AppendAttemptContext(context.Background(), attempt)
+}
+
+// AppendAttemptContext is AppendAttempt reporting to the observer (SetObserver) under ctx.
+func (c *RunCapture) AppendAttemptContext(ctx context.Context, attempt RawAttempt) (AppendOutcome, error) {
+	_, op := Observe(ctx, "capture.append_attempt", false)
+	defer op.End()
+	if op != nil {
+		op.Set(AttributeRunID, c.run.RunID.String())
+		op.Set(AttributeAttemptID, attempt.AttemptID.String())
 	}
-	return c.appendAttempt(attempt), nil
+	if attempt.AttemptID.IsZero() {
+		err := errors.New("an attempt must be named by a non-empty UUID")
+		op.Fail(err)
+		return "", err
+	}
+	outcome := c.appendAttempt(attempt)
+	op.Done(string(outcome))
+	return outcome, nil
 }
 
 func (c *RunCapture) appendAttempt(attempt RawAttempt) AppendOutcome {
@@ -243,19 +281,36 @@ func (c *RunCapture) appendAttempt(attempt RawAttempt) AppendOutcome {
 // Completed, Failed or Cancelled, and the run cannot end before it started (both are errors). A run completes once:
 // a second call answers Conflict and changes nothing.
 func (c *RunCapture) Complete(status RunExecutionStatus, endedAt Instant) (AppendOutcome, error) {
+	return c.CompleteContext(context.Background(), status, endedAt)
+}
+
+// CompleteContext is Complete reporting to the observer (SetObserver) under ctx.
+func (c *RunCapture) CompleteContext(ctx context.Context, status RunExecutionStatus,
+	endedAt Instant) (AppendOutcome, error) {
+	_, op := Observe(ctx, "capture.complete_run", false)
+	defer op.End()
+	if op != nil {
+		op.Set(AttributeRunID, c.run.RunID.String())
+	}
 	switch status {
 	case RunCompleted, RunFailed, RunCancelled:
 	default:
-		return "", errors.New("a run ends Completed, Failed or Cancelled")
+		err := errors.New("a run ends Completed, Failed or Cancelled")
+		op.Fail(err)
+		return "", err
 	}
 	if endedAt.Before(c.run.StartedAt) {
-		return "", errors.New("a run cannot end before it started")
+		err := errors.New("a run cannot end before it started")
+		op.Fail(err)
+		return "", err
 	}
 	if c.run.ExecutionStatus != "" {
+		op.Done(string(OutcomeConflict))
 		return OutcomeConflict, nil
 	}
 	c.run.ExecutionStatus = status
 	c.run.EndedAt = &endedAt
+	op.Done(string(OutcomeRecorded))
 	return OutcomeRecorded, nil
 }
 

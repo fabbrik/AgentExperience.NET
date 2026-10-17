@@ -244,9 +244,9 @@ lesson was injected) is published as [a language-neutral contract](contract/READ
 [what 1.5 adds](contract/README-1.5.md), [what 1.6 adds](contract/README-1.6.md): retrieval by meaning, with
 embeddings, [what 1.7 adds](contract/README-1.7.md): the lessons view): a JSON Schema, the SQL to run, and
 fixtures generated from and checked against this implementation on every build. A pure-Python core that passes
-contract 1.7 (including retrieval by meaning, with an embedder you register, and a read-only lessons view), with a one-call Python Agent Framework integration, is in [`python/`](python/README.md). A lesson a .NET
+contract 1.7 (including retrieval by meaning, with an embedder you register, and a read-only lessons view), with a one-call Python Agent Framework integration and optional [OpenTelemetry telemetry](docs/telemetry.md#the-python-and-go-ports), is in [`python/`](python/README.md). A lesson a .NET
 agent learned is injected into a Python agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.7 (including retrieval by meaning, with an embedder you register, and a read-only lessons view), with a one-call Go Agent
-Framework integration, are in [`go/`](go/README.md). A lesson a .NET agent learned is injected into a Go agent, and
+Framework integration and an optional OpenTelemetry module, are in [`go/`](go/README.md). A lesson a .NET agent learned is injected into a Go agent, and
 the other way round. Both are published with each release, at the same version as the NuGet packages (a Python alpha,
 `0.1.0aN`, for `0.1.0-preview.N`), and are previews in the same sense:
 

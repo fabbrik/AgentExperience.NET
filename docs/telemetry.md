@@ -17,7 +17,10 @@ re-labelling a dashboard:
 - `InjectionTelemetryTests`;
 - `ErasureTelemetryTests`;
 - `DiagnosticsAgreementTests` and `ErasureDiagnosticsAgreementTests` (each adapter restates Core's wire names, and
-  these assert that each copy agrees with Core).
+  these assert that each copy agrees with Core);
+- `TelemetryNamesFileTests`, which generates [`telemetry-names.json`](telemetry-names.json) from the definitions above
+  (sources, operations with their outcome sets, instruments, dimensions, error classes and attributes) and fails on
+  drift. The Python and Go ports load that file in their own tests; see [The Python and Go ports](#the-python-and-go-ports).
 
 > **Superseded names.** §24 of [`AgentExperience_NET_MAF_Production_Architecture.md`](AgentExperience_NET_MAF_Production_Architecture.md)
 > is the pre-implementation research proposal. Its span names (`agentexperience.rank`, `agentexperience.persist`, …)
@@ -332,6 +335,71 @@ Notes:
   plus `verify`, `reflect`, `lifecycle.commit` and `index` (`nested=true`), and the `reindex` inside that `index`
   (`nested=true`). A hung embedding provider inside the post-commit hook therefore reaches `failures` or a
   `Timeout`-classified span, instead of being absorbed into the outer operation.
+
+## The Python and Go ports
+
+The Python and Go ports emit the same telemetry for the operations they actually perform, so one dashboard and one
+alert rule serve a mixed fleet. Everything above holds for them: the same two source and meter names, the same span
+names, the same three instruments with the same units, the same four dimensions with the same value sets, and the same
+span attributes. The names and values are pinned against [`telemetry-names.json`](telemetry-names.json), which a .NET
+test generates from the definitions listed at the top of this page (`AGENTEXPERIENCE_TELEMETRY_NAMES_UPDATE=1` rewrites
+it; the diff is then reviewed and committed on purpose). A Python test and a Go test load it, and fail when a name or
+value a port can emit is not in it.
+
+### Enabling it
+
+Neither core imports OpenTelemetry. They call a small observer hook (`agentexperience.observer` in Python,
+`agentexperience.SetObserver` in Go) that costs one `None`/`nil` check when nothing is registered. An optional adapter
+turns the hook into OpenTelemetry, depends on the OpenTelemetry API only, and configures no SDK and no exporter:
+
+```python
+# pip install "agenticexperience[otel]"
+from agentexperience import telemetry
+
+telemetry.enable()  # the global tracer and meter providers your application configured
+```
+
+```go
+// go get github.com/fabbrik/AgentExperience.NET/go/telemetry
+disable := telemetry.Enable() // the global providers; telemetry.WithTracerProvider / WithMeterProvider override
+defer disable()
+```
+
+An exporter, listener or observer that raises or panics is swallowed and never reaches the agent or changes a result.
+Attributes never carry record content, task text, scopes or exception messages; a failing operation records its
+exception's (or error's) type name only. `error.type` is the language's own type name (`ValueError`, `errors.errorString`)
+where .NET writes the .NET type's full name.
+
+### What they emit
+
+A port emits an operation only when it performs what the .NET operation of that name does. Outcomes are verbatim members
+of that operation's .NET outcome set, or `Faulted` when the operation failed with an error (an exception in Python, a
+returned error in Go).
+
+| `operation` | Source | Python | Go | Outcomes reached |
+| --- | --- | --- | --- | --- |
+| `capture.start_run`, `capture.append_attempt`, `capture.complete_run` | Core | `RunCapture.start`, `.append_attempt`, `.complete` | `StartRun`, `AppendAttempt`, `Complete` (and the `...Context` forms) | `Started`; `Recorded`, `DuplicateNoOp`, `Conflict`, `SanitizationRejected`, `CapacityExceeded`; `Recorded`, `Conflict` (Python also `DuplicateNoOp`) |
+| `verify`, `reflect` | Core | `aggregate`, `reflect` | `Aggregate`, `Reflect` | `Unknown`, `Verified`, `Failed` |
+| `finalize` | Core | `finalize` | `Finalize` | `Validated`, `Quarantined`. It covers verification, reflection, record creation and the initial event; the store write is not a separate `lifecycle.commit` |
+| `retrieve` | Core | the text and vector search and the ranking inside an injection | the same | `Completed`, `Failed` (the text search failed) |
+| `index` | Core | the background embedding write after a record is stored | the same | `Indexed`, `Stale`, `Missing`, `ProviderFailed`, `IndexFailed` |
+| `inject` | MAF | the context provider | the context provider | `Injected`, `NothingToInject`, `Skipped`, `RetrievalFailed`, `Failed` |
+| `record_injection` | MAF | the background injection record (measurements only, no span) | the same | `Recorded`, `NotTracked`, `NotRecorded`, `OutcomeUnknown`, with the failure classes of the table above |
+
+The ports never emit `lifecycle.commit`, `confidence.apply`, `deindex`, `reindex`, `reuse_feedback`, `delete`,
+`retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal` or `record.authorship.backfill`: they do not perform
+them. Differences from .NET that a dashboard should know:
+
+- `nested` is `true` for `verify` and `reflect` inside `finalize`, and `false` for everything else: `inject`,
+  `record_injection` and `index` are never nested, and the `retrieve` inside an `inject` is on the Core meter, so `false`.
+  A span's parent is the span that ran it, or the host's current span.
+- The ports set only these span attributes beyond the common ones: `run_id`, `attempt_id`, `experience_id`,
+  `reflection_id`, `stage` (on `finalize`: `Load`, `Evaluate`, `Reflect` or `CreateRecord`, the last stage reached) and
+  `omitted_count` (on `inject`). They do not write `correlation_id`, `event_id`, `retracted_count`, `history_read`,
+  `confidence.admission`, `independence.refusal`, `reflection.screening_refusal` or `reuse_evidence.submitted`, because
+  they have no such thing.
+- An `inject` is `Faulted` only when something escapes it (the invocation's own cancellation in Python); every other
+  failure is a returned outcome, as in .NET.
 
 ## What is not instrumented
 
