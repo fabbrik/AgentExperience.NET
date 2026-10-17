@@ -1,5 +1,6 @@
 // Package inmemory is an in-memory store for development and tests: no PostgreSQL. It keeps only what the contract
-// needs (insert a finalized record, read one back, the text search, and when each record was last injected),
+// needs (insert a finalized record, read one back, the text search, when each record was last injected, and the
+// embeddings of contract 1.6 with their nearest-neighbour search),
 // honouring scope and the authorization
 // bounds the way the PostgreSQL store's row-level security does. Its text search is the .NET in-memory store's:
 // words normalized to Unicode form KC and lower-cased, the English stopwords PostgreSQL drops left out of a query,
@@ -12,6 +13,7 @@ package inmemory
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -176,6 +178,17 @@ type Store struct {
 	order      []ae.UUID
 	events     map[ae.UUID]Event
 	injections map[ae.UUID]Injection
+	embeddings map[ae.UUID]Embedding
+}
+
+// Embedding is a record's stored embedding (contract 1.6): the model, the dimension, the content hash of the summary
+// that was embedded, the record revision it was read at, and the vector, its components 32-bit floats.
+type Embedding struct {
+	ModelID        string
+	Dimension      int
+	ContentHash    string
+	SourceRevision int64
+	Vector         []float32
 }
 
 // Injection is when a record was last injected in its own scope, and how many injected blocks delivered it.
@@ -186,7 +199,8 @@ type Injection struct {
 
 // New is a store holding records (each experience ID once).
 func New(records ...ae.ExperienceRecord) (*Store, error) {
-	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}, injections: map[ae.UUID]Injection{}}
+	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}, injections: map[ae.UUID]Injection{},
+		embeddings: map[ae.UUID]Embedding{}}
 	for _, record := range records {
 		if _, held := s.records[record.ExperienceID]; held {
 			return nil, errors.New("two records share one experience ID")
@@ -465,7 +479,138 @@ func (s *Store) SetInjection(id ae.UUID, injection Injection) {
 	s.injections[id] = injection
 }
 
+// WriteEmbedding stores a record's embedding as sql/write-experience-embedding.sql does: only for a record held in
+// exactly the write's scope and still at exactly its source revision (Written); otherwise Stale with the record's
+// revision, or Missing for an unknown record or one in another scope or outside the bounds. A row stored from a newer
+// revision is never replaced by an older one. A write that fails Validate is an error, and stores nothing.
+func (s *Store) WriteEmbedding(ctx context.Context, bounds ae.AuthorizationBounds,
+	write ae.EmbeddingWrite) (ae.EmbeddingWriteResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ae.EmbeddingWriteResult{}, err
+	}
+	if err := write.Validate(); err != nil {
+		return ae.EmbeddingWriteResult{}, err
+	}
+	if !Permits(bounds, write.Scope) {
+		return ae.EmbeddingWriteResult{Outcome: ae.EmbeddingMissing}, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held, ok := s.records[write.ExperienceID]
+	if !ok || !held.record.Scope.Equal(write.Scope) {
+		return ae.EmbeddingWriteResult{Outcome: ae.EmbeddingMissing}, nil
+	}
+	revision := held.record.Revision
+	if existing, stored := s.embeddings[write.ExperienceID]; revision != write.SourceRevision ||
+		(stored && existing.SourceRevision > write.SourceRevision) {
+		return ae.EmbeddingWriteResult{Outcome: ae.EmbeddingStale, CurrentRevision: revision}, nil
+	}
+	s.embeddings[write.ExperienceID] = Embedding{ModelID: write.ModelID, Dimension: write.Dimension,
+		ContentHash: write.ContentHash, SourceRevision: write.SourceRevision,
+		Vector: append([]float32(nil), write.Vector...)}
+	return ae.EmbeddingWriteResult{Outcome: ae.EmbeddingWritten}, nil
+}
+
+// Embedding is a record's stored embedding, for tests; ok is false when it has none.
+func (s *Store) Embedding(id ae.UUID) (Embedding, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	held, ok := s.embeddings[id]
+	held.Vector = append([]float32(nil), held.Vector...)
+	return held, ok
+}
+
+// CosineDistance is 1 - cos of two vectors of equal length, clamped to [0, 2]: the components are 32-bit floats,
+// the arithmetic double. NaN when either has no magnitude (a zero vector).
+func CosineDistance(left, right []float32) float64 {
+	var dot, leftSquares, rightSquares float64
+	for i := range left {
+		a, b := float64(left[i]), float64(right[i])
+		dot += a * b
+		leftSquares += a * a
+		rightSquares += b * b
+	}
+	norm := math.Sqrt(leftSquares) * math.Sqrt(rightSquares)
+	if norm == 0 || math.IsNaN(norm) {
+		return math.NaN()
+	}
+	return math.Min(math.Max(1.0-dot/norm, 0), 2)
+}
+
+// SearchVectors is the nearest-neighbour search: embeddings of the query's model and dimension, of records in exactly
+// the query's scope with an eligible status and confidence (and not model-authored, when excluded), by cosine
+// distance, ties by experience ID, NaN last, at most the limit. With none, the outcome says why: ModelMismatch or
+// DimensionMismatch when eligible embeddings exist but none is comparable, else Found and empty. Nothing outside the
+// bounds. A query that fails Validate is an error.
+func (s *Store) SearchVectors(ctx context.Context, bounds ae.AuthorizationBounds,
+	query ae.VectorQuery) (ae.VectorSearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ae.VectorSearchResult{}, err
+	}
+	if err := query.Validate(); err != nil {
+		return ae.VectorSearchResult{}, err
+	}
+	scope := query.Scope
+	if !Permits(bounds, scope) {
+		return ae.VectorSearchResult{Outcome: ae.VectorFound}, nil
+	}
+	eligible := map[ae.ExperienceStatus]bool{}
+	for _, status := range query.EffectiveStatuses() {
+		eligible[status] = true
+	}
+	minConfidence := query.EffectiveMinConfidence()
+
+	type candidate struct {
+		record    *indexed
+		embedding Embedding
+	}
+	s.mu.RLock()
+	var held []candidate
+	for _, id := range s.order {
+		embedding, ok := s.embeddings[id]
+		if !ok {
+			continue
+		}
+		x := s.records[id]
+		record := &x.record
+		if !record.Scope.Equal(scope) || !eligible[record.Status] || record.ReuseConfidence < minConfidence ||
+			(query.ExcludeModelAuthored && ae.IsModelAuthored(record.Reflection)) {
+			continue
+		}
+		held = append(held, candidate{x, embedding})
+	}
+	s.mu.RUnlock()
+
+	var hits []ae.VectorHit
+	modelHeld := false
+	for _, c := range held {
+		if c.embedding.ModelID != query.ModelID {
+			continue
+		}
+		modelHeld = true
+		if c.embedding.Dimension != len(query.Vector) || len(c.embedding.Vector) != len(query.Vector) {
+			continue
+		}
+		hits = append(hits, ae.VectorHit{Record: mustClone(c.record.record),
+			Distance: CosineDistance(c.embedding.Vector, query.Vector)})
+	}
+	switch {
+	case len(hits) > 0:
+		hits = ae.OrderHits(hits)
+		if limit := query.EffectiveLimit(); len(hits) > limit {
+			hits = hits[:limit]
+		}
+		return ae.VectorSearchResult{Outcome: ae.VectorFound, Hits: hits}, nil
+	case len(held) == 0:
+		return ae.VectorSearchResult{Outcome: ae.VectorFound}, nil
+	case !modelHeld:
+		return ae.VectorSearchResult{Outcome: ae.VectorModelMismatch}, nil
+	}
+	return ae.VectorSearchResult{Outcome: ae.VectorDimensionMismatch}, nil
+}
+
 var (
 	_ ae.Store             = (*Store)(nil)
 	_ ae.InjectionRecorder = (*Store)(nil)
+	_ ae.EmbeddingIndex    = (*Store)(nil)
 )

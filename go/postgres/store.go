@@ -1,5 +1,6 @@
 // Package postgres is the PostgreSQL store: it writes finalized records and their initial event, reads records
-// back, runs the contract's text search, and records injections, all as the application role inside a transaction
+// back, runs the contract's text search, records injections, and (contract 1.6, with pgvector) writes and searches
+// embeddings, all as the application role inside a transaction
 // that first declared its bounds.
 //
 // It runs against a schema the .NET migrator applied (ExperienceSchemaMigrator.MigrateAsync, then
@@ -30,6 +31,10 @@ const (
 	DeclareBoundsSQL   = "declare-bounds.sql"
 	SearchSQL          = "search-experience-text.sql"
 	RecordInjectionSQL = "record-injection.sql"
+	// WriteEmbeddingSQL and SearchVectorSQL are contract 1.6's: each holds several statements, each starting at its
+	// "-- statement: <name>" line (ContractStatements).
+	WriteEmbeddingSQL = "write-experience-embedding.sql"
+	SearchVectorSQL   = "search-experience-vector.sql"
 )
 
 const (
@@ -38,6 +43,7 @@ const (
 )
 
 //go:embed sql/declare-bounds.sql sql/search-experience-text.sql sql/record-injection.sql
+//go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql
 var contractFiles embed.FS
 
 // ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
@@ -48,6 +54,33 @@ func ContractSQL(name string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ContractStatements are the statements of a contract SQL file that holds several, by name: each starts at its
+// "-- statement: <name>" line and runs to the next one (or the end); the header before the first is not a statement.
+func ContractStatements(name string) (map[string]string, error) {
+	text, err := ContractSQL(name)
+	if err != nil {
+		return nil, err
+	}
+	lines := map[string][]string{}
+	current := ""
+	started := false
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if label, ok := strings.CutPrefix(line, "-- statement: "); ok {
+			current, started = strings.TrimSpace(label), true
+			lines[current] = nil
+			continue
+		}
+		if started {
+			lines[current] = append(lines[current], line)
+		}
+	}
+	statements := make(map[string]string, len(lines))
+	for key, body := range lines {
+		statements[key] = strings.TrimSpace(strings.Join(body, "\n"))
+	}
+	return statements, nil
 }
 
 // Statement is a SQL text with its @name placeholders numbered for the driver, and the parameter each number
@@ -224,6 +257,12 @@ type Store struct {
 	declare Statement
 	search  Statement
 	record  Statement
+	// Contract 1.6's: the embedding write (its two statements), and the vector search statements, which keep their
+	// {dim} until the query vector's length is known.
+	writeEmbedding Statement
+	probeRevision  Statement
+	vectorSQL      map[string]string
+	probes         map[string]Statement
 }
 
 // NewStore is a store that runs its transactions on db, which the host controls (and closes).
@@ -243,8 +282,33 @@ func NewStore(db Beginner) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{db: db, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
-		record: ToDriverPlaceholders(record)}, nil
+	writes, err := ContractStatements(WriteEmbeddingSQL)
+	if err != nil {
+		return nil, err
+	}
+	vectors, err := ContractStatements(SearchVectorSQL)
+	if err != nil {
+		return nil, err
+	}
+	store := &Store{db: db, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
+		record: ToDriverPlaceholders(record), writeEmbedding: ToDriverPlaceholders(writes["write"]),
+		probeRevision: ToDriverPlaceholders(writes["probe-revision"]), vectorSQL: vectors,
+		probes: map[string]Statement{}}
+	for _, name := range []string{"write", "probe-revision"} {
+		if writes[name] == "" {
+			return nil, fmt.Errorf("%s has no %q statement", WriteEmbeddingSQL, name)
+		}
+	}
+	for _, name := range []string{"search", "search-excluding-model-authored", "compatibility",
+		"compatibility-excluding-model-authored"} {
+		if vectors[name] == "" {
+			return nil, fmt.Errorf("%s has no %q statement", SearchVectorSQL, name)
+		}
+	}
+	for _, name := range []string{"compatibility", "compatibility-excluding-model-authored"} {
+		store.probes[name] = ToDriverPlaceholders(vectors[name])
+	}
+	return store, nil
 }
 
 // Open is a store on a new connection pool for a connection string (as the application role). Close it with Close.
@@ -520,6 +584,176 @@ func (s *Store) RecordInjection(ctx context.Context, bounds ae.AuthorizationBoun
 }
 
 var _ ae.InjectionRecorder = (*Store)(nil)
+
+// WriteEmbedding stores a record's embedding (contract 1.6): in one transaction that declared bounds, "write" from
+// sql/write-experience-embedding.sql and, when it wrote no row, "probe-revision". Written; Stale with the record's
+// current revision; Missing for an unknown ID, a record in another scope or an erased one. The write is validated
+// first (an error, and nothing runs). Needs the grants of sql/application-role-privileges-1.6.sql and the vectors
+// migrations.
+func (s *Store) WriteEmbedding(ctx context.Context, bounds ae.AuthorizationBounds,
+	write ae.EmbeddingWrite) (ae.EmbeddingWriteResult, error) {
+	if err := write.Validate(); err != nil {
+		return ae.EmbeddingWriteResult{}, err
+	}
+	scope := write.Scope
+	values := map[string]any{
+		"experience_id":   [16]byte(write.ExperienceID),
+		"tenant_id":       scope.TenantID,
+		"application_id":  scope.ApplicationID,
+		"project_id":      scope.ProjectID,
+		"team_id":         scope.TeamID,
+		"agent_id":        scope.AgentID,
+		"user_id":         scope.UserID,
+		"model_id":        write.ModelID,
+		"dimension":       int32(write.Dimension),
+		"content_hash":    write.ContentHash,
+		"source_revision": write.SourceRevision,
+		"embedding":       ae.VectorLiteral(write.Vector),
+		"now":             write.Now.TruncateToMicroseconds().Time(),
+	}
+	writeArgs, err := s.writeEmbedding.Args(values)
+	if err != nil {
+		return ae.EmbeddingWriteResult{}, err
+	}
+	probeArgs, err := s.probeRevision.Args(values)
+	if err != nil {
+		return ae.EmbeddingWriteResult{}, err
+	}
+	result := ae.EmbeddingWriteResult{Outcome: ae.EmbeddingWritten}
+	err = s.transaction(ctx, bounds, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, s.writeEmbedding.SQL, writeArgs...)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			return nil
+		}
+		var revision int64
+		switch err := tx.QueryRow(ctx, s.probeRevision.SQL, probeArgs...).Scan(&revision); {
+		case errors.Is(err, pgx.ErrNoRows):
+			result = ae.EmbeddingWriteResult{Outcome: ae.EmbeddingMissing}
+		case err != nil:
+			return err
+		default:
+			result = ae.EmbeddingWriteResult{Outcome: ae.EmbeddingStale, CurrentRevision: revision}
+		}
+		return nil
+	})
+	if err != nil {
+		return ae.EmbeddingWriteResult{}, err
+	}
+	return result, nil
+}
+
+// SearchVectors is the nearest-neighbour search (contract 1.6): in one transaction that declared bounds, "search" (or
+// "search-excluding-model-authored") from sql/search-experience-vector.sql with {dim} the query vector's length and,
+// when it returns no row, the matching compatibility probe. Hits come back nearest first, ties by experience ID,
+// NaN last; a sealed row (payload_version 2) is skipped. The query is validated first (an error, and nothing runs).
+func (s *Store) SearchVectors(ctx context.Context, bounds ae.AuthorizationBounds,
+	query ae.VectorQuery) (ae.VectorSearchResult, error) {
+	if err := query.Validate(); err != nil {
+		return ae.VectorSearchResult{}, err
+	}
+	searchName, probeName := "search", "compatibility"
+	if query.ExcludeModelAuthored {
+		searchName, probeName = "search-excluding-model-authored", "compatibility-excluding-model-authored"
+	}
+	search := ToDriverPlaceholders(strings.ReplaceAll(s.vectorSQL[searchName], "{dim}",
+		strconv.Itoa(len(query.Vector))))
+	probe := s.probes[probeName]
+	scope := query.Scope
+	statuses := query.EffectiveStatuses()
+	names := make([]string, len(statuses))
+	for i, status := range statuses {
+		names[i] = string(status)
+	}
+	values := map[string]any{
+		"tenant_id":      scope.TenantID,
+		"application_id": scope.ApplicationID,
+		"project_id":     scope.ProjectID,
+		"team_id":        scope.TeamID,
+		"agent_id":       scope.AgentID,
+		"user_id":        scope.UserID,
+		"statuses":       names,
+		"min_confidence": query.EffectiveMinConfidence(),
+		"model_id":       query.ModelID,
+		"query_vector":   ae.VectorLiteral(query.Vector),
+		"limit":          int32(query.EffectiveLimit()),
+	}
+	searchArgs, err := search.Args(values)
+	if err != nil {
+		return ae.VectorSearchResult{}, err
+	}
+	probeArgs, err := probe.Args(values)
+	if err != nil {
+		return ae.VectorSearchResult{}, err
+	}
+	result := ae.VectorSearchResult{Outcome: ae.VectorFound}
+	err = s.transaction(ctx, bounds, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, search.SQL, searchArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		fields := rows.FieldDescriptions()
+		count := len(ae.ColumnNames)
+		if len(fields) != count+4 || fields[count+3].Name != "distance" {
+			return errors.New("the vector search returned columns in an unexpected order")
+		}
+		for i, name := range ae.ColumnNames {
+			if fields[i].Name != name {
+				return errors.New("the vector search returned columns in an unexpected order")
+			}
+		}
+		returned := 0
+		for rows.Next() {
+			returned++
+			var row recordRow
+			var distance *float64
+			targets := append(row.targets(), new(any), new(any), new(any), &distance)
+			if err := rows.Scan(targets...); err != nil {
+				return err
+			}
+			if row.payloadVersion != ae.PayloadVersion {
+				continue
+			}
+			if distance == nil {
+				return errors.New("the vector search returned a row with no distance")
+			}
+			record, err := row.record()
+			if err != nil {
+				return err
+			}
+			result.Hits = append(result.Hits, ae.VectorHit{Record: record, Distance: *distance})
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		if returned > 0 {
+			return nil
+		}
+		var comparable, sameModel bool
+		if err := tx.QueryRow(ctx, probe.SQL, probeArgs...).Scan(&comparable, &sameModel); err != nil {
+			return err
+		}
+		switch {
+		case !comparable:
+		case sameModel:
+			result.Outcome = ae.VectorDimensionMismatch
+		default:
+			result.Outcome = ae.VectorModelMismatch
+		}
+		return nil
+	})
+	if err != nil {
+		return ae.VectorSearchResult{}, err
+	}
+	result.Hits = ae.OrderHits(result.Hits)
+	return result, nil
+}
+
+var _ ae.EmbeddingIndex = (*Store)(nil)
 
 // recordRow is the eighteen record columns as the driver reads them.
 type recordRow struct {

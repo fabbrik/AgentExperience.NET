@@ -58,7 +58,8 @@ func ContextProviderOf(config *agent.Config) *ContextProvider {
 	return nil
 }
 
-// Close waits for every injection record the provider started to end, or for ctx to be done, whichever is first,
+// Close waits for every injection record the provider started, and every background embedding write its
+// configuration started, to end, or for ctx to be done, whichever is first,
 // and returns ctx's error in the second case. Each record is bounded by InjectionRecordTimeout, so a host shutting
 // down can call it with a context of a few seconds. A store write that overran that bound was abandoned when its
 // record ended and is not awaited: it may still be running (AbandonedInjectionRecords counts them). Close may run
@@ -66,18 +67,20 @@ func ContextProviderOf(config *agent.Config) *ContextProvider {
 // be awaited.
 func (p *ContextProvider) Close(ctx context.Context) error {
 	p.mu.Lock()
-	if p.running == 0 {
-		p.mu.Unlock()
-		return nil
-	}
 	idle := p.idle
-	p.mu.Unlock()
-	select {
-	case <-idle:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if p.running == 0 {
+		idle = nil
 	}
+	p.mu.Unlock()
+	if idle != nil {
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	// The background embedding writes of the records stored (contract 1.6) too.
+	return p.settings.index.wait(ctx)
 }
 
 // beginRecording counts a record started.

@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.5, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.5 (and so every 1.0, 1.1, 1.2, 1.3 and 1.4 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.6, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.6 (and so every 1.0, 1.1, 1.2, 1.3, 1.4 and 1.5 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -81,6 +81,47 @@ the identity names its application, the recorded environment is fixed so the out
 and it prints each run and the block. Its output is checked in as
 [`quickstart.expected.txt`](maf/examples/quickstart/quickstart.expected.txt), and a test compares them.
 
+### Semantic retrieval: registering an embedder
+
+Without an embedder retrieval is text only, and a reworded query finds nothing it shares no words with. Implement
+`ae.Embedder` over any model (none is a dependency of this repository) and set `maf.Options.Embedder`, and retrieval
+becomes hybrid:
+
+```go
+type myEmbedder struct{ client *myprovider.Client }
+
+func (myEmbedder) ModelID() string { return "my-embedding-model" } // stored with every vector; another model's vectors are never compared
+func (myEmbedder) Dimension() int  { return 1536 }                // the vector's length, known without calling the provider
+
+func (e myEmbedder) Embed(ctx context.Context, text string) ([]float32, error) { // exactly Dimension() finite numbers
+	return e.client.Embed(ctx, text)
+}
+
+err := maf.UseAgentExperience(&config, maf.Options{Store: store, Identity: identity, Verify: verify,
+	Embedder: myEmbedder{client}})
+```
+
+- **In-memory and PostgreSQL stores.** `inmemory.Store` compares 32-bit floats by cosine distance. `postgres.Store`
+  needs PostgreSQL with pgvector, the .NET vectors package's migrations (`0004`, `0020`) and the grants of
+  `sql/application-role-privileges-1.6.sql` after the 1.0 and 1.4 files (or the .NET privileges call); it runs the
+  contract's two new SQL files as written (`WriteEmbedding`, `SearchVectors`). Both are an `ae.EmbeddingIndex`.
+- **Fail-open.** The vector channel never fails or delays past `VectorTimeout` (default 500 ms, covering the embedding
+  and the search) the text answer, and at most `maf.MaxVectorCalls` (16) embedder and vector-store calls are in flight at
+  once, abandoned ones included, so a hung provider cannot starve the text search; past that a call fails at once. When
+  the channel does not contribute the injection answers from text and reports the reason through `OnVectorFallback`
+  and `InjectionResult.VectorFallback`: `NotConfigured` (no embedder, or a store that is not an `ae.EmbeddingIndex`),
+  `ProviderUnavailable` (the embedder failed, panicked, ran out of time, or returned a blank model ID or an empty,
+  wrong-length or non-finite vector; no statement runs), `ModelMismatch` or `DimensionMismatch` (every stored vector is
+  of another model or width) and `VectorSearchFailed`. A failure of the text search still fails the injection, as
+  without an embedder. `MinVectorRelevance` (0 to 1) drops vector candidates below it; text candidates are never
+  dropped.
+- **Writing embeddings.** After a record is stored, a goroutine embeds its summary (task ID, task summary and lesson)
+  and writes it, only while the record is still at that revision. It never runs inside the record's own commit and
+  never fails capture: a failure is reported to `OnCaptureFailure` with the stage `maf.StageIndex` (`"Index"`).
+  `maf.WaitForIndexWrites(ctx, &config)` (and `ContextProviderOf(&config).Close(ctx)`) awaits the ones still running.
+  Records stored before an embedder was registered have no vector until one is written; the .NET library's re-index
+  does it for a shared database.
+
 ### What the one call wires
 
 - **Capture**: agent middleware and function invocation middleware, each put first so it wraps everything else on
@@ -113,6 +154,9 @@ and it prints each run and the block. Its output is checked in as
   overruns it is abandoned. `OnInjectionRecorded` reports how it ended (`Recorded`, `NotTracked`, `NotRecorded` or
   `OutcomeUnknown`, as .NET's `record_injection` operation), and `maf.ContextProviderOf(&config).Close(ctx)` awaits the
   records still running, for a host shutting down.
+- **Semantic retrieval** (contract 1.6), with an embedder you register (below). Injection then runs the text and the
+  vector channel together, merges them and ranks as before; each stored record's summary is embedded in the
+  background.
 - **The task text, and where history sits.** Capture records the task text of the invocation's own input. In the Go
   SDK a session's history provider always runs before the context providers, so injection sees the replayed history,
   then the new input, and derives the task text from both, as .NET's `ChatClientAgent`-level provider does: a request
@@ -177,9 +221,13 @@ Python agents on the same database.
 - **The error class.** `ErrorClass` reduces a captured error to its short class.
 - **Search and ranking.** `SearchParameters` and `AuthorizationBounds` are the contract statements' parameters;
   `Rank` applies the contract's safety checks, truncation and ranking to the rows a search returns.
+- **Semantic retrieval** (contract 1.6). `Embedder` is your embedding object; `RetrievalSummary`, `RecordSummary` and
+  `ContentHash` are what is embedded and how it is hashed; `EmbeddingWrite` and `VectorQuery` validate before any
+  statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list (`Rank` itself is
+  unchanged, and ranks every merged candidate, up to 100).
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
-  role, reads records back, runs the contract's text search, and records injections (`RecordInjection`, contract
-  1.4), every transaction first declaring its bounds. The contract's three statement files are embedded and run as
+  role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
+  1.4) and writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6), every transaction first declaring its bounds. The contract's three statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
@@ -202,7 +250,7 @@ Python agents on the same database.
   an invocation runs under and `DevelopmentIdentity` (see [the quick start](#quick-start-with-microsoft-agent-framework)),
   in the core, so they need no Agent Framework type.
 
-It does nothing outside contract 1.x: no grants, crypto-shredding, provenance signing or vectors, and no lifecycle
+It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, and no lifecycle
 after finalization. It writes no logs at all, so no record content is ever logged.
 
 [`example_test.go`](example_test.go) captures a run, finalizes it and renders the block; `go test` runs it and checks
@@ -271,7 +319,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.5 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.6 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -304,15 +352,18 @@ cancellation, parallel calls), runs the quick start and compares its output
 
 **PostgreSQL** (the `postgres` build tag, in `postgres/pgtest/` and `maf/`, Go 1.26): in `postgres/pgtest/`, each
 finalize fixture is written through the Go store and read back row for row, every search fixture is run and ranked,
-every record-injection fixture is run, and sealed rows, tombstones, the exact scope, row-level security, `recorded_at` and concurrent use on a pool are
+every record-injection fixture is run, every embedding-write and vector-search fixture is run, and sealed rows, tombstones, the exact scope, row-level security, `recorded_at` and concurrent use on a pool are
 checked; in `maf/`, the cross-language tests run. Both use the server helper the `pgtest` package is (its roles are
 made under an advisory lock, so test binaries may share one server). Each test database (dropped when its test ends) is migrated with the .NET migrator's own
 scripts from [`src/AgentExperience.Storage.Postgres/Migrations`](../src/AgentExperience.Storage.Postgres/Migrations),
 in order, and given the application role's privileges from the contract's
 [`sql/application-role-privileges.sql`](../contract/sql/application-role-privileges.sql) then
-[`sql/application-role-privileges-1.4.sql`](../contract/sql/application-role-privileges-1.4.sql). The server is a
-testcontainers-go `postgres` container (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or the server `PGHOST`,
-`PGPORT`, `PGUSER` and `PGPASSWORD` name (a superuser). With neither the tests skip, unless
+[`sql/application-role-privileges-1.4.sql`](../contract/sql/application-role-privileges-1.4.sql) and
+[`sql/application-role-privileges-1.6.sql`](../contract/sql/application-role-privileges-1.6.sql); from contract 1.6 the
+vectors package's migrations (`src/AgentExperience.Storage.Postgres.Vectors/Migrations`) follow, after a superuser ran
+`CREATE EXTENSION vector`. The server is a testcontainers-go `pgvector/pgvector` container
+(`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or the server `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` name (a
+superuser, with the pgvector extension available). With neither the tests skip, unless
 `AGENTEXPERIENCE_REQUIRE_POSTGRES=1`, when they fail. On a Mac with Rancher Desktop or Colima, testcontainers-go may
 need:
 

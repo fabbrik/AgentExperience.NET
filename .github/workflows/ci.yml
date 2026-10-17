@@ -505,7 +505,8 @@ jobs:
   # stable. Then the PostgreSQL leg (the postgres build tag, race detector
   # on), which writes every finalize fixture through the Go store and reads it back row for row, runs every search
   # fixture, and uses the store from many goroutines at once, on the oldest and newest majors the contract tests cover.
-  # The leg sets AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips without Docker, and
+  # The leg uses the pgvector/pgvector image (contract 1.6's vector fixtures need the extension). The leg sets
+  # AGENTEXPERIENCE_REQUIRE_POSTGRES, so it fails rather than skips without Docker, and
   # AGENTEXPERIENCE_POSTGRES_MAJOR, which the tests assert the server reports. testcontainers-go prepends the
   # workflow's TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX as a path, so it needs no slash.
   go:

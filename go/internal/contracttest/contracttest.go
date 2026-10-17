@@ -33,6 +33,8 @@ var (
 	Fixtures   = filepath.Join(Contract, "fixtures")
 	Schema     = filepath.Join(Contract, "schema", "experience-record.v1.json")
 	Migrations = filepath.Join(Repository, "src", "AgentExperience.Storage.Postgres", "Migrations")
+	// VectorMigrations are the vectors package's migrations (contract 1.6), which need the pgvector extension.
+	VectorMigrations = filepath.Join(Repository, "src", "AgentExperience.Storage.Postgres.Vectors", "Migrations")
 )
 
 // ReadJSON reads a JSON file, keeping every number exactly as written and every object's member order.
@@ -72,21 +74,12 @@ func Cases(family string) []string {
 // ErrUnsupportedContractVersion is a lock naming a contract version this package does not support.
 var ErrUnsupportedContractVersion = errors.New("unsupported contract version")
 
-// PendingContractVersions are the contract versions the lock may name although this package does not pass them yet:
-// contract 1.6 only adds PendingVectorFamilies, so every 1.0 to 1.5 fixture still runs under its lock.
-var PendingContractVersions = []string{"1.6"}
-
-// PendingVectorFamilies are contract 1.6's vector fixture families, which this package does not implement yet. They
-// are skipped by name (TestPendingVectorFamilies), never ignored. Stories 23.2 and 23.3 implement them and remove this.
-var PendingVectorFamilies = []string{"embedding-summary", "embedding-write", "hybrid-merge", "vector-search"}
-
-// CheckContractVersion is the lock's contract version, when this package supports it or it is pending; a clear
-// failure otherwise.
+// CheckContractVersion is the lock's contract version, when this package supports it; a clear failure otherwise.
 func CheckContractVersion(lock any) (string, error) {
 	object, _ := lock.(*ae.Object)
 	value, _ := object.Get("contractVersion")
 	version, _ := value.(string)
-	for _, supported := range append(append([]string{}, ae.SupportedContractVersions...), PendingContractVersions...) {
+	for _, supported := range ae.SupportedContractVersions {
 		if version == supported {
 			return version, nil
 		}
@@ -437,4 +430,84 @@ func RunFinalizeCase(input any) (ae.FinalizedExperience, *ae.Object, error) {
 		FinalizedAt:             must(ae.ParseInstant(text(get(verification, "finalizedAt")))),
 	})
 	return finalized, answers, err
+}
+
+// ---- Contract 1.6's vector fixtures ------------------------------------------------------------------------------
+
+func vectorOf(value any) []float32 {
+	var vector []float32
+	for _, item := range list(value) {
+		n, _ := item.(json.Number)
+		f, err := strconv.ParseFloat(string(n), 32)
+		if err != nil {
+			panic(fmt.Sprintf("contracttest: %v is not a vector component", item))
+		}
+		vector = append(vector, float32(f))
+	}
+	return vector
+}
+
+// EmbeddingWriteOf reads a write step of the embedding-write and vector-search fixtures.
+func EmbeddingWriteOf(value any) ae.EmbeddingWrite {
+	o := object(value)
+	return ae.EmbeddingWrite{
+		ExperienceID:   must(ae.ParseUUID(text(get(o, "experienceId")))),
+		Scope:          ScopeOf(get(o, "scope")),
+		ModelID:        text(get(o, "modelId")),
+		Dimension:      int(integer(get(o, "dimension"))),
+		ContentHash:    text(get(o, "contentHash")),
+		SourceRevision: integer(get(o, "sourceRevision")),
+		Vector:         vectorOf(get(o, "vector")),
+		Now:            must(ae.ParseInstant(text(get(o, "now")))),
+	}
+}
+
+// VectorQueryOf reads a search step of the vector-search fixtures.
+func VectorQueryOf(value any) ae.VectorQuery {
+	o := object(value)
+	var statuses []ae.ExperienceStatus
+	for _, status := range list(get(o, "statuses")) {
+		statuses = append(statuses, ae.ExperienceStatus(text(status)))
+	}
+	number, _ := get(o, "minConfidence").(json.Number)
+	minConfidence, err := strconv.ParseFloat(string(number), 64)
+	if err != nil {
+		panic(fmt.Sprintf("contracttest: %v is not a confidence", number))
+	}
+	excluding, _ := get(o, "excludeModelAuthored").(bool)
+	return ae.VectorQuery{
+		Scope:                ScopeOf(get(o, "scope")),
+		ModelID:              text(get(o, "modelId")),
+		Vector:               vectorOf(get(o, "vector")),
+		Statuses:             statuses,
+		MinConfidence:        &minConfidence,
+		Limit:                int(integer(get(o, "limit"))),
+		ExcludeModelAuthored: excluding,
+	}
+}
+
+// WriteOutcome is a write's result in the fixtures' form: {"outcome": ...} and, for Stale, "currentRevision".
+func WriteOutcome(result ae.EmbeddingWriteResult) *ae.Object {
+	o := ae.NewObject(ae.Member{Key: "outcome", Value: string(result.Outcome)})
+	if result.Outcome == ae.EmbeddingStale {
+		o.Set("currentRevision", json.Number(strconv.FormatInt(result.CurrentRevision, 10)))
+	}
+	return o
+}
+
+// SearchOutcome is a search's result in the fixtures' form: the outcome, and the rows with each distance (null for
+// NaN) and relevance.
+func SearchOutcome(result ae.VectorSearchResult) *ae.Object {
+	rows := []any{}
+	for _, hit := range result.Hits {
+		row := ae.NewObject(ae.Member{Key: "experienceId", Value: hit.Record.ExperienceID.String()})
+		if math.IsNaN(hit.Distance) {
+			row.Set("distance", nil)
+		} else {
+			row.Set("distance", json.Number(strconv.FormatFloat(hit.Distance, 'g', -1, 64)))
+		}
+		row.Set("relevance", json.Number(strconv.FormatFloat(hit.Relevance(), 'g', -1, 64)))
+		rows = append(rows, row)
+	}
+	return ae.NewObject(ae.Member{Key: "outcome", Value: string(result.Outcome)}, ae.Member{Key: "rows", Value: rows})
 }

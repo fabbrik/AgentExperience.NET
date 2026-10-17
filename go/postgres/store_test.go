@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestTheEmbeddedSQLIsTheContractSQL(t *testing.T) {
-	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL} {
+	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL, WriteEmbeddingSQL, SearchVectorSQL} {
 		embedded, err := ContractSQL(name)
 		if err != nil {
 			t.Fatal(err)
@@ -132,4 +133,74 @@ func TestInsertFinalizedRefusesWhatIsNotARecordAndItsOwnEvent(t *testing.T) {
 	if _, err := NewStore(nil); err == nil {
 		t.Error("a store with no connection source")
 	}
+}
+
+func TestTheContractStatementsAreSplitAtTheirMarkers(t *testing.T) {
+	writes, err := ContractStatements(WriteEmbeddingSQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(writes) != 2 || !strings.HasPrefix(writes["write"], "INSERT INTO agent_experience.experience_embeddings") ||
+		!strings.HasPrefix(writes["probe-revision"], "SELECT r.revision") || strings.Contains(writes["write"], "-- ") {
+		t.Fatalf("write statements: %v", writes)
+	}
+	vectors, err := ContractStatements(SearchVectorSQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"search", "search-excluding-model-authored", "compatibility",
+		"compatibility-excluding-model-authored"} {
+		if vectors[name] == "" {
+			t.Fatalf("no %s statement", name)
+		}
+	}
+	if !strings.Contains(vectors["search"], "{dim}") || strings.Contains(vectors["compatibility"], "{dim}") {
+		t.Fatal("only the searches have {dim}")
+	}
+	names := ToDriverPlaceholders(strings.ReplaceAll(vectors["search"], "{dim}", "4")).Names
+	want := []string{"query_vector", "tenant_id", "application_id", "project_id", "team_id", "agent_id", "user_id",
+		"statuses", "min_confidence", "model_id", "limit"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("search parameters: %v", names)
+	}
+}
+
+func TestAnInvalidWriteOrSearchIsRefusedBeforeAnyStatement(t *testing.T) {
+	// No connection source can be used: a refused call never reaches it.
+	store, err := NewStore(nil)
+	if err == nil || store != nil {
+		t.Fatal("a store needs a connection source")
+	}
+	store, err = NewStore(neverBegins{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := ae.Scope{TenantID: "t", ApplicationID: "a", ProjectID: "p"}
+	good := ae.EmbeddingWrite{ExperienceID: ae.NewRandomUUID(), Scope: scope, ModelID: "m", Dimension: 2,
+		ContentHash: "h", SourceRevision: 1, Vector: []float32{1, 0}, Now: ae.Now()}
+	bad := []ae.EmbeddingWrite{good, good, good, good, good}
+	bad[0].ModelID = " "
+	bad[1].Vector = []float32{1}
+	bad[2].Vector = []float32{1, float32(math.NaN())}
+	bad[3].ContentHash = ""
+	bad[4].SourceRevision = -1
+	for i, write := range bad {
+		if _, err := store.WriteEmbedding(context.Background(), ae.BoundsOf(scope), write); err == nil {
+			t.Fatalf("write %d was accepted", i)
+		}
+	}
+	for i, query := range []ae.VectorQuery{{Scope: scope, ModelID: "", Vector: []float32{1}},
+		{Scope: scope, ModelID: "m"}, {Scope: scope, ModelID: "m", Vector: []float32{float32(math.Inf(1))}},
+		{Scope: scope, ModelID: "m", Vector: []float32{1}, Limit: -1}} {
+		if _, err := store.SearchVectors(context.Background(), ae.BoundsOf(scope), query); err == nil {
+			t.Fatalf("query %d was accepted", i)
+		}
+	}
+}
+
+// neverBegins fails the test's premise if a statement is ever run: it panics when asked for a transaction.
+type neverBegins struct{}
+
+func (neverBegins) Begin(context.Context) (pgx.Tx, error) {
+	panic("a refused call began a transaction")
 }

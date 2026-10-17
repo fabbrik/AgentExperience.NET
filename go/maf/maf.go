@@ -27,15 +27,24 @@
 //     panic, recorded by its value's type and re-raised; or a returned call the classifier named an error class
 //     for). When the invocation ends, Verify decides from the host's own facts; a verdict is finalized through the
 //     core (the deterministic lesson, the derived IDs) and stored. Without Verify nothing is stored.
+//
 //   - Injection, as a context provider. It derives the task text from the invocation's messages (the contract's
 //     rule), searches the store in the identity's scope, ranks with the contract's weights, renders the Historical
 //     Reference block with BlockOptions, and adds it as one user-role message (MessageRole system sends it as a
 //     system message) just before the new input, stamped AdditionalProperties[HistoricalReferenceKey] = true.
+//
 //   - Injection tracking (contract 1.4). Once the block is handed over, a store that records injections (an
 //     ae.InjectionRecorder: the PostgreSQL store, the in-memory store) is told which records it delivered, in a
 //     goroutine bounded by InjectionRecordTimeout, so the .NET lessons view shows when each lesson was last injected.
 //     It never delays or fails the invocation; the outcome is reported through OnInjectionRecorded, and
 //     ContextProviderOf(config).Close awaits the records still running, for a host shutting down.
+//
+//   - Semantic retrieval (contract 1.6), with Options.Embedder. Injection then runs the text and the vector channel
+//     together, merges them as the contract says and ranks as before; every stored record's summary is embedded in
+//     the background (a failure is reported as StageIndex and never fails the capture). Without an embedder, or when
+//     the vector channel fails, the injection answers from text alone and says why (OnVectorFallback). To register
+//     one, implement ae.Embedder (ModelID, Dimension, Embed) over your provider's client and set Options.Embedder; no
+//     embedding model is a dependency of this module.
 //
 // Nothing here returns an error or panics into the agent: a store, identity, classifier or verifier failure means no
 // block, or no stored record, and is reported through OnInjectionFailure or OnCaptureFailure. Only the invocation's
@@ -143,6 +152,9 @@ const (
 	StageVerify                   CaptureStage = "Verify"
 	StageFinalize                 CaptureStage = "Finalize"
 	StageStore                    CaptureStage = "Store"
+	// StageIndex is the background embedding write after a record was stored (contract 1.6): the record stays
+	// stored, only its vector is missing.
+	StageIndex CaptureStage = "Index"
 )
 
 // CaptureFailure is a capture problem, reported once per stage per run. Reason never quotes record content; Err is
@@ -163,11 +175,13 @@ type InjectionFailure struct {
 }
 
 // InjectionResult is what one injection delivered: the records in the block, best first, the block's size in UTF-8
-// bytes, and whether the search returned more candidates than the ranking considers.
+// bytes, whether the search returned more candidates than the ranking considers, and, when the vector channel did not
+// contribute (contract 1.6), why: nil when it did.
 type InjectionResult struct {
-	ExperienceIDs []ae.UUID
-	ByteCount     int
-	Truncated     bool
+	ExperienceIDs  []ae.UUID
+	ByteCount      int
+	Truncated      bool
+	VectorFallback *ae.VectorFallback
 }
 
 // IdentityContext is what an identity resolver is given: the agent and the caller's session. Never model output.
@@ -220,6 +234,25 @@ type Options struct {
 	Clock func() ae.Instant
 	// NewID is ae.NewRandomUUID when nil.
 	NewID func() ae.UUID
+	// Embedder (contract 1.6) turns text into a vector, for hybrid retrieval and for embedding each stored record.
+	// With one, injection runs the text and the vector channel together (a store that is an ae.EmbeddingIndex serves
+	// it: the in-memory store, and the PostgreSQL store with pgvector), merges them and ranks as before, and every
+	// stored record's summary is embedded in the background. Without one, or when the vector channel fails, the
+	// injection answers from text alone and says why (OnVectorFallback, InjectionResult.VectorFallback). The
+	// embedder's calls honour ctx, are bounded by VectorTimeout, and at most MaxVectorCalls run at once, abandoned
+	// ones included.
+	Embedder ae.Embedder
+	// MinVectorRelevance, when set (0 to 1), drops vector candidates whose relevance is below it; text candidates
+	// never are.
+	MinVectorRelevance *float64
+	// VectorTimeout bounds the vector channel of one injection in all (embedding the task text, then searching):
+	// past it the injection answers from text alone and reports ProviderUnavailable or VectorSearchFailed.
+	// DefaultVectorTimeout when 0.
+	VectorTimeout time.Duration
+	// OnVectorFallback is told, once per injection, why the vector channel did not contribute (NotConfigured,
+	// ProviderUnavailable, ModelMismatch, DimensionMismatch, VectorSearchFailed); optional, and a panic in it is
+	// recovered and ignored. Its detail never quotes record or vector content.
+	OnVectorFallback func(ae.VectorFallback)
 	// FinalizationTimeout bounds how long an invocation's end waits for finalization (append, verify, finalize,
 	// store), on its own clock, never the caller's context: past it the work is abandoned and reported, and the
 	// invocation returns. DefaultFinalizationTimeout when 0.
@@ -249,6 +282,10 @@ func DefaultEnvironment() ae.EnvironmentFingerprint {
 type settings struct {
 	Options
 	environment ae.EnvironmentFingerprint
+	// vectorSlots bound the embedder and vector-store calls in flight, abandoned ones included.
+	vectorSlots chan struct{}
+	// index counts the background embedding writes started and not yet ended.
+	index tracker
 }
 
 func newSettings(options Options) (*settings, error) {
@@ -302,13 +339,22 @@ func newSettings(options Options) (*settings, error) {
 	if options.InjectionRecordTimeout == 0 {
 		options.InjectionRecordTimeout = DefaultInjectionRecordTimeout
 	}
+	if options.VectorTimeout < 0 {
+		return nil, errors.New("maf: the vector timeout must not be negative")
+	}
+	if options.VectorTimeout == 0 {
+		options.VectorTimeout = DefaultVectorTimeout
+	}
+	if options.MinVectorRelevance != nil && !(*options.MinVectorRelevance >= 0 && *options.MinVectorRelevance <= 1) {
+		return nil, errors.New("maf: the minimum vector relevance must be a number from 0 to 1")
+	}
 	if options.Clock == nil {
 		options.Clock = ae.Now
 	}
 	if options.NewID == nil {
 		options.NewID = ae.NewRandomUUID
 	}
-	s := &settings{Options: options}
+	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls)}
 	if options.Environment != nil {
 		s.environment = *options.Environment
 	} else {

@@ -7,10 +7,14 @@
 // (src/AgentExperience.Storage.Postgres/Migrations/*.sql) in name order, one transaction per script, as the owner
 // role, which is what ExperienceSchemaMigrator.MigrateAsync does. The application role's privileges are the
 // contract's sql/application-role-privileges.sql then, from contract 1.4, sql/application-role-privileges-1.4.sql (the
-// injection table's), both modes (row-level security on, what a contract 1.x port runs against).
+// injection table's) and, from contract 1.6, sql/application-role-privileges-1.6.sql (the embeddings table's), both
+// modes (row-level security on, what a contract 1.x port runs against). From contract 1.6 the schema is also given
+// the vectors package's migrations (src/AgentExperience.Storage.Postgres.Vectors/Migrations), after a superuser ran
+// CREATE EXTENSION vector (pgvector is not a trusted extension), so the server must have pgvector: the container is
+// the pgvector/pgvector image; a server named by PGHOST must have the extension installed.
 //
 // The server comes from PGHOST (with PGPORT, PGUSER, PGPASSWORD: a superuser connection) when set, else from a
-// Testcontainers postgres container (AGENTEXPERIENCE_POSTGRES_MAJOR, default 16). With neither, the tests skip, unless
+// Testcontainers pgvector container (AGENTEXPERIENCE_POSTGRES_MAJOR, default 16). With neither, the tests skip, unless
 // AGENTEXPERIENCE_REQUIRE_POSTGRES=1, when they fail. testcontainers-go applies TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX
 // to every image it starts, the Reaper's (Ryuk) included, and recognises the Reaper by its name's suffix, so a
 // prefix (CI's Docker Hub mirror) needs no workaround here, unlike testcontainers-python (python/tests/_postgres.py).
@@ -135,9 +139,9 @@ func start(ctx context.Context) (Server, func(), error) {
 	if major == "" {
 		major = "16"
 	}
-	container, err := runContainer(ctx, "postgres:"+major)
+	container, err := runContainer(ctx, "pgvector/pgvector:pg"+major)
 	if err != nil {
-		return Server{}, nil, fmt.Errorf("no PGHOST, and no Docker for a postgres:%s container: %w", major, err)
+		return Server{}, nil, fmt.Errorf("no PGHOST, and no Docker for a pgvector/pgvector:pg%s container: %w", major, err)
 	}
 	stop := func() { _ = testcontainers.TerminateContainer(container) }
 	host, err := container.Host(ctx)
@@ -225,17 +229,21 @@ func prepareRoles(ctx context.Context, admin Server) error {
 
 var roleName = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
-// The contract's privileges files: 1.0's, and 1.4's for the injection table.
+// The contract's privileges files: 1.0's, 1.4's for the injection table and 1.6's for the embeddings table.
 const (
 	PrivilegesFile   = "application-role-privileges.sql"
 	Privileges14File = "application-role-privileges-1.4.sql"
+	Privileges16File = "application-role-privileges-1.6.sql"
 )
 
-// ApplicationRolePrivileges are the statements of the contract's two privileges files for role (a plain
-// identifier), the 1.0 file then the 1.4 file: what the .NET privileges call grants.
+// ApplicationRolePrivileges are the statements of the contract's three privileges files for role (a plain
+// identifier), the 1.0 file, the 1.4 file then the 1.6 file: what the .NET privileges call grants on a schema with
+// the vectors migrations applied.
 func ApplicationRolePrivileges(t *testing.T, role string) []string {
 	t.Helper()
-	return append(PrivilegesOf(t, role, PrivilegesFile), PrivilegesOf(t, role, Privileges14File)...)
+	privileges := PrivilegesOf(t, role, PrivilegesFile)
+	privileges = append(privileges, PrivilegesOf(t, role, Privileges14File)...)
+	return append(privileges, PrivilegesOf(t, role, Privileges16File)...)
 }
 
 // PrivilegesOf are the statements of one contract privileges file (under contract/sql/) for role (a plain
@@ -284,7 +292,8 @@ func DatabaseName(label string) string {
 	return "go_" + prefix + "_" + hex.EncodeToString(digest[:])[:12]
 }
 
-// CreateDatabase is a fresh database, migrated by the .NET scripts and with the application role's privileges,
+// CreateDatabase is a fresh database, migrated by the .NET scripts (the vectors package's too) and with the
+// application role's privileges,
 // dropped when the test ends (after the stores that use it close). Give each module's labels their own prefix: a
 // server may be shared.
 func CreateDatabase(t *testing.T, admin Server, label string) string {
@@ -330,6 +339,22 @@ func CreateDatabaseWith(t *testing.T, admin Server, label string, privileges []s
 		t.Fatalf("no migration scripts under %s", ct.Migrations)
 	}
 	sort.Strings(scripts)
+	vectorScripts, err := filepath.Glob(filepath.Join(ct.VectorMigrations, "*.sql"))
+	if err != nil || len(vectorScripts) == 0 {
+		t.Fatalf("no migration scripts under %s", ct.VectorMigrations)
+	}
+	sort.Strings(vectorScripts)
+	scripts = append(scripts, vectorScripts...)
+	// pgvector is not a trusted extension: a superuser installs it, as an operator does (contract 1.6).
+	superuser, err := pgx.Connect(ctx, admin.Admin(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = superuser.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+	superuser.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	owner, err := pgx.Connect(ctx, admin.Owner(name))
 	if err != nil {
 		t.Fatal(err)

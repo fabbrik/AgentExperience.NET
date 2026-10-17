@@ -245,7 +245,7 @@ lesson was injected) is published as [a language-neutral contract](contract/READ
 embeddings): a JSON Schema, the SQL to run, and
 fixtures generated from and checked against this implementation on every build. A pure-Python core that passes
 contract 1.6 (including retrieval by meaning, with an embedder you register), with a one-call Python Agent Framework integration, is in [`python/`](python/README.md). A lesson a .NET
-agent learned is injected into a Python agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.5, with a one-call Go Agent
+agent learned is injected into a Python agent, and the other way round. A Go core and PostgreSQL store that pass contract 1.6 (including retrieval by meaning, with an embedder you register), with a one-call Go Agent
 Framework integration, are in [`go/`](go/README.md). A lesson a .NET agent learned is injected into a Go agent, and
 the other way round. Both are published with each release, at the same version as the NuGet packages (a Python alpha,
 `0.1.0aN`, for `0.1.0-preview.N`), and are previews in the same sense:

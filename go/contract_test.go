@@ -13,10 +13,11 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -43,10 +44,10 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != ae.ContractVersion && !slices.Contains(ct.PendingContractVersions, version) {
+	if version != ae.ContractVersion {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
-	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5" {
+	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6" {
 		t.Fatalf("supported versions: %v", ae.SupportedContractVersions)
 	}
 }
@@ -54,7 +55,7 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
 	for _, version := range []any{"2.0", "1.7", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
-		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5") {
+		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6") {
 			t.Fatalf("version %v: %v", version, err)
 		}
 	}
@@ -124,16 +125,134 @@ func TestEveryFixtureFamilyHasCases(t *testing.T) {
 	}
 }
 
-// TestPendingVectorFamilies skips contract 1.6's vector families by name: this package does not implement them yet
-// (stories 23.2 and 23.3 do, and remove ct.PendingVectorFamilies). Each must exist, so a renamed family fails here.
-func TestPendingVectorFamilies(t *testing.T) {
-	for _, family := range ct.PendingVectorFamilies {
-		t.Run(family, func(t *testing.T) {
-			if _, err := os.Stat(fixture(family)); err != nil {
-				t.Fatal(err)
+// ---- Contract 1.6: the vector families that need no database ----------------------------------------------------
+
+func TestEmbeddingSummary(t *testing.T) {
+	cases := ct.MustReadJSON(fixture("embedding-summary", "cases.json")).([]any)
+	if len(cases) == 0 {
+		t.Fatal("no cases")
+	}
+	text := func(o *ae.Object, key string) *string {
+		value, _ := o.Get(key)
+		s, ok := value.(string)
+		if !ok {
+			return nil
+		}
+		return &s
+	}
+	for i, item := range cases {
+		c := item.(*ae.Object)
+		description := *text(c, "description")
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			summary := ae.RetrievalSummary(text(c, "taskId"), text(c, "taskSummary"), text(c, "lesson"))
+			if summary != *text(c, "summary") {
+				t.Fatalf("%s: summary %q, expected %q", description, summary, *text(c, "summary"))
 			}
-			t.Skipf("%s: a contract 1.6 vector family, pending in this package", family)
+			if hash := ae.ContentHash(*text(c, "modelId"), summary); hash != *text(c, "contentHash") {
+				t.Fatalf("%s: hash %s, expected %s", description, hash, *text(c, "contentHash"))
+			}
 		})
+	}
+}
+
+func relevanceOf(t *testing.T, value any) float64 {
+	t.Helper()
+	if s, ok := value.(string); ok {
+		if s != "NaN" {
+			t.Fatalf("relevance %q", s)
+		}
+		return math.NaN()
+	}
+	f, err := strconv.ParseFloat(string(value.(json.Number)), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestHybridMerge(t *testing.T) {
+	cases := ct.MustReadJSON(fixture("hybrid-merge", "cases.json")).([]any)
+	if len(cases) == 0 {
+		t.Fatal("no cases")
+	}
+	type candidate struct {
+		id        ae.UUID
+		relevance float64
+	}
+	entries := func(c *ae.Object, key string) []candidate {
+		value, _ := c.Get(key)
+		var result []candidate
+		for _, item := range value.([]any) {
+			o := item.(*ae.Object)
+			id, _ := o.Get("experienceId")
+			relevance, _ := o.Get("relevance")
+			result = append(result, candidate{ae.MustParseUUID(id.(string)), relevanceOf(t, relevance)})
+		}
+		return result
+	}
+	for i, item := range cases {
+		c := item.(*ae.Object)
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			var floor *float64
+			if value, _ := c.Get("minimumVectorRelevance"); value != nil {
+				f := relevanceOf(t, value)
+				floor = &f
+			}
+			merged := ae.MergeChannels(entries(c, "text"), entries(c, "vector"),
+				func(x candidate) ae.UUID { return x.id }, func(x candidate) float64 { return x.relevance }, floor)
+			expectedValue, _ := c.Get("merged")
+			expected := expectedValue.([]any)
+			description, _ := c.Get("description")
+			if len(merged) != len(expected) {
+				t.Fatalf("%v: %d merged, expected %d", description, len(merged), len(expected))
+			}
+			for j, entry := range merged {
+				e := expected[j].(*ae.Object)
+				id, _ := e.Get("experienceId")
+				from, _ := e.Get("from")
+				relevance, _ := e.Get("relevance")
+				want := relevanceOf(t, relevance)
+				same := entry.Relevance == want || (math.IsNaN(want) && math.IsNaN(entry.Relevance))
+				if entry.Item.id.String() != id.(string) || string(entry.Source) != from.(string) || !same {
+					t.Fatalf("%v: entry %d is %v %v %v, expected %v %v %v", description, j, entry.Item.id,
+						entry.Source, entry.Relevance, id, from, want)
+				}
+			}
+		})
+	}
+}
+
+func TestALoneSurrogateIsHashedAsTheReplacementCharacter(t *testing.T) {
+	// A lone surrogate in three-byte form (what text carrying one looks like in a Go string), and any invalid byte.
+	for _, bad := range []string{"a\xed\xa0\x80b", "a\xffb"} {
+		if ae.ContentHash("m", bad) != ae.ContentHash("m", "a\uFFFDb") {
+			t.Fatalf("%q is not hashed as U+FFFD", bad)
+		}
+	}
+	if ae.ContentHash("m", "a\xed\xa0\x80\xed\xb0\x80b") != ae.ContentHash("m", "a\uFFFD\uFFFDb") {
+		t.Fatal("two lone surrogates are two U+FFFD")
+	}
+}
+
+func TestTheSummaryCapBacksOffASplitPairAndATrailingHighSurrogate(t *testing.T) {
+	lesson := func(s string) string { return ae.RetrievalSummary(nil, nil, &s) }
+	// 8,191 units and then an astral character (two units): the pair does not fit, so it is dropped whole.
+	astral := strings.Repeat("a", 8191) + "\U0001F600"
+	if got := lesson(astral); got != strings.Repeat("a", 8191) {
+		t.Fatalf("%d units kept", ae.UTF16Len(got))
+	}
+	// 8,191 units and then a lone high surrogate and one more unit: the cut ends on the surrogate, which goes too.
+	high := strings.Repeat("a", 8191) + "\xed\xa0\x80" + "b"
+	if got := lesson(high); got != strings.Repeat("a", 8191) {
+		t.Fatalf("%d units kept", ae.UTF16Len(got))
+	}
+	// A cut that leaves trailing spaces drops them.
+	spaced := strings.Repeat("a", 8190) + " b c"
+	if got := lesson(spaced); got != strings.Repeat("a", 8190)+" b" {
+		t.Fatalf("%q", got[len(got)-4:])
+	}
+	if got := lesson(strings.Repeat("a", 8192)); ae.UTF16Len(got) != 8192 {
+		t.Fatal("a summary of exactly 8,192 units is kept whole")
 	}
 }
 
