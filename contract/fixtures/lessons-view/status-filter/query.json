@@ -1,0 +1,19 @@
+{
+  "description": "Only the named statuses are read.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": [
+    "Quarantined",
+    "Stale",
+    "Reinforced"
+  ],
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00"
+}

@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.6, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.6. It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.7, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.7 (and so every 1.0 to 1.6 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -132,6 +132,39 @@ agent = use_agent_experience(agent, store=store, identity=identity, verify=verif
   `await settings.wait_for_index_writes()` (also on the provider) awaits the ones still running. Records stored before
   an embedder was registered have no vector until one is written; the .NET library's re-index does it for a shared
   database.
+
+### See what it learned: the lessons view
+
+A read-only list of what was learned in a scope (contract 1.7), as .NET's `AgentExperienceLessons` lists it:
+
+```python
+from agentexperience import LessonsQuery
+from agentexperience.maf import agent_experience_lessons
+
+lessons = agent_experience_lessons(agent)               # or its ExperienceSettings
+page = lessons.list(query=LessonsQuery(limit=20))       # the setup's own identity; list(identity) for another
+for lesson in page.lessons:                             # newest first
+    print(lesson.status, lesson.confidence, lesson.is_eligible, lesson.ineligible_reason, lesson.last_injected_at)
+```
+
+- **Each lesson** has its status, confidence and `checks` (check ID, evidence kind, result; never the evidence's
+  detail), `block_text` (the Historical Reference block for that record alone, numbered 1, with no ranking, byte for
+  byte what .NET renders), whether retrieval would use it (`is_eligible`, with `ineligibility` and `ineligible_reason`
+  when not), and `last_injected_at` and `injection_count`.
+- **Eligibility codes** this port decides: `Status`, `BelowConfidenceFloor` (retrieval's 0.5), `ModelAuthored` (when the
+  setup's `exclude_model_authored` is on), `OverByteBudget` (the block options' `max_bytes`) and `Unrenderable`. .NET's
+  `Expired` and `ContentUnconfirmed` do not exist here: this port has no maximum-age policy and no provenance signing.
+- **The page** has `outcome`, `generated_at`, `has_more`, `out_of_scope_dropped` and `injections_tracked`. When it is
+  false (a store that records no injections, or a PostgreSQL role without the 1.4 grants or table), a `None`
+  `last_injected_at` means "not known", not "never". A scope outside the authorization bounds is an empty page with the
+  outcome `Denied`, never an exception; an invalid `LessonsQuery` (`limit` outside 1 to 500, empty or unknown
+  `statuses`) raises `ValueError`. One record that cannot be rendered is listed as `Unrenderable`, and the rest still are.
+- **Reads only**, under the caller's authorization bounds and in the caller's own scope (no sharing grants in contract
+  1.x). Build one without the setup with `ExperienceLessons(store, block_options=..., exclude_model_authored=...)` and
+  `list_scope(bounds, scope, query)`. The view discloses lessons: serve it only behind your own authorization. This
+  port renders no HTML and maps no endpoint.
+- **Stores.** `InMemoryExperienceStore` and `PostgresExperienceStore` have `list_lessons_page`; PostgreSQL runs the
+  contract's `sql/list-experience-lessons.sql` as written and needs no grants beyond 1.0 and 1.4.
 
 ### In production
 

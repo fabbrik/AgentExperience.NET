@@ -19,7 +19,7 @@ internal static class ContractFiles
     /// what minor version N adds) bumps the minor version; a change to anything already published (a fixture, the
     /// schema, the SQL, a README) bumps the major version.
     /// </summary>
-    public const string ContractVersion = "1.6";
+    public const string ContractVersion = "1.7";
 
     /// <summary>
     /// The SHA-256 of <c>contract/lock.json</c> for every published version. This, not <c>lock.json</c>, is the authority:
@@ -35,6 +35,7 @@ internal static class ContractFiles
         ["1.4"] = "e8f058379b3f1ddf545ec76c376af64f30de734b8a60fb801ce9ac975a4287d1",
         ["1.5"] = "bb0b1eb2529d9b48bea47da548bdd9e19aa9a08b0c5a31b735374e47060d5560",
         ["1.6"] = "c16f2803a667fca0f621847d90ae50340bb6304eed1e97295599f98049e547ff",
+        ["1.7"] = "54f0c23c5489577ef5a09a587905cc39679ae756f848926b6934091eb86e4e4a",
     };
 
     /// <summary>The environment variable that rewrites the fixtures instead of only comparing against them.</summary>

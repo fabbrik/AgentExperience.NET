@@ -31,6 +31,8 @@ What it adds to the agent:
   store, the in-memory store) is told which records it delivered, in a background task bounded by
   ``injection_record_timeout``, so the .NET lessons view shows when each lesson was last injected. It never delays or
   fails the invocation; the outcome is reported through ``on_injection_recorded``.
+- **The lessons view** (contract 1.7), ``agent_experience_lessons(agent)``: a read-only list of what was learned in a
+  scope, with each lesson's block, eligibility and last injection.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -49,7 +51,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from agent_framework import (
     AgentContext,
@@ -103,7 +105,9 @@ from .inmemory import (
     ExperienceStore,
     InjectionRecorder,
     InMemoryExperienceStore,
+    LessonsReader,
 )
+from .lessons import ExperienceLessons
 from .records import EnvironmentFingerprint, Provenance, RunExposure
 from .sanitization import Sanitization
 from .search import SearchParameters, SearchRow, rank
@@ -1188,6 +1192,33 @@ class ExperienceToolMiddleware(FunctionMiddleware):
             scope.report("ToolCall", f"Recording a tool call raised {_type_name(ex)}; it is not recorded.", ex)
 
 
+# ---- The lessons view --------------------------------------------------------------------------------------------
+
+
+def agent_experience_lessons(source: Any) -> ExperienceLessons:
+    """
+    The read-only lessons view (contract 1.7) for an agent set up with :func:`use_agent_experience`, or for its
+    :class:`ExperienceSettings`: it reads the same store, renders blocks with the same block options, excludes
+    model-authored lessons when the setup does, and uses the setup's clock. When the setup has one fixed identity (the
+    development identity, say), ``list()`` lists its scope; otherwise pass the identity from your own authentication:
+    ``list(identity)``. ``TypeError`` for an agent that was not set up, or a store that cannot list lessons.
+    """
+    settings = source
+    if not isinstance(source, ExperienceSettings):
+        middleware = getattr(source, "middleware", None) or ()
+        found = next((item.settings for item in middleware if isinstance(item, ExperienceCaptureMiddleware)), None)
+        if found is None:
+            raise TypeError("The agent was not set up with use_agent_experience; pass it, or its ExperienceSettings.")
+        settings = found
+    return ExperienceLessons(
+        cast("LessonsReader", settings.store),
+        block_options=settings.block_options,
+        exclude_model_authored=settings.exclude_model_authored,
+        clock=settings.clock,
+        identity=settings.identity if isinstance(settings.identity, ExperienceIdentity) else None,
+    )
+
+
 # ---- The one-call setup ------------------------------------------------------------------------------------------
 
 
@@ -1305,6 +1336,7 @@ __all__ = [
     "ExperienceCaptureMiddleware",
     "ExperienceContextProvider",
     "ExperienceIdentity",
+    "ExperienceLessons",
     "ExperienceSettings",
     "ExperienceStore",
     "ExperienceToolMiddleware",
@@ -1318,6 +1350,7 @@ __all__ = [
     "VectorFallback",
     "Verification",
     "VerificationContext",
+    "agent_experience_lessons",
     "all_of",
     "any_of",
     "approval",

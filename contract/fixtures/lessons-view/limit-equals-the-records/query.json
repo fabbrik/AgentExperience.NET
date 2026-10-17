@@ -1,0 +1,15 @@
+{
+  "description": "The limit is 9 and the scope holds exactly 9: nothing past the page, so hasMore is false.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 9,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00"
+}

@@ -16,7 +16,8 @@ import (
 )
 
 func TestTheEmbeddedSQLIsTheContractSQL(t *testing.T) {
-	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL, WriteEmbeddingSQL, SearchVectorSQL} {
+	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL, WriteEmbeddingSQL, SearchVectorSQL,
+		ListLessonsSQL} {
 		embedded, err := ContractSQL(name)
 		if err != nil {
 			t.Fatal(err)
@@ -60,6 +61,30 @@ func TestThePlaceholdersOfTheContractSQLAreItsParameters(t *testing.T) {
 		"agent_id", "user_id"}
 	if !reflect.DeepEqual(statement.Names, want) {
 		t.Fatalf("record-injection.sql parameters: %v", statement.Names)
+	}
+}
+
+func TestTheLessonsStatementsAreTheContractsFourWithTheirParameters(t *testing.T) {
+	statements, err := ContractStatements(ListLessonsSQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"tenant_id", "application_id", "project_id", "team_id", "agent_id", "user_id"}
+	for name, want := range map[string][]string{
+		"page":                                  append(append([]string(nil), base...), "limit"),
+		"page-with-statuses":                    append(append([]string(nil), base...), "statuses", "limit"),
+		"page-without-injections":               append(append([]string(nil), base...), "limit"),
+		"page-without-injections-with-statuses": append(append([]string(nil), base...), "statuses", "limit"),
+	} {
+		if statements[name] == "" {
+			t.Fatalf("no %q statement", name)
+		}
+		if got := ToDriverPlaceholders(statements[name]).Names; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s parameters: %v, want %v", name, got, want)
+		}
+	}
+	if len(statements) != 4 {
+		t.Fatalf("%d statements", len(statements))
 	}
 }
 
