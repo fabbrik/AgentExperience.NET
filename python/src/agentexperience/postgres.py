@@ -21,6 +21,15 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from ._text import is_null_or_whitespace
+from .embedding import (
+    EmbeddingWrite,
+    EmbeddingWriteResult,
+    VectorHit,
+    VectorQuery,
+    VectorSearchResult,
+    order_hits,
+    vector_literal,
+)
 from .encoding import Instant
 from .finalize import FinalizedExperience
 from .inmemory import AuthorizationDenied, injection_ids, permits
@@ -118,9 +127,26 @@ def to_driver_placeholders(sql: str) -> str:
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
+def contract_statements(name: str) -> dict[str, str]:
+    """
+    The statements of a contract SQL file that holds several, each starting at its ``-- statement: <name>`` line and
+    running to the next one (or the end), by name; the header before the first is not a statement.
+    """
+    statements: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in contract_sql(name).splitlines():
+        if line.startswith("-- statement: "):
+            current = statements.setdefault(line.removeprefix("-- statement: ").strip(), [])
+        elif current is not None:
+            current.append(line)
+    return {key: "\n".join(lines).strip() for key, lines in statements.items()}
+
+
 DECLARE_BOUNDS_SQL = "declare-bounds.sql"
 SEARCH_SQL = "search-experience-text.sql"
 RECORD_INJECTION_SQL = "record-injection.sql"
+WRITE_EMBEDDING_SQL = "write-experience-embedding.sql"
+SEARCH_VECTOR_SQL = "search-experience-vector.sql"
 
 _INSERT_RECORD = (
     f"INSERT INTO {TABLE} ({', '.join(COLUMN_NAMES)}) VALUES ({', '.join(f'%({name})s' for name in COLUMN_NAMES)})"
@@ -177,6 +203,11 @@ class PostgresExperienceStore:
         self._declare = to_driver_placeholders(contract_sql(DECLARE_BOUNDS_SQL))
         self._search = to_driver_placeholders(contract_sql(SEARCH_SQL))
         self._record_injection = to_driver_placeholders(contract_sql(RECORD_INJECTION_SQL))
+        self._write_statements = {
+            key: to_driver_placeholders(text) for key, text in contract_statements(WRITE_EMBEDDING_SQL).items()
+        }
+        # The vector search statements keep their ``{dim}`` until the query vector's length is known.
+        self._vector_statements = contract_statements(SEARCH_VECTOR_SQL)
 
     @contextmanager
     def _transaction(self, bounds: AuthorizationBounds) -> Iterator[psycopg.Cursor[Any]]:
@@ -287,6 +318,92 @@ class PostgresExperienceStore:
                 )
             )
         return result
+
+    def write_embedding(self, bounds: AuthorizationBounds, write: EmbeddingWrite) -> EmbeddingWriteResult:
+        """
+        Stores a record's embedding (contract 1.6): in one transaction that declared the bounds for the record's scope,
+        ``write`` from ``sql/write-experience-embedding.sql`` and, when it wrote no row, ``probe-revision``.
+        ``Written``;
+        ``Stale`` with the record's current revision; ``Missing`` for an unknown ID, a record in another scope or an
+        erased one. ``write`` is validated first (``ValueError``); nothing runs when it is refused. Needs the grants of
+        ``sql/application-role-privileges-1.6.sql`` and the vectors migrations.
+        """
+        scope = write.scope
+        parameters: dict[str, Any] = {
+            "experience_id": write.experience_id,
+            "tenant_id": scope.tenant_id,
+            "application_id": scope.application_id,
+            "project_id": scope.project_id,
+            "team_id": scope.team_id,
+            "agent_id": scope.agent_id,
+            "user_id": scope.user_id,
+            "model_id": write.model_id,
+            "dimension": write.dimension,
+            "content_hash": write.content_hash,
+            "source_revision": write.source_revision,
+            "embedding": vector_literal(write.vector),
+            "now": write.now.truncate_to_microseconds().to_datetime(),
+        }
+        with self._transaction(bounds) as cursor:
+            cursor.execute(self._write_statements["write"], parameters)
+            if cursor.rowcount == 1:
+                return EmbeddingWriteResult("Written")
+            cursor.execute(self._write_statements["probe-revision"], parameters)
+            row = cursor.fetchone()
+        return EmbeddingWriteResult("Missing") if row is None else EmbeddingWriteResult("Stale", int(row[0]))
+
+    def search_vectors(self, bounds: AuthorizationBounds, query: VectorQuery) -> VectorSearchResult:
+        """
+        The nearest-neighbour search (contract 1.6): in one transaction that declared the bounds, ``search`` (or
+        ``search-excluding-model-authored``) from ``sql/search-experience-vector.sql`` with ``{dim}`` the query
+        vector's length and, when it returns no row, the matching compatibility probe. Rows come back nearest first,
+        ties by experience ID, NaN last. A sealed row (``payload_version`` 2) is skipped. ``query`` is validated first.
+        """
+        from psycopg.types.numeric import Int4
+
+        scope = query.scope
+        excluding = query.exclude_model_authored
+        search = self._vector_statements["search-excluding-model-authored" if excluding else "search"]
+        probe = self._vector_statements["compatibility-excluding-model-authored" if excluding else "compatibility"]
+        search = to_driver_placeholders(search.replace("{dim}", str(len(query.vector))))
+        probe = to_driver_placeholders(probe)
+        parameters: dict[str, Any] = {
+            "tenant_id": scope.tenant_id,
+            "application_id": scope.application_id,
+            "project_id": scope.project_id,
+            "team_id": scope.team_id,
+            "agent_id": scope.agent_id,
+            "user_id": scope.user_id,
+            "statuses": list(query.statuses),
+            "min_confidence": float(query.min_confidence),
+            "model_id": query.model_id,
+            "query_vector": vector_literal(query.vector),
+            "limit": Int4(query.limit),
+        }
+        with self._transaction(bounds) as cursor:
+            cursor.execute(search, parameters)
+            names = [column.name for column in cursor.description or ()]
+            rows = cursor.fetchall()
+            compatible: tuple[Any, ...] | None = None
+            if not rows:
+                cursor.execute(probe, {key: value for key, value in parameters.items() if key != "limit"})
+                compatible = cursor.fetchone()
+        if not rows:
+            if compatible is None or not compatible[0]:
+                return VectorSearchResult("Found")
+            return VectorSearchResult("DimensionMismatch" if compatible[1] else "ModelMismatch")
+        count = len(COLUMN_NAMES)
+        if names[:count] != list(COLUMN_NAMES) or names[-1:] != ["distance"]:
+            raise RuntimeError("The vector search returned columns in an unexpected order.")
+        hits: list[VectorHit] = []
+        for row in rows:
+            columns = dict(zip(names, row, strict=True))
+            if columns["payload_version"] != PAYLOAD_VERSION:
+                continue
+            if columns["distance"] is None:
+                raise RuntimeError("The vector search returned a row with no distance.")
+            hits.append(VectorHit(from_columns(columns, columns["payload"]), float(columns["distance"])))
+        return VectorSearchResult("Found", tuple(order_hits(hits)))
 
     def record_injection(
         self,

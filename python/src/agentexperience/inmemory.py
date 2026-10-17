@@ -8,6 +8,7 @@ minimum number of query terms (fewer for a shorter query). Nothing survives the 
 
 from __future__ import annotations
 
+import math
 import threading
 import unicodedata
 import uuid
@@ -15,6 +16,15 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from .embedding import (
+    EmbeddingWrite,
+    EmbeddingWriteResult,
+    VectorHit,
+    VectorQuery,
+    VectorSearchResult,
+    float32,
+    order_hits,
+)
 from .encoding import Instant
 from .finalize import FinalizedExperience, InitialLifecycleEvent
 from .records import ExperienceRecord, Scope
@@ -63,6 +73,19 @@ class InjectionRecorder(Protocol):
         experience_ids: Sequence[uuid.UUID],
         injected_at: Instant,
     ) -> None: ...
+
+
+@runtime_checkable
+class EmbeddingIndex(Protocol):
+    """
+    A store that keeps embeddings and searches them by cosine distance (contract 1.6). Optional: the agent integration
+    runs the vector channel only through a store that has both methods, and reports ``NotConfigured`` for one that
+    does not.
+    """
+
+    def write_embedding(self, bounds: AuthorizationBounds, write: EmbeddingWrite) -> EmbeddingWriteResult: ...
+
+    def search_vectors(self, bounds: AuthorizationBounds, query: VectorQuery) -> VectorSearchResult: ...
 
 
 MAX_RECORD_INJECTION_IDS = 200
@@ -134,6 +157,24 @@ def query_terms(text: str) -> list[str]:
 
 
 @dataclass(frozen=True)
+class _Embedding:
+    model_id: str
+    dimension: int
+    content_hash: str
+    source_revision: int
+    vector: tuple[float, ...]  # 32-bit float values
+
+
+def cosine_distance(left: Sequence[float], right: Sequence[float]) -> float:
+    """Cosine distance (``1 - cos``, in [0, 2]) of two vectors of equal length; NaN when either has no magnitude."""
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    if norm == 0.0 or math.isnan(norm):
+        return math.nan
+    return min(max(1.0 - dot / norm, 0.0), 2.0)
+
+
+@dataclass(frozen=True)
 class _Indexed:
     record: ExperienceRecord
     task_id: frozenset[str]
@@ -177,6 +218,7 @@ class InMemoryExperienceStore:
         self._records: dict[uuid.UUID, _Indexed] = {}
         self._events: dict[uuid.UUID, tuple[InitialLifecycleEvent, str]] = {}
         self._injections: dict[uuid.UUID, InjectionSummary] = {}
+        self._embeddings: dict[uuid.UUID, _Embedding] = {}
         for record in records:
             if record.experience_id in self._records:
                 raise ValueError("Two records share one experience ID.")
@@ -273,3 +315,78 @@ class InMemoryExperienceStore:
         matches.sort(key=lambda row: str(row.record.experience_id))
         matches.sort(key=lambda row: row.relevance, reverse=True)
         return matches[: parameters.limit]
+
+    def write_embedding(self, bounds: AuthorizationBounds, write: EmbeddingWrite) -> EmbeddingWriteResult:
+        """
+        Stores a record's embedding as ``sql/write-experience-embedding.sql`` does: only for a record held in exactly
+        the write's scope and still at exactly ``source_revision`` (``Written``); otherwise ``Stale`` with the record's
+        revision, or ``Missing`` for an unknown record or one in another scope or outside the bounds. A row stored
+        from a newer revision is never replaced by an older one. Components are kept as 32-bit floats.
+        """
+        vector = tuple(float32(component) for component in write.vector)
+        if not permits(bounds, write.scope):
+            return EmbeddingWriteResult("Missing")
+        with self._lock:
+            indexed = self._records.get(write.experience_id)
+            if indexed is None or indexed.record.scope != write.scope:
+                return EmbeddingWriteResult("Missing")
+            revision = indexed.record.revision
+            existing = self._embeddings.get(write.experience_id)
+            if revision != write.source_revision or (
+                existing is not None and existing.source_revision > write.source_revision
+            ):
+                return EmbeddingWriteResult("Stale", revision)
+            self._embeddings[write.experience_id] = _Embedding(
+                write.model_id, write.dimension, write.content_hash, write.source_revision, vector
+            )
+        return EmbeddingWriteResult("Written")
+
+    def embedding(self, experience_id: uuid.UUID) -> tuple[str, int, str, int, tuple[float, ...]] | None:
+        """A record's stored embedding (model ID, dimension, content hash, source revision, vector), for tests."""
+        with self._lock:
+            stored = self._embeddings.get(experience_id)
+        return (
+            None
+            if stored is None
+            else (stored.model_id, stored.dimension, stored.content_hash, stored.source_revision, stored.vector)
+        )
+
+    def search_vectors(self, bounds: AuthorizationBounds, query: VectorQuery) -> VectorSearchResult:
+        """
+        The nearest-neighbour search: embeddings of the query's model and dimension, of records in exactly the query's
+        scope with an eligible status and confidence (and not model-authored, when excluded), by cosine distance
+        (components compared as 32-bit floats), ties by experience ID, NaN last, at most ``limit``. With none, the
+        outcome says why: ``ModelMismatch`` or ``DimensionMismatch`` when eligible embeddings exist but none is
+        comparable, else ``Found`` and empty. Nothing outside the bounds.
+        """
+        scope = query.scope
+        if not permits(bounds, scope):
+            return VectorSearchResult("Found")
+        vector = tuple(float32(component) for component in query.vector)
+        statuses = set(query.statuses)
+        with self._lock:
+            held = [
+                (self._records[experience_id].record, embedding)
+                for experience_id, embedding in self._embeddings.items()
+                if experience_id in self._records
+            ]
+        eligible = [
+            (record, embedding)
+            for record, embedding in held
+            if record.scope == scope
+            and record.status in statuses
+            and record.reuse_confidence >= query.min_confidence
+            and not (query.exclude_model_authored and is_model_authored(record.reflection))
+        ]
+        hits = [
+            VectorHit(record, cosine_distance(embedding.vector, vector))
+            for record, embedding in eligible
+            if embedding.model_id == query.model_id and embedding.dimension == len(vector)
+        ]
+        if hits:
+            return VectorSearchResult("Found", tuple(order_hits(hits)[: query.limit]))
+        if not eligible:
+            return VectorSearchResult("Found")
+        if not any(embedding.model_id == query.model_id for _, embedding in eligible):
+            return VectorSearchResult("ModelMismatch")
+        return VectorSearchResult("DimensionMismatch")

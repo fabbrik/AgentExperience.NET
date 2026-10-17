@@ -24,6 +24,23 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **The Python and Go ports still pass contract 1.5**, not 1.6. Their suites accept a 1.6 lock and skip the four vector
   families by name until stories 23.2 and 23.3 implement them.
 
+### Python semantic retrieval (story 23.2)
+
+- **The Python port passes contract 1.6.** `use_agent_experience(..., embedder=...)` takes your embedding callable (an
+  object with `model_id`, `dimension` and a sync or async `embed(text)`; no model is a dependency). With one, injection
+  runs the text and the vector channel together and merges them as contract 1.6 says, then ranks with the unchanged
+  ranking, so a reworded query finds a lesson it shares no words with. Without one, or when the vector channel fails,
+  it answers from text alone and reports why: `NotConfigured`, `ProviderUnavailable`, `ModelMismatch`,
+  `DimensionMismatch` or `VectorSearchFailed`, through `on_vector_fallback` and `InjectionResult.vector_fallback`. The
+  vector channel never fails the call and is bounded by `vector_timeout` (0.5 seconds by default); the text channel's
+  failure still fails it. `min_vector_relevance` drops weak vector candidates, never text ones.
+- **Stores.** `InMemoryExperienceStore` and `PostgresExperienceStore` (PostgreSQL with pgvector, running the contract's
+  two new SQL files as written) both serve the channel through `write_embedding` and `search_vectors`. After a record is
+  stored, its summary's embedding is written in the background, outside the record's own commit; a failure is reported
+  to `on_capture_failure` as the new stage `Index` and never fails capture.
+- Without an embedder nothing changes. The Python test suite now needs a pgvector image (`pgvector/pgvector`) for its
+  PostgreSQL leg. The Go port still passes contract 1.5.
+
 ## 0.1.0-preview.14
 
 This is the first preview that publishes the Python and Go ports. The same tag now releases the six NuGet packages, the

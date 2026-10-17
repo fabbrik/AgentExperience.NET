@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 import uuid
 from collections.abc import Iterator
@@ -20,8 +21,6 @@ import pytest
 from _contract import (
     CONTRACT,
     FIXTURES,
-    PENDING_CONTRACT_VERSIONS,
-    PENDING_VECTOR_FAMILIES,
     SCHEMA,
     UnsupportedContractVersion,
     cases,
@@ -46,10 +45,13 @@ from agentexperience import (
     RequiredCheck,
     RunCapture,
     Scope,
+    content_hash,
     derive_task_text,
     error_class,
     from_stored,
+    merge_channels,
     render_block,
+    retrieval_summary,
     to_stored,
 )
 from agentexperience.block import ranked_from_json
@@ -108,12 +110,12 @@ def assert_json_equal(expected: Any, actual: Any, what: str) -> None:
 
 def test_the_contract_version_is_one_this_package_supports() -> None:
     version = check_contract_version(read_json(CONTRACT / "lock.json"))
-    assert version == CONTRACT_VERSION or version in PENDING_CONTRACT_VERSIONS
+    assert version == CONTRACT_VERSION
 
 
 @pytest.mark.parametrize("version", ["2.0", "1.7", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
-    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5"):
+    with pytest.raises(UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6"):
         check_contract_version({"contractVersion": version})
 
 
@@ -132,7 +134,16 @@ def test_every_contract_file_matches_the_lock() -> None:
         assert hashlib.sha256((CONTRACT / name).read_bytes()).hexdigest() == digest, name
 
 
-@pytest.mark.parametrize("name", ["declare-bounds.sql", "search-experience-text.sql", "record-injection.sql"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "declare-bounds.sql",
+        "search-experience-text.sql",
+        "record-injection.sql",
+        "write-experience-embedding.sql",
+        "search-experience-vector.sql",
+    ],
+)
 def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
     assert contract_sql(name) == (CONTRACT / "sql" / name).read_text(encoding="utf-8")
 
@@ -156,12 +167,45 @@ def test_every_fixture_family_has_cases() -> None:
         assert cases(family), family
 
 
-@pytest.mark.parametrize("family", PENDING_VECTOR_FAMILIES)
-def test_pending_vector_family(family: str) -> None:
-    # Contract 1.6's vector families, skipped by name: this package does not implement them yet (stories 23.2 and 23.3
-    # do, and remove PENDING_VECTOR_FAMILIES). Each must exist, so a renamed family fails here rather than going unseen.
-    assert (FIXTURES / family).is_dir(), family
-    pytest.skip(f"{family}: a contract 1.6 vector family, pending in this package")
+# ---- Contract 1.6: the vector families that need no database -----------------------------------------------------
+
+
+@pytest.mark.parametrize("index", range(len(read_json(FIXTURES / "embedding-summary" / "cases.json"))))
+def test_embedding_summary(index: int) -> None:
+    case = read_json(FIXTURES / "embedding-summary" / "cases.json")[index]
+    summary = retrieval_summary(case["taskId"], case["taskSummary"], case["lesson"])
+    assert summary == case["summary"], case["description"]
+    assert content_hash(case["modelId"], summary) == case["contentHash"], case["description"]
+
+
+def _nan(value: Any) -> float:
+    return float("nan") if value == "NaN" else float(value)
+
+
+def _same_relevance(expected: Any, actual: float) -> bool:
+    return math.isnan(actual) if expected == "NaN" else actual == expected
+
+
+@pytest.mark.parametrize("index", range(len(read_json(FIXTURES / "hybrid-merge" / "cases.json"))))
+def test_hybrid_merge(index: int) -> None:
+    case = read_json(FIXTURES / "hybrid-merge" / "cases.json")[index]
+
+    def entries(channel: list[dict[str, Any]]) -> list[tuple[uuid.UUID, float]]:
+        return [(uuid.UUID(item["experienceId"]), _nan(item["relevance"])) for item in channel]
+
+    merged = merge_channels(
+        entries(case["text"]),
+        entries(case["vector"]),
+        lambda item: item[0],
+        lambda item: item[1],
+        case["minimumVectorRelevance"],
+    )
+    assert [str(entry.item[0]) for entry in merged] == [item["experienceId"] for item in case["merged"]], case[
+        "description"
+    ]
+    assert [entry.source for entry in merged] == [item["from"] for item in case["merged"]]
+    for entry, expected in zip(merged, case["merged"], strict=True):
+        assert _same_relevance(expected["relevance"], entry.relevance), (case["description"], expected, entry)
 
 
 # ---- finalize ---------------------------------------------------------------------------------------------------

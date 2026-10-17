@@ -24,6 +24,9 @@ What it adds to the agent:
   searches the store in the identity's scope, ranks with the contract's weights, renders the Historical Reference block
   with the block options, and adds it as one user-role message (``message_role="system"`` sends it as a system
   message), stamped ``additional_properties["AgentExperience.HistoricalReference"] = True``.
+- **Semantic retrieval** (contract 1.6), with ``embedder=``. Injection then runs the text and the vector channel
+  together, merges them and ranks as before; every stored record's summary is embedded in the background. Without an
+  embedder, or when the vector channel fails, it answers from text alone and reports why (``on_vector_fallback``).
 - **Injection tracking** (contract 1.4). Once the block is handed over, a store that records injections (the PostgreSQL
   store, the in-memory store) is told which records it delivered, in a background task bounded by
   ``injection_record_timeout``, so the .NET lessons view shows when each lesson was last injected. It never delays or
@@ -69,6 +72,20 @@ from .classifiers import (
     exit_code,
     http_status,
 )
+from .embedding import (
+    Embedder,
+    EmbeddingWrite,
+    VectorFallback,
+    VectorQuery,
+    VectorSearchResult,
+    content_hash,
+    embed_text,
+    rank_hybrid,
+    record_summary,
+    run_on_vector_thread,
+    validate_model_id,
+    validate_vector,
+)
 from .encoding import Duration, Instant
 from .error_class import is_single_token
 from .finalize import FinalizedExperience, finalize
@@ -80,10 +97,16 @@ from .identity import (
     is_development_environment,
     reduce_name,
 )
-from .inmemory import MAX_RECORD_INJECTION_IDS, ExperienceStore, InjectionRecorder, InMemoryExperienceStore
+from .inmemory import (
+    MAX_RECORD_INJECTION_IDS,
+    EmbeddingIndex,
+    ExperienceStore,
+    InjectionRecorder,
+    InMemoryExperienceStore,
+)
 from .records import EnvironmentFingerprint, Provenance, RunExposure
 from .sanitization import Sanitization
-from .search import SearchParameters, rank
+from .search import SearchParameters, SearchRow, rank
 from .task_text import CHAT_HISTORY, EXTERNAL, derive_task_text
 from .task_text import Message as TaskMessage
 from .task_text import MessagePart as TaskMessagePart
@@ -114,6 +137,10 @@ PROVENANCE_SOURCE = "agentexperience.maf"
 DEFAULT_TASK_ID = "default"
 DEFAULT_FINALIZATION_TIMEOUT = 5.0
 """How long, in seconds, an invocation's end waits for finalization by default: .NET's ``FinalizationTimeout``."""
+
+DEFAULT_VECTOR_TIMEOUT = 0.5
+"""How long, in seconds, the vector channel (embedding the task text, then searching the stored vectors) may take by
+default; past it the injection answers from text alone."""
 
 DEFAULT_INJECTION_RECORD_TIMEOUT = 5.0
 """How long, in seconds, recording one injection may take by default, all chunks together: .NET's."""
@@ -150,6 +177,7 @@ CaptureStage = Literal[
     "Verify",
     "Finalize",
     "Store",
+    "Index",
 ]
 
 AgentT = TypeVar("AgentT")
@@ -181,6 +209,8 @@ class InjectionResult:
     experience_ids: tuple[uuid.UUID, ...]
     byte_count: int
     truncated: bool
+    vector_fallback: VectorFallback | None = None
+    """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
 
 
 InjectionRecordOutcome = Literal["Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"]
@@ -246,6 +276,11 @@ class ExperienceSettings:
     on_injected: Callable[[InjectionResult], None] | None = None
     on_finalized: Callable[[FinalizedExperience], None] | None = None
     on_injection_recorded: Callable[[InjectionRecordResult], None] | None = None
+    embedder: Embedder | None = None
+    """Turns text into a vector, for hybrid retrieval and for embedding each stored record (contract 1.6)."""
+    min_vector_relevance: float | None = None
+    """When set (0 to 1), vector candidates whose relevance is below it are dropped; text candidates never are."""
+    on_vector_fallback: Callable[[VectorFallback], None] | None = None
     clock: Callable[[], Instant] = Instant.now
     new_id: Callable[[], uuid.UUID] = uuid.uuid4
     finalization_timeout: float = DEFAULT_FINALIZATION_TIMEOUT
@@ -254,6 +289,10 @@ class ExperienceSettings:
     injection_record_timeout: float = DEFAULT_INJECTION_RECORD_TIMEOUT
     """Seconds recording one injected block may take in the background, all chunks together; past it the write is
     abandoned and reported ``OutcomeUnknown``. The invocation never waits for it."""
+    vector_timeout: float = DEFAULT_VECTOR_TIMEOUT
+    """Seconds the vector channel may take in all (embedding the task text and searching); past it the injection
+    answers from text alone and reports ``ProviderUnavailable`` or ``VectorSearchFailed``."""
+    _index_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.store is None:
@@ -276,6 +315,7 @@ class ExperienceSettings:
             "on_injected",
             "on_finalized",
             "on_injection_recorded",
+            "on_vector_fallback",
             "clock",
             "new_id",
         ):
@@ -286,6 +326,16 @@ class ExperienceSettings:
             raise ValueError("finalization_timeout must be a positive number of seconds.")
         if not self.injection_record_timeout > 0:
             raise ValueError("injection_record_timeout must be a positive number of seconds.")
+        if not self.vector_timeout > 0:
+            raise ValueError("vector_timeout must be a positive number of seconds.")
+        if self.min_vector_relevance is not None and not 0.0 <= self.min_vector_relevance <= 1.0:
+            raise ValueError("min_vector_relevance must be between 0 and 1.")
+        if self.embedder is not None and not (
+            isinstance(getattr(self.embedder, "model_id", None), str)
+            and hasattr(self.embedder, "dimension")
+            and callable(getattr(self.embedder, "embed", None))
+        ):
+            raise TypeError("embedder must have model_id, dimension and an embed(text) method.")
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
         if self.task_id is not None and not self.task_id.strip():
@@ -313,6 +363,21 @@ class ExperienceSettings:
             self.on_injection_failure(failure)
         except Exception:
             pass
+
+    def report_vector_fallback(self, fallback: VectorFallback) -> None:
+        if self.on_vector_fallback is None:
+            return
+        try:
+            self.on_vector_fallback(fallback)
+        except Exception:
+            pass
+
+    async def wait_for_index_writes(self) -> None:
+        """Completes once every background embedding write this configuration started on the running event loop has
+        ended. Each is bounded by ``finalization_timeout``; never raises."""
+        loop = asyncio.get_running_loop()
+        while pending := [task for task in self._index_tasks if task.get_loop() is loop and not task.done()]:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def report_injection_recorded(self, result: InjectionRecordResult) -> None:
         if self.on_injection_recorded is None:
@@ -509,11 +574,62 @@ class _CaptureScope:
             self.report("Store", f"Storing the record raised {_type_name(ex)}; the run is not stored.", ex)
             return
 
+        # The embedding is derived data: written after the record's own commit, in the background, never failing it.
+        self._start_index(finalized, identity)
+
         if settings.on_finalized is not None:
             try:
                 settings.on_finalized(finalized)
             except Exception:
                 pass
+
+    def _start_index(self, finalized: FinalizedExperience, identity: ExperienceIdentity) -> None:
+        """Starts embedding the stored record's summary in the background; never raises, never waits."""
+        settings = self.settings
+        if settings.embedder is None or not isinstance(settings.store, EmbeddingIndex):
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(self._index(finalized, identity))
+        except Exception as ex:
+            self.report("Index", f"Starting the embedding write raised {_type_name(ex)}.", ex)
+            return
+        settings._index_tasks.add(task)
+        task.add_done_callback(settings._index_tasks.discard)
+
+    async def _index(self, finalized: FinalizedExperience, identity: ExperienceIdentity) -> None:
+        settings = self.settings
+        try:
+            await asyncio.wait_for(self._write_embedding(finalized, identity), settings.finalization_timeout)
+        except (asyncio.TimeoutError, TimeoutError) as ex:
+            self.report(
+                "Index", f"Embedding the record did not finish within {settings.finalization_timeout} seconds.", ex
+            )
+        except asyncio.CancelledError as ex:
+            self.report("Index", "Embedding the record was cancelled.", ex)
+            raise
+        except Exception as ex:
+            self.report("Index", f"Embedding the record raised {_type_name(ex)}; its text retrieval is unaffected.", ex)
+
+    async def _write_embedding(self, finalized: FinalizedExperience, identity: ExperienceIdentity) -> None:
+        settings = self.settings
+        embedder, store = settings.embedder, settings.store
+        assert embedder is not None and isinstance(store, EmbeddingIndex)
+        record = finalized.record
+        summary = record_summary(record)
+        model_id, dimension = embedder.model_id, embedder.dimension
+        validate_model_id(model_id)
+        vector = validate_vector(await embed_text(embedder, summary), dimension)
+        write = EmbeddingWrite(
+            record.experience_id,
+            record.scope,
+            model_id,
+            dimension,
+            content_hash(model_id, summary),
+            record.revision,
+            vector,
+            settings.clock(),
+        )
+        await run_on_vector_thread(store.write_embedding, identity.authorization, write)
 
 
 _current_scope: ContextVar[_CaptureScope | None] = ContextVar("agentexperience_capture_scope", default=None)
@@ -748,6 +864,64 @@ class ExperienceContextProvider(ContextProvider):
                 state.abandoned = True
                 self._abandoned_records += 1
 
+    async def wait_for_index_writes(self) -> None:
+        """Completes once the embedding writes started after records were stored have ended; see
+        :meth:`ExperienceSettings.wait_for_index_writes`."""
+        await self.settings.wait_for_index_writes()
+
+    async def _vector_channel(
+        self, task_text: str, identity: ExperienceIdentity
+    ) -> tuple[list[SearchRow], VectorFallback | None]:
+        """
+        The vector channel (contract 1.6): embed the task text, search the stored vectors, both within
+        ``vector_timeout``. Never raises (apart from the caller's cancellation): whatever goes wrong is the fallback it
+        answers with, and its text never quotes record or vector content.
+        """
+        settings = self.settings
+        embedder, store = settings.embedder, settings.store
+        if embedder is None:
+            return [], VectorFallback("NotConfigured", "No embedder is registered, so only text retrieval ran.")
+        if not isinstance(store, EmbeddingIndex):
+            return [], VectorFallback(
+                "NotConfigured", "The store does not serve vector search, so only text retrieval ran."
+            )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + settings.vector_timeout
+        try:
+            model_id, dimension = embedder.model_id, embedder.dimension
+            raw = await asyncio.wait_for(embed_text(embedder, task_text), max(deadline - loop.time(), 0.0))
+            if not isinstance(model_id, str) or not model_id.strip():
+                return [], VectorFallback("ProviderUnavailable", "The embedder reported no model ID.")
+            validate_model_id(model_id)
+            vector = validate_vector(raw, dimension)
+            query = VectorQuery(
+                identity.scope, model_id, vector, exclude_model_authored=settings.exclude_model_authored
+            )
+        except (asyncio.TimeoutError, TimeoutError) as ex:
+            return [], VectorFallback("ProviderUnavailable", "The embedder did not answer in time.", ex)
+        except Exception as ex:
+            return [], VectorFallback(
+                "ProviderUnavailable", f"The embedder failed or returned an unusable vector ({_type_name(ex)}).", ex
+            )
+        try:
+            result = await asyncio.wait_for(
+                run_on_vector_thread(store.search_vectors, identity.authorization, query),
+                max(deadline - loop.time(), 0.0),
+            )
+        except (asyncio.TimeoutError, TimeoutError) as ex:
+            return [], VectorFallback("VectorSearchFailed", "The vector search did not answer in time.", ex)
+        except Exception as ex:
+            return [], VectorFallback("VectorSearchFailed", f"The vector search raised {_type_name(ex)}.", ex)
+        if not isinstance(result, VectorSearchResult):
+            return [], VectorFallback("VectorSearchFailed", "The store answered the vector search with something else.")
+        if result.outcome == "ModelMismatch":
+            return [], VectorFallback("ModelMismatch", "Every stored embedding in this scope is of another model.")
+        if result.outcome == "DimensionMismatch":
+            return [], VectorFallback("DimensionMismatch", "Every stored embedding in this scope is of another width.")
+        if result.outcome != "Found":
+            return [], VectorFallback("VectorSearchFailed", "The vector search answered with an unknown outcome.")
+        return [SearchRow(hit.record, hit.relevance) for hit in result.hits], None
+
     async def before_run(
         self,
         *,
@@ -787,16 +961,41 @@ class ExperienceContextProvider(ContextProvider):
             parameters = SearchParameters(
                 identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
             )
-            rows = await asyncio.to_thread(settings.store.search, identity.authorization, parameters)
+            text_search = asyncio.ensure_future(
+                asyncio.to_thread(settings.store.search, identity.authorization, parameters)
+            )
+            vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
+            # Both channels run together; the vector channel never raises (it answers with a fallback instead).
+            text_found, vector_found = await asyncio.gather(text_search, vector_search, return_exceptions=True)
+            if isinstance(vector_found, BaseException):
+                vector_found = ([], VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."))
+            vector_rows, fallback = vector_found
+            if fallback is not None:
+                settings.report_vector_fallback(fallback)
+            if isinstance(text_found, BaseException):
+                # The text channel's failure fails the call, whatever the vector channel found.
+                raise text_found
+            rows = text_found
             # The instant the block is built at: ranking's "now", and the injection's instant.
             now = settings.clock()
-            ranked = rank(
-                rows,
-                identity.scope,
-                now,
-                settings.preferred_environment,
-                exclude_model_authored=settings.exclude_model_authored,
-            )
+            if vector_rows:
+                ranked = rank_hybrid(
+                    rows,
+                    vector_rows,
+                    identity.scope,
+                    now,
+                    settings.preferred_environment,
+                    minimum_vector_relevance=settings.min_vector_relevance,
+                    exclude_model_authored=settings.exclude_model_authored,
+                )
+            else:
+                ranked = rank(
+                    rows,
+                    identity.scope,
+                    now,
+                    settings.preferred_environment,
+                    exclude_model_authored=settings.exclude_model_authored,
+                )
             block = render_block(ranked.ranked, settings.block_options)
             if block.is_empty:
                 return
@@ -817,7 +1016,7 @@ class ExperienceContextProvider(ContextProvider):
         delivered = tuple(record.experience_id for record in block.included)
         if settings.on_injected is not None:
             try:
-                settings.on_injected(InjectionResult(delivered, block.byte_count, ranked.truncated))
+                settings.on_injected(InjectionResult(delivered, block.byte_count, ranked.truncated, fallback))
             except Exception:
                 pass
 
@@ -1016,6 +1215,10 @@ def use_agent_experience(
     new_id: Callable[[], uuid.UUID] | None = None,
     finalization_timeout: float = DEFAULT_FINALIZATION_TIMEOUT,
     injection_record_timeout: float = DEFAULT_INJECTION_RECORD_TIMEOUT,
+    embedder: Embedder | None = None,
+    min_vector_relevance: float | None = None,
+    vector_timeout: float = DEFAULT_VECTOR_TIMEOUT,
+    on_vector_fallback: Callable[[VectorFallback], None] | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -1035,6 +1238,12 @@ def use_agent_experience(
     ``on_injection_recorded`` reports how that ended. On PostgreSQL the application role needs the grants of the
     contract's ``sql/application-role-privileges-1.4.sql`` (or the .NET privileges call); without them every injection
     is still made and reported ``NotRecorded``.
+
+    ``embedder`` (contract 1.6) turns text into a vector: with one, injection runs the text and the vector channel
+    together (in-memory and PostgreSQL+pgvector stores serve it) and merges them, and every stored record's summary is
+    embedded in the background. Without one, or when the vector channel fails, the injection answers from text and
+    reports why (``on_vector_fallback``, ``InjectionResult.vector_fallback``). ``vector_timeout`` bounds the embedding
+    and the search of one injection; ``min_vector_relevance`` drops weaker vector candidates.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -1066,6 +1275,10 @@ def use_agent_experience(
         new_id=new_id or uuid.uuid4,
         finalization_timeout=finalization_timeout,
         injection_record_timeout=injection_record_timeout,
+        embedder=embedder,
+        min_vector_relevance=min_vector_relevance,
+        vector_timeout=vector_timeout,
+        on_vector_fallback=on_vector_fallback,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.
@@ -1078,6 +1291,7 @@ def use_agent_experience(
 
 __all__ = [
     "DEFAULT_INJECTION_RECORD_TIMEOUT",
+    "DEFAULT_VECTOR_TIMEOUT",
     "HISTORICAL_REFERENCE_KEY",
     "MAX_ABANDONED_INJECTION_RECORDS",
     "PROVENANCE_SOURCE",
@@ -1087,6 +1301,7 @@ __all__ = [
     "Approval",
     "CaptureFailure",
     "DevelopmentOnlyError",
+    "Embedder",
     "ExperienceCaptureMiddleware",
     "ExperienceContextProvider",
     "ExperienceIdentity",
@@ -1100,6 +1315,7 @@ __all__ = [
     "InjectionRecordResult",
     "InjectionResult",
     "ToolResultContext",
+    "VectorFallback",
     "Verification",
     "VerificationContext",
     "all_of",
