@@ -337,6 +337,20 @@ ranked = rank(rows, scope, now=finished)
 print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 ```
 
+## What the Python port does not do yet
+
+The port covers contract 1.0 to 1.7: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view and telemetry. These .NET features have no counterpart here, so a mixed
+.NET and Python deployment should keep them on the .NET side:
+
+- **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
+- **Sharing:** grants, and so the grant-disclosure choices.
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
+- **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
+- **Lessons view HTML and endpoint mapping.**
+
+What the port does write or read follows the same contract the .NET library is tested against.
+
 ## Running the tests
 
 [uv](https://docs.astral.sh/uv/) manages the environment. From this directory:
