@@ -3,8 +3,8 @@ module github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest
 go 1.26.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.15
-	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.15
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.16
+	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.16
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0

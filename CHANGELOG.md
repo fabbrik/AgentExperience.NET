@@ -6,6 +6,15 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.16
+
+The Python and Go ports can now list what an agent learned and report the same OpenTelemetry spans and metrics as .NET.
+Both pass contract 1.7, which this preview adds (add-only; for .NET users no library behaviour or public API changed).
+The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and, for the first time, six Go
+modules (the new one is the optional `go/telemetry` adapter) at one version.
+
 ### Port telemetry: Python and Go emit what .NET emits (story 23.5)
 
 - **Python and Go report the same spans and metrics as .NET** for the operations they perform: `inject`, `retrieve`,
