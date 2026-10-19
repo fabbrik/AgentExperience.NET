@@ -370,6 +370,20 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
   character the contract's fixtures use is classified the same in all of them, and CI runs the fixtures on Go 1.24 and
   the latest stable.
 
+## What the Go port does not do yet
+
+The port covers contract 1.0 to 1.7: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view and telemetry. These .NET features have no counterpart here, so a mixed
+.NET and Go deployment should keep them on the .NET side:
+
+- **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
+- **Sharing:** grants, and so the grant-disclosure choices.
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
+- **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
+- **Lessons view HTML and endpoint mapping.**
+
+What the port does write or read follows the same contract the .NET library is tested against.
+
 ## Running the tests
 
 From this directory (the core module), and from `postgres/`, `inmemory/` and `maf/` (the other modules):
