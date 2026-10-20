@@ -259,7 +259,15 @@ numbers are properties of the script and prove only the harness.
 trials errored, so 10 of 12 instances were excluded, more than the pre-registration allows, and no comparison was
 evaluated. Of the two instances that remained, nothing can be read: the mismatched-trait trial failed as many attempts as
 the memory-disabled one in both. The ledger counts this as the confirmatory run for that model, so a rerun of the same
-model is exploratory and its report must say so. A second provider is still needed (story 20.5). Pre-registered in
+model is exploratory and its report must say so. A second run, `claude-haiku-4-5` (2026-10-20, [report](results/transfer-anthropic-claude-haiku-4-5-2026-10-20.md),
+about USD 0.79, 245 calls; the first complete run for that provider and model, so confirmatory under the transfer rule), concluded **`TransferNoDemonstratedBenefit`**.
+The direction favours memory (mean failed attempts 2.4 with memory against 3.5 without; success 8 of 10 against 5 of 10),
+but the sign test does not pass (p = 0.0625, 6 fewer, 1 more, 3 tied, of 10 pairs), and the controls say it would not be
+attributable to the lesson's content even if it had: the placebo block (strategy withheld) also did better than no memory
+(success 8 of 10), and the mismatched-trait block, which holds only other clusters' lessons, did as well as the
+full store (2.4 failed attempts, success 9 of 10). Ten pairs is small, one cluster's learning run never verified (two
+instances excluded, within the limit of four), and the task names the trait in its text. So: no demonstrated transfer
+benefit from this experiment, and no evidence against it. Pre-registered in
 [`preregistration.transfer.json`](preregistration.transfer.json) (story 20.4), registered in the commit that adds the
 file (parent `c3dcb37`). No live results existed at registration; the offline scripted results are part of the design.
 One amendment (2026-10-10, story 20.7, before any live run) gates injected records on the run's own tools; see below.
