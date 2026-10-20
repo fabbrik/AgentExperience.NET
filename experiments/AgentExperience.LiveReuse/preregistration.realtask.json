@@ -1,0 +1,102 @@
+{
+  "experiment": "realtask",
+  "version": "realtask@1",
+  "registeredOn": "2026-10-20",
+  "storyKey": "24-1-real-task-experiment-design",
+  "claim": "A model that has failed and then fixed a service broken by a dependency upgrade, once that experience has been captured, verified, reflected on, stored and injected as a Historical Reference, needs fewer tool calls to make a sibling service's tests pass than with memory disabled and than when shown the same block with the file path withheld, and gets no such help from lessons of unrelated upgrade breakages.",
+  "notAClaimAbout": "Whether a model could not find the fix without memory (it can: the traceback and the vendored changelog say what changed). The metric is the cost of finding it.",
+  "taskSet": {
+    "version": "realtask@1",
+    "digest": "818e5b9fa3e831cb05705ea4a7dca6b4707d992f4bdb40c755b149ccf6c56873",
+    "shape": "12 small stdlib-only Python services in 6 clusters of 2. Each vendors quirklib 2.0, which changed six behaviours; a service is broken by exactly one. The consumer of the changed function sits in app/<feature>/helpers.py, two hops from the facade the tests call, among five healthy features. Both services of a cluster need the same file changed; clusters need different files."
+  },
+  "tools": {
+    "list_files": "Lists the repository's files.",
+    "read_file": "Reads one file (6000 characters).",
+    "write_file": "Writes a whole file under app/ only; any other path (tests/, vendor/, the repository root, a case variant, a hidden path, a path leaving the repository) is refused and counts as an unauthorized request. After the first green run_tests a further write is refused without counting.",
+    "run_tests": "Runs the service's own unit tests in a real isolated python3 process (python3 -I, 20 s timeout, scrubbed environment) and returns the exit code and the end of the output. Exit 0 counts only if the output reports all 6 tests run and OK; otherwise the harness reports exit 125."
+  },
+  "verification": "The exit code of the service's unit tests, read from a process the model cannot influence except by editing the service's own code. The harness runs the tests once more, uncounted, at the end of every trial and refuses to report if the two readings disagree. No LLM judge.",
+  "phases": {
+    "learning": "Each of the 12 services is worked once with memory disabled and finalized through the library into a shared store if it verifies.",
+    "evaluation": "Each service is evaluated with the 11 other services' learning records in the store (never its own). The sibling's record is the same-cluster lesson; the other ten are unrelated breakages."
+  },
+  "conditions": {
+    "memory-disabled": "No Historical Reference.",
+    "memory-enabled": "The library's context provider injects from the store; the file path of the working attempt's write_file call is allowlisted so the block's Tried: line carries it.",
+    "memory-placebo": "The same store and block, with the path allowlist empty: the block says that the tool names were used, not which file was written.",
+    "mismatched-cluster": "The store without the sibling's record: whatever is retrieved is another breakage's lesson."
+  },
+  "labels": {
+    "control": "memory-disabled",
+    "treatment": "memory-enabled",
+    "placebo": "memory-placebo",
+    "mismatched": "mismatched-cluster"
+  },
+  "repeats": 3,
+  "conditionOrder": "derived: the four conditions rotated left by (service index + repeat) mod 4.",
+  "sampling": {
+    "temperature": 0.7,
+    "seed": 20261020,
+    "note": "Temperature above zero is what makes the repeats differ. The seed is sent only to providers that accept it. Every provider setting is recorded in the report."
+  },
+  "limits": {
+    "learningToolCalls": 30,
+    "evaluationToolCalls": 30,
+    "maxAttempts": 8,
+    "toolCallsPerModelResponse": "all of a response's calls run; the attempt ends at the first run_tests call"
+  },
+  "primaryMetric": {
+    "name": "tool_calls",
+    "definition": "Tool calls the trial made up to and including the first green run_tests. A trial that never reaches green scores its cap (30), the pre-registered substitute for a censored value.",
+    "unit": "Per service, the mean over its repeats; that mean is the unit the sign test counts."
+  },
+  "gate": {
+    "alpha": 0.05,
+    "maxExcludedServices": 4,
+    "terms": [
+      "mean over services of tool_calls(treatment) < mean over services of tool_calls(control)",
+      "exact one-sided sign test over services (each service's mean over repeats, treatment fewer than control) has p <= alpha",
+      "trial success rate(treatment) >= trial success rate(control)",
+      "sum of refused writes(treatment) <= sum of refused writes(control)"
+    ],
+    "note": "The unit is the service, not the trial: the repeats of one service are not independent, so counting them would make p optimistic. With 12 services a pass needs at least 10 services to improve and none to be tied. The trial-level sign test over all (service, repeat) pairs is reported and never gated."
+  },
+  "comparisons": {
+    "reference": "memory-enabled against memory-disabled",
+    "content": "memory-enabled against memory-placebo",
+    "mismatchedControl": "mismatched-cluster against memory-disabled (expected NoDemonstratedBenefit)"
+  },
+  "overallConclusion": {
+    "rule": "As the transfer experiment: reference and content must both pass and the mismatched control must not for RealTaskBenefitAttributableToContent; reference passing with content or the control passing is RealTaskBenefitNotAttributableToContent; reference failing is RealTaskNoDemonstratedBenefit; too many exclusions is RealTaskInconclusive; a stop at a budget cap is RealTaskNotEvaluated.",
+    "RealTaskBenefitAttributableToContent": "memory-enabled beats memory-disabled and memory-placebo and the mismatched control does not beat memory-disabled",
+    "RealTaskBenefitNotAttributableToContent": "memory-enabled beats memory-disabled, but the placebo or the mismatched control does as well",
+    "RealTaskNoDemonstratedBenefit": "memory-enabled does not beat memory-disabled under the gate",
+    "RealTaskInconclusive": "more than maxExcludedServices services were excluded",
+    "RealTaskNotEvaluated": "the run stopped at a budget cap"
+  },
+  "exclusions": {
+    "rule": "A service whose sibling's learning run did not verify (so its cluster has no record in the store) is excluded before evaluation and runs no trial. A service any of whose trials errored (a provider error that survived the retries) is excluded from every comparison."
+  },
+  "retry": {
+    "maxTries": 3,
+    "delaysMilliseconds": [500, 2000],
+    "on": "HTTP 429 and HTTP 5xx from the provider, before a model call is counted as made",
+    "note": "Written before any live run, in answer to the first transfer run, whose nine HTTP 503 responses excluded 10 of 12 instances."
+  },
+  "budgetDefaults": {
+    "maxModelCalls": 2600,
+    "maxTotalTokens": 11000000,
+    "note": "Overridable per run by AGENTEXPERIENCE_LIVE_MAX_CALLS and AGENTEXPERIENCE_LIVE_MAX_TOKENS. A run that reaches either cap stops before the next model call, writes its report, and evaluates no verdict."
+  },
+  "confirmatoryRunRule": "The first complete run per provider and model, as recorded in experiments/AgentExperience.LiveReuse/results/realtask-ledger.tsv, is the confirmatory result. Every run is appended before its first model call and never rewritten; a later run of the same provider and model is exploratory and its report says so.",
+  "limitations": [
+    "Synthetic services and a vendored library written for this experiment, not code found in the wild. Realism comes from real files, real tools and a real process exit code, not from real-world breakage.",
+    "The two services of a cluster are near-copies: transfer here means reusing a fix location across sibling services, the shape of a real monorepo with many similar services.",
+    "The tools are four, with no shell and no search. A model with a grep tool would find the file faster without memory and the benefit would shrink.",
+    "The repository is public and the task set is in its source. Check a model's training cutoff against the registration date.",
+    "Three repeats at temperature 0.7 reduce noise per service; they do not make the twelve services independent samples of all upgrade breakages.",
+    "A model could pass by hard-coding the expected answers in app/ instead of adapting the helper; that is still an edit to the service's own code, the harness does not detect it, and the report lists every path each trial wrote so it can be audited."
+  ],
+  "amendments": []
+}

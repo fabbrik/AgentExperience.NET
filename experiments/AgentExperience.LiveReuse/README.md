@@ -384,3 +384,65 @@ independent. The mismatched-trait control is weaker than it looks: under the bij
 clusters' strategies, and a capable model could find its own by elimination. A control that passes can only move the
 conclusion to `TransferBenefitNotAttributableToContent`, a conservative error that withholds a claim and never makes
 one; the harm comparison reports what the mismatched block cost.
+
+## Real-task experiment
+
+**Status: harness built and proven offline; no live results yet.** Pre-registered in
+[`preregistration.realtask.json`](preregistration.realtask.json) (story 24.1) before any live run. Nothing below is a model
+result.
+
+The reuse experiment's tool is a simulated database whose hidden answer is one of six words, and the transfer experiment
+was inconclusive. This one asks a different question on work a developer recognises: **does captured, verified experience
+cut the tool calls a model needs to repair a service broken by a dependency upgrade?** The answer is findable without
+memory (the traceback and the vendored changelog say what changed); the metric is the cost of finding it.
+
+**The task.** Twelve small stdlib-only Python services in six clusters of two, generated into a temporary repository per
+trial. Each vendors `quirklib` 2.0, which changed six behaviours (cents instead of dollars, underscores instead of hyphens, a
+changed day count, a generator instead of a list, no lowercasing, a fraction instead of a percentage). A service is broken
+by exactly one, so one of its six unit tests fails. The code that consumes the changed function is in
+`app/<feature>/helpers.py`, two hops from the facade the tests call and among five healthy features; both services of a
+cluster need the same file edited, different clusters different files. The ticket states the symptom as a user would; nothing
+the agent reads names the file.
+
+**The tools** are real: `list_files`, `read_file`, `write_file` (only `app/` can be written; any other path is refused and
+counted) and `run_tests`, which runs the service's own tests in a `python3` process. The verifier is that process's exit code,
+checked again by the harness at the end of every trial; no LLM judges anything. There is no shell and no search tool.
+
+**The design.** Each service is worked once with memory disabled and its verified run is finalized through the library into a
+store (a lesson naming the file it edited, via the allowlisted `write_file` path). Each service is then evaluated, three
+repeats at temperature 0.7, in four conditions against a store that holds the eleven other services' lessons and never its
+own: `memory-disabled`, `memory-enabled`, `memory-placebo` (the same block without the file path) and `mismatched-cluster` (the
+sibling's lesson removed). The primary metric is tool calls to the first green `run_tests` (the cap, 30, when it never gets
+there). The **gate counts services, not trials** (each service's mean over its repeats), because the repeats of one service
+are not independent: with 12 services a pass needs at least 10 to improve. The trial-level sign test is printed and never
+gated. Provider calls that fail with HTTP 429 or 5xx are retried up to three times, as registered, so a flaky provider cannot
+silently exclude half the services as it did in the first transfer run.
+
+**Run it.** The same variables, caps and rules as above, with `--experiment realtask`:
+
+```bash
+# Offline: the whole harness against the scripted stand-in. No key, no network, writes nothing. Needs python3.
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment realtask --scripted
+
+# Live (spends money; never run in CI):
+export ANTHROPIC_API_KEY=...        # or GEMINI_API_KEY, or the Azure variables
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment realtask
+```
+
+A live run appends to `results/realtask-ledger.tsv` before its first model call and writes
+`results/realtask-<provider>-<model>-<date>.md` and `.json`. The first complete run per provider and model is the confirmatory
+result. The pre-registered caps are 2,600 model calls and 11,000,000 tokens (a scripted run uses about 1,200 calls).
+`AGENTEXPERIENCE_LIVE_PYTHON` names a different interpreter.
+
+**What the offline run shows.** The scripted engineer goes to the first file path a block names. It needs 3 tool calls with
+the lesson and 9 without, the sibling's lesson ranks first in every memory-enabled block, and the mismatched control gets no
+benefit. That proves the harness (the library's capture, verification, reflection, storage, retrieval and injection run for
+real; the stores, conditions and gate behave as registered). It says nothing about any model.
+
+### What a result will and will not show
+
+- A pass shows that, on twelve synthetic services, one model needed fewer tool calls with a lesson from a sibling service
+  than without, more than with a block that withholds the file, and that other clusters' lessons did not do as well.
+- It does not show the model could not have found the fix (it can), that real repositories behave like these, or that a model
+  with a search tool would benefit as much.
+- A negative or inconclusive result is reported as plainly as a positive one.

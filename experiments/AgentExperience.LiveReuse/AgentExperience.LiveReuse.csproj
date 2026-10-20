@@ -46,6 +46,7 @@
     <!-- Embedded so the harness reads the exact bytes it was built with, and reports their git blob id. -->
     <EmbeddedResource Include="preregistration.json" LogicalName="AgentExperience.LiveReuse.preregistration.json" />
     <EmbeddedResource Include="preregistration.transfer.json" LogicalName="AgentExperience.LiveReuse.preregistration.transfer.json" />
+    <EmbeddedResource Include="preregistration.realtask.json" LogicalName="AgentExperience.LiveReuse.preregistration.realtask.json" />
   </ItemGroup>
 
   <ItemGroup>
