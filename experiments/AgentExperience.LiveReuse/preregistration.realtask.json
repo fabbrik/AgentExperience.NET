@@ -78,6 +78,12 @@
   "exclusions": {
     "rule": "A service whose sibling's learning run did not verify (so its cluster has no record in the store) is excluded before evaluation and runs no trial. A service any of whose trials errored (a provider error that survived the retries) is excluded from every comparison."
   },
+  "providerRefusal": {
+    "abortAfterConsecutiveTrials": 3,
+    "httpStatuses": [400, 401, 402, 403],
+    "rule": "If this many consecutive learning runs or trials end in an error whose HTTP status is one of these (what a provider returns for a bad key, an empty credit balance or a blocked account), the run stops before the next model call, writes its report and evaluates no verdict, exactly like a budget cap. It is recorded as stopped, never as complete, and does not use the confirmatory slot.",
+    "amendedAfterLiveResults": true
+  },
   "retry": {
     "maxTries": 3,
     "delaysMilliseconds": [500, 2000],
@@ -89,7 +95,7 @@
     "maxTotalTokens": 11000000,
     "note": "Overridable per run by AGENTEXPERIENCE_LIVE_MAX_CALLS and AGENTEXPERIENCE_LIVE_MAX_TOKENS. A run that reaches either cap stops before the next model call, writes its report, and evaluates no verdict."
   },
-  "confirmatoryRunRule": "The first complete run per provider and model, as recorded in experiments/AgentExperience.LiveReuse/results/realtask-ledger.tsv, is the confirmatory result. Every run is appended before its first model call and never rewritten; a later run of the same provider and model is exploratory and its report says so.",
+  "confirmatoryRunRule": "The first complete run per provider and model, as recorded in experiments/AgentExperience.LiveReuse/results/realtask-ledger.tsv, is the confirmatory result. A run that stopped at a budget cap, was refused by the provider (providerRefusal) or was refused by the harness is not complete. Every run is appended before its first model call and never rewritten; a later run of the same provider and model after a complete one is exploratory and its report says so.",
   "limitations": [
     "Synthetic services and a vendored library written for this experiment, not code found in the wild. Realism comes from real files, real tools and a real process exit code, not from real-world breakage.",
     "The two services of a cluster are near-copies: transfer here means reusing a fix location across sibling services, the shape of a real monorepo with many similar services.",
@@ -98,5 +104,12 @@
     "Three repeats at temperature 0.7 reduce noise per service; they do not make the twelve services independent samples of all upgrade breakages.",
     "A model could pass by hard-coding the expected answers in app/ instead of adapting the helper; that is still an edit to the service's own code, the harness does not detect it, and the report lists every path each trial wrote so it can be audited."
   ],
-  "amendments": []
+  "amendments": [
+    {
+      "date": "2026-10-20",
+      "change": "Added providerRefusal: three consecutive learning runs or trials that end in an HTTP 400, 401, 402 or 403 stop the run like a budget cap (recorded as stopped, no verdict, confirmatory slot not used). The confirmatoryRunRule now says what is not complete, and the report's earlier-runs line counts only complete runs.",
+      "why": "Made after live results existed, because of them. The first live Haiku run (claude-haiku-4-5, 2026-10-20) completed 70 trials normally and then every call returned HTTP 400 (the account's credit balance is the likely cause, as in the first reuse experiment's Haiku attempt). The harness recorded the remaining 74 trials as errored, excluded all 12 services and ended the run as complete and RealTaskInconclusive, which used the confirmatory slot on a run no design could have evaluated. The partial data are reported as they are. No task text, store content, condition, metric, gate, limit or retry rule changes, and no result of that run was used to choose this change.",
+      "resultsExisted": true
+    }
+  ]
 }

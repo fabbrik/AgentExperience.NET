@@ -387,7 +387,17 @@ one; the harm comparison reports what the mismatched block cost.
 
 ## Real-task experiment
 
-**Status: harness built and proven offline; no live results yet.** Pre-registered in
+**Status: one live run, `RealTaskInconclusive`, stopped by the provider -- it shows nothing either way.** The first live
+Haiku run (`claude-haiku-4-5`, 2026-10-20, [report](results/realtask-anthropic-claude-haiku-4-5-2026-10-20.md), USD 2.31,
+594 calls) completed its 12 learning runs and 70 of the 144 evaluation trials normally, and then every call returned HTTP 400 (from trial 83) (the
+account's credit balance is the likely cause), so the other 74 trials errored, all 12 services were excluded, and no
+comparison was evaluated. The harness at that time recorded such a run as complete, which used the confirmatory slot on a
+run no design could have evaluated; **amendment 1** (made after live results existed, recorded in the pre-registration)
+stops a run after three consecutive refused trials and does not count it as complete. That run's ledger entry stays as it
+was written, so the next Haiku run is the first complete one under the amended rule. What the 70 normal trials show, as a
+description and not a verdict: the library's retrieval ranked the sibling's lesson first in every memory-enabled block the
+model was shown, and mean tool calls over the completed trials were 10.9 with memory disabled, 10.4 with memory, 10.0 with the placebo and 10.7 with the
+mismatched control (17 or 18 completed trials each). Haiku explored almost as much with the lesson as without it, and the lesson it received named the cluster's usual fix file in only half the services (the learning run sometimes fixed the service elsewhere in `app/`). Pre-registered in
 [`preregistration.realtask.json`](preregistration.realtask.json) (story 24.1) before any live run. Nothing below is a model
 result.
 
