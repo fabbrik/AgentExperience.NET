@@ -22,6 +22,8 @@ public static class LiveReuseHost
 
     public const string TransferExperimentName = "transfer";
 
+    public const string RealTaskExperimentName = "realtask";
+
     /// <summary>
     /// Runs the command. Anything unexpected is reported by exception type only and never by its message or stack:
     /// the default unhandled-exception output would print both, and an SDK message is not ours to publish.
@@ -63,7 +65,7 @@ public static class LiveReuseHost
 
         if (args.Contains("--help") || args.Contains("-h"))
         {
-            await output.WriteLineAsync("Usage: dotnet run --project experiments/AgentExperience.LiveReuse -c Release [-- [--experiment reuse|transfer] [--scripted]]").ConfigureAwait(false);
+            await output.WriteLineAsync("Usage: dotnet run --project experiments/AgentExperience.LiveReuse -c Release [-- [--experiment reuse|transfer|realtask] [--scripted]]").ConfigureAwait(false);
             await output.WriteLineAsync("See experiments/AgentExperience.LiveReuse/README.md for the variables, the cost and the design.").ConfigureAwait(false);
             return ExitSuccess;
         }
@@ -83,9 +85,14 @@ public static class LiveReuseHost
             return await RunTransferAsync(args, environment, output, error, clock, createClient, cancellationToken).ConfigureAwait(false);
         }
 
+        if (experiment == RealTaskExperimentName)
+        {
+            return await RunRealTaskAsync(args, environment, output, error, clock, createClient, cancellationToken).ConfigureAwait(false);
+        }
+
         if (experiment != ReuseExperiment)
         {
-            await error.WriteLineAsync($"Configuration error: {ExperimentOption} takes '{ReuseExperiment}' (the default) or '{TransferExperimentName}'.").ConfigureAwait(false);
+            await error.WriteLineAsync($"Configuration error: {ExperimentOption} takes '{ReuseExperiment}' (the default), '{TransferExperimentName}' or '{RealTaskExperimentName}'.").ConfigureAwait(false);
             return ExitConfigurationError;
         }
 
@@ -322,6 +329,138 @@ public static class LiveReuseHost
         return result.Complete ? ExitSuccess : ExitStoppedAtBudget;
     }
 
+    /// <summary>
+    /// The real-task experiment (story 24.1): the same rules as the other two -- configuration from the environment only,
+    /// SKIPPED when unconfigured, the ledger line before the first model call, no key or prompt in any report -- with its own
+    /// pre-registration, its own ledger (<c>results/realtask-ledger.tsv</c>) and its own report prefix.
+    /// </summary>
+    private static async Task<int> RunRealTaskAsync(
+        string[] args,
+        Func<string, string?> environment,
+        TextWriter output,
+        TextWriter error,
+        TimeProvider clock,
+        Func<LiveConfiguration, Microsoft.Extensions.AI.IChatClient>? createClient,
+        CancellationToken cancellationToken)
+    {
+        RealTaskDesign design;
+        try
+        {
+            design = RealTaskDesign.ReadEmbedded();
+        }
+        catch (PreregistrationException ex)
+        {
+            await error.WriteLineAsync("The real-task pre-registration could not be read: " + ex.Message).ConfigureAwait(false);
+            return ExitHarnessRefused;
+        }
+
+        if (args.Contains("--scripted"))
+        {
+            var scripted = await RunRealTaskGuardedAsync(
+                new RealTaskOptions
+                {
+                    Model = new ScriptedRealTaskModel(),
+                    Descriptor = new RunDescriptor("scripted", ScriptedRealTaskModel.ModelId, "none (offline)", null, null, "none: scripted run, nothing is billed"),
+                    Design = design,
+                    Clock = clock,
+                    NoRetryDelay = true,
+                },
+                error,
+                cancellationToken).ConfigureAwait(false);
+
+            if (scripted is null)
+            {
+                return ExitHarnessRefused;
+            }
+
+            await output.WriteAsync(RealTaskReport.Markdown(scripted)).ConfigureAwait(false);
+            return ExitSuccess;
+        }
+
+        var (outcome, configuration, message) = LiveConfiguration.Read(environment, design.DefaultMaxModelCalls, design.DefaultMaxTotalTokens);
+        switch (outcome)
+        {
+            case ConfigurationOutcome.NotConfigured:
+                await output.WriteLineAsync("SKIPPED: " + message).ConfigureAwait(false);
+                return ExitSuccess;
+            case ConfigurationOutcome.Invalid:
+                await error.WriteLineAsync("Configuration error: " + message).ConfigureAwait(false);
+                return ExitConfigurationError;
+        }
+
+        var descriptor = configuration!.Describe();
+        var resultsDirectory = configuration.ResultsDirectory ?? DefaultResultsDirectory();
+        if (resultsDirectory is null)
+        {
+            await error.WriteLineAsync($"Could not find the repository root (AgentExperience.NET.sln) above the current directory; set {LiveConfiguration.ResultsDirectoryVariable}.").ConfigureAwait(false);
+            return ExitConfigurationError;
+        }
+
+        var budget = configuration.Budget ?? new LiveBudget(design.DefaultMaxModelCalls, design.DefaultMaxTotalTokens);
+        await output.WriteLineAsync($"Real-task experiment: {configuration}; budget {budget.MaxModelCalls} calls / {budget.MaxTotalTokens} tokens.").ConfigureAwait(false);
+
+        // The ledger line is written BEFORE the first model call, and only the first complete run per provider and model is the confirmatory result.
+        Directory.CreateDirectory(resultsDirectory);
+        var ledger = new RunLedger(Path.Combine(resultsDirectory, RunLedger.RealTaskFileName));
+        var earlier = ledger.CountFor(descriptor.Provider, descriptor.RequestedModel);
+        var runId = clock.GetUtcNow().UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, "started", "-");
+        var partial = Path.Combine(resultsDirectory, RealTaskReport.Prefix + runId + ".partial.jsonl");
+
+        using var model = (createClient ?? (config => config.CreateChatClient()))(configuration);
+        var result = await RunRealTaskGuardedAsync(
+            new RealTaskOptions
+            {
+                Model = model,
+                Descriptor = descriptor,
+                Design = design,
+                Budget = budget,
+                Clock = clock,
+                MinimumCallInterval = configuration.MinimumCallInterval,
+                Progress = output,
+                OnRunRecorded = record => File.AppendAllText(partial, RealTaskReport.JsonLine(record) + "\n"),
+            },
+            error,
+            cancellationToken).ConfigureAwait(false);
+
+        if (result is null)
+        {
+            ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, "refused", "-");
+            return ExitHarnessRefused;
+        }
+
+        result = result with { EarlierLedgerEntries = earlier };
+        var baseName = RealTaskReport.BaseName(result);
+        var path = Path.Combine(resultsDirectory, baseName);
+        for (var suffix = 2; File.Exists(path + ".md") || File.Exists(path + ".json"); suffix++)
+        {
+            path = Path.Combine(resultsDirectory, baseName + "-run" + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        await File.WriteAllTextAsync(path + ".md", RealTaskReport.Markdown(result), cancellationToken).ConfigureAwait(false);
+        await File.WriteAllTextAsync(path + ".json", RealTaskReport.Json(result), cancellationToken).ConfigureAwait(false);
+        File.Delete(partial);
+        ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, result.Complete ? "complete: " + result.Conclusion : "stopped at budget cap", Path.GetFileName(path) + ".md");
+
+        await output.WriteLineAsync($"Conclusion: {result.Conclusion}. Reference {result.Reference.Verdict}; content {result.Content.Verdict}; mismatched-cluster control {result.MismatchedControl.Verdict}.").ConfigureAwait(false);
+        await output.WriteLineAsync($"Used {result.Total.ModelCalls} model calls, {result.Total.InputTokens} input and {result.Total.OutputTokens} output tokens.").ConfigureAwait(false);
+        await output.WriteLineAsync($"Wrote {Path.GetFileName(path)}.md and .json to {resultsDirectory}.").ConfigureAwait(false);
+        return result.Complete ? ExitSuccess : ExitStoppedAtBudget;
+    }
+
+    private static async Task<RealTaskResult?> RunRealTaskGuardedAsync(RealTaskOptions options, TextWriter error, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RealTaskExperiment.RunAsync(options, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is PreregistrationException or HarnessIntegrityException)
+        {
+            await error.WriteLineAsync($"The harness refused to report: {ex.GetType().Name}: {ex.Message}").ConfigureAwait(false);
+            return null;
+        }
+    }
+
     private static async Task<TransferExperimentResult?> RunTransferGuardedAsync(TransferExperimentOptions options, TextWriter error, CancellationToken cancellationToken)
     {
         try
@@ -374,6 +513,9 @@ internal sealed class RunLedger(string path)
 
     /// <summary>The transfer experiment's own ledger, beside the reuse experiment's.</summary>
     public const string TransferFileName = "transfer-ledger.tsv";
+
+    /// <summary>The real-task experiment's own ledger.</summary>
+    public const string RealTaskFileName = "realtask-ledger.tsv";
     private const string Header = "run\tutc\tprovider\tmodel\thost\tpreregistration\tevent\treport";
 
     /// <summary>How many earlier runs (distinct run ids) this ledger holds for the provider and model.</summary>
