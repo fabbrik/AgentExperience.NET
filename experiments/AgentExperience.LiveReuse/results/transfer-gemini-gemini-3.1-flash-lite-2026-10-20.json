@@ -1,0 +1,2503 @@
+{
+  "schema": "agentexperience-transfer-results@1",
+  "scripted": false,
+  "provider": "gemini",
+  "endpointHost": "generativelanguage.googleapis.com",
+  "requestedModel": "gemini-3.1-flash-lite",
+  "reportedModels": [
+    "gemini-3.1-flash-lite"
+  ],
+  "startedAtUtc": "2026-10-20T16:23:44Z",
+  "preregistration": {
+    "file": "preregistration.transfer.json",
+    "gitBlobId": "2d4407c34c60948f4f7155ed07f9bc15e33143a4",
+    "byteCount": 14133,
+    "registeredAgainstCommit": "registered in the commit that adds this file (parent c3dcb37)",
+    "amendments": 1,
+    "amendmentsAfterResults": 0
+  },
+  "taskSetVersion": "transfer-clusters@1",
+  "traitDigest": "78d4d01e140a685d83cccfab968e10e7b9d7850ab4bdb9651ea245778243b938",
+  "settings": {
+    "temperature": 0,
+    "seed": 20260926,
+    "seedSent": false,
+    "maxOutputTokens": null,
+    "learningAttemptLimit": 8,
+    "evaluationAttemptLimit": 6,
+    "toolCallsPerAttempt": 6
+  },
+  "budget": {
+    "maxModelCalls": 500,
+    "maxTotalTokens": 4000000
+  },
+  "complete": true,
+  "stopReason": null,
+  "excluded": [
+    {
+      "instance": 0,
+      "reason": "an evaluation trial errored"
+    },
+    {
+      "instance": 1,
+      "reason": "an evaluation trial errored"
+    },
+    {
+      "instance": 2,
+      "reason": "the learning run of cluster mizzen did not verify, so it ran no evaluation trial"
+    },
+    {
+      "instance": 3,
+      "reason": "the learning run of cluster bowsprit did not verify, so it ran no evaluation trial"
+    },
+    {
+      "instance": 4,
+      "reason": "an evaluation trial errored"
+    },
+    {
+      "instance": 5,
+      "reason": "an evaluation trial errored"
+    },
+    {
+      "instance": 6,
+      "reason": "an evaluation trial errored"
+    },
+    {
+      "instance": 7,
+      "reason": "an evaluation trial errored"
+    },
+    {
+      "instance": 8,
+      "reason": "the learning run of cluster mizzen did not verify, so it ran no evaluation trial"
+    },
+    {
+      "instance": 9,
+      "reason": "the learning run of cluster bowsprit did not verify, so it ran no evaluation trial"
+    }
+  ],
+  "conclusion": "TransferInconclusive",
+  "reference": {
+    "treatment": "memory-enabled",
+    "control": "memory-disabled",
+    "pairs": 2,
+    "excludedInstances": 10,
+    "treatmentMeanFailedAttempts": 3,
+    "controlMeanFailedAttempts": 1.5,
+    "treatmentSuccessRate": 1,
+    "controlSuccessRate": 1,
+    "treatmentUnauthorized": 0,
+    "controlUnauthorized": 0,
+    "signTest": null,
+    "terms": [],
+    "verdict": "Inconclusive"
+  },
+  "content": {
+    "treatment": "memory-enabled",
+    "control": "memory-placebo",
+    "pairs": 2,
+    "excludedInstances": 10,
+    "treatmentMeanFailedAttempts": 3,
+    "controlMeanFailedAttempts": 1.5,
+    "treatmentSuccessRate": 1,
+    "controlSuccessRate": 1,
+    "treatmentUnauthorized": 0,
+    "controlUnauthorized": 0,
+    "signTest": null,
+    "terms": [],
+    "verdict": "Inconclusive"
+  },
+  "mismatchedControl": {
+    "treatment": "mismatched-trait",
+    "control": "memory-disabled",
+    "pairs": 2,
+    "excludedInstances": 10,
+    "treatmentMeanFailedAttempts": 1.5,
+    "controlMeanFailedAttempts": 1.5,
+    "treatmentSuccessRate": 1,
+    "controlSuccessRate": 1,
+    "treatmentUnauthorized": 0,
+    "controlUnauthorized": 0,
+    "signTest": null,
+    "terms": [],
+    "verdict": "Inconclusive"
+  },
+  "prices": {
+    "inputUsdPerMillionTokens": 0.25,
+    "outputUsdPerMillionTokens": 1.5,
+    "source": "ai.google.dev/gemini-api/docs/pricing, Standard paid tier, text input and output (thinking included), checked 2026-09-26"
+  },
+  "totals": {
+    "modelCalls": 134,
+    "inputTokens": 142739,
+    "outputTokens": 4623,
+    "modelLatencyMilliseconds": 2241749.7789,
+    "totalTokens": 147362
+  },
+  "estimatedCostUsd": 0.04261925,
+  "callsWithoutUsage": 0,
+  "distractors": [
+    {
+      "index": 0,
+      "service": "sessionstore",
+      "cluster": "halyard",
+      "family": "CacheFlush",
+      "taskId": "sessionstore/flush"
+    },
+    {
+      "index": 1,
+      "service": "imagecdn",
+      "cluster": "keel",
+      "family": "CacheFlush",
+      "taskId": "imagecdn/flush"
+    },
+    {
+      "index": 2,
+      "service": "pagecache",
+      "cluster": "mizzen",
+      "family": "CacheFlush",
+      "taskId": "pagecache/flush"
+    },
+    {
+      "index": 3,
+      "service": "geolookup",
+      "cluster": "bowsprit",
+      "family": "CacheFlush",
+      "taskId": "geolookup/flush"
+    },
+    {
+      "index": 4,
+      "service": "ratelimiter",
+      "cluster": "capstan",
+      "family": "CacheFlush",
+      "taskId": "ratelimiter/flush"
+    },
+    {
+      "index": 5,
+      "service": "feedbuilder",
+      "cluster": "taffrail",
+      "family": "CacheFlush",
+      "taskId": "feedbuilder/flush"
+    },
+    {
+      "index": 6,
+      "service": "currencyfx",
+      "cluster": "halyard",
+      "family": "CacheFlush",
+      "taskId": "currencyfx/flush"
+    },
+    {
+      "index": 7,
+      "service": "bannerads",
+      "cluster": "keel",
+      "family": "CacheFlush",
+      "taskId": "bannerads/flush"
+    },
+    {
+      "index": 8,
+      "service": "sitemapgen",
+      "cluster": "mizzen",
+      "family": "CacheFlush",
+      "taskId": "sitemapgen/flush"
+    },
+    {
+      "index": 9,
+      "service": "cmsblocks",
+      "cluster": "bowsprit",
+      "family": "CacheFlush",
+      "taskId": "cmsblocks/flush"
+    },
+    {
+      "index": 10,
+      "service": "abtests",
+      "cluster": "capstan",
+      "family": "CacheFlush",
+      "taskId": "abtests/flush"
+    },
+    {
+      "index": 11,
+      "service": "nightlyexport",
+      "cluster": "taffrail",
+      "family": "CacheFlush",
+      "taskId": "nightlyexport/flush"
+    },
+    {
+      "index": 12,
+      "service": "checkoutapi",
+      "cluster": "halyard",
+      "family": "ConfigRollout",
+      "taskId": "checkoutapi/config"
+    },
+    {
+      "index": 13,
+      "service": "cartpricing",
+      "cluster": "keel",
+      "family": "ConfigRollout",
+      "taskId": "cartpricing/config"
+    },
+    {
+      "index": 14,
+      "service": "promoengine",
+      "cluster": "mizzen",
+      "family": "ConfigRollout",
+      "taskId": "promoengine/config"
+    },
+    {
+      "index": 15,
+      "service": "inventoryapi",
+      "cluster": "bowsprit",
+      "family": "ConfigRollout",
+      "taskId": "inventoryapi/config"
+    },
+    {
+      "index": 16,
+      "service": "dispatchhub",
+      "cluster": "capstan",
+      "family": "ConfigRollout",
+      "taskId": "dispatchhub/config"
+    },
+    {
+      "index": 17,
+      "service": "paymentsui",
+      "cluster": "taffrail",
+      "family": "ConfigRollout",
+      "taskId": "paymentsui/config"
+    },
+    {
+      "index": 18,
+      "service": "accountsapi",
+      "cluster": "halyard",
+      "family": "ConfigRollout",
+      "taskId": "accountsapi/config"
+    },
+    {
+      "index": 19,
+      "service": "notifyhub",
+      "cluster": "keel",
+      "family": "ConfigRollout",
+      "taskId": "notifyhub/config"
+    },
+    {
+      "index": 20,
+      "service": "catalogapi",
+      "cluster": "mizzen",
+      "family": "ConfigRollout",
+      "taskId": "catalogapi/config"
+    },
+    {
+      "index": 21,
+      "service": "warehouseapi",
+      "cluster": "bowsprit",
+      "family": "ConfigRollout",
+      "taskId": "warehouseapi/config"
+    },
+    {
+      "index": 22,
+      "service": "quotesvc",
+      "cluster": "capstan",
+      "family": "ConfigRollout",
+      "taskId": "quotesvc/config"
+    },
+    {
+      "index": 23,
+      "service": "reportingapi",
+      "cluster": "taffrail",
+      "family": "ConfigRollout",
+      "taskId": "reportingapi/config"
+    }
+  ],
+  "harm": {
+    "pairs": 2,
+    "worse": 0,
+    "better": 0,
+    "tied": 2,
+    "mismatchedMeanFailedAttempts": 1.5,
+    "disabledMeanFailedAttempts": 1.5
+  },
+  "learning": [
+    {
+      "cluster": "halyard",
+      "run": {
+        "sequence": 1,
+        "phase": "learning",
+        "instance": 0,
+        "service": "ledgerpost",
+        "condition": "learn-cluster",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 1,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 3,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 1618,
+          "outputTokens": 109,
+          "modelLatencyMilliseconds": 21392.5594,
+          "totalTokens": 1727
+        },
+        "latencyMilliseconds": 21427.5465,
+        "storedStrategy": "online-copy",
+        "storedStrategies": [
+          "online-copy"
+        ],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "keel",
+      "run": {
+        "sequence": 2,
+        "phase": "learning",
+        "instance": 1,
+        "service": "basketsync",
+        "condition": "learn-cluster",
+        "acceptedStrategy": "in-place",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 2296,
+          "outputTokens": 162,
+          "modelLatencyMilliseconds": 117346.9015,
+          "totalTokens": 2458
+        },
+        "latencyMilliseconds": 117351.852,
+        "storedStrategy": "in-place",
+        "storedStrategies": [
+          "in-place"
+        ],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "mizzen",
+      "run": {
+        "sequence": 3,
+        "phase": "learning",
+        "instance": 2,
+        "service": "couponvault",
+        "condition": "learn-cluster",
+        "acceptedStrategy": "batched-backfill",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 3
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 2301,
+          "outputTokens": 152,
+          "modelLatencyMilliseconds": 95329.14929999999,
+          "totalTokens": 2453
+        },
+        "latencyMilliseconds": 95337.2274,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "bowsprit",
+      "run": {
+        "sequence": 4,
+        "phase": "learning",
+        "instance": 3,
+        "service": "stockpile",
+        "condition": "learn-cluster",
+        "acceptedStrategy": "shadow-table",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 1012,
+          "outputTokens": 63,
+          "modelLatencyMilliseconds": 31913.572400000005,
+          "totalTokens": 1075
+        },
+        "latencyMilliseconds": 31916.3907,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "capstan",
+      "run": {
+        "sequence": 5,
+        "phase": "learning",
+        "instance": 4,
+        "service": "parcelroute",
+        "condition": "learn-cluster",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 4,
+        "attempts": 5,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "batched-backfill",
+            "exitCode": 3
+          },
+          {
+            "turn": 5,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 6,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 6,
+          "inputTokens": 3801,
+          "outputTokens": 249,
+          "modelLatencyMilliseconds": 125043.78870000009,
+          "totalTokens": 4050
+        },
+        "latencyMilliseconds": 125050.5047,
+        "storedStrategy": "blue-green",
+        "storedStrategies": [
+          "blue-green"
+        ],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "run": {
+        "sequence": 6,
+        "phase": "learning",
+        "instance": 5,
+        "service": "pricebook",
+        "condition": "learn-cluster",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "in-place",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 2284,
+          "outputTokens": 155,
+          "modelLatencyMilliseconds": 58243.84049999999,
+          "totalTokens": 2439
+        },
+        "latencyMilliseconds": 58246.9151,
+        "storedStrategy": "expand-contract",
+        "storedStrategies": [
+          "expand-contract"
+        ],
+        "blockStrategies": []
+      }
+    }
+  ],
+  "trials": [
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 7,
+        "phase": "evaluation",
+        "instance": 0,
+        "service": "refundflow",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 1,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 3,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 1597,
+          "outputTokens": 105,
+          "modelLatencyMilliseconds": 47779.686400000006,
+          "totalTokens": 1702
+        },
+        "latencyMilliseconds": 47782.6781,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "ledgerpost/learning",
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 8,
+        "phase": "evaluation",
+        "instance": 0,
+        "service": "refundflow",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 1,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 3,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "online-copy",
+        "firstStrategy": "expand-contract",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 4864,
+          "outputTokens": 105,
+          "modelLatencyMilliseconds": 44811.87930000009,
+          "totalTokens": 4969
+        },
+        "latencyMilliseconds": 44940.514,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "online-copy"
+        ]
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 10,
+      "followedBlock": true,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 9,
+        "phase": "evaluation",
+        "instance": 0,
+        "service": "refundflow",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "expand-contract",
+        "firstStrategy": "expand-contract",
+        "followedBlock": true,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 5706,
+          "outputTokens": 149,
+          "modelLatencyMilliseconds": 54707.309499999974,
+          "totalTokens": 5855
+        },
+        "latencyMilliseconds": 54719.8873,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "expand-contract"
+        ]
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "ledgerpost/learning",
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 10,
+        "phase": "evaluation",
+        "instance": 0,
+        "service": "refundflow",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "online-copy",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 3003,
+          "outputTokens": 61,
+          "modelLatencyMilliseconds": 57144.69079999998,
+          "totalTokens": 3064
+        },
+        "latencyMilliseconds": 57153.0108,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "basketsync/learning",
+        "parcelroute/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 11,
+        "phase": "evaluation",
+        "instance": 1,
+        "service": "wishlist",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "in-place",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "in-place",
+        "firstStrategy": "expand-contract",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 6610,
+          "outputTokens": 149,
+          "modelLatencyMilliseconds": 75183.9243999999,
+          "totalTokens": 6759
+        },
+        "latencyMilliseconds": 75196.1712,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "in-place"
+        ]
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "parcelroute/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 9,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 12,
+        "phase": "evaluation",
+        "instance": 1,
+        "service": "wishlist",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "in-place",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "blue-green",
+        "firstStrategy": "expand-contract",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 5562,
+          "outputTokens": 149,
+          "modelLatencyMilliseconds": 32619.277000000002,
+          "totalTokens": 5711
+        },
+        "latencyMilliseconds": 32629.7474,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "blue-green"
+        ]
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "basketsync/learning",
+        "parcelroute/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 13,
+        "phase": "evaluation",
+        "instance": 1,
+        "service": "wishlist",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "in-place",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 1,
+        "changes": [],
+        "toolCalls": 0,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": null,
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 1,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "modelLatencyMilliseconds": 35255.17969999998,
+          "totalTokens": 0
+        },
+        "latencyMilliseconds": 35256.7164,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 14,
+        "phase": "evaluation",
+        "instance": 1,
+        "service": "wishlist",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "in-place",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "batched-backfill",
+            "exitCode": 3
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 2254,
+          "outputTokens": 151,
+          "modelLatencyMilliseconds": 187508.03879999998,
+          "totalTokens": 2405
+        },
+        "latencyMilliseconds": 187510.7933,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 15,
+        "phase": "evaluation",
+        "instance": 4,
+        "service": "taxcalc",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 2949,
+          "outputTokens": 193,
+          "modelLatencyMilliseconds": 29679.343199999887,
+          "totalTokens": 3142
+        },
+        "latencyMilliseconds": 29682.4985,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "parcelroute/learning",
+        "basketsync/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 16,
+        "phase": "evaluation",
+        "instance": 4,
+        "service": "taxcalc",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "blue-green",
+        "firstStrategy": "in-place",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 8394,
+          "outputTokens": 193,
+          "modelLatencyMilliseconds": 78755.55580000009,
+          "totalTokens": 8587
+        },
+        "latencyMilliseconds": 78786.2809,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "blue-green"
+        ]
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "basketsync/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 8,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 17,
+        "phase": "evaluation",
+        "instance": 4,
+        "service": "taxcalc",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "blue-green",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 1,
+        "changes": [],
+        "toolCalls": 0,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "in-place",
+        "firstStrategy": null,
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 1259,
+          "outputTokens": 17,
+          "modelLatencyMilliseconds": 65250.76829999988,
+          "totalTokens": 1276
+        },
+        "latencyMilliseconds": 65254.4202,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "in-place"
+        ]
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "parcelroute/learning",
+        "basketsync/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 18,
+        "phase": "evaluation",
+        "instance": 4,
+        "service": "taxcalc",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 7964,
+          "outputTokens": 193,
+          "modelLatencyMilliseconds": 23454.34129999997,
+          "totalTokens": 8157
+        },
+        "latencyMilliseconds": 23462.8083,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "pricebook/learning",
+        "parcelroute/learning",
+        "ledgerpost/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": true,
+      "followedTransferredLesson": true,
+      "run": {
+        "sequence": 19,
+        "phase": "evaluation",
+        "instance": 5,
+        "service": "searchindex",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 0,
+        "attempts": 1,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "expand-contract",
+        "firstStrategy": "expand-contract",
+        "followedBlock": true,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 3177,
+          "outputTokens": 62,
+          "modelLatencyMilliseconds": 27774.623499999987,
+          "totalTokens": 3239
+        },
+        "latencyMilliseconds": 27777.6268,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "expand-contract"
+        ]
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "parcelroute/learning",
+        "ledgerpost/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 9,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 20,
+        "phase": "evaluation",
+        "instance": 5,
+        "service": "searchindex",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "expand-contract",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 1,
+        "changes": [],
+        "toolCalls": 0,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "blue-green",
+        "firstStrategy": null,
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 1285,
+          "outputTokens": 17,
+          "modelLatencyMilliseconds": 9379.564299999969,
+          "totalTokens": 1302
+        },
+        "latencyMilliseconds": 9383.674,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "blue-green"
+        ]
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "pricebook/learning",
+        "parcelroute/learning",
+        "ledgerpost/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": true,
+      "run": {
+        "sequence": 21,
+        "phase": "evaluation",
+        "instance": 5,
+        "service": "searchindex",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 0,
+        "attempts": 1,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 3005,
+          "outputTokens": 62,
+          "modelLatencyMilliseconds": 28089.077800000086,
+          "totalTokens": 3067
+        },
+        "latencyMilliseconds": 28094.2166,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": true,
+      "run": {
+        "sequence": 22,
+        "phase": "evaluation",
+        "instance": 5,
+        "service": "searchindex",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 0,
+        "attempts": 1,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 999,
+          "outputTokens": 62,
+          "modelLatencyMilliseconds": 37650.12990000006,
+          "totalTokens": 1061
+        },
+        "latencyMilliseconds": 37650.976,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 10,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 23,
+        "phase": "evaluation",
+        "instance": 6,
+        "service": "loyaltyclub",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "online-copy",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 1,
+        "changes": [],
+        "toolCalls": 0,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "expand-contract",
+        "firstStrategy": null,
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 1,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "modelLatencyMilliseconds": 8018.911700000055,
+          "totalTokens": 0
+        },
+        "latencyMilliseconds": 8021.2078,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "expand-contract"
+        ]
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "ledgerpost/learning",
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 24,
+        "phase": "evaluation",
+        "instance": 6,
+        "service": "loyaltyclub",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 1,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 3,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 4626,
+          "outputTokens": 110,
+          "modelLatencyMilliseconds": 35825.21869999985,
+          "totalTokens": 4736
+        },
+        "latencyMilliseconds": 35831.7391,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 25,
+        "phase": "evaluation",
+        "instance": 6,
+        "service": "loyaltyclub",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 1,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 3,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 1617,
+          "outputTokens": 110,
+          "modelLatencyMilliseconds": 135839.65540000005,
+          "totalTokens": 1727
+        },
+        "latencyMilliseconds": 135840.916,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "halyard",
+      "hiddenStrategy": "online-copy",
+      "sameClusterTaskId": "ledgerpost/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "ledgerpost/learning",
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 26,
+        "phase": "evaluation",
+        "instance": 6,
+        "service": "loyaltyclub",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "online-copy",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 1,
+        "attempts": 2,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 3,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "online-copy",
+        "firstStrategy": "expand-contract",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 3,
+          "inputTokens": 4884,
+          "outputTokens": 110,
+          "modelLatencyMilliseconds": 53073.695400000084,
+          "totalTokens": 4994
+        },
+        "latencyMilliseconds": 53081.4837,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "online-copy"
+        ]
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "basketsync/learning",
+        "parcelroute/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 27,
+        "phase": "evaluation",
+        "instance": 7,
+        "service": "authgate",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "in-place",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 4,
+        "attempts": 5,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "blue-green",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "shadow-table",
+            "exitCode": 3
+          },
+          {
+            "turn": 5,
+            "strategy": "in-place",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 6,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 6,
+          "inputTokens": 9749,
+          "outputTokens": 237,
+          "modelLatencyMilliseconds": 83559.38960000034,
+          "totalTokens": 9986
+        },
+        "latencyMilliseconds": 83571.873,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 28,
+        "phase": "evaluation",
+        "instance": 7,
+        "service": "authgate",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "in-place",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "batched-backfill",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "in-place",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 2971,
+          "outputTokens": 195,
+          "modelLatencyMilliseconds": 65809.2276000001,
+          "totalTokens": 3166
+        },
+        "latencyMilliseconds": 65811.5777,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "basketsync/learning",
+        "parcelroute/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 29,
+        "phase": "evaluation",
+        "instance": 7,
+        "service": "authgate",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "in-place",
+        "status": "Errored",
+        "classification": "ClientResultException (HTTP 503)",
+        "verified": null,
+        "failedAttempts": null,
+        "attempts": 1,
+        "changes": [],
+        "toolCalls": 0,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "in-place",
+        "firstStrategy": null,
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 1,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "modelLatencyMilliseconds": 100673.75059999991,
+          "totalTokens": 0
+        },
+        "latencyMilliseconds": 100675.2715,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "in-place"
+        ]
+      }
+    },
+    {
+      "cluster": "keel",
+      "hiddenStrategy": "in-place",
+      "sameClusterTaskId": "basketsync/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "parcelroute/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 9,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 30,
+        "phase": "evaluation",
+        "instance": 7,
+        "service": "authgate",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "in-place",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "blue-green",
+        "firstStrategy": "expand-contract",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 5568,
+          "outputTokens": 149,
+          "modelLatencyMilliseconds": 49717.53759999992,
+          "totalTokens": 5717
+        },
+        "latencyMilliseconds": 49726.4434,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "blue-green"
+        ]
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "basketsync/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 8,
+      "followedBlock": true,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 31,
+        "phase": "evaluation",
+        "instance": 10,
+        "service": "shipquote",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "in-place",
+        "firstStrategy": "in-place",
+        "followedBlock": true,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 6947,
+          "outputTokens": 193,
+          "modelLatencyMilliseconds": 110883.20760000008,
+          "totalTokens": 7140
+        },
+        "latencyMilliseconds": 110892.9935,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "in-place"
+        ]
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "parcelroute/learning",
+        "basketsync/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 32,
+        "phase": "evaluation",
+        "instance": 10,
+        "service": "shipquote",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 7962,
+          "outputTokens": 193,
+          "modelLatencyMilliseconds": 48961.300800000085,
+          "totalTokens": 8155
+        },
+        "latencyMilliseconds": 48969.8765,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 33,
+        "phase": "evaluation",
+        "instance": 10,
+        "service": "shipquote",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 3,
+        "attempts": 4,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 5,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "online-copy",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 5,
+          "inputTokens": 2947,
+          "outputTokens": 193,
+          "modelLatencyMilliseconds": 46293.9813999997,
+          "totalTokens": 3140
+        },
+        "latencyMilliseconds": 46296.1585,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "capstan",
+      "hiddenStrategy": "blue-green",
+      "sameClusterTaskId": "parcelroute/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "parcelroute/learning",
+        "basketsync/learning",
+        "pricebook/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 34,
+        "phase": "evaluation",
+        "instance": 10,
+        "service": "shipquote",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "blue-green",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 4,
+        "attempts": 5,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "expand-contract",
+            "exitCode": 3
+          },
+          {
+            "turn": 4,
+            "strategy": "shadow-table",
+            "exitCode": 3
+          },
+          {
+            "turn": 5,
+            "strategy": "blue-green",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 6,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "blue-green",
+        "firstStrategy": "in-place",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 6,
+          "inputTokens": 10238,
+          "outputTokens": 237,
+          "modelLatencyMilliseconds": 82363.54029999976,
+          "totalTokens": 10475
+        },
+        "latencyMilliseconds": 82381.0304,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "blue-green"
+        ]
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": true,
+      "run": {
+        "sequence": 35,
+        "phase": "evaluation",
+        "instance": 11,
+        "service": "returnsdesk",
+        "condition": "memory-placebo",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 0,
+        "attempts": 1,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 3009,
+          "outputTokens": 62,
+          "modelLatencyMilliseconds": 30748.38279999979,
+          "totalTokens": 3071
+        },
+        "latencyMilliseconds": 30750.578,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [],
+      "strategyMentions": 0,
+      "followedBlock": null,
+      "followedTransferredLesson": true,
+      "run": {
+        "sequence": 36,
+        "phase": "evaluation",
+        "instance": 11,
+        "service": "returnsdesk",
+        "condition": "memory-disabled",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 0,
+        "attempts": 1,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": false,
+        "blockStrategy": null,
+        "firstStrategy": "expand-contract",
+        "followedBlock": null,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 1003,
+          "outputTokens": 62,
+          "modelLatencyMilliseconds": 25519.75630000001,
+          "totalTokens": 1065
+        },
+        "latencyMilliseconds": 25520.6107,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": []
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": true,
+      "sameClusterRank": 1,
+      "blockRecords": [
+        "pricebook/learning",
+        "parcelroute/learning",
+        "basketsync/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 12,
+      "followedBlock": false,
+      "followedTransferredLesson": false,
+      "run": {
+        "sequence": 37,
+        "phase": "evaluation",
+        "instance": 11,
+        "service": "returnsdesk",
+        "condition": "memory-enabled",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 2,
+        "attempts": 3,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "in-place",
+            "exitCode": 3
+          },
+          {
+            "turn": 2,
+            "strategy": "online-copy",
+            "exitCode": 3
+          },
+          {
+            "turn": 3,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 4,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "expand-contract",
+        "firstStrategy": "in-place",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 4,
+          "inputTokens": 6621,
+          "outputTokens": 152,
+          "modelLatencyMilliseconds": 48269.32979999995,
+          "totalTokens": 6773
+        },
+        "latencyMilliseconds": 48311.734,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "expand-contract"
+        ]
+      }
+    },
+    {
+      "cluster": "taffrail",
+      "hiddenStrategy": "expand-contract",
+      "sameClusterTaskId": "pricebook/learning",
+      "sameClusterInjected": false,
+      "sameClusterRank": null,
+      "blockRecords": [
+        "parcelroute/learning",
+        "basketsync/learning",
+        "ledgerpost/learning"
+      ],
+      "strategyMentions": 9,
+      "followedBlock": false,
+      "followedTransferredLesson": true,
+      "run": {
+        "sequence": 38,
+        "phase": "evaluation",
+        "instance": 11,
+        "service": "returnsdesk",
+        "condition": "mismatched-trait",
+        "acceptedStrategy": "expand-contract",
+        "status": "Completed",
+        "classification": null,
+        "verified": true,
+        "failedAttempts": 0,
+        "attempts": 1,
+        "changes": [
+          {
+            "turn": 1,
+            "strategy": "expand-contract",
+            "exitCode": 0
+          }
+        ],
+        "toolCalls": 2,
+        "unauthorizedRequests": 0,
+        "blockSeen": true,
+        "blockStrategy": "blue-green",
+        "firstStrategy": "expand-contract",
+        "followedBlock": false,
+        "usage": {
+          "modelCalls": 2,
+          "inputTokens": 2657,
+          "outputTokens": 62,
+          "modelLatencyMilliseconds": 31879.69150000019,
+          "totalTokens": 2719
+        },
+        "latencyMilliseconds": 31884.8424,
+        "storedStrategy": null,
+        "storedStrategies": [],
+        "blockStrategies": [
+          "blue-green"
+        ]
+      }
+    }
+  ]
+}

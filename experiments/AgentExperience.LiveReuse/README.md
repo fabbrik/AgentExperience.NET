@@ -253,7 +253,13 @@ numbers are properties of the script and prove only the harness.
 
 ## Transfer experiment
 
-**Status: in progress, no live results yet.** Pre-registered in
+**Status: one live run, `TransferInconclusive` -- it shows nothing either way.** The first complete Gemini run
+(`gemini-3.1-flash-lite`, 2026-10-20, [report](results/transfer-gemini-gemini-3.1-flash-lite-2026-10-20.md), about USD
+0.04, 134 calls) hit nine HTTP 503 errors from the provider: two learning runs never verified and four evaluation
+trials errored, so 10 of 12 instances were excluded, more than the pre-registration allows, and no comparison was
+evaluated. Of the two instances that remained, nothing can be read: the mismatched-trait trial failed as many attempts as
+the memory-disabled one in both. The ledger counts this as the confirmatory run for that model, so a rerun of the same
+model is exploratory and its report must say so. A second provider is still needed (story 20.5). Pre-registered in
 [`preregistration.transfer.json`](preregistration.transfer.json) (story 20.4), registered in the commit that adds the
 file (parent `c3dcb37`). No live results existed at registration; the offline scripted results are part of the design.
 One amendment (2026-10-10, story 20.7, before any live run) gates injected records on the run's own tools; see below.
