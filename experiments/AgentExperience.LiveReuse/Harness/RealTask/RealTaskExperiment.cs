@@ -110,6 +110,7 @@ public static partial class RealTaskExperiment
         var trials = new List<RealTaskRun>();
         string? stopReason = null;
         var sequence = 0;
+        var refused = 0;
 
         // ---- Learning: one memory-disabled run per service, finalized into the master store if it verifies. -----------
         foreach (var service in taskSet.Services)
@@ -139,6 +140,8 @@ public static partial class RealTaskExperiment
             {
                 stopReason = "the budget cap was reached during the learning phase (" + outcome.Run.Classification + ")";
             }
+
+            stopReason ??= RefusalStop(design, outcome.Run, ref refused, "learning");
         }
 
         // ---- The stores each service is evaluated against: everyone's learning record but its own (and, for the mismatched control, its sibling's). --
@@ -183,6 +186,8 @@ public static partial class RealTaskExperiment
                         {
                             stopReason = "the budget cap was reached during the evaluation phase (" + outcome.Run.Classification + ")";
                         }
+
+                        stopReason ??= RefusalStop(design, outcome.Run, ref refused, "evaluation");
                     }
                 }
             }
@@ -218,6 +223,32 @@ public static partial class RealTaskExperiment
             metered.CallsWithoutUsage,
             metered.Totals);
     }
+
+    /// <summary>
+    /// The pre-registered provider-refusal rule: counts consecutive runs that ended in a refused HTTP status (a bad key, an
+    /// empty credit balance) and returns the reason to stop once the registered number is reached.
+    /// </summary>
+    internal static string? RefusalStop(RealTaskDesign design, RealTaskRun run, ref int consecutive, string phase)
+    {
+        if (run.Status == RunStatus.Errored && IsProviderRefusal(design, run.Classification))
+        {
+            consecutive++;
+        }
+        else
+        {
+            consecutive = 0;
+        }
+
+        return consecutive >= design.AbortAfterRefusedTrials
+            ? $"the provider refused {consecutive} consecutive runs during the {phase} phase ({run.Classification}); the likely cause is the key or the account's credit, so the run stopped before spending more"
+            : null;
+    }
+
+    internal static bool IsProviderRefusal(RealTaskDesign design, string? classification) =>
+        classification is not null
+        && HttpStatus().Match(classification) is { Success: true } match
+        && int.TryParse(match.Groups[1].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out var status)
+        && design.RefusedStatuses.Contains(status);
 
     /// <summary>
     /// The pre-registered exclusion rule: a service whose sibling's learning run did not verify (so its cluster has no
@@ -410,6 +441,9 @@ public static partial class RealTaskExperiment
                 ? (run.Verified == true ? "green" : "NOT green") + " after " + run.ToolCalls + " tool call(s)"
                 : run.Status + ": " + run.Classification,
             run.BlockSeen ? "; block of " + run.BlockRecords.Count + (run.SiblingRank is { } rank ? ", sibling rank " + rank : ", no sibling") : string.Empty));
+
+    [GeneratedRegex(@"\(HTTP (\d+)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex HttpStatus();
 
     [GeneratedRegex(@"app/[A-Za-z0-9_./-]+", RegexOptions.CultureInvariant)]
     private static partial Regex HelperPath();

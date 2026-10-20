@@ -160,7 +160,7 @@ public static class LiveReuseHost
         // went badly cannot quietly disappear and a later one take its place.
         Directory.CreateDirectory(resultsDirectory);
         var ledger = new RunLedger(Path.Combine(resultsDirectory, RunLedger.FileName));
-        var earlier = ledger.CountFor(descriptor.Provider, descriptor.RequestedModel);
+        var earlier = ledger.CountCompleteFor(descriptor.Provider, descriptor.RequestedModel);
         var runId = clock.GetUtcNow().UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
         ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, "started", "-");
         var partial = Path.Combine(resultsDirectory, runId + ".partial.jsonl");
@@ -440,7 +440,7 @@ public static class LiveReuseHost
         await File.WriteAllTextAsync(path + ".md", RealTaskReport.Markdown(result), cancellationToken).ConfigureAwait(false);
         await File.WriteAllTextAsync(path + ".json", RealTaskReport.Json(result), cancellationToken).ConfigureAwait(false);
         File.Delete(partial);
-        ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, result.Complete ? "complete: " + result.Conclusion : "stopped at budget cap", Path.GetFileName(path) + ".md");
+        ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, result.Complete ? "complete: " + result.Conclusion : result.StopReason?.StartsWith("the provider refused", StringComparison.Ordinal) == true ? "stopped: provider refused" : "stopped at budget cap", Path.GetFileName(path) + ".md");
 
         await output.WriteLineAsync($"Conclusion: {result.Conclusion}. Reference {result.Reference.Verdict}; content {result.Content.Verdict}; mismatched-cluster control {result.MismatchedControl.Verdict}.").ConfigureAwait(false);
         await output.WriteLineAsync($"Used {result.Total.ModelCalls} model calls, {result.Total.InputTokens} input and {result.Total.OutputTokens} output tokens.").ConfigureAwait(false);
@@ -525,6 +525,17 @@ internal sealed class RunLedger(string path)
             .Skip(1)
             .Select(line => line.Split('\t'))
             .Where(fields => fields.Length >= 4 && fields[2] == provider && fields[3] == model)
+            .Select(fields => fields[0])
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+    /// <summary>How many earlier runs for the provider and model ended complete: the only ones that use the confirmatory slot.</summary>
+    public int CountCompleteFor(string provider, string model) => !File.Exists(path)
+        ? 0
+        : File.ReadAllLines(path)
+            .Skip(1)
+            .Select(line => line.Split('\t'))
+            .Where(fields => fields.Length >= 7 && fields[2] == provider && fields[3] == model && fields[6].StartsWith("complete", StringComparison.Ordinal))
             .Select(fields => fields[0])
             .Distinct(StringComparer.Ordinal)
             .Count();

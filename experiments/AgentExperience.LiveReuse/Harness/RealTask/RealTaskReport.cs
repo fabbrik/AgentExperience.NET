@@ -90,7 +90,7 @@ public static class RealTaskReport
         Line($"| Limits | {design.LearningToolCalls} tool calls per learning run, {design.EvaluationToolCalls} per trial, {design.MaxAttempts} test-running attempts |");
         Line($"| Retries | up to {design.RetryMaxTries} tries on HTTP 429 and 5xx before a call is counted |");
         Line($"| Budget cap | {result.Budget.MaxModelCalls} model calls, {result.Budget.MaxTotalTokens} tokens; used {result.Total.ModelCalls} calls, {result.Total.TotalTokens} tokens |");
-        Line($"| Earlier runs | {(result.EarlierLedgerEntries is { } earlier ? earlier.ToString(CultureInfo.InvariantCulture) + " earlier ledger entries for this provider and model in `results/realtask-ledger.tsv`; " + (earlier == 0 ? "the confirmatory run is the first complete one" : "this run is exploratory") : "no ledger")} |");
+        Line($"| Earlier runs | {(result.EarlierLedgerEntries is { } earlier ? earlier.ToString(CultureInfo.InvariantCulture) + " earlier complete run(s) for this provider and model in `results/realtask-ledger.tsv`; " + (earlier == 0 ? "the confirmatory run is the first complete one" : "this run is exploratory") : "no ledger")} |");
         Line($"| Run status | {(result.Complete ? "complete: every learning run and every trial ran" : "stopped: " + result.StopReason)} |");
         Line();
 

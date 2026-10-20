@@ -1,0 +1,141 @@
+using System.ClientModel;
+using System.ClientModel.Primitives;
+using AgentExperience.LiveReuse.Harness;
+using Microsoft.Extensions.AI;
+
+namespace AgentExperience.LiveReuse.Tests;
+
+public sealed class RealTaskRefusalTests : IDisposable
+{
+    /// <summary>The git blob id of <c>preregistration.realtask.json</c> as it stands; any change to the file fails until this and the amendment count are updated.</summary>
+    private const string RegisteredBlobId = "ae5e1fe462a5f32d6d1d8c3e0fbbaee218eb000d";
+
+    private const int RegisteredAmendments = 1;
+
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "realtask-refusal-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_directory))
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void The_pre_registration_is_the_checked_in_file_and_every_change_is_a_recorded_amendment()
+    {
+        var onDisk = File.ReadAllBytes(Path.Combine(TestSupport.ExperimentDirectory(), "preregistration.realtask.json"));
+        var embedded = RealTaskDesign.ReadEmbedded();
+        Assert.Equal(LivePreregistration.ComputeGitBlobId(onDisk), embedded.GitBlobId);
+        Assert.True(embedded.GitBlobId == RegisteredBlobId, $"preregistration.realtask.json changed (blob {embedded.GitBlobId}, registered {RegisteredBlobId}). Record an entry in 'amendments' and update RegisteredBlobId and RegisteredAmendments.");
+        Assert.Equal(RegisteredAmendments, embedded.AmendmentCount);
+    }
+
+    [Fact]
+    public void Only_the_registered_http_statuses_are_a_provider_refusal()
+    {
+        var design = RealTaskDesign.ReadEmbedded();
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "AnthropicBadRequestException (HTTP 400)"));
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 401)"));
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 403)"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 503)"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 429)"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "TaskCanceledException"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, null));
+    }
+
+    [Fact]
+    public async Task A_provider_that_refuses_every_call_stops_the_run_early_and_is_not_complete()
+    {
+        var model = new RefusingClient(400);
+        var result = await RealTaskExperiment.RunAsync(new RealTaskOptions
+        {
+            Model = model,
+            Descriptor = new RunDescriptor("anthropic", "claude-haiku-4-5", "api.anthropic.com", 1, 5, "test price"),
+            Clock = new SteppingClock(),
+            NoRetryDelay = true,
+        });
+
+        Assert.False(result.Complete);
+        Assert.StartsWith("the provider refused", result.StopReason, StringComparison.Ordinal);
+        Assert.Equal(RealTaskConclusion.RealTaskNotEvaluated, result.Conclusion);
+        Assert.Equal(3, result.Learning.Count);
+        Assert.Equal(3, model.Calls);
+    }
+
+    [Fact]
+    public async Task A_refusal_is_not_retried_but_a_503_is()
+    {
+        Assert.False(RetryingChatClient.IsTransient(new ClientResultException(new FakeResponse(400))));
+        Assert.True(RetryingChatClient.IsTransient(new ClientResultException(new FakeResponse(503))));
+        Assert.True(RetryingChatClient.IsTransient(new ClientResultException(new FakeResponse(429))));
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task A_refused_live_run_is_recorded_as_stopped_and_leaves_the_confirmatory_slot_free()
+    {
+        var environment = new Dictionary<string, string?>
+        {
+            ["AGENTEXPERIENCE_LIVE_PROVIDER"] = "anthropic",
+            ["ANTHROPIC_API_KEY"] = "sk-test-0123456789-not-a-real-key",
+            ["AGENTEXPERIENCE_LIVE_RESULTS_DIR"] = _directory,
+        };
+
+        var exit = await LiveReuseHost.RunAsync(["--experiment", "realtask"], environment.GetValueOrDefault, new StringWriter(), new StringWriter(), new SteppingClock(), _ => new RefusingClient(401));
+
+        Assert.Equal(LiveReuseHost.ExitStoppedAtBudget, exit);
+        var ledger = File.ReadAllLines(Path.Combine(_directory, "realtask-ledger.tsv"));
+        Assert.Contains("stopped: provider refused", ledger[^1], StringComparison.Ordinal);
+        Assert.Equal(0, new RunLedger(Path.Combine(_directory, "realtask-ledger.tsv")).CountCompleteFor("anthropic", "claude-haiku-4-5"));
+        Assert.Equal(1, new RunLedger(Path.Combine(_directory, "realtask-ledger.tsv")).CountFor("anthropic", "claude-haiku-4-5"));
+    }
+
+    private sealed class RefusingClient(int status) : IChatClient
+    {
+        public int Calls { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromException<ChatResponse>(new ClientResultException(new FakeResponse(status)));
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FakeResponse(int status) : PipelineResponse
+    {
+        private Stream? _content = new MemoryStream();
+
+        public override int Status => status;
+
+        public override string ReasonPhrase => "fake";
+
+        public override Stream? ContentStream
+        {
+            get => _content;
+            set => _content = value;
+        }
+
+        public override BinaryData Content => BinaryData.Empty;
+
+        protected override PipelineResponseHeaders HeadersCore => throw new NotSupportedException();
+
+        public override BinaryData BufferContent(CancellationToken cancellationToken = default) => BinaryData.Empty;
+
+        public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(BinaryData.Empty);
+
+        public override void Dispose()
+        {
+        }
+    }
+}

@@ -1,0 +1,3 @@
+run	utc	provider	model	host	preregistration	event	report
+20261020T212448Z	2026-10-20T21:24:48Z	anthropic	claude-haiku-4-5	api.anthropic.com	a70914279493fb45855e2f271e79542149faa5cd	started	-
+20261020T212448Z	2026-10-20T21:49:55Z	anthropic	claude-haiku-4-5	api.anthropic.com	a70914279493fb45855e2f271e79542149faa5cd	complete: RealTaskInconclusive	realtask-anthropic-claude-haiku-4-5-2026-10-20.md
