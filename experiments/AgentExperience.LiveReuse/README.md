@@ -260,7 +260,7 @@ trials errored, so 10 of 12 instances were excluded, more than the pre-registrat
 evaluated. Of the two instances that remained, nothing can be read: the mismatched-trait trial failed as many attempts as
 the memory-disabled one in both. The ledger counts this as the confirmatory run for that model, so a rerun of the same
 model is exploratory and its report must say so. A second run, `claude-haiku-4-5` (2026-10-20, [report](results/transfer-anthropic-claude-haiku-4-5-2026-10-20.md),
-about USD 0.79, 245 calls, exploratory: no Claude model is registered), concluded **`TransferNoDemonstratedBenefit`**.
+about USD 0.79, 245 calls; the first complete run for that provider and model, so confirmatory under the transfer rule), concluded **`TransferNoDemonstratedBenefit`**.
 The direction favours memory (mean failed attempts 2.4 with memory against 3.5 without; success 8 of 10 against 5 of 10),
 but the sign test does not pass (p = 0.0625, 6 fewer, 1 more, 3 tied, of 10 pairs), and the controls say it would not be
 attributable to the lesson's content even if it had: the placebo block (strategy withheld) also did better than no memory
