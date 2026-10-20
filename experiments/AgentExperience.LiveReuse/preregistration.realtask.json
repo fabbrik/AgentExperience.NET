@@ -80,7 +80,7 @@
   },
   "providerRefusal": {
     "abortAfterConsecutiveTrials": 3,
-    "httpStatuses": [400, 401, 402, 403],
+    "httpStatuses": [400, 401, 402, 403, 429],
     "rule": "If this many consecutive learning runs or trials end in an error whose HTTP status is one of these (what a provider returns for a bad key, an empty credit balance or a blocked account), the run stops before the next model call, writes its report and evaluates no verdict, exactly like a budget cap. It is recorded as stopped, never as complete, and does not use the confirmatory slot.",
     "amendedAfterLiveResults": true
   },
@@ -109,6 +109,12 @@
       "date": "2026-10-20",
       "change": "Added providerRefusal: three consecutive learning runs or trials that end in an HTTP 400, 401, 402 or 403 stop the run like a budget cap (recorded as stopped, no verdict, confirmatory slot not used). The confirmatoryRunRule now says what is not complete, and the report's earlier-runs line counts only complete runs.",
       "why": "Made after live results existed, because of them. The first live Haiku run (claude-haiku-4-5, 2026-10-20) completed 70 trials normally and then every call returned HTTP 400 (the account's credit balance is the likely cause, as in the first reuse experiment's Haiku attempt). The harness recorded the remaining 74 trials as errored, excluded all 12 services and ended the run as complete and RealTaskInconclusive, which used the confirmatory slot on a run no design could have evaluated. The partial data are reported as they are. No task text, store content, condition, metric, gate, limit or retry rule changes, and no result of that run was used to choose this change.",
+      "resultsExisted": true
+    },
+    {
+      "date": "2026-10-20",
+      "change": "Added HTTP 429 to providerRefusal.httpStatuses: a 429 that survives the retry rule counts toward the three consecutive refused trials. The ledger can void a run (a 'void' row for its run id) and a voided run is not counted as complete.",
+      "why": "Made after live results existed, because of them. The first live Gemini run (gemini-3.1-flash-lite, 2026-10-20) completed 6 of 156 trials and then every call returned HTTP 429 after the retries (the account's rate or daily quota, not a transient burst). The harness recorded the rest as errored, excluded all 12 services and ended the run as complete and RealTaskInconclusive, which used the confirmatory slot on a run no design could have evaluated. That run is voided in the ledger and reported as it is. No task text, store content, condition, metric, gate, limit or retry rule changes, and no result of that run was used to choose this change.",
       "resultsExisted": true
     }
   ]

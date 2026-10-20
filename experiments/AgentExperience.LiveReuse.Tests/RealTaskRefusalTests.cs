@@ -8,9 +8,9 @@ namespace AgentExperience.LiveReuse.Tests;
 public sealed class RealTaskRefusalTests : IDisposable
 {
     /// <summary>The git blob id of <c>preregistration.realtask.json</c> as it stands; any change to the file fails until this and the amendment count are updated.</summary>
-    private const string RegisteredBlobId = "ae5e1fe462a5f32d6d1d8c3e0fbbaee218eb000d";
+    private const string RegisteredBlobId = "bc987b60adf1ea59c62507d12323d8f8bfafb5b6";
 
-    private const int RegisteredAmendments = 1;
+    private const int RegisteredAmendments = 2;
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "realtask-refusal-" + Guid.NewGuid().ToString("N"));
 
@@ -37,10 +37,10 @@ public sealed class RealTaskRefusalTests : IDisposable
     {
         var design = RealTaskDesign.ReadEmbedded();
         Assert.True(RealTaskExperiment.IsProviderRefusal(design, "AnthropicBadRequestException (HTTP 400)"));
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 429)"));
         Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 401)"));
         Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 403)"));
         Assert.False(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 503)"));
-        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException (HTTP 429)"));
         Assert.False(RealTaskExperiment.IsProviderRefusal(design, "TaskCanceledException"));
         Assert.False(RealTaskExperiment.IsProviderRefusal(design, null));
     }
@@ -90,6 +90,18 @@ public sealed class RealTaskRefusalTests : IDisposable
         Assert.Contains("stopped: provider refused", ledger[^1], StringComparison.Ordinal);
         Assert.Equal(0, new RunLedger(Path.Combine(_directory, "realtask-ledger.tsv")).CountCompleteFor("anthropic", "claude-haiku-4-5"));
         Assert.Equal(1, new RunLedger(Path.Combine(_directory, "realtask-ledger.tsv")).CountFor("anthropic", "claude-haiku-4-5"));
+    }
+
+    [Fact]
+    public void A_voided_run_is_not_counted_as_complete()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "void-ledger.tsv");
+        File.WriteAllText(path, "run\tutc\tprovider\tmodel\thost\tpreregistration\tevent\treport\n"
+            + "r1\tt\tp\tm\th\tb\tcomplete: RealTaskInconclusive\tx.md\n"
+            + "r2\tt\tp\tm\th\tb\tcomplete: RealTaskInconclusive\ty.md\n"
+            + "r1\tt\tp\tm\th\tb\tvoid: amendment\t-\n");
+        Assert.Equal(1, new RunLedger(path).CountCompleteFor("p", "m"));
     }
 
     private sealed class RefusingClient(int status) : IChatClient
