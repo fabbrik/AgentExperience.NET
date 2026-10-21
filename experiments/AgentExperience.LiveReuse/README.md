@@ -393,8 +393,12 @@ Haiku run (`claude-haiku-4-5`, 2026-10-20, [report](results/realtask-anthropic-c
 account's credit balance is the likely cause), so the other 74 trials errored, all 12 services were excluded, and no
 comparison was evaluated. The harness at that time recorded such a run as complete, which used the confirmatory slot on a
 run no design could have evaluated; **amendment 1** (made after live results existed, recorded in the pre-registration)
-stops a run after three consecutive refused trials and does not count it as complete. That run's ledger entry stays as it
-was written, so the next Haiku run is the first complete one under the amended rule. What the 70 normal trials show, as a
+stops a run after three consecutive refused trials and does not count it as complete. That run's ledger row stays as it
+was written and a later `void` row marks it not complete, so the next Haiku run is the first complete one.
+The first Gemini run (`gemini-3.1-flash-lite`, [report](results/realtask-gemini-gemini-3.1-flash-lite-2026-10-20.md)) ran 6 of 156
+trials and then every call returned HTTP 429 after the retries (a quota, not a burst), so it is also `RealTaskInconclusive`, and
+it was also recorded as complete; **amendment 2** adds 429 to the refusal statuses and lets the ledger void a run, and that
+run is voided. Neither provider has a complete real-task run yet. What the 70 normal trials show, as a
 description and not a verdict: the library's retrieval ranked the sibling's lesson first in every memory-enabled block the
 model was shown, and mean tool calls over the completed trials were 10.9 with memory disabled, 10.4 with memory, 10.0 with the placebo and 10.7 with the
 mismatched control (17 or 18 completed trials each). Haiku explored almost as much with the lesson as without it, and the lesson it received named the cluster's usual fix file in only half the services (the learning run sometimes fixed the service elsewhere in `app/`). Pre-registered in

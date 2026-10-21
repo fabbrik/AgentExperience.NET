@@ -1,3 +1,7 @@
 run	utc	provider	model	host	preregistration	event	report
 20261020T212448Z	2026-10-20T21:24:48Z	anthropic	claude-haiku-4-5	api.anthropic.com	a70914279493fb45855e2f271e79542149faa5cd	started	-
 20261020T212448Z	2026-10-20T21:49:55Z	anthropic	claude-haiku-4-5	api.anthropic.com	a70914279493fb45855e2f271e79542149faa5cd	complete: RealTaskInconclusive	realtask-anthropic-claude-haiku-4-5-2026-10-20.md
+20261020T215423Z	2026-10-20T21:54:23Z	gemini	gemini-3.1-flash-lite	generativelanguage.googleapis.com	ae5e1fe462a5f32d6d1d8c3e0fbbaee218eb000d	started	-
+20261020T215423Z	2026-10-20T23:00:36Z	gemini	gemini-3.1-flash-lite	generativelanguage.googleapis.com	ae5e1fe462a5f32d6d1d8c3e0fbbaee218eb000d	complete: RealTaskInconclusive	realtask-gemini-gemini-3.1-flash-lite-2026-10-20.md
+20261020T215423Z	2026-10-20T23:30:00Z	gemini	gemini-3.1-flash-lite	generativelanguage.googleapis.com	ae5e1fe462a5f32d6d1d8c3e0fbbaee218eb000d	void: amendment 2 (HTTP 429 quota; 6 of 156 trials ran)	-
+20261020T212448Z	2026-10-20T23:30:00Z	anthropic	claude-haiku-4-5	api.anthropic.com	a70914279493fb45855e2f271e79542149faa5cd	void: amendment 1 (HTTP 400 credit; 70 of 144 trials ran)	-

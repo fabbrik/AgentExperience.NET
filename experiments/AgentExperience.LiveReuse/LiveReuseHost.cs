@@ -530,15 +530,21 @@ internal sealed class RunLedger(string path)
             .Count();
 
     /// <summary>How many earlier runs for the provider and model ended complete: the only ones that use the confirmatory slot.</summary>
-    public int CountCompleteFor(string provider, string model) => !File.Exists(path)
-        ? 0
-        : File.ReadAllLines(path)
-            .Skip(1)
-            .Select(line => line.Split('\t'))
-            .Where(fields => fields.Length >= 7 && fields[2] == provider && fields[3] == model && fields[6].StartsWith("complete", StringComparison.Ordinal))
+    public int CountCompleteFor(string provider, string model)
+    {
+        if (!File.Exists(path))
+        {
+            return 0;
+        }
+
+        var rows = File.ReadAllLines(path).Skip(1).Select(line => line.Split('\t')).Where(fields => fields.Length >= 7 && fields[2] == provider && fields[3] == model).ToList();
+        var voided = rows.Where(fields => fields[6].StartsWith("void", StringComparison.Ordinal)).Select(fields => fields[0]).ToHashSet(StringComparer.Ordinal);
+        return rows
+            .Where(fields => fields[6].StartsWith("complete", StringComparison.Ordinal) && !voided.Contains(fields[0]))
             .Select(fields => fields[0])
             .Distinct(StringComparer.Ordinal)
             .Count();
+    }
 
     public void Append(string runId, DateTimeOffset at, RunDescriptor descriptor, string preregistration, string outcome, string report)
     {
