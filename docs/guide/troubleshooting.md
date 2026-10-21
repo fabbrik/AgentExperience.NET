@@ -17,19 +17,20 @@ Subscribe to the library's own signals and you will see which step dropped the r
 .WithMetrics(metrics => metrics.AddMeter("AgentExperience.*"))
 ```
 
-Then watch the `retrieve` operation. Its `agentexperience.retrieve.count` instrument and the span
-`agentexperience.retrieve` carry the filter and rank outcomes; `agentexperience.omitted` marks what the
-injection gate left out, with the reason. The names are in [Telemetry](../telemetry.md#instruments); the
-"operation" and "outcome" tags are the two to read first. If `retrieve` never appears at all, the problem is
-upstream of retrieval — go to step 4.
+Then watch the `retrieve` operation. The `agentexperience.operation.count` and `agentexperience.operation.duration`
+instruments carry the `operation`, `outcome` and `nested` dimensions, and the `retrieve` span's attributes are
+listed under Span attributes in [Telemetry](../telemetry.md#instruments). The injection span carries
+`agentexperience.omitted_count`, how many ranked records the injection left out; the reasons for each omission are
+on the typed injection result, not in telemetry. If `retrieve` never appears at all, the problem is upstream of
+retrieval: go to step 4.
 
 ## 1. Is the record eligible?
 
-Only a record in **`Validated`** or **`Reinforced`** status is retrieved, injected or indexed. A `Candidate`
-that was never reinforced, a `Superseded` record, a `Retracted` one, or one moved to **`Quarantined`** will
-never be returned no matter how well it matches. Check the record's lifecycle status first — the transition
-table is in [Lifecycle](lifecycle.md), and `Quarantined` in particular is easy to reach by accident and stays
-until an operator moves it back.
+Only a record in **`Validated`** or **`Reinforced`** status is retrieved, injected or indexed. A `Candidate`,
+`Quarantined`, `Contested`, `Stale`, `Superseded` or `Revoked` record is never returned, however well it matches
+(see [Retrieval](retrieval.md)). Check the record's lifecycle status first; the transition table is in
+[Lifecycle](lifecycle.md). Two things to know there: quarantine is a capture-time decision only, so a live record
+cannot be moved into it, and `Contested` and `Stale` are one-way, exiting only to `Revoked`.
 
 ## 2. Did any check produce evidence?
 
@@ -78,8 +79,8 @@ you can tell a low score from a missing one.
 
 Even a retrieved lesson can be omitted at injection time. The block only carries lessons whose approach the
 receiving agent can actually act on: its declared available tools and the highest tool risk class it may use. A
-lesson that needs a tool the agent does not have, or a risk class above its ceiling, is left out — and
-`agentexperience.omitted` records that it was. See [Injection into MAF](injection.md).
+lesson that needs a tool the agent does not have, or a risk class above its ceiling, is left out, and
+`agentexperience.omitted_count` counts it (the reason is on the typed result). See [Injection into MAF](injection.md).
 
 ## 8. Was the run ever exposed to the record?
 
@@ -99,10 +100,7 @@ until the embedding is retried ([Indexing](indexing.md)).
 
 ## Still stuck
 
-Two things are worth ruling out before filing anything:
-
-- **The library never stores hidden reasoning.** If the "lesson" you expected was the model's own explanation
-  rather than an observable fact, it was never a candidate. See the design principles in
-  [the guide index](README.md#design-principles).
-- **At least one path genuinely does not exist yet.** The per-session cloud listing has no documented endpoint;
-  see [Known limits](../known-limits.md) for what is out of scope rather than broken.
+One thing is worth ruling out before filing anything: **the library never stores hidden reasoning.** If the
+"lesson" you expected was the model's own explanation rather than an observable fact, it was never a candidate. See
+the design principles in [the guide index](README.md#design-principles), and
+[Known limits](../known-limits.md) for what is out of scope rather than broken.
