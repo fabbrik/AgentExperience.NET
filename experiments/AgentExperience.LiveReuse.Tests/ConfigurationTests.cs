@@ -26,6 +26,29 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
+    public void Ollama_is_chosen_only_explicitly_needs_a_model_costs_nothing_and_reports_the_local_host()
+    {
+        Assert.Equal(ConfigurationOutcome.NotConfigured, Read(("OLLAMA_MODEL", "qwen2.5:7b")).Outcome);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "ollama")).Outcome);
+
+        var (outcome, configuration, _) = Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "ollama"), ("OLLAMA_MODEL", "qwen2.5:7b"));
+        Assert.Equal(ConfigurationOutcome.Ready, outcome);
+        Assert.Equal(LiveProvider.Ollama, configuration!.Provider);
+        Assert.Equal(0, configuration.InputPrice);
+        var descriptor = configuration.Describe();
+        Assert.Equal("ollama", descriptor.Provider);
+        Assert.Equal("qwen2.5:7b", descriptor.RequestedModel);
+        Assert.Equal("localhost", descriptor.EndpointHost);
+        Assert.True(descriptor.SeedSent);
+
+        var (remote, custom, _) = Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "ollama"), ("OLLAMA_MODEL", "llama3.1:8b"), ("OLLAMA_HOST", "10.0.0.5:11434"));
+        Assert.Equal(ConfigurationOutcome.Ready, remote);
+        Assert.Equal("10.0.0.5", custom!.Describe().EndpointHost);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "ollama"), ("OLLAMA_MODEL", "a b")).Outcome);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "gemini"), ("GEMINI_API_KEY", FakeGeminiKey), ("GEMINI_MODEL", "x:y")).Outcome);
+    }
+
+    [Fact]
     public void An_anthropic_key_alone_selects_anthropic_with_the_default_model_its_price_and_the_anthropic_host()
     {
         var (outcome, configuration, _) = Read(("ANTHROPIC_API_KEY", FakeAnthropicKey));

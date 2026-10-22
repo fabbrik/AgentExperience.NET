@@ -57,6 +57,12 @@ export ANTHROPIC_API_KEY=...
 export AGENTEXPERIENCE_LIVE_PROVIDER=anthropic   # optional when no other provider's variables are set
 dotnet run --project experiments/AgentExperience.LiveReuse -c Release
 
+# A local open-weights model through Ollama (no key, no cost; needs a model that supports tool calls, pulled first).
+# Only ever chosen explicitly. OLLAMA_HOST is optional (default localhost:11434).
+export AGENTEXPERIENCE_LIVE_PROVIDER=ollama
+export OLLAMA_MODEL=qwen2.5:7b
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release
+
 # Offline: the whole harness against the scripted stand-in. No key, no network, writes nothing.
 dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --scripted
 ```
@@ -68,12 +74,14 @@ which is part of the ordinary `dotnet test` run.
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENTEXPERIENCE_LIVE_PROVIDER` | `gemini`, `azure` or `anthropic`. Optional when only one provider's variables are set; required when two or three are. |
+| `AGENTEXPERIENCE_LIVE_PROVIDER` | `gemini`, `azure`, `anthropic` or `ollama` (`ollama` only when named). Optional when only one provider's variables are set; required when two or three are. |
 | `GEMINI_API_KEY` | Gemini API key. |
 | `GEMINI_MODEL` | Optional. Default `gemini-3.1-flash-lite`, Google's stable low-cost model (checked 2026-09-26). |
 | `AZURE_OPENAI_ENDPOINT` | `https://<resource>.openai.azure.com/` (the `/openai/v1/` path is appended if absent). |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI key. |
 | `AZURE_OPENAI_DEPLOYMENT` | The deployment name to call. |
+| `OLLAMA_MODEL` | Required with `AGENTEXPERIENCE_LIVE_PROVIDER=ollama`: the model tag, such as `qwen2.5:7b`. Reports name it and a price of zero; a local run costs time, not dollars. |
+| `OLLAMA_HOST` | Optional. Default `localhost:11434`. |
 | `ANTHROPIC_API_KEY` | Anthropic API key. |
 | `ANTHROPIC_MODEL` | Optional. Default `claude-haiku-4-5`, Anthropic's low-cost current model. |
 | `AGENTEXPERIENCE_LIVE_MAX_CALLS` | Hard cap on model calls for the whole run. Default 600 (pre-registered). |
