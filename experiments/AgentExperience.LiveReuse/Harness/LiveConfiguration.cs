@@ -12,6 +12,7 @@ public enum LiveProvider
     Gemini,
     Azure,
     Anthropic,
+    Ollama,
 }
 
 /// <summary>What reading the environment decided.</summary>
@@ -45,6 +46,8 @@ public sealed class LiveConfiguration
     public const string AzureDeploymentVariable = "AZURE_OPENAI_DEPLOYMENT";
     public const string AnthropicKeyVariable = "ANTHROPIC_API_KEY";
     public const string AnthropicModelVariable = "ANTHROPIC_MODEL";
+    public const string OllamaModelVariable = "OLLAMA_MODEL";
+    public const string OllamaHostVariable = "OLLAMA_HOST";
     public const string MaxCallsVariable = "AGENTEXPERIENCE_LIVE_MAX_CALLS";
     public const string MaxTokensVariable = "AGENTEXPERIENCE_LIVE_MAX_TOKENS";
     public const string MinIntervalVariable = "AGENTEXPERIENCE_LIVE_MIN_CALL_INTERVAL_MS";
@@ -60,6 +63,12 @@ public sealed class LiveConfiguration
 
     /// <summary>Gemini's OpenAI-compatible Chat Completions base URL (ai.google.dev/gemini-api/docs/openai).</summary>
     public static Uri GeminiEndpoint { get; } = new("https://generativelanguage.googleapis.com/v1beta/openai/");
+
+    /// <summary>A local Ollama server's OpenAI-compatible base URL, used when <c>OLLAMA_HOST</c> is not set.</summary>
+    public static Uri OllamaEndpoint { get; } = new("http://localhost:11434/v1/");
+
+    /// <summary>A local model can take minutes on a long prompt: the SDK's default 100 second timeout would end those calls.</summary>
+    public static readonly TimeSpan OllamaNetworkTimeout = TimeSpan.FromMinutes(10);
 
     /// <summary>Anthropic's low-cost current model (the alias, which follows the latest Claude Haiku 4.5 snapshot).</summary>
     public const string DefaultAnthropicModel = "claude-haiku-4-5";
@@ -128,6 +137,7 @@ public sealed class LiveConfiguration
     {
         LiveProvider.Gemini => "gemini",
         LiveProvider.Azure => "azure",
+        LiveProvider.Ollama => "ollama",
         _ => "anthropic",
     };
 
@@ -143,9 +153,9 @@ public sealed class LiveConfiguration
         OutputPrice,
         PriceSource)
     {
-        // Only Azure accepts a seed: Gemini's OpenAI-compatible endpoint rejects the field (amendment 1), and the
+        // Azure and Ollama accept a seed: Gemini's OpenAI-compatible endpoint rejects the field (amendment 1), and the
         // Anthropic Messages API has no such parameter.
-        SeedSent = Provider == LiveProvider.Azure,
+        SeedSent = Provider is LiveProvider.Azure or LiveProvider.Ollama,
         MaxOutputTokens = Provider == LiveProvider.Anthropic ? AnthropicMaxOutputTokens : null,
     };
 
@@ -161,6 +171,10 @@ public sealed class LiveConfiguration
         LiveProvider.Anthropic =>
             new AnthropicClient { ApiKey = _apiKey, BaseUrl = AnthropicBaseUrl }
                 .AsIChatClient(Model, AnthropicMaxOutputTokens),
+        LiveProvider.Ollama =>
+            new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint, NetworkTimeout = OllamaNetworkTimeout })
+                .GetChatClient(Model)
+                .AsIChatClient(),
         _ =>
             new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
                 .GetChatClient(Model)
@@ -209,13 +223,13 @@ public sealed class LiveConfiguration
                         $"No provider is configured, so no live run was attempted and nothing was spent. Set {GeminiKeyVariable} "
                         + $"(and optionally {GeminiModelVariable}), or {AzureEndpointVariable}, {AzureKeyVariable} and {AzureDeploymentVariable}, "
                         + $"or {AnthropicKeyVariable} (and optionally {AnthropicModelVariable}); "
-                        + $"choose between them with {ProviderVariable}=gemini|azure|anthropic. See experiments/AgentExperience.LiveReuse/README.md.");
+                        + $"choose between them with {ProviderVariable}=gemini|azure|anthropic|ollama (ollama only when chosen). See experiments/AgentExperience.LiveReuse/README.md.");
                 case 1:
                     chosen = configured[0];
                     break;
                 default:
                     return (ConfigurationOutcome.Invalid, null,
-                        $"Variables for more than one provider are set ({string.Join(", ", configured)}); choose one with {ProviderVariable}=gemini|azure|anthropic.");
+                        $"Variables for more than one provider are set ({string.Join(", ", configured)}); choose one with {ProviderVariable}=gemini|azure|anthropic|ollama (ollama only when chosen).");
             }
         }
 
@@ -292,11 +306,35 @@ public sealed class LiveConfiguration
                 endpoint = AnthropicEndpoint;
                 break;
 
+            case "ollama":
+                // Only ever chosen explicitly: a local server is not a credential, so it is never auto-detected.
+                if (Get(OllamaModelVariable) is not { } ollamaModel)
+                {
+                    return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable}=ollama needs {OllamaModelVariable}, such as qwen2.5:7b (the model must already be pulled).");
+                }
+
+                endpoint = OllamaEndpoint;
+                if (Get(OllamaHostVariable) is { } host)
+                {
+                    if (!Uri.TryCreate(host.Contains("://", StringComparison.Ordinal) ? host : "http://" + host, UriKind.Absolute, out var parsedHost)
+                        || parsedHost.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(parsedHost.UserInfo) || !string.IsNullOrEmpty(parsedHost.Query))
+                    {
+                        return (ConfigurationOutcome.Invalid, null, $"{OllamaHostVariable} must be a host or an http(s) URL such as localhost:11434.");
+                    }
+
+                    endpoint = new Uri(parsedHost.GetLeftPart(UriPartial.Authority) + "/v1/");
+                }
+
+                provider = LiveProvider.Ollama;
+                apiKey = "ollama";
+                model = ollamaModel;
+                break;
+
             default:
-                return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini', 'azure' or 'anthropic'.");
+                return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini', 'azure', 'anthropic' or 'ollama'.");
         }
 
-        if (model.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_')))
+        if (model.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_' || (provider == LiveProvider.Ollama && character == ':'))))
         {
             return (ConfigurationOutcome.Invalid, null, "The model or deployment name may contain only letters, digits, '-', '.' and '_'.");
         }
@@ -315,6 +353,10 @@ public sealed class LiveConfiguration
             }
 
             (inputPrice, outputPrice, priceSource) = (input, output, $"{InputPriceVariable} and {OutputPriceVariable}, as set for this run");
+        }
+        else if (provider == LiveProvider.Ollama)
+        {
+            (inputPrice, outputPrice, priceSource) = (0, 0, "local model on the host's own hardware: no per-token price (the cost is time and electricity, not estimated)");
         }
         else if (KnownPrices.TryGetValue((provider, model), out var known))
         {
