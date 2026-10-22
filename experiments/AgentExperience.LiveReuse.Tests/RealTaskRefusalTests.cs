@@ -8,9 +8,9 @@ namespace AgentExperience.LiveReuse.Tests;
 public sealed class RealTaskRefusalTests : IDisposable
 {
     /// <summary>The git blob id of <c>preregistration.realtask.json</c> as it stands; any change to the file fails until this and the amendment count are updated.</summary>
-    private const string RegisteredBlobId = "bc987b60adf1ea59c62507d12323d8f8bfafb5b6";
+    private const string RegisteredBlobId = "bee0e6e9d24dae4a99660036735dc78e206e8fce";
 
-    private const int RegisteredAmendments = 2;
+    private const int RegisteredAmendments = 3;
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "realtask-refusal-" + Guid.NewGuid().ToString("N"));
 

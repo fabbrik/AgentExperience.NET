@@ -19,7 +19,7 @@ public sealed class RealTaskSetTests
     [Fact]
     public void Every_service_fails_exactly_one_test_as_shipped_and_passes_with_its_clusters_reference_fix()
     {
-        foreach (var service in TaskSet.Services)
+        foreach (var service in RealTaskSet.Current.Services)
         {
             using var environment = new RealTaskEnvironment(TaskSet, service);
             var broken = environment.VerifyIndependently();
@@ -34,7 +34,7 @@ public sealed class RealTaskSetTests
     [Fact]
     public void Fixing_any_other_clusters_file_does_not_make_a_service_pass()
     {
-        foreach (var service in TaskSet.Services)
+        foreach (var service in RealTaskSet.Current.Services)
         {
             using var environment = new RealTaskEnvironment(TaskSet, service);
             foreach (var other in RealTaskSet.Clusters.Where(cluster => cluster.Feature != service.Cluster))
@@ -49,7 +49,7 @@ public sealed class RealTaskSetTests
     [Fact]
     public void Nothing_an_agent_reads_without_exploring_names_the_file_to_edit()
     {
-        foreach (var service in TaskSet.Services)
+        foreach (var service in RealTaskSet.Current.Services)
         {
             var ticket = RealTaskSet.Ticket(service);
             var cluster = RealTaskSet.ClusterOf(service);
@@ -153,6 +153,30 @@ public sealed class RealTaskEnvironmentTests
         {
             Environment.SetEnvironmentVariable("REALTASK_SECRET_PROBE", null);
         }
+    }
+
+    [Fact]
+    public void Every_repository_is_padded_to_a_realistic_size_that_one_listing_still_shows()
+    {
+        foreach (var service in RealTaskSet.Current.Services)
+        {
+            var files = RealTaskSet.Current.Files(service);
+            Assert.InRange(files.Count, 60, RealTaskEnvironment.MaxListed);
+            Assert.All(RealTaskSet.Clusters, cluster => Assert.Contains(cluster.Feature + "_legacy/helpers.py", string.Join('\n', files.Keys), StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public async Task Editing_the_deprecated_twin_does_not_fix_the_service()
+    {
+        var service = RealTaskSet.Current.Services[0];
+        using var environment = new RealTaskEnvironment(RealTaskSet.Current, service);
+        var cluster = RealTaskSet.ClusterOf(service);
+        var twin = cluster.FixPath.Replace("/helpers.py", "_legacy/helpers.py", StringComparison.Ordinal);
+        await environment.Write.InvokeAsync(new Microsoft.Extensions.AI.AIFunctionArguments { ["path"] = twin, ["content"] = RealTaskSet.FixedHelpers(cluster.Feature) });
+        environment.BeginTurn();
+        await environment.Test.InvokeAsync(new Microsoft.Extensions.AI.AIFunctionArguments());
+        Assert.False(environment.IsGreen);
     }
 
     [Fact]

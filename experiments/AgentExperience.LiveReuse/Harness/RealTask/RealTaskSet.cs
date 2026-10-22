@@ -23,15 +23,19 @@ public sealed record RealService(int Index, string Service, string Cluster, int 
 /// services of a cluster and in a different file for every other cluster.
 /// </summary>
 /// <remarks>
+/// realtask@2 (pre-registration amendment 3) pads each repository to a realistic size: a deprecated twin of every
+/// cluster's package that holds the same broken code and is imported by nothing, and twelve unrelated extension packages.
+/// <para>
 /// Nothing an agent reads names the file to edit. The failing test and its traceback say which feature is wrong, the
 /// vendored changelog lists all six changes, and the code that consumes the changed function is two hops from the facade
 /// the tests call, among five healthy features. Finding it costs steps; that cost is what experience is meant to cut.
 /// The repository is generated at run time into a temporary directory from this class's text, so nothing here is
 /// downloaded and nothing needs a network.
+/// </para>
 /// </remarks>
 public sealed class RealTaskSet
 {
-    public const string Version = "realtask@1";
+    public const string Version = "realtask@2";
 
     /// <summary>The six clusters, in the order the services list them.</summary>
     public static IReadOnlyList<RealCluster> Clusters { get; } =
@@ -145,8 +149,32 @@ public sealed class RealTaskSet
             files[cluster.FixPath] = cluster.Feature == service.Cluster ? BrokenHelpers(cluster.Feature) : FixedHelpers(cluster.Feature);
         }
 
+        // realtask@2: a repository of realistic size. Each cluster has a deprecated twin that holds the same broken code and is
+        // not imported by anything, and twelve unrelated feature packages sit beside them, so finding the file to edit costs steps.
+        foreach (var cluster in Clusters)
+        {
+            files["app/" + cluster.Feature + "_legacy/__init__.py"] = string.Empty;
+            files["app/" + cluster.Feature + "_legacy/api.py"] = "\"\"\"Deprecated copy kept for the 1.x migration script. Nothing in the service imports it.\"\"\"\n\n" + Api(cluster.Feature).Replace("app." + cluster.Feature + " ", "app." + cluster.Feature + "_legacy ", StringComparison.Ordinal);
+            files["app/" + cluster.Feature + "_legacy/helpers.py"] = BrokenHelpers(cluster.Feature).Replace("Helpers for this feature.", "Deprecated copy of this feature's helpers, kept for the 1.x migration script.", StringComparison.Ordinal);
+        }
+
+        for (var index = 0; index < ExtensionNames.Length; index++)
+        {
+            var name = ExtensionNames[index];
+            var folder = "app/ext_" + name + "/";
+            files[folder + "__init__.py"] = string.Empty;
+            files[folder + "api.py"] = $"from app.ext_{name} import helpers\n\n\ndef run(value):\n    return helpers.normalize(value)\n";
+            files[folder + "helpers.py"] = $"\"\"\"Helpers for the {name} extension.\"\"\"\n\nfrom vendor import quirklib\n\nLIMIT = {10 + (index * 7)}\n\n\ndef normalize(value):\n    return quirklib.clamp(len(str(value)), 0, LIMIT)\n";
+            files[folder + "models.py"] = $"from dataclasses import dataclass\n\n\n@dataclass\nclass {char.ToUpperInvariant(name[0])}{name[1..]}Entry:\n    key: str\n    weight: int = {index + 1}\n";
+        }
+
         return files;
     }
+
+    private static readonly string[] ExtensionNames =
+    [
+        "audit", "cache", "config", "currency", "dates", "feeds", "flags", "hooks", "limits", "mailer", "metrics", "tags",
+    ];
 
     /// <summary>Writes <paramref name="service"/>'s repository into <paramref name="directory"/>.</summary>
     public void Materialize(RealService service, string directory)

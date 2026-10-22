@@ -1,13 +1,13 @@
 {
   "experiment": "realtask",
-  "version": "realtask@1",
+  "version": "realtask@2",
   "registeredOn": "2026-10-20",
   "storyKey": "24-1-real-task-experiment-design",
   "claim": "A model that has failed and then fixed a service broken by a dependency upgrade, once that experience has been captured, verified, reflected on, stored and injected as a Historical Reference, needs fewer tool calls to make a sibling service's tests pass than with memory disabled and than when shown the same block with the file path withheld, and gets no such help from lessons of unrelated upgrade breakages.",
   "notAClaimAbout": "Whether a model could not find the fix without memory (it can: the traceback and the vendored changelog say what changed). The metric is the cost of finding it.",
   "taskSet": {
-    "version": "realtask@1",
-    "digest": "818e5b9fa3e831cb05705ea4a7dca6b4707d992f4bdb40c755b149ccf6c56873",
+    "version": "realtask@2",
+    "digest": "252b8b61715be4e72f38df3ce84e59673beda28a997de9b9dced1ff310b056fa",
     "shape": "12 small stdlib-only Python services in 6 clusters of 2. Each vendors quirklib 2.0, which changed six behaviours; a service is broken by exactly one. The consumer of the changed function sits in app/<feature>/helpers.py, two hops from the facade the tests call, among five healthy features. Both services of a cluster need the same file changed; clusters need different files."
   },
   "tools": {
@@ -80,13 +80,22 @@
   },
   "providerRefusal": {
     "abortAfterConsecutiveTrials": 3,
-    "httpStatuses": [400, 401, 402, 403, 429],
+    "httpStatuses": [
+      400,
+      401,
+      402,
+      403,
+      429
+    ],
     "rule": "If this many consecutive learning runs or trials end in an error whose HTTP status is one of these (what a provider returns for a bad key, an empty credit balance or a blocked account), the run stops before the next model call, writes its report and evaluates no verdict, exactly like a budget cap. It is recorded as stopped, never as complete, and does not use the confirmatory slot.",
     "amendedAfterLiveResults": true
   },
   "retry": {
     "maxTries": 3,
-    "delaysMilliseconds": [500, 2000],
+    "delaysMilliseconds": [
+      500,
+      2000
+    ],
     "on": "HTTP 429 and HTTP 5xx from the provider, before a model call is counted as made",
     "note": "Written before any live run, in answer to the first transfer run, whose nine HTTP 503 responses excluded 10 of 12 instances."
   },
@@ -102,7 +111,8 @@
     "The tools are four, with no shell and no search. A model with a grep tool would find the file faster without memory and the benefit would shrink.",
     "The repository is public and the task set is in its source. Check a model's training cutoff against the registration date.",
     "Three repeats at temperature 0.7 reduce noise per service; they do not make the twelve services independent samples of all upgrade breakages.",
-    "A model could pass by hard-coding the expected answers in app/ instead of adapting the helper; that is still an edit to the service's own code, the harness does not detect it, and the report lists every path each trial wrote so it can be audited."
+    "A model could pass by hard-coding the expected answers in app/ instead of adapting the helper; that is still an edit to the service's own code, the harness does not detect it, and the report lists every path each trial wrote so it can be audited.",
+    "realtask@2 was chosen after the partial realtask@1 Haiku data showed no room for a saving (amendment 3). It is a larger repository than the one that showed nothing, made so exploring costs more; a benefit seen only here is a benefit when exploring is expensive, which is the case the library targets, and says nothing about small repositories."
   ],
   "amendments": [
     {
@@ -115,6 +125,12 @@
       "date": "2026-10-20",
       "change": "Added HTTP 429 to providerRefusal.httpStatuses: a 429 that survives the retry rule counts toward the three consecutive refused trials. The ledger can void a run (a 'void' row for its run id) and a voided run is not counted as complete.",
       "why": "Made after live results existed, because of them. The first live Gemini run (gemini-3.1-flash-lite, 2026-10-20) completed 6 of 156 trials and then every call returned HTTP 429 after the retries (the account's rate or daily quota, not a transient burst). The harness recorded the rest as errored, excluded all 12 services and ended the run as complete and RealTaskInconclusive, which used the confirmatory slot on a run no design could have evaluated. That run is voided in the ledger and reported as it is. No task text, store content, condition, metric, gate, limit or retry rule changes, and no result of that run was used to choose this change.",
+      "resultsExisted": true
+    },
+    {
+      "date": "2026-10-21",
+      "change": "The task set is now realtask@2 (taskSet.version and taskSet.digest). Every service's repository is padded to a realistic size: a deprecated twin of each cluster's package (app/<feature>_legacy/, the same broken helper code, imported by nothing) and twelve unrelated extension packages (app/ext_*). The tickets, tests, vendored library, fix files, tools, conditions, metric, gate, limits, retry and refusal rules are unchanged.",
+      "why": "Made after live results existed, because of them, and before any complete run: no provider has one, so none of the realtask@1 runs was confirmatory. The 70 completed Haiku trials on realtask@1 (partial, reported as they are) showed a floor effect: each repository was about 20 small files, a model needed about 10 calls to solve it with or without memory, and the placebo and mismatched blocks were indistinguishable from no memory. A lesson cannot save much on a repository that is that cheap to explore. The change is a reading of those trials, so it is disclosed as a limitation: it makes finding the file costlier for every condition, and the placebo and mismatched-cluster controls are what separate a lesson-specific saving from any other effect of the larger repository. The realtask@1 partial reports stay as they are, with their own digest.",
       "resultsExisted": true
     }
   ]
