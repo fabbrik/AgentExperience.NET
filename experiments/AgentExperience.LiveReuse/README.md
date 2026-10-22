@@ -398,7 +398,15 @@ was written and a later `void` row marks it not complete, so the next Haiku run 
 The first Gemini run (`gemini-3.1-flash-lite`, [report](results/realtask-gemini-gemini-3.1-flash-lite-2026-10-20.md)) ran 6 of 156
 trials and then every call returned HTTP 429 after the retries (a quota, not a burst), so it is also `RealTaskInconclusive`, and
 it was also recorded as complete; **amendment 2** adds 429 to the refusal statuses and lets the ledger void a run, and that
-run is voided. Neither provider has a complete real-task run yet. What the 70 normal trials show, as a
+run is voided. Neither provider has a complete real-task run yet.
+
+**The task set is now `realtask@2` (amendment 3, 2026-10-21).** The 70 completed Haiku trials on `realtask@1` showed a floor effect:
+about 20 small files, about 10 calls with or without memory, and a placebo block that cost the same as none, so a lesson had
+almost nothing to save. `realtask@2` pads every repository to about 90 files: a deprecated twin of each cluster's package that
+holds the same broken code and is imported by nothing (editing it does not fix the service), and twelve unrelated extension
+packages. Tickets, tests, tools, conditions, metric, gate and limits are unchanged. It is a disclosed post-hoc change made
+after seeing a null, before any complete run; the placebo and mismatched-cluster controls are what separate a lesson-specific
+saving from any other effect of the larger repository. No `realtask@2` run has happened yet. What the 70 normal trials show, as a
 description and not a verdict: the library's retrieval ranked the sibling's lesson first in every memory-enabled block the
 model was shown, and mean tool calls over the completed trials were 10.9 with memory disabled, 10.4 with memory, 10.0 with the placebo and 10.7 with the
 mismatched control (17 or 18 completed trials each). Haiku explored almost as much with the lesson as without it, and the lesson it received named the cluster's usual fix file in only half the services (the learning run sometimes fixed the service elsewhere in `app/`). Pre-registered in

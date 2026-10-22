@@ -111,7 +111,7 @@ public sealed record RealTaskDesign(
 
         if (!string.Equals(TaskSetDigest, taskSet.Digest(), StringComparison.Ordinal))
         {
-            throw new PreregistrationException("The task set differs from the one the pre-registration locked (its digest does not match).");
+            throw new PreregistrationException("The task set differs from the one the pre-registration locked (its digest does not match; this build's is " + taskSet.Digest() + ").");
         }
     }
 
