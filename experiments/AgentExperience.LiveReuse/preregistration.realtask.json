@@ -34,6 +34,12 @@
     "mismatched": "mismatched-cluster"
   },
   "repeats": 3,
+  "localModel": {
+    "provider": "ollama",
+    "repeats": 1,
+    "callTimeoutSeconds": 900,
+    "note": "A model served from Ollama on a local GPU takes about a minute per call, so a run uses one repeat per service and a 15-minute per-step timeout. Every other provider keeps the repeats above and the 3-minute timeout. The service-level gate is unchanged: with one repeat a service's mean is its single trial."
+  },
   "conditionOrder": "derived: the four conditions rotated left by (service index + repeat) mod 4.",
   "sampling": {
     "temperature": 0.7,
@@ -131,6 +137,12 @@
       "date": "2026-10-21",
       "change": "The task set is now realtask@2 (taskSet.version and taskSet.digest). Every service's repository is padded to a realistic size: a deprecated twin of each cluster's package (app/<feature>_legacy/, the same broken helper code, imported by nothing) and twelve unrelated extension packages (app/ext_*). The tickets, tests, vendored library, fix files, tools, conditions, metric, gate, limits, retry and refusal rules are unchanged.",
       "why": "Made after live results existed, because of them, and before any complete run: no provider has one, so none of the realtask@1 runs was confirmatory. The 70 completed Haiku trials on realtask@1 (partial, reported as they are) showed a floor effect: each repository was about 20 small files, a model needed about 10 calls to solve it with or without memory, and the placebo and mismatched blocks were indistinguishable from no memory. A lesson cannot save much on a repository that is that cheap to explore. The change is a reading of those trials, so it is disclosed as a limitation: it makes finding the file costlier for every condition, and the placebo and mismatched-cluster controls are what separate a lesson-specific saving from any other effect of the larger repository. The realtask@1 partial reports stay as they are, with their own digest.",
+      "resultsExisted": true
+    },
+    {
+      "date": "2026-10-23",
+      "change": "Runs on the ollama provider use localModel.repeats (1) instead of repeats (3), and a per-step timeout of localModel.callTimeoutSeconds (900) instead of 3 minutes. Nothing else changes: task set, tools, conditions, metric, gate, limits, retry and refusal rules.",
+      "why": "Made after live results existed. A 60-call smoke run of qwen2.5:14b on the cluster GPU took 53 minutes (about 53 s per call) and one step hit the 3-minute timeout, so the registered 3 repeats (about 2,000 calls, about 30 hours) would mostly produce timeout errors. One repeat per service is about 700 calls. It is a noisier test (12 paired services, no per-service averaging) and says nothing about other models; it does not replace a run on a hosted model. The smoke trials are not part of any result.",
       "resultsExisted": true
     }
   ]

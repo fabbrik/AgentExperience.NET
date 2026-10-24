@@ -30,7 +30,9 @@ public sealed record RealTaskDesign(
     IReadOnlyList<int> RetryDelaysMilliseconds,
     int DefaultMaxModelCalls,
     long DefaultMaxTotalTokens,
-    int AmendmentCount)
+    int AmendmentCount,
+    int LocalRepeats,
+    int LocalCallTimeoutSeconds)
 {
     public const string ResourceName = "AgentExperience.LiveReuse.preregistration.realtask.json";
 
@@ -88,9 +90,11 @@ public sealed record RealTaskDesign(
             [.. Required(retry, "delaysMilliseconds").EnumerateArray().Select(item => item.GetInt32())],
             Int(budget, "maxModelCalls"),
             (long)Number(budget, "maxTotalTokens"),
-            Required(root, "amendments").GetArrayLength());
+            Required(root, "amendments").GetArrayLength(),
+            Int(Required(root, "localModel"), "repeats"),
+            Int(Required(root, "localModel"), "callTimeoutSeconds"));
 
-        if (design.Repeats is < 1 or > 10 || design.Alpha is <= 0 or >= 1 || design.MaxAttempts < 1
+        if (design.Repeats is < 1 or > 10 || design.LocalRepeats is < 1 or > 10 || design.LocalCallTimeoutSeconds < 1 || design.Alpha is <= 0 or >= 1 || design.MaxAttempts < 1
             || design.LearningToolCalls < 1 || design.EvaluationToolCalls < 1 || design.RetryMaxTries < 1
             || design.MaxExcludedServices < 0 || design.AbortAfterRefusedTrials < 1 || design.Temperature is < 0 or > 2)
         {

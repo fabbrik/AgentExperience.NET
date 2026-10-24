@@ -389,6 +389,12 @@ public static class LiveReuseHost
         }
 
         var descriptor = configuration!.Describe();
+        var localModel = string.Equals(descriptor.Provider, "ollama", StringComparison.Ordinal);
+        if (localModel)
+        {
+            // Amendment 4: a local model is slow, so it runs fewer repeats with a longer call timeout; both are in the report.
+            design = design with { Repeats = design.LocalRepeats };
+        }
         var resultsDirectory = configuration.ResultsDirectory ?? DefaultResultsDirectory();
         if (resultsDirectory is null)
         {
@@ -417,6 +423,7 @@ public static class LiveReuseHost
                 Budget = budget,
                 Clock = clock,
                 MinimumCallInterval = configuration.MinimumCallInterval,
+                CallTimeout = localModel ? TimeSpan.FromSeconds(design.LocalCallTimeoutSeconds) : TimeSpan.FromMinutes(3),
                 Progress = output,
                 OnRunRecorded = record => File.AppendAllText(partial, RealTaskReport.JsonLine(record) + "\n"),
             },
