@@ -93,7 +93,7 @@
       403,
       429
     ],
-    "rule": "If this many consecutive learning runs or trials end in an error whose HTTP status is one of these (what a provider returns for a bad key, an empty credit balance or a blocked account), the run stops before the next model call, writes its report and evaluates no verdict, exactly like a budget cap. It is recorded as stopped, never as complete, and does not use the confirmatory slot.",
+    "rule": "If this many consecutive learning runs or trials end in an error whose HTTP status is one of these (what a provider returns for a bad key, an empty credit balance or a blocked account), or in an error with no HTTP answer at all (a dropped or refused connection), the run stops before the next model call, writes its report and evaluates no verdict, exactly like a budget cap. It is recorded as stopped, never as complete, and does not use the confirmatory slot.",
     "amendedAfterLiveResults": true
   },
   "retry": {
@@ -102,7 +102,7 @@
       500,
       2000
     ],
-    "on": "HTTP 429 and HTTP 5xx from the provider, before a model call is counted as made",
+    "on": "HTTP 429 and HTTP 5xx from the provider, and a failure with no HTTP answer at all (a dropped connection), before a model call is counted as made",
     "note": "Written before any live run, in answer to the first transfer run, whose nine HTTP 503 responses excluded 10 of 12 instances."
   },
   "budgetDefaults": {
@@ -143,6 +143,12 @@
       "date": "2026-10-23",
       "change": "Runs on the ollama provider use localModel.repeats (1) instead of repeats (3), and a per-step timeout of localModel.callTimeoutSeconds (900) instead of 3 minutes. Nothing else changes: task set, tools, conditions, metric, gate, limits, retry and refusal rules.",
       "why": "Made after live results existed. A 60-call smoke run of qwen2.5:14b on the cluster GPU took 53 minutes (about 53 s per call) and one step hit the 3-minute timeout, so the registered 3 repeats (about 2,000 calls, about 30 hours) would mostly produce timeout errors. One repeat per service is about 700 calls. It is a noisier test (12 paired services, no per-service averaging) and says nothing about other models; it does not replace a run on a hosted model. The smoke trials are not part of any result.",
+      "resultsExisted": true
+    },
+    {
+      "date": "2026-10-25",
+      "change": "A failure with no HTTP answer at all (a dropped or refused connection: ClientResultException, HttpRequestException, IOException or SocketException without an HTTP status) is retried like an HTTP 429 or 5xx and counts toward the consecutive-refusal stop (providerRefusal) like a refused status. A model-call timeout is neither.",
+      "why": "Made after live results existed. Two runs of qwen2.5:14b through a kubectl port-forward lost their connection mid-run; every later trial errored, and each run was recorded as complete and inconclusive, which would have used the model's confirmatory slot on a dead connection. The change only decides when a run stops and what is retried; the task set, conditions, metric, gate and limits are unchanged, and no complete run exists for any provider.",
       "resultsExisted": true
     }
   ]
