@@ -13,6 +13,7 @@ public enum LiveProvider
     Azure,
     Anthropic,
     Ollama,
+    OpenRouter,
 }
 
 /// <summary>What reading the environment decided.</summary>
@@ -48,6 +49,8 @@ public sealed class LiveConfiguration
     public const string AnthropicModelVariable = "ANTHROPIC_MODEL";
     public const string OllamaModelVariable = "OLLAMA_MODEL";
     public const string OllamaHostVariable = "OLLAMA_HOST";
+    public const string OpenRouterKeyVariable = "OPENROUTER_API_KEY";
+    public const string OpenRouterModelVariable = "OPENROUTER_MODEL";
     public const string MaxCallsVariable = "AGENTEXPERIENCE_LIVE_MAX_CALLS";
     public const string MaxTokensVariable = "AGENTEXPERIENCE_LIVE_MAX_TOKENS";
     public const string MinIntervalVariable = "AGENTEXPERIENCE_LIVE_MIN_CALL_INTERVAL_MS";
@@ -66,6 +69,9 @@ public sealed class LiveConfiguration
 
     /// <summary>A local Ollama server's OpenAI-compatible base URL, used when <c>OLLAMA_HOST</c> is not set.</summary>
     public static Uri OllamaEndpoint { get; } = new("http://localhost:11434/v1/");
+
+    /// <summary>OpenRouter's OpenAI-compatible base URL (openrouter.ai/docs): one key reaches many hosted open-weights models.</summary>
+    public static Uri OpenRouterEndpoint { get; } = new("https://openrouter.ai/api/v1/");
 
     /// <summary>A local model can take minutes on a long prompt: the SDK's default 100 second timeout would end those calls.</summary>
     public static readonly TimeSpan OllamaNetworkTimeout = TimeSpan.FromMinutes(10);
@@ -138,6 +144,7 @@ public sealed class LiveConfiguration
         LiveProvider.Gemini => "gemini",
         LiveProvider.Azure => "azure",
         LiveProvider.Ollama => "ollama",
+        LiveProvider.OpenRouter => "openrouter",
         _ => "anthropic",
     };
 
@@ -153,7 +160,8 @@ public sealed class LiveConfiguration
         OutputPrice,
         PriceSource)
     {
-        // Azure and Ollama accept a seed: Gemini's OpenAI-compatible endpoint rejects the field (amendment 1), and the
+        // Azure and Ollama accept a seed. OpenRouter routes to whichever host serves the model and not every host honours
+        // it, so none is sent. Gemini's OpenAI-compatible endpoint rejects the field (amendment 1), and the
         // Anthropic Messages API has no such parameter.
         SeedSent = Provider is LiveProvider.Azure or LiveProvider.Ollama,
         MaxOutputTokens = Provider == LiveProvider.Anthropic ? AnthropicMaxOutputTokens : null,
@@ -223,13 +231,13 @@ public sealed class LiveConfiguration
                         $"No provider is configured, so no live run was attempted and nothing was spent. Set {GeminiKeyVariable} "
                         + $"(and optionally {GeminiModelVariable}), or {AzureEndpointVariable}, {AzureKeyVariable} and {AzureDeploymentVariable}, "
                         + $"or {AnthropicKeyVariable} (and optionally {AnthropicModelVariable}); "
-                        + $"choose between them with {ProviderVariable}=gemini|azure|anthropic|ollama (ollama only when chosen). See experiments/AgentExperience.LiveReuse/README.md.");
+                        + $"choose between them with {ProviderVariable}=gemini|azure|anthropic|ollama|openrouter (ollama and openrouter only when chosen). See experiments/AgentExperience.LiveReuse/README.md.");
                 case 1:
                     chosen = configured[0];
                     break;
                 default:
                     return (ConfigurationOutcome.Invalid, null,
-                        $"Variables for more than one provider are set ({string.Join(", ", configured)}); choose one with {ProviderVariable}=gemini|azure|anthropic|ollama (ollama only when chosen).");
+                        $"Variables for more than one provider are set ({string.Join(", ", configured)}); choose one with {ProviderVariable}=gemini|azure|anthropic|ollama|openrouter (ollama and openrouter only when chosen).");
             }
         }
 
@@ -306,6 +314,24 @@ public sealed class LiveConfiguration
                 endpoint = AnthropicEndpoint;
                 break;
 
+            case "openrouter":
+                // Only ever chosen explicitly, like ollama: the model is a routing choice, not a default.
+                if (Get(OpenRouterKeyVariable) is not { } openRouterKey)
+                {
+                    return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable}=openrouter, but {OpenRouterKeyVariable} is not set.");
+                }
+
+                if (Get(OpenRouterModelVariable) is not { } openRouterModel)
+                {
+                    return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable}=openrouter needs {OpenRouterModelVariable}, such as qwen/qwen3-coder (a model that supports tool calls).");
+                }
+
+                provider = LiveProvider.OpenRouter;
+                apiKey = openRouterKey;
+                model = openRouterModel;
+                endpoint = OpenRouterEndpoint;
+                break;
+
             case "ollama":
                 // Only ever chosen explicitly: a local server is not a credential, so it is never auto-detected.
                 if (Get(OllamaModelVariable) is not { } ollamaModel)
@@ -331,10 +357,10 @@ public sealed class LiveConfiguration
                 break;
 
             default:
-                return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini', 'azure', 'anthropic' or 'ollama'.");
+                return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini', 'azure', 'anthropic', 'ollama' or 'openrouter'.");
         }
 
-        if (model.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_' || (provider == LiveProvider.Ollama && character == ':'))))
+        if (model.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_' || (provider == LiveProvider.Ollama && character == ':') || (provider == LiveProvider.OpenRouter && character is '/' or ':'))))
         {
             return (ConfigurationOutcome.Invalid, null, "The model or deployment name may contain only letters, digits, '-', '.' and '_'.");
         }
