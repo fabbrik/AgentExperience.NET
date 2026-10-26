@@ -82,6 +82,8 @@ which is part of the ordinary `dotnet test` run.
 | `AZURE_OPENAI_DEPLOYMENT` | The deployment name to call. |
 | `OLLAMA_MODEL` | Required with `AGENTEXPERIENCE_LIVE_PROVIDER=ollama`: the model tag, such as `qwen2.5:7b`. Reports name it and a price of zero; a local run costs time, not dollars. |
 | `OLLAMA_HOST` | Optional. Default `localhost:11434`. |
+| `OPENROUTER_API_KEY` | Required with `AGENTEXPERIENCE_LIVE_PROVIDER=openrouter` (chosen only explicitly). Prepaid credit, no subscription. |
+| `OPENROUTER_MODEL` | Required with `openrouter`: a model that supports tool calls, such as `qwen/qwen3-coder`. Set both price variables for a cost estimate; no seed is sent. |
 | `ANTHROPIC_API_KEY` | Anthropic API key. |
 | `ANTHROPIC_MODEL` | Optional. Default `claude-haiku-4-5`, Anthropic's low-cost current model. |
 | `AGENTEXPERIENCE_LIVE_MAX_CALLS` | Hard cap on model calls for the whole run. Default 600 (pre-registered). |
