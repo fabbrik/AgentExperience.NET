@@ -408,6 +408,8 @@ trials and then every call returned HTTP 429 after the retries (a quota, not a b
 it was also recorded as complete; **amendment 2** adds 429 to the refusal statuses and lets the ledger void a run, and that
 run is voided. Neither provider has a complete real-task run yet.
 
+**A dropped connection stops a run (amendment 5, 2026-10-25).** A failure with no HTTP answer (a dropped or refused connection) is retried like a 429 or 5xx and, after 3 in a row, stops the run as "provider refused" instead of recording a run of errored trials as complete. A model-call timeout is neither.
+
 **Local models (amendment 4, 2026-10-23).** A run on the `ollama` provider uses one repeat per service instead of three and a 15-minute per-step timeout instead of 3 minutes (`localModel` in the pre-registration), because a local GPU takes about a minute per call. The gate is unchanged; the report shows the repeats actually used. A local run is a noisier test of one model and does not replace a hosted-model run.
 
 **The task set is now `realtask@2` (amendment 3, 2026-10-21).** The 70 completed Haiku trials on `realtask@1` showed a floor effect:

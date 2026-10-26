@@ -104,9 +104,10 @@ internal sealed class RetryingChatClient(IChatClient inner, int maxTries, IReadO
         }
     }
 
-    /// <summary>Whether the failure is an HTTP 429 or 5xx, read from the same classification the report records.</summary>
+    /// <summary>Whether the failure is an HTTP 429 or 5xx, or no answer at all (a dropped connection), read from the same classification the report records.</summary>
     internal static bool IsTransient(Exception exception) => IsTransientClassification(LiveReuseExperiment.Classify(exception));
 
     internal static bool IsTransientClassification(string classification) =>
-        classification.Contains("(HTTP 429)", StringComparison.Ordinal) || classification.Contains("(HTTP 5", StringComparison.Ordinal);
+        classification.Contains("(HTTP 429)", StringComparison.Ordinal) || classification.Contains("(HTTP 5", StringComparison.Ordinal)
+        || RealTaskExperiment.IsUnreachable(classification);
 }

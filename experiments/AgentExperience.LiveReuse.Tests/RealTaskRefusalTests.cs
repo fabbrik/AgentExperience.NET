@@ -8,9 +8,9 @@ namespace AgentExperience.LiveReuse.Tests;
 public sealed class RealTaskRefusalTests : IDisposable
 {
     /// <summary>The git blob id of <c>preregistration.realtask.json</c> as it stands; any change to the file fails until this and the amendment count are updated.</summary>
-    private const string RegisteredBlobId = "7e2177c91ed87aacdd69adc536ff45abbfc2167a";
+    private const string RegisteredBlobId = "f4b0b70eb349e0f56d6a0c54d42383d4ab36df13";
 
-    private const int RegisteredAmendments = 4;
+    private const int RegisteredAmendments = 5;
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "realtask-refusal-" + Guid.NewGuid().ToString("N"));
 
@@ -62,6 +62,18 @@ public sealed class RealTaskRefusalTests : IDisposable
         Assert.Equal(RealTaskConclusion.RealTaskNotEvaluated, result.Conclusion);
         Assert.Equal(3, result.Learning.Count);
         Assert.Equal(3, model.Calls);
+    }
+
+    [Fact]
+    public void A_dropped_connection_is_retried_and_counts_as_a_refusal_but_a_timeout_does_not()
+    {
+        var design = RealTaskDesign.ReadEmbedded();
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException"));
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "HttpRequestException"));
+        Assert.True(RetryingChatClient.IsTransientClassification("ClientResultException"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "model call timed out after 900 s"));
+        Assert.False(RetryingChatClient.IsTransientClassification("model call timed out after 900 s"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "InvalidOperationException"));
     }
 
     [Fact]

@@ -240,15 +240,25 @@ public static partial class RealTaskExperiment
         }
 
         return consecutive >= design.AbortAfterRefusedTrials
-            ? $"the provider refused {consecutive} consecutive runs during the {phase} phase ({run.Classification}); the likely cause is the key or the account's credit, so the run stopped before spending more"
+            ? $"the provider refused or could not be reached for {consecutive} consecutive runs during the {phase} phase ({run.Classification}); the likely cause is the key, the account's credit or the connection, so the run stopped before spending more"
             : null;
     }
 
-    internal static bool IsProviderRefusal(RealTaskDesign design, string? classification) =>
+    /// <summary>A failure with no HTTP answer at all: the connection to the provider dropped or was never made.</summary>
+    internal static bool IsUnreachable(string? classification) =>
         classification is not null
+        && !classification.Contains("(HTTP ", StringComparison.Ordinal)
+        && (classification.StartsWith("ClientResultException", StringComparison.Ordinal)
+            || classification.StartsWith("HttpRequestException", StringComparison.Ordinal)
+            || classification.StartsWith("IOException", StringComparison.Ordinal)
+            || classification.StartsWith("SocketException", StringComparison.Ordinal));
+
+    internal static bool IsProviderRefusal(RealTaskDesign design, string? classification) =>
+        IsUnreachable(classification)
+        || (classification is not null
         && HttpStatus().Match(classification) is { Success: true } match
         && int.TryParse(match.Groups[1].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out var status)
-        && design.RefusedStatuses.Contains(status);
+        && design.RefusedStatuses.Contains(status));
 
     /// <summary>
     /// The pre-registered exclusion rule: a service whose sibling's learning run did not verify (so its cluster has no
