@@ -2246,3 +2246,62 @@ test pins names against the .NET list.
 ### Story 23.6: 1.0-Safe Release Scripts
 Fix RELEASING's prefix-suffix build so an empty suffix yields 1.0.0; one
 tested version-derivation rule replaces the three inline copies.
+
+## Epic 24: The Library Measures Its Own Benefit
+
+**Added:** 2026-10-26 · **Status:** planned
+
+Every live experiment so far has failed to show that lessons help, and the
+library cannot tell either: an injected lesson is exposure (KL-11), and a run
+that got no lesson is not linked to the lessons it would have got. People learn
+by comparing what happened when they did something with what happened when they
+did not. This epic gives the library that comparison in production: on a
+random share of eligible runs it withholds the block, records what it withheld,
+and compares verified outcomes. Measured benefit then decides what keeps being
+injected, per scope and per consuming model, so lessons that one model learned
+are trusted by another only when they have been shown to help it.
+
+Design rules: off by default (rate 0); assignment is deterministic from the run
+id, so a replay lands in the same arm; both arms are recorded the same way; a
+verdict needs a minimum count per arm and an interval that excludes zero,
+otherwise it is `NoEvidence`; nothing is claimed from exposure alone.
+
+### Story 24.1: Withhold the Block on a Holdout Share and Record Both Arms
+`ExperienceInjectionOptions.Holdout` (rate 0..1, default 0). After the
+eligibility check and before the block is written, a run assigned to the holdout
+gets no block, no exposure and `InjectionOutcome.Withheld`; an injection
+assignment row records the run, its arm (treatment or holdout), the eligible
+record ids and revisions, and the instant, for both arms. In-memory and
+PostgreSQL (new migration, grants, RLS), telemetry outcome `Withheld`.
+
+### Story 24.2: Estimate Benefit From Verified Outcomes
+`IExperienceBenefitEstimator` joins assignments to finalized outcomes
+(Verified/Failed; Unknown excluded and counted) and returns, overall and per
+record: counts per arm, success rates, the difference with a 95% interval, and a
+verdict `Helps`/`Hurts`/`NoEvidence`. Pure and deterministic; tested against
+hand-computed tables.
+
+### Story 24.3: Act on Measured Benefit
+Opt-in policy: a record (or a whole scope) measured `Hurts` is no longer
+injected; one measured `Helps` gets a ranking boost; `NoEvidence` changes
+nothing. The holdout keeps running so a verdict can be reversed. Reported in the
+lessons listing (21.4) and as telemetry.
+
+### Story 24.4: Know Which Model Learned and Which Model Used It
+The capture records the model id the run's responses report; a record keeps the
+model that produced its source run. Benefit is estimated per consuming model and
+per (producing, consuming) pair, so cross-model transfer is measured, not
+assumed.
+
+### Story 24.5: Cross-Model Transfer Experiment
+A live experiment where one model learns and another uses the lessons, with the
+holdout as the comparison, pre-registered like the real-task experiment.
+
+### Story 24.6: Port the Holdout to Python and Go
+Assignment, the `Withheld` outcome and the assignment row through the contract
+(new fixtures), so a mixed-language deployment measures one benefit.
+
+### Story 24.7: Safeguards the Measurement Will Need
+Retire a lesson when the environment it was learned under changes; inject
+nothing below a retrieval threshold; report the mismatched-lesson cost in every
+live experiment. Each is judged by the benefit 24.2 measures.
