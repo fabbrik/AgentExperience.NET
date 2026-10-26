@@ -745,6 +745,9 @@ public static class LiveReuseExperiment
         return new TrialOutcome(record, metered.FirstBlockSeen, stored);
     }
 
+    /// <summary>The classification of a reply that carried no completion (an error body with no choices).</summary>
+    internal const string EmptyCompletion = "EmptyCompletion";
+
     /// <summary>
     /// The exception's type and, for an HTTP failure, its status code; an AggregateException is unwrapped to its first
     /// inner exception. Never the message: a provider's error body is not ours to publish.
@@ -754,6 +757,11 @@ public static class LiveReuseExperiment
         while (exception is AggregateException { InnerExceptions.Count: > 0 } aggregate)
         {
             exception = aggregate.InnerExceptions[0];
+        }
+
+        if (exception is EmptyCompletionException)
+        {
+            return EmptyCompletion;
         }
 
         var status = exception switch

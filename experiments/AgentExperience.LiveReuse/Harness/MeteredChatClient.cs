@@ -11,6 +11,29 @@ public sealed record LiveBudget(int MaxModelCalls, long MaxTotalTokens);
 /// <summary>The budget cap was reached. The experiment stops, records where, and evaluates no verdict.</summary>
 public sealed class BudgetExhaustedException(string message) : Exception(message);
 
+/// <summary>A reply that carried no completion: an HTTP 200 whose body had no choices (a gateway's error body).</summary>
+public sealed class EmptyCompletionException(Exception inner) : Exception("The provider answered with no completion.", inner);
+
+/// <summary>
+/// Turns the OpenAI SDK's failure on a reply with no choices into <see cref="EmptyCompletionException"/>. A gateway such
+/// as OpenRouter answers HTTP 200 with an error body when its upstream host fails, and the SDK then throws an index
+/// <see cref="ArgumentOutOfRangeException"/> from <c>ChatCompletion.Role</c>.
+/// </summary>
+internal sealed class EmptyCompletionGuard(IChatClient inner) : DelegatingChatClient(inner)
+{
+    public override async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentOutOfRangeException ex) when (ex.ParamName == "index")
+        {
+            throw new EmptyCompletionException(ex);
+        }
+    }
+}
+
 /// <summary>Model usage, summed.</summary>
 public sealed record UsageTotals(int ModelCalls, long InputTokens, long OutputTokens, double ModelLatencyMilliseconds)
 {

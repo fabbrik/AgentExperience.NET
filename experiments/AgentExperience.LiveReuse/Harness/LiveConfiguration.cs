@@ -180,13 +180,13 @@ public sealed class LiveConfiguration
             new AnthropicClient { ApiKey = _apiKey, BaseUrl = AnthropicBaseUrl }
                 .AsIChatClient(Model, AnthropicMaxOutputTokens),
         LiveProvider.Ollama =>
-            new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint, NetworkTimeout = OllamaNetworkTimeout })
+            new EmptyCompletionGuard(new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint, NetworkTimeout = OllamaNetworkTimeout })
                 .GetChatClient(Model)
-                .AsIChatClient(),
+                .AsIChatClient()),
         _ =>
-            new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
+            new EmptyCompletionGuard(new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
                 .GetChatClient(Model)
-                .AsIChatClient(),
+                .AsIChatClient()),
     };
 
     public override string ToString() => $"{ProviderName} model={Model} host={Describe().EndpointHost} (key redacted)";

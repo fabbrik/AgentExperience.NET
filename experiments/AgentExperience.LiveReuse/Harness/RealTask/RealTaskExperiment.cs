@@ -251,7 +251,8 @@ public static partial class RealTaskExperiment
         && (classification.StartsWith("ClientResultException", StringComparison.Ordinal)
             || classification.StartsWith("HttpRequestException", StringComparison.Ordinal)
             || classification.StartsWith("IOException", StringComparison.Ordinal)
-            || classification.StartsWith("SocketException", StringComparison.Ordinal));
+            || classification.StartsWith("SocketException", StringComparison.Ordinal)
+            || classification.StartsWith(LiveReuseExperiment.EmptyCompletion, StringComparison.Ordinal));
 
     internal static bool IsProviderRefusal(RealTaskDesign design, string? classification) =>
         IsUnreachable(classification)

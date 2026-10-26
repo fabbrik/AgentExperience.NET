@@ -8,9 +8,9 @@ namespace AgentExperience.LiveReuse.Tests;
 public sealed class RealTaskRefusalTests : IDisposable
 {
     /// <summary>The git blob id of <c>preregistration.realtask.json</c> as it stands; any change to the file fails until this and the amendment count are updated.</summary>
-    private const string RegisteredBlobId = "f4b0b70eb349e0f56d6a0c54d42383d4ab36df13";
+    private const string RegisteredBlobId = "a9f38487da195936633c0fd4988601509e2c29ec";
 
-    private const int RegisteredAmendments = 5;
+    private const int RegisteredAmendments = 6;
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "realtask-refusal-" + Guid.NewGuid().ToString("N"));
 
@@ -74,6 +74,25 @@ public sealed class RealTaskRefusalTests : IDisposable
         Assert.False(RealTaskExperiment.IsProviderRefusal(design, "model call timed out after 900 s"));
         Assert.False(RetryingChatClient.IsTransientClassification("model call timed out after 900 s"));
         Assert.False(RealTaskExperiment.IsProviderRefusal(design, "InvalidOperationException"));
+    }
+
+    [Fact]
+    public void A_reply_with_no_completion_is_retried_and_counts_as_a_refusal()
+    {
+        var design = RealTaskDesign.ReadEmbedded();
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, LiveReuseExperiment.EmptyCompletion));
+        Assert.True(RetryingChatClient.IsTransientClassification(LiveReuseExperiment.EmptyCompletion));
+        Assert.Equal(LiveReuseExperiment.EmptyCompletion, LiveReuseExperiment.Classify(new EmptyCompletionException(new ArgumentOutOfRangeException("index"))));
+        Assert.Equal("ArgumentOutOfRangeException", LiveReuseExperiment.Classify(new ArgumentOutOfRangeException("index")));
+    }
+
+    [Fact]
+    public async Task The_guard_turns_a_reply_with_no_choices_into_an_empty_completion()
+    {
+        using var guard = new EmptyCompletionGuard(new ThrowingChatClient(new ArgumentOutOfRangeException("index")));
+        await Assert.ThrowsAsync<EmptyCompletionException>(() => guard.GetResponseAsync([new ChatMessage(ChatRole.User, "x")]));
+        using var other = new EmptyCompletionGuard(new ThrowingChatClient(new ArgumentOutOfRangeException("count")));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => other.GetResponseAsync([new ChatMessage(ChatRole.User, "x")]));
     }
 
     [Fact]
@@ -170,5 +189,18 @@ public sealed class RealTaskRefusalTests : IDisposable
         public override void Dispose()
         {
         }
+    }
+}
+
+internal sealed class ThrowingChatClient(Exception exception) : IChatClient
+{
+    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) => throw exception;
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) => throw exception;
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose()
+    {
     }
 }
