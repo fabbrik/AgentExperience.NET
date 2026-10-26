@@ -9,4 +9,4 @@ run	utc	provider	model	host	preregistration	event	report
 20261024T035626Z	2026-10-24T05:07:24Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	complete: RealTaskInconclusive	realtask-ollama-qwen2.5-14b-2026-10-24.md
 20261024T035626Z	2026-10-24T05:40:00Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	void: connection lost (port-forward to the pod dropped after 49 calls; 16 of 60 runs ran)	-
 20261024T053511Z	2026-10-24T05:35:11Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	started	-
-20261024T053511Z	2026-10-25T23:40:00Z	ollama	qwen2.5:14b	localhost	f4b0b70eb349e0f56d6a0c54d42383d4ab36df13	void: process ended without a report (connection lost; 15 of 60 runs recorded in the partial file)	-
+20261024T053511Z	2026-10-25T23:40:00Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	void: process ended without a report (connection lost; 15 of 60 runs recorded in the partial file)	-
