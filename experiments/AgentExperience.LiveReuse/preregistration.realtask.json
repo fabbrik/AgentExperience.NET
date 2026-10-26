@@ -150,6 +150,12 @@
       "change": "A failure with no HTTP answer at all (a dropped or refused connection: ClientResultException, HttpRequestException, IOException or SocketException without an HTTP status) is retried like an HTTP 429 or 5xx and counts toward the consecutive-refusal stop (providerRefusal) like a refused status. A model-call timeout is neither.",
       "why": "Made after live results existed. Two runs of qwen2.5:14b through a kubectl port-forward lost their connection mid-run; every later trial errored, and each run was recorded as complete and inconclusive, which would have used the model's confirmatory slot on a dead connection. The change only decides when a run stops and what is retried; the task set, conditions, metric, gate and limits are unchanged, and no complete run exists for any provider.",
       "resultsExisted": true
+    },
+    {
+      "date": "2026-10-26",
+      "change": "A reply that carries no completion (OpenRouter answers HTTP 200 with an error body and no choices when its upstream host fails; the OpenAI SDK then throws ArgumentOutOfRangeException from ChatCompletion.Role) is classified EmptyCompletion, retried like an HTTP 429 or 5xx and counted toward the consecutive-refusal stop (providerRefusal) like a dropped connection. Nothing else changes.",
+      "why": "Made after live results existed. The first openrouter run (qwen/qwen3-coder) recorded its first two learning runs as errored with ArgumentOutOfRangeException, so every later trial would have errored and the run been recorded as complete and inconclusive. The change only decides when a model call is retried and when a run stops; the task set, tools, conditions, metric and gate are untouched.",
+      "resultsExisted": true
     }
   ]
 }

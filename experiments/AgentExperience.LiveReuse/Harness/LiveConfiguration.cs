@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Globalization;
 using Anthropic;
 using Microsoft.Extensions.AI;
@@ -180,14 +181,30 @@ public sealed class LiveConfiguration
             new AnthropicClient { ApiKey = _apiKey, BaseUrl = AnthropicBaseUrl }
                 .AsIChatClient(Model, AnthropicMaxOutputTokens),
         LiveProvider.Ollama =>
-            new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint, NetworkTimeout = OllamaNetworkTimeout })
+            new EmptyCompletionGuard(new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint, NetworkTimeout = OllamaNetworkTimeout })
                 .GetChatClient(Model)
-                .AsIChatClient(),
+                .AsIChatClient()),
+        LiveProvider.OpenRouter =>
+            new EmptyCompletionGuard(new OpenAIClient(new ApiKeyCredential(_apiKey), OpenRouterOptions(Endpoint))
+                .GetChatClient(Model)
+                .AsIChatClient()),
         _ =>
-            new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
+            new EmptyCompletionGuard(new OpenAIClient(new ApiKeyCredential(_apiKey), new OpenAIClientOptions { Endpoint = Endpoint })
                 .GetChatClient(Model)
-                .AsIChatClient(),
+                .AsIChatClient()),
     };
+
+    /// <summary>
+    /// OpenRouter routes a request to any host serving the model, including one that ignores the tools it was sent or
+    /// is down. <c>provider.require_parameters</c> limits routing to hosts that support every parameter in the request
+    /// (openrouter.ai/docs/features/provider-routing), so a run is never served by a host that drops the tools.
+    /// </summary>
+    internal static OpenAIClientOptions OpenRouterOptions(Uri endpoint)
+    {
+        var options = new OpenAIClientOptions { Endpoint = endpoint };
+        options.AddPolicy(new OpenRouterRoutingPolicy(), PipelinePosition.PerCall);
+        return options;
+    }
 
     public override string ToString() => $"{ProviderName} model={Model} host={Describe().EndpointHost} (key redacted)";
 

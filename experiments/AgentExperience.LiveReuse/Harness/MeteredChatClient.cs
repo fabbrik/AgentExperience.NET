@@ -1,3 +1,4 @@
+using System.ClientModel;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using Microsoft.Extensions.AI;
 
@@ -10,6 +11,29 @@ public sealed record LiveBudget(int MaxModelCalls, long MaxTotalTokens);
 
 /// <summary>The budget cap was reached. The experiment stops, records where, and evaluates no verdict.</summary>
 public sealed class BudgetExhaustedException(string message) : Exception(message);
+
+/// <summary>A reply that carried no completion: an HTTP 200 whose body had no choices (a gateway's error body).</summary>
+public sealed class EmptyCompletionException(Exception inner) : Exception("The provider answered with no completion.", inner);
+
+/// <summary>
+/// Turns the OpenAI SDK's failure on a reply with no choices into <see cref="EmptyCompletionException"/>. A gateway such
+/// as OpenRouter answers HTTP 200 with an error body when its upstream host fails, and the SDK then throws an index
+/// <see cref="ArgumentOutOfRangeException"/> from <c>ChatCompletion.Role</c>.
+/// </summary>
+internal sealed class EmptyCompletionGuard(IChatClient inner) : DelegatingChatClient(inner)
+{
+    public override async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentOutOfRangeException ex) when (ex.ParamName == "index")
+        {
+            throw new EmptyCompletionException(ex);
+        }
+    }
+}
 
 /// <summary>Model usage, summed.</summary>
 public sealed record UsageTotals(int ModelCalls, long InputTokens, long OutputTokens, double ModelLatencyMilliseconds)
@@ -153,5 +177,41 @@ internal sealed class MeteredChatClient(IChatClient inner, LiveBudget budget, Ti
 
         AnyBlockSeen = true;
         FirstBlockSeen ??= block;
+    }
+}
+
+/// <summary>Adds <c>"provider": {"require_parameters": true}</c> to every OpenRouter request body.</summary>
+internal sealed class OpenRouterRoutingPolicy : System.ClientModel.Primitives.PipelinePolicy
+{
+    public override void Process(System.ClientModel.Primitives.PipelineMessage message, IReadOnlyList<System.ClientModel.Primitives.PipelinePolicy> pipeline, int currentIndex)
+    {
+        Rewrite(message);
+        ProcessNext(message, pipeline, currentIndex);
+    }
+
+    public override async ValueTask ProcessAsync(System.ClientModel.Primitives.PipelineMessage message, IReadOnlyList<System.ClientModel.Primitives.PipelinePolicy> pipeline, int currentIndex)
+    {
+        Rewrite(message);
+        await ProcessNextAsync(message, pipeline, currentIndex).ConfigureAwait(false);
+    }
+
+    internal static byte[] WithRouting(ReadOnlySpan<byte> body)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(body) as System.Text.Json.Nodes.JsonObject
+            ?? throw new InvalidOperationException("An OpenRouter request body is not a JSON object.");
+        node["provider"] = new System.Text.Json.Nodes.JsonObject { ["require_parameters"] = true };
+        return System.Text.Encoding.UTF8.GetBytes(node.ToJsonString());
+    }
+
+    private static void Rewrite(System.ClientModel.Primitives.PipelineMessage message)
+    {
+        if (message.Request.Content is not { } content)
+        {
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        content.WriteTo(buffer, CancellationToken.None);
+        message.Request.Content = BinaryContent.Create(BinaryData.FromBytes(WithRouting(buffer.ToArray())));
     }
 }
