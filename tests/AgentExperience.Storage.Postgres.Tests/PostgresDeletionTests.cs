@@ -834,6 +834,62 @@ public sealed class PostgresDeletionTests
         Assert.Equal(0, await CountAsync("experience_injections", record.ExperienceId));
     }
 
+    // ------------------------------------------------------------------ holdout assignments (story 25.1)
+
+    [Fact]
+    public async Task A_holdout_assignment_recorded_while_a_record_is_being_erased_waits_and_records_nothing()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+
+        // The purge holds the record FOR UPDATE; the insert's FOR KEY SHARE waits for it, then re-reads a tombstone.
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await purging.BeginTransactionAsync();
+        await PurgeInAsync(purging, transaction, record.ExperienceId, tenant, scope.TeamId);
+
+        var recording = _store.RecordHoldoutAssignmentAsync(
+            auth, scope, new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Holdout, [new(record.ExperienceId, record.Revision)], DateTimeOffset.UtcNow), CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, ExperienceRecordSql.RecordKeyShareLock, recording);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await recording).Outcome);
+        Assert.Equal(0, await CountAsync("experience_holdout_assignments", record.ExperienceId));
+    }
+
+    [Fact]
+    public async Task An_erasure_started_while_a_holdout_assignment_is_being_recorded_waits_and_then_removes_its_row()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+
+        // The insert, uncommitted: it holds the record FOR KEY SHARE and its new row.
+        await using var recording = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await recording.BeginTransactionAsync();
+        await ExperienceSessionContext.DeclareAsync(recording, transaction, auth, CancellationToken.None);
+        await using (var insert = new NpgsqlCommand(PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, recording, transaction))
+        {
+            insert.Parameters.Add(new NpgsqlParameter<Guid>("run_id", Guid.NewGuid()));
+            insert.Parameters.Add(new NpgsqlParameter<string>("arm", nameof(HoldoutArm.Holdout)));
+            insert.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", [record.ExperienceId]));
+            insert.Parameters.Add(new NpgsqlParameter<long[]>("revisions", [record.Revision]));
+            insert.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("assigned_at", DateTimeOffset.UtcNow));
+            ExperienceRecordParameters.AddScopeParameters(insert.Parameters, scope);
+            Assert.Equal(1, await insert.ExecuteNonQueryAsync());
+        }
+
+        // The erasure's FOR UPDATE waits for it; once it commits, the tombstone's trigger deletes the row.
+        var erasing = _store.DeleteAsync(auth, scope, record.ExperienceId, CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, recording, "purge_experience_record", erasing);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await erasing).Outcome);
+        Assert.Equal(0, await CountAsync("experience_holdout_assignments", record.ExperienceId));
+    }
+
     [Fact]
     public async Task Concurrent_injection_records_and_erasures_over_the_same_records_never_deadlock()
     {

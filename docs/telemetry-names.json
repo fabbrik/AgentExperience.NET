@@ -234,11 +234,23 @@
         "RetrievalFailed",
         "Failed",
         "Retracted",
-        "SessionBudgetExhausted"
+        "SessionBudgetExhausted",
+        "Withheld"
       ]
     },
     {
       "operation": "record_injection",
+      "source": "AgentExperience.MicrosoftAgentFramework",
+      "span": false,
+      "outcomes": [
+        "Recorded",
+        "NotTracked",
+        "NotRecorded",
+        "OutcomeUnknown"
+      ]
+    },
+    {
+      "operation": "record_holdout",
       "source": "AgentExperience.MicrosoftAgentFramework",
       "span": false,
       "outcomes": [

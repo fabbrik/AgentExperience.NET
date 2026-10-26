@@ -702,6 +702,20 @@ public sealed class ExperienceInjectionOptions
     /// </remarks>
     public HistoricalReferenceMessageRole MessageRole { get; set; } = HistoricalReferenceMessageRole.User;
 
+    /// <summary>
+    /// The injection holdout: on a deterministic, run-ID-derived share of captured runs that have a block to inject, the
+    /// block is withheld (<see cref="InjectionOutcome.Withheld"/>), and every assigned run's arm and records are recorded
+    /// through <see cref="IExperienceRecordStore.RecordHoldoutAssignmentAsync"/>, so benefit can later be measured
+    /// against a control group. Off by default (<see cref="ExperienceHoldoutOptions.Off"/>): with it off, injection,
+    /// telemetry and storage are exactly what they are without it. See <see cref="ExperienceHoldoutOptions"/>.
+    /// </summary>
+    /// <remarks>
+    /// A held-out run's model is not given lessons it would otherwise have been given: run it only at a rate the
+    /// workload can afford. A rate outside [0, 1] or not a number, an empty salt, or <see langword="null"/> is refused
+    /// when the provider is constructed.
+    /// </remarks>
+    public ExperienceHoldoutOptions Holdout { get; set; } = ExperienceHoldoutOptions.Off;
+
     /// <summary>A shallow copy, taken before validation, so a later change to these options changes nothing.</summary>
     internal ExperienceInjectionOptions Snapshot()
     {
@@ -724,8 +738,8 @@ public sealed class ExperienceInjectionOptions
     /// </summary>
     /// <param name="paramName">The parameter name to report on a validation failure.</param>
     /// <returns>The validated snapshot of <see cref="ApproachArguments"/>.</returns>
-    /// <exception cref="ArgumentNullException"><see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, or <see cref="SessionStateKey"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">Not exactly one of <see cref="ResolveRequest"/> and <see cref="ResolveRequestAsync"/> is set, or <see cref="ApproachArguments"/> or <see cref="SessionStateKey"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
+    /// <exception cref="ArgumentNullException"><see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, <see cref="SessionStateKey"/>, or <see cref="Holdout"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Not exactly one of <see cref="ResolveRequest"/> and <see cref="ResolveRequestAsync"/> is set, or <see cref="ApproachArguments"/>, <see cref="SessionStateKey"/> or <see cref="Holdout"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
     internal ApproachArgumentAllowlist Validate(string paramName)
     {
         if (ResolveRequest is null == (ResolveRequestAsync is null))
@@ -766,6 +780,9 @@ public sealed class ExperienceInjectionOptions
                 "MessageRole must be a defined HistoricalReferenceMessageRole value.",
                 $"{paramName}.{nameof(MessageRole)}");
         }
+
+        ArgumentNullException.ThrowIfNull(Holdout, $"{paramName}.{nameof(Holdout)}");
+        Holdout.Validate($"{paramName}.{nameof(Holdout)}");
 
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)
         {

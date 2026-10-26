@@ -299,10 +299,11 @@ public class ContractShapeTests
     {
         var methods = typeof(IExperienceRecordStore).GetMethods().Where(m => !m.IsSpecialName).OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
 
-        // The one property: whether the store tracks injections, false unless a store says otherwise (story 21.8).
-        var tracks = Assert.Single(typeof(IExperienceRecordStore).GetProperties());
-        Assert.Equal(nameof(IExperienceRecordStore.TracksInjections), tracks.Name);
-        Assert.False(tracks.GetMethod!.IsAbstract);
+        // The two properties: whether the store tracks injections (story 21.8) and holdout assignments (story 25.1), false
+        // unless a store says otherwise.
+        var properties = typeof(IExperienceRecordStore).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
+        Assert.Equal([nameof(IExperienceRecordStore.TracksHoldout), nameof(IExperienceRecordStore.TracksInjections)], properties.Select(p => p.Name));
+        Assert.All(properties, property => Assert.False(property.GetMethod!.IsAbstract));
 
         // Two GetAsync overloads: the plain read, and the one that also says what the caller will do
         // with the record. Only auditing looks at the difference, so the second has a default
@@ -310,13 +311,13 @@ public class ContractShapeTests
         Assert.Equal(
             [
                 "CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "GetManyAsync",
-                "QueryAsync", "QueryWithInjectionsAsync", "RecordInjectionAsync",
+                "QueryAsync", "QueryWithInjectionsAsync", "RecordHoldoutAssignmentAsync", "RecordInjectionAsync",
             ],
             methods.Select(m => m.Name));
 
         // The lessons view's injection read and the provider's injection write both have default implementations, so an
         // existing store keeps compiling (and reads as not tracking injections); override all three or none.
-        Assert.All(methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync"), method => Assert.False(method.IsAbstract));
+        Assert.All(methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync" or "RecordHoldoutAssignmentAsync"), method => Assert.False(method.IsAbstract));
         Assert.All(methods, method =>
         {
             var parameters = method.GetParameters();

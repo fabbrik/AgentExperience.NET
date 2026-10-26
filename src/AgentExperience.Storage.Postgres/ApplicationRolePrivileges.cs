@@ -24,6 +24,12 @@ internal static class ApplicationRolePrivileges
     internal const string InjectionsTable = "experience_injections";
 
     /// <summary>
+    /// <c>0027</c>'s table: the injection holdout's assignments. Optional, so the privileges call still succeeds on a schema
+    /// not yet migrated to <c>0027</c>. .NET-only: no contract privileges file grants it.
+    /// </summary>
+    internal const string HoldoutAssignmentsTable = "experience_holdout_assignments";
+
+    /// <summary>
     /// Every table the application role gets anything on, and exactly what. A table in the schema that is
     /// not listed here -- the migration journal, or anything a later migration adds before this list names
     /// it -- gets nothing, and the verification fails if the role can reach it anyway.
@@ -52,6 +58,10 @@ internal static class ApplicationRolePrivileges
         // record or the scope columns, which the upsert copies from the record and the policies match on. No DELETE:
         // erasure removes a row through 0026's trigger, as the owner.
         new(InjectionsTable, Delete: false, ["injection_count", "last_injected_at"], Optional: true),
+
+        // Story 25.1: the holdout assignment insert. Append and read: its ON CONFLICT DO NOTHING updates nothing, and erasure
+        // removes a row through 0027's trigger, as the owner.
+        new(HoldoutAssignmentsTable, Delete: false, [], Optional: true),
 
         // Derived, rebuildable data owned by the vectors package: the index upserts and removes vectors.
         // UPDATE is column-level, the columns the upsert's ON CONFLICT DO UPDATE sets: never experience_id,

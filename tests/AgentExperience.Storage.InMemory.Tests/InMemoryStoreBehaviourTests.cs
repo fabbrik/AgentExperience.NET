@@ -77,6 +77,76 @@ public sealed class InMemoryStoreBehaviourTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
+    // ---------------------------------------------------------------- holdout assignments (story 25.1)
+
+    [Fact]
+    public async Task A_holdout_assignment_writes_one_row_per_run_and_own_scope_record_and_never_a_second()
+    {
+        var now = new DateTimeOffset(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
+        var store = new InMemoryExperienceRecordStore(new FixedClock(now));
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var other = Scope(tenant, team: "team-1");
+        var first = Record(scope, ExperienceStatus.Validated);
+        var second = Record(scope, ExperienceStatus.Validated);
+        var borrowed = Record(other, ExperienceStatus.Validated);
+        foreach (var record in new[] { first, second, borrowed })
+        {
+            await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+        }
+
+        var runId = Guid.NewGuid();
+
+        // A record of another scope (lent through a grant, say) and an unknown ID are skipped; a record named twice counts
+        // once, at its first revision; an instant ahead of the store's clock is clamped to it.
+        var result = await store.RecordHoldoutAssignmentAsync(
+            Authorize(tenant),
+            scope,
+            new HoldoutAssignment(
+                runId,
+                HoldoutArm.Holdout,
+                [new(first.ExperienceId, 3), new(borrowed.ExperienceId, 0), new(Guid.NewGuid(), 0), new(second.ExperienceId, 0), new(first.ExperienceId, 9)],
+                now.AddDays(1)),
+            CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, result.Outcome);
+        Assert.True(result.Tracked);
+
+        var rows = store.ReadHoldoutAssignments().OrderBy(r => r.ExperienceId == first.ExperienceId ? 0 : 1).ToList();
+        Assert.Equal(
+            [
+                new InMemoryExperienceRecordStore.StoredHoldoutAssignment(runId, first.ExperienceId, 3, HoldoutArm.Holdout, scope, now),
+                new InMemoryExperienceRecordStore.StoredHoldoutAssignment(runId, second.ExperienceId, 0, HoldoutArm.Holdout, scope, now),
+            ],
+            rows);
+
+        // The same run again -- a second invocation -- adds nothing and changes nothing.
+        await store.RecordHoldoutAssignmentAsync(
+            Authorize(tenant),
+            scope,
+            new HoldoutAssignment(runId, HoldoutArm.Holdout, [new(first.ExperienceId, 5), new(second.ExperienceId, 1)], now.AddMinutes(-5)),
+            CancellationToken.None);
+        Assert.Equal(rows, store.ReadHoldoutAssignments().OrderBy(r => r.ExperienceId == first.ExperienceId ? 0 : 1));
+
+        // The record itself is untouched.
+        var read = await store.GetAsync(Authorize(tenant), scope, first.ExperienceId, CancellationToken.None);
+        Assert.Equal(first.Revision, read.Record!.Revision);
+        Assert.Equal(first.UpdatedAt, read.Record.UpdatedAt);
+    }
+
+    [Fact]
+    public void The_holdout_consistency_check_fails_a_decorator_that_overrides_only_one_holdout_member()
+    {
+        AgentExperience.Storage.Conformance.RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(_store);
+        AgentExperience.Storage.Conformance.RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(new Decorator(_store));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AgentExperience.Storage.Conformance.RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(new HoldoutPartialDecorator(_store)));
+    }
+
+    /// <summary>Claims to record holdout assignments without forwarding the write.</summary>
+    private sealed class HoldoutPartialDecorator(IExperienceRecordStore inner) : Decorator(inner), IExperienceRecordStore
+    {
+        public bool TracksHoldout => true;
+    }
+
     // ---------------------------------------------------------------- search
 
     [Fact]

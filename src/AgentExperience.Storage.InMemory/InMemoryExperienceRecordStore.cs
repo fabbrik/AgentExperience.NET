@@ -338,6 +338,80 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <inheritdoc />
+    public bool TracksHoldout => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The instant is clamped to this store's clock, as the PostgreSQL store clamps it to the database's. A row that
+    /// already exists for a run and record is kept as it is. This store has no erasure, so no row is ever removed.
+    /// </remarks>
+    public Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        HoldoutAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutAssignment(scope, assignment);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Invalid, errors));
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Denied, NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ExperienceHoldoutRecordResult>(cancellationToken);
+        }
+
+        var now = StoredSnapshots.Timestamp(_timeProvider.GetUtcNow());
+        var at = StoredSnapshots.Timestamp(assignment.AssignedAt);
+        if (at > now)
+        {
+            at = now;
+        }
+
+        lock (_gate)
+        {
+            foreach (var exposure in assignment.Records)
+            {
+                // Only a record in exactly this scope; anything else is skipped, revealing nothing.
+                if (!_records.TryGetValue(exposure.ExperienceId, out var record) || record.Scope != scope)
+                {
+                    continue;
+                }
+
+                HoldoutAssignments.TryAdd(
+                    (assignment.RunId, exposure.ExperienceId),
+                    new StoredHoldoutAssignment(assignment.RunId, exposure.ExperienceId, exposure.Revision, assignment.Arm, scope, at));
+            }
+        }
+
+        return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Committed, NoErrors));
+    }
+
+    /// <summary>The holdout assignment rows, keyed on run and record. Internal, for tests.</summary>
+    internal Dictionary<(Guid RunId, Guid ExperienceId), StoredHoldoutAssignment> HoldoutAssignments { get; } = [];
+
+    /// <summary>A copy of every holdout assignment row, taken under the store's lock. For tests.</summary>
+    internal IReadOnlyList<StoredHoldoutAssignment> ReadHoldoutAssignments()
+    {
+        lock (_gate)
+        {
+            return [.. HoldoutAssignments.Values];
+        }
+    }
+
+    /// <summary>One holdout assignment row: ids, a revision, the arm, the scope and an instant.</summary>
+    internal sealed record StoredHoldoutAssignment(Guid RunId, Guid ExperienceId, long Revision, HoldoutArm Arm, Scope Scope, DateTimeOffset AssignedAt);
+
+    /// <inheritdoc />
     public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
         AuthorizationContext authorization,
         Scope scope,

@@ -168,6 +168,7 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `ModelAuthoredLessons` (since `0.1.0-preview.5`) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since `0.1.0-preview.6`); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. No result is emitted when the caller cancels the invocation: the cancellation propagates instead. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
+| `Holdout` | `Rate = 0` (off) | The injection holdout: on a deterministic, run-ID-derived share (`Rate`, 0 to 1) of captured runs that have a block, the block is withheld (`Withheld`), and both arms are recorded for measuring benefit. A rate outside 0..1 or not a number, or an empty `Salt`, throws when the provider is constructed. See [Measuring benefit: the holdout](#measuring-benefit-the-holdout). |
 
 ## What the agent sees
 
@@ -1098,3 +1099,35 @@ about it is refused as `NotExposed`. A failure to record — a throw, or a captu
 `NotSupported`, `Conflict` or `CapacityExceeded` — is reported once per run through `OnCaptureFailure` at stage
 `RecordExposure` and never affects the injection. Exposure means *delivered*, not *used*: the library records what it
 put in front of the model, and nothing about what the model did with it.
+
+## Measuring benefit: the holdout
+
+Exposure says what a run was given; it cannot say whether the lesson helped, because there is nothing to compare a run
+with. The holdout gives benefit estimation that comparison. Set `Holdout = new ExperienceHoldoutOptions { Rate = 0.1 }`
+and, of the captured runs that have a block to inject, about one in ten has it withheld; every other run is injected
+as before. Both arms are recorded: the run, its arm (`Treatment` or `Holdout`), and the records its block named, at the
+revisions it rendered. A run's own record, once finalized, carries its verified outcome, and joining the two compares
+the arms.
+
+- **Off by default.** With `Rate = 0` nothing changes: injection, telemetry and storage are what they are without it.
+- **Deterministic.** The arm is a pure function of the run ID and `Salt`: SHA-256 over the run ID's 16 bytes in
+  RFC 4122 (big-endian) order followed by the salt's UTF-8 bytes; the digest's first 8 bytes, read as a big-endian
+  unsigned integer and divided by 2^64, give a number in [0, 1), and the run is held out when it is below `Rate`
+  (always, at a rate of 1). Every invocation of a run lands in the same arm. A different salt draws different arms.
+- **Who takes part.** Only an invocation captured by this agent's own `UseExperienceCapture` (the same condition under
+  which exposure is recorded, above) whose block names at least one record. An uncaptured invocation, or one with
+  nothing to inject, is injected as before and assigned nothing.
+- **What a held-out invocation does.** The block is built (so what is withheld is exactly what would have been
+  delivered), then withheld whole: no message, nothing staged in the session, no exposure, no "last injected". The
+  result is `InjectionOutcome.Withheld`, with `WithheldExperienceIds`. Withdrawal notices are never withheld: a held-out
+  invocation that owes any is given a block of those notices alone, reported as `Retracted` with
+  `WithheldExperienceIds` still naming the withheld records. The run's model works without the lessons it
+  would have had, so choose a rate the workload can afford.
+- **Recording.** The assignment is written in the background, like "last injected", through
+  `IExperienceRecordStore.RecordHoldoutAssignmentAsync`, and never delays or fails the invocation; its outcome is the
+  `record_holdout` operation in [telemetry](../telemetry.md). Only records in the invocation's own scope are recorded: a
+  record borrowed through a grant is withheld or delivered with the rest of the block, but has no row. A row holds IDs,
+  a revision, the arm, the scope and an instant, never content; erasing a lesson removes its rows, and erasing a run's
+  own record removes that run's rows. In PostgreSQL the rows are migration `0027`'s
+  `agent_experience.experience_holdout_assignments` (see [the schema](postgres-schema.md)); the in-memory store keeps
+  them in memory. The Python and Go ports do not take part yet.

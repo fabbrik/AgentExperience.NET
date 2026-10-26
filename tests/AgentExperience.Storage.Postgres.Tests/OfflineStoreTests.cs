@@ -393,6 +393,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.TextSearchFunctionScriptName,
                 PostgresExperienceRecordSchema.TextSearchAnyTermScriptName,
                 PostgresExperienceRecordSchema.ExperienceInjectionsScriptName,
+                PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1340,8 +1341,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     /// <summary>
@@ -1393,8 +1394,64 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("WHEN i.injection_count = 9223372036854775807 THEN i.injection_count", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
         Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
+        // Applied after every earlier script; 0027 follows it.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    /// <summary>
+    /// Story 25.1: 0027 creates the holdout assignment table, its erasure trigger (which also removes the erased record's
+    /// own run's rows) and exactly its two canonical policies, and switches nothing on, grants nothing and defines no
+    /// SECURITY DEFINER function.
+    /// </summary>
+    [Fact]
+    public void The_holdout_script_creates_the_table_its_erasure_trigger_and_its_canonical_policies_only()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        Assert.Equal(
+            ["rls_holdout_assignments_insert", "rls_holdout_assignments_select"],
+            RowLevelSecurityPolicies.NamesFor(ApplicationRolePrivileges.HoldoutAssignmentsTable));
+        foreach (var policy in RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.HoldoutAssignmentsTable))
+        {
+            Assert.Equal(1, CountOccurrences(statements, policy.Ddl));
+        }
+
+        Assert.Equal(2, CountOccurrences(statements, "CREATE POLICY "));
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_holdout_assignments (", statements, StringComparison.Ordinal);
+        Assert.Contains("CONSTRAINT experience_holdout_assignments_pkey PRIMARY KEY (run_id, experience_id)", statements, StringComparison.Ordinal);
+        Assert.Contains(
+            "FOREIGN KEY (experience_id)\n        REFERENCES agent_experience.experience_records (experience_id) ON DELETE CASCADE",
+            statements,
+            StringComparison.Ordinal);
+        Assert.Contains("CHECK (arm IN ('Treatment', 'Holdout'))", statements, StringComparison.Ordinal);
+        Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+        Assert.Contains("OR (run_id = OLD.source_run_id", statements, StringComparison.Ordinal);
+        Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_holdout_assignments_cleared", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("payload", statements, StringComparison.Ordinal);
+
+        // Append and read only, granted only when the table exists, and left out of the contract's privileges files.
+        var manifest = Assert.Single(ApplicationRolePrivileges.Tables, t => t.Name == ApplicationRolePrivileges.HoldoutAssignmentsTable);
+        Assert.Empty(manifest.UpdateColumns);
+        Assert.False(manifest.Delete);
+        Assert.True(manifest.Optional);
+        Assert.Contains(
+            "AND r.deleted_at IS NULL)",
+            Assert.Single(RowLevelSecurityPolicies.All, p => p.Table == ApplicationRolePrivileges.HoldoutAssignmentsTable && p.Command == "INSERT").Check,
+            StringComparison.Ordinal);
+
+        // The insert copies the scope from the record, in exactly the caller's scope, live only, locked, and never twice.
+        Assert.Contains(ExperienceRecordSql.RecordScopePredicate, PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordLivePredicate, PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
+        Assert.Contains("LEAST(@assigned_at, pg_catalog.clock_timestamp())", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
+        Assert.EndsWith("ON CONFLICT (run_id, experience_id) DO NOTHING", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
+
         // The last script.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>
@@ -1422,7 +1479,9 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // of the embedding table's, which are the vectors package's own script.
         foreach (var policy in RowLevelSecurityPolicies.All)
         {
-            Assert.Equal(policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable ? 0 : 1, CountOccurrences(statements, policy.Ddl));
+            Assert.Equal(
+                policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable or ApplicationRolePrivileges.HoldoutAssignmentsTable ? 0 : 1,
+                CountOccurrences(statements, policy.Ddl));
         }
 
         Assert.Equal(18, CountOccurrences(statements, "CREATE POLICY "));

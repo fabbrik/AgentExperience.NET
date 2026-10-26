@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0026` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0027` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -747,6 +747,32 @@ as the store's own statement now does (see [How the text channel matches](retrie
   Python and Go ports write it too, with the contract's `sql/record-injection.sql`, the statement the .NET store runs.
   Its grants are the contract's `sql/application-role-privileges-1.4.sql`, applied after the 1.0 file (whose
   `REVOKE ALL` removes them): in a mixed fleet, apply the 1.0 then the 1.4 contract privileges, or the .NET call.
+- No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
+
+### 0027: the injection holdout's assignments
+
+`0027_experience_holdout_assignments.sql` records which arm of the injection holdout each captured run was assigned to
+(see [Measuring benefit: the holdout](injection.md#measuring-benefit-the-holdout)):
+
+- `agent_experience.experience_holdout_assignments`: one row per captured run and record its block named, keyed on
+  `(run_id, experience_id)` (with a foreign key from `experience_id` to `experience_records`, `ON DELETE CASCADE`; none on
+  `run_id`, whose record is written later, at finalization), with the record's `revision` as the block rendered it, the
+  `arm` (`Treatment` or `Holdout`), the record's six scope columns and `assigned_at`. The store writes it with one
+  `INSERT … SELECT … ON CONFLICT DO NOTHING` per assigned block, which copies the scope from the record (live, in exactly
+  the caller's scope), clamps the instant to `clock_timestamp()`, and keeps a run's first row for each record. In
+  encrypted mode the store skips a record whose key is destroyed. It holds no content. Join it to a run's outcome through
+  `experience_records.source_run_id = run_id`.
+- **Concurrency.** The insert locks its records `FOR KEY SHARE` in ID order, as `0026`'s upsert does, so an erasure
+  racing it either waits and then removes its rows, or runs first and leaves a tombstone the insert does not select.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is
+  tombstoned, every row naming it and every row of the run it was captured from (its `source_run_id` before the purge
+  zeroes it), so erasing a lesson or a run's own record takes its rows with it on every erasure path.
+- Its row-level security policies (`rls_holdout_assignments_select`, `_insert`): the row's scope inside the declared
+  bounds, and, for an insert, a live record with that ID in exactly those scope columns. A grant never admits one.
+- The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**; until then assignments are reported as not recorded and
+  injection carries on. The table is .NET-only: no contract privileges file grants it, and the contract's `REVOKE ALL`
+  removes the .NET grants, so in a mixed fleet run the .NET privileges call after the contract's files.
 - No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped

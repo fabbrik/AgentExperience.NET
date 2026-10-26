@@ -81,6 +81,12 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - `TracksInjections` is `true`, and a store overrides it, `RecordInjectionAsync` and `QueryWithInjectionsAsync`
   together. `RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent(store)` checks the "all three or none" rule
   for any store or decorator, including one that does not track injections at all.
+- `RecordHoldoutAssignmentAsync` commits whatever it matches (a record in another scope, or one nothing holds, is
+  skipped without a word) and changes nothing about the records; an empty run ID, an undefined arm, an empty record ID,
+  a negative revision, too many records, an unset instant, no assignment or a malformed scope is `Invalid`, and a scope
+  outside the authorization is `Denied`. `TracksHoldout` is `true`, and a store overrides it and
+  `RecordHoldoutAssignmentAsync` together; `RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(store)` checks
+  that for any store or decorator. The rows themselves have no port read: each store's own tests check them.
 
 **Candidate source**
 

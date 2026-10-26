@@ -115,7 +115,7 @@ for exporter options. For the sample's fixtures and limitations, read its
 | Name | Kind | Emitted by | Operations |
 | --- | --- | --- | --- |
 | `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the thirteen Core operations below |
-| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, and `record_injection` (measurements only, no span) |
+| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, and `record_injection` and `record_holdout` (measurements only, no span) |
 | `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention) and `record.seal` (the crypto-shredding upgrade) only |
 
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
@@ -167,7 +167,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 
 | Dimension | Values |
 | --- | --- |
-| `operation` | one of the twenty values in [Operations](#operations) |
+| `operation` | one of the twenty-two values in [Operations](#operations) |
 | `outcome` | an enum member name from that operation's own outcome enum, verbatim, or `Faulted` when it threw. See [Operations](#operations) |
 | `error.class` | `Cancelled`, `Timeout`, `Infrastructure`, `Unexpected`. See [`error.class`](#errorclass). Only on `agentexperience.operation.failures` |
 | `nested` | `true` or `false` (a boolean). See [`nested`](#nested) |
@@ -276,7 +276,7 @@ record was erased is out of the library's reach: see KL-2.
 
 ## Operations
 
-There are twenty `operation` values: thirteen emitted on `AgentExperience.Core`, one on
+There are twenty-two `operation` values: thirteen emitted on `AgentExperience.Core`, three on
 `AgentExperience.MicrosoftAgentFramework`, and six on `AgentExperience.Storage.Postgres`. The set is closed: adding
 a value is a deliberate change that widens every instrument's cardinality.
 
@@ -295,8 +295,9 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `deindex` | `ExperienceIndexingService.RemoveAsync` | `ExperienceDeindexingOutcome`: `Removed`, `NotIndexed`, `Denied`, `Failed` | `experience_id` | — |
 | `reindex` | `ExperienceIndexingService.ReindexAsync` | `ExperienceReindexOutcome`: `Completed`, `Denied`, `Invalid`, `Failed` | none (a pass has no single record) | — |
 | `reuse_feedback` | `ExperienceReuseFeedbackService.RecordAsync` | `ExperienceReuseFeedbackOutcome`: `Recorded`, `AlreadyRecorded`, `Conflict`, `Denied`, `Invalid` | `feedback_id`, `run_id` | `confidence.apply` (once per attributed exposed record) |
-| `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed`, `Retracted` (a block of withdrawal notices only), `SessionBudgetExhausted` | `correlation_id`, `omitted_count`, `retracted_count`, `history_read` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
+| `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed`, `Retracted` (a block of withdrawal notices only), `SessionBudgetExhausted`, `Withheld` (the injection holdout withheld a built block from a captured run; see `ExperienceInjectionOptions.Holdout`) | `correlation_id`, `omitted_count`, `retracted_count`, `history_read` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
 | `record_injection` | `ExperienceContextProvider`, in the background after an injected block is handed over: it records when the block's records were injected, for the lessons view. No span (the injection's has closed); counted, timed and failure-counted on the same instruments | `Recorded`; `NotTracked` (the store does not track injections, `IExperienceRecordStore.TracksInjections`); `NotRecorded` (the store refused or failed the write; `error.class` `Infrastructure` or `Unexpected` when it threw, `Timeout` when too many earlier writes are still running); `OutcomeUnknown` (the write overran its few-second bound, `Timeout`, or was cancelled, `Cancelled`: it may have landed) | — | — |
+| `record_holdout` | `ExperienceContextProvider`, in the background, when the injection holdout (`ExperienceInjectionOptions.Holdout`, off by default) assigned a captured run to an arm: it records the run's arm and the records its block named, delivered or withheld. No span; counted, timed and failure-counted on the same instruments | The same four as `record_injection`; `NotTracked` means the store does not record holdout assignments (`IExperienceRecordStore.TracksHoldout`) | — | — |
 | `delete` | `PostgresExperienceRecordStore.DeleteAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `StaleRevision`, `NotFound`, `Denied`, `Invalid` | `experience_id` | — |
 | `retention.sweep` | `PostgresExperienceRecordStore.SweepExpiredAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count`, `interrupted`, `scope_match` | — (one span per batch, never one per record, whether `Exact` or `Subtree`) |
 | `grant.purge` | `PostgresExperienceGrantStore.PurgeExpiredAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count` | — |
