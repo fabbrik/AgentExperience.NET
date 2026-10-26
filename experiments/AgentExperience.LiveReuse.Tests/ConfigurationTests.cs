@@ -46,6 +46,15 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
+    public void An_openrouter_request_asks_for_hosts_that_support_every_parameter()
+    {
+        var body = System.Text.Encoding.UTF8.GetBytes("{\"model\":\"m\",\"tools\":[]}");
+        var rewritten = System.Text.Json.Nodes.JsonNode.Parse(OpenRouterRoutingPolicy.WithRouting(body))!;
+        Assert.Equal("m", (string?)rewritten["model"]);
+        Assert.True((bool)rewritten["provider"]!["require_parameters"]!);
+    }
+
+    [Fact]
     public void Ollama_is_chosen_only_explicitly_needs_a_model_costs_nothing_and_reports_the_local_host()
     {
         Assert.Equal(ConfigurationOutcome.NotConfigured, Read(("OLLAMA_MODEL", "qwen2.5:7b")).Outcome);

@@ -1,3 +1,4 @@
+using System.ClientModel;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using Microsoft.Extensions.AI;
 
@@ -176,5 +177,41 @@ internal sealed class MeteredChatClient(IChatClient inner, LiveBudget budget, Ti
 
         AnyBlockSeen = true;
         FirstBlockSeen ??= block;
+    }
+}
+
+/// <summary>Adds <c>"provider": {"require_parameters": true}</c> to every OpenRouter request body.</summary>
+internal sealed class OpenRouterRoutingPolicy : System.ClientModel.Primitives.PipelinePolicy
+{
+    public override void Process(System.ClientModel.Primitives.PipelineMessage message, IReadOnlyList<System.ClientModel.Primitives.PipelinePolicy> pipeline, int currentIndex)
+    {
+        Rewrite(message);
+        ProcessNext(message, pipeline, currentIndex);
+    }
+
+    public override async ValueTask ProcessAsync(System.ClientModel.Primitives.PipelineMessage message, IReadOnlyList<System.ClientModel.Primitives.PipelinePolicy> pipeline, int currentIndex)
+    {
+        Rewrite(message);
+        await ProcessNextAsync(message, pipeline, currentIndex).ConfigureAwait(false);
+    }
+
+    internal static byte[] WithRouting(ReadOnlySpan<byte> body)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(body) as System.Text.Json.Nodes.JsonObject
+            ?? throw new InvalidOperationException("An OpenRouter request body is not a JSON object.");
+        node["provider"] = new System.Text.Json.Nodes.JsonObject { ["require_parameters"] = true };
+        return System.Text.Encoding.UTF8.GetBytes(node.ToJsonString());
+    }
+
+    private static void Rewrite(System.ClientModel.Primitives.PipelineMessage message)
+    {
+        if (message.Request.Content is not { } content)
+        {
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        content.WriteTo(buffer, CancellationToken.None);
+        message.Request.Content = BinaryContent.Create(BinaryData.FromBytes(WithRouting(buffer.ToArray())));
     }
 }
