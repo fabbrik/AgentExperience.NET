@@ -10,3 +10,12 @@ run	utc	provider	model	host	preregistration	event	report
 20261024T035626Z	2026-10-24T05:40:00Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	void: connection lost (port-forward to the pod dropped after 49 calls; 16 of 60 runs ran)	-
 20261024T053511Z	2026-10-24T05:35:11Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	started	-
 20261024T053511Z	2026-10-25T23:40:00Z	ollama	qwen2.5:14b	localhost	7e2177c91ed87aacdd69adc536ff45abbfc2167a	void: process ended without a report (connection lost; 15 of 60 runs recorded in the partial file)	-
+20261026T104031Z	2026-10-26T10:40:31Z	ollama	qwen2.5:14b	127.0.0.1	f4b0b70eb349e0f56d6a0c54d42383d4ab36df13	started	-
+20261026T223808Z	2026-10-26T22:38:08Z	openrouter	qwen/qwen3-coder	openrouter.ai	f4b0b70eb349e0f56d6a0c54d42383d4ab36df13	started	-
+20261026T223808Z	2026-10-26T22:38:09Z	openrouter	qwen/qwen3-coder	openrouter.ai	f4b0b70eb349e0f56d6a0c54d42383d4ab36df13	stopped: provider refused	realtask-openrouter-qwen-qwen3-coder-2026-10-26.md
+20261026T224750Z	2026-10-26T22:47:50Z	openrouter	qwen/qwen3-coder	openrouter.ai	f4b0b70eb349e0f56d6a0c54d42383d4ab36df13	started	-
+20261026T225812Z	2026-10-26T22:58:12Z	openrouter	qwen/qwen3-coder	openrouter.ai	f4b0b70eb349e0f56d6a0c54d42383d4ab36df13	started	-
+20261026T225926Z	2026-10-26T22:59:26Z	openrouter	qwen/qwen3-coder	openrouter.ai	a9f38487da195936633c0fd4988601509e2c29ec	started	-
+20261026T230259Z	2026-10-26T23:02:59Z	openrouter	qwen/qwen3-coder	openrouter.ai	a9f38487da195936633c0fd4988601509e2c29ec	started	-
+20261026T230259Z	2026-10-26T23:05:33Z	openrouter	qwen/qwen3-coder	openrouter.ai	a9f38487da195936633c0fd4988601509e2c29ec	stopped at budget cap	realtask-openrouter-qwen-qwen3-coder-2026-10-26-run2.md
+20261026T231425Z	2026-10-26T23:14:25Z	openrouter	qwen/qwen3-coder	openrouter.ai	a9f38487da195936633c0fd4988601509e2c29ec	started	-
