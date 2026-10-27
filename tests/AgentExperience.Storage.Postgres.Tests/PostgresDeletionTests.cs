@@ -851,12 +851,122 @@ public sealed class PostgresDeletionTests
 
         var recording = _store.RecordHoldoutAssignmentAsync(
             auth, scope, new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Holdout, [new(record.ExperienceId, record.Revision)], DateTimeOffset.UtcNow), CancellationToken.None);
-        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, ExperienceRecordSql.RecordKeyShareLock, recording);
+        // The statement's opening words: pg_stat_activity truncates its text (track_activity_query_size, 1 kB by default)
+        // before the lock clause at its end.
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, HoldoutStatementStart, recording);
         await transaction.CommitAsync();
 
         Assert.Equal(ExperienceStoreOutcome.Committed, (await recording).Outcome);
         Assert.Equal(0, await CountAsync("experience_holdout_assignments", record.ExperienceId));
     }
+
+    /// <summary>
+    /// Story 25.10, the late-write guard: an erasure of the run's own record that has started holds a holdout write for
+    /// that run on the record's lock; once it commits, the write finds the tombstone and records nothing for the run.
+    /// </summary>
+    [Fact]
+    public async Task A_holdout_assignment_recorded_while_the_run_s_record_is_being_erased_waits_and_records_nothing()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await ValidatedAsync(auth, scope);
+        var runId = Guid.NewGuid();
+        var runRecord = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, runRecord, CancellationToken.None)).Outcome);
+
+        // The purge holds the run's record FOR UPDATE; the write's lock on the run's records waits for it.
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await purging.BeginTransactionAsync();
+        await PurgeInAsync(purging, transaction, runRecord.ExperienceId, tenant, scope.TeamId);
+
+        var recording = _store.RecordHoldoutAssignmentAsync(
+            auth, scope, new HoldoutAssignment(runId, HoldoutArm.Treatment, [new(lesson.ExperienceId, lesson.Revision)], DateTimeOffset.UtcNow), CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, HoldoutStatementStart, recording);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await recording).Outcome);
+        Assert.Equal(0, await RunRowsAsync(runId));
+
+        // The lesson is untouched and still recordable for any other run.
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await _store.RecordHoldoutAssignmentAsync(
+            auth, scope, new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Treatment, [new(lesson.ExperienceId, lesson.Revision)], DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+        Assert.Equal(1, await CountAsync("experience_holdout_assignments", lesson.ExperienceId));
+    }
+
+    /// <summary>
+    /// Story 25.10, the other order: a holdout write for a run, in flight, holds an erasure of the run's own record on the
+    /// record's lock; once the write commits, the erasure's trigger removes the run's rows.
+    /// </summary>
+    [Fact]
+    public async Task An_erasure_of_the_run_s_record_started_while_its_holdout_assignment_is_being_recorded_waits_and_then_removes_the_run_s_rows()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await ValidatedAsync(auth, scope);
+        var runId = Guid.NewGuid();
+        var runRecord = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, runRecord, CancellationToken.None)).Outcome);
+
+        // The insert, uncommitted: it holds the run's record and the lesson FOR KEY SHARE, and its new row.
+        await using var recording = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await recording.BeginTransactionAsync();
+        await ExperienceSessionContext.DeclareAsync(recording, transaction, auth, CancellationToken.None);
+        await using (var insert = new NpgsqlCommand(PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, recording, transaction))
+        {
+            insert.Parameters.Add(new NpgsqlParameter<Guid>("run_id", runId));
+            insert.Parameters.Add(new NpgsqlParameter<string>("arm", nameof(HoldoutArm.Holdout)));
+            insert.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", [lesson.ExperienceId]));
+            insert.Parameters.Add(new NpgsqlParameter<long[]>("revisions", [lesson.Revision]));
+            insert.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("assigned_at", DateTimeOffset.UtcNow));
+            ExperienceRecordParameters.AddScopeParameters(insert.Parameters, scope);
+            Assert.Equal(1, await insert.ExecuteNonQueryAsync());
+        }
+
+        var erasing = _store.DeleteAsync(auth, scope, runRecord.ExperienceId, CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, recording, "purge_experience_record", erasing);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await erasing).Outcome);
+        Assert.Equal(0, await RunRowsAsync(runId));
+    }
+
+    /// <summary>
+    /// A run with two records, one erased while the write waits on it: the other is still live, so the run still has a
+    /// record and its rows are written.
+    /// </summary>
+    [Fact]
+    public async Task A_holdout_assignment_for_a_run_with_another_live_record_is_recorded_though_one_is_erased_mid_write()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await ValidatedAsync(auth, scope);
+        var runId = Guid.NewGuid();
+        var kept = Minimal(scope) with { SourceRunId = runId };
+        var erased = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, kept, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, erased, CancellationToken.None)).Outcome);
+
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await purging.BeginTransactionAsync();
+        await PurgeInAsync(purging, transaction, erased.ExperienceId, tenant, scope.TeamId);
+
+        var recording = _store.RecordHoldoutAssignmentAsync(
+            auth, scope, new HoldoutAssignment(runId, HoldoutArm.Treatment, [new(lesson.ExperienceId, lesson.Revision)], DateTimeOffset.UtcNow), CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, HoldoutStatementStart, recording);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await recording).Outcome);
+        Assert.Equal(1, await RunRowsAsync(runId));
+    }
+
+    /// <summary>The holdout write's opening words, which <c>pg_stat_activity</c> keeps however long the statement is.</summary>
+    private const string HoldoutStatementStart = "WITH run_record AS MATERIALIZED";
+
+    private Task<long> RunRowsAsync(Guid runId) =>
+        ScalarAsync("SELECT count(*) FROM agent_experience.experience_holdout_assignments WHERE run_id = @id", runId);
 
     [Fact]
     public async Task An_erasure_started_while_a_holdout_assignment_is_being_recorded_waits_and_then_removes_its_row()

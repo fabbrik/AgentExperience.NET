@@ -553,6 +553,30 @@ public abstract class RecordStoreConformanceTests
         Assert.Equal(refusal != "denied", result.Errors.Count > 0);
     }
 
+    /// <summary>
+    /// Story 25.10: a store may refuse a write for a run whose own record is being erased, but never one for a run whose
+    /// record is live or not yet written: those are recorded and read back.
+    /// </summary>
+    [Fact]
+    public async Task A_holdout_assignment_for_a_run_whose_record_is_live_or_not_yet_written_is_recorded()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var live = Guid.NewGuid();
+        var unwritten = Guid.NewGuid();
+        await CreateAsync(tenant, RunRecord(scope, live, TaskVerificationStatus.Verified));
+
+        await Assign(auth, scope, live, HoldoutArm.Treatment, lesson);
+        await Assign(auth, scope, unwritten, HoldoutArm.Holdout, lesson);
+
+        var result = await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+        Assert.Equal(
+            new[] { (live, (TaskVerificationStatus?)TaskVerificationStatus.Verified), (unwritten, null) }.OrderBy(row => row.Item1),
+            result.Rows.Select(row => (row.RunId, row.RunOutcome)));
+    }
+
     // ---------------------------------------------------------------- holdout outcomes (story 25.2)
 
     [Fact]

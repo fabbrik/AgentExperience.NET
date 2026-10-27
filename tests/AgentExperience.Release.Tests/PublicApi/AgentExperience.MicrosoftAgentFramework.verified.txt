@@ -124,6 +124,7 @@
         public long InjectionCount { get; init; }
         public bool IsEligible { get; init; }
         public System.DateTimeOffset? LastInjectedAt { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceLessonBenefit? MeasuredBenefit { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus Status { get; init; }
         public string TaskId { get; init; }
         public System.DateTimeOffset UpdatedAt { get; init; }
@@ -169,6 +170,7 @@
     {
         public ExperienceLessonsQuery() { }
         public bool IncludeIneligible { get; init; }
+        public bool IncludeMeasuredBenefit { get; init; }
         public int Limit { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus>? Statuses { get; init; }
     }

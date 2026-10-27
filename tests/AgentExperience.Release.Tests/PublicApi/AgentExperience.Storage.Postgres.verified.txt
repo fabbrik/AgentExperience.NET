@@ -159,6 +159,7 @@ namespace AgentExperience.Storage.Postgres
         public const string EvidenceAdmissionScriptName = "0018_evidence_admission.sql";
         public const string ExperienceHoldoutAssignmentsScriptName = "0027_experience_holdout_assignments.sql";
         public const string ExperienceInjectionsScriptName = "0026_experience_injections.sql";
+        public const string ExperienceRecordsSourceRunScriptName = "0028_experience_records_source_run_id.sql";
         public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
         public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
         public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";

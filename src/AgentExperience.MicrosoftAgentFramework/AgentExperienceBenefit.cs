@@ -12,8 +12,9 @@ namespace AgentExperience.MicrosoftAgentFramework;
 /// <remarks>
 /// <para>
 /// It reads through <see cref="IExperienceRecordStore.QueryHoldoutOutcomesAsync"/>, a page at a time, under the caller's
-/// own authorization and in exactly the scope passed in (the scope the blocks were built in), then runs
-/// <see cref="ExperienceBenefitEstimator"/>. It never writes, and it changes nothing about ranking, confidence or injection.
+/// own authorization and in exactly the scope passed in (the scope the blocks were built in), and folds each page into an
+/// <see cref="ExperienceBenefitAccumulator"/>, which gives what <see cref="ExperienceBenefitEstimator"/> gives over the same
+/// rows while holding one page at a time. It never writes, and it changes nothing about ranking, confidence or injection.
 /// </para>
 /// <para>
 /// The authorization and scope must come from the host's own authentication, never from a request's query string or
@@ -36,7 +37,10 @@ public static class AgentExperienceBenefit
     /// </returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceBenefitOptions.MinimumRunsPerArm"/> is less than 1.</exception>
-    /// <exception cref="InvalidOperationException">No <see cref="IExperienceRecordStore"/> is registered.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// No <see cref="IExperienceRecordStore"/> is registered, or the store paged a run's rows apart (out of the port's
+    /// run-then-record order), so the run could not be counted once.
+    /// </exception>
     /// <exception cref="ExperienceStoreException">The store failed.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public static async Task<ExperienceBenefitEstimate> EstimateAsync(
@@ -59,7 +63,8 @@ public static class AgentExperienceBenefit
     /// <summary>
     /// Reads every holdout row in <paramref name="scope"/> through <paramref name="store"/>, a page at a time, and estimates
     /// from those assigned at or after <paramref name="assignedFrom"/> (every row when <see langword="null"/>). The filter is
-    /// applied in memory, before the estimator. Behaves exactly as the public overload otherwise.
+    /// applied in memory, before the estimator. Each page is folded into an <see cref="ExperienceBenefitAccumulator"/> and
+    /// released, so memory grows with runs and lessons, not rows. Behaves exactly as the public overload otherwise.
     /// </summary>
     internal static async Task<ExperienceBenefitEstimate> EstimateFromStoreAsync(
         IExperienceRecordStore store,
@@ -75,7 +80,8 @@ public static class AgentExperienceBenefit
             return empty with { Tracked = false };
         }
 
-        var rows = new List<HoldoutOutcomeRow>();
+        // Folded run by run as the pages arrive (the port pages by run, then record): only one page is held at a time.
+        var accumulator = new ExperienceBenefitAccumulator(options);
         HoldoutOutcomeCursor? after = null;
         while (true)
         {
@@ -97,7 +103,7 @@ public static class AgentExperienceBenefit
             }
 
             var pageRows = page.Rows ?? [];
-            rows.AddRange(pageRows.Where(row => row is not null && (assignedFrom is not { } from || row.AssignedAt >= from)));
+            accumulator.AddRange(pageRows.Where(row => row is not null && (assignedFrom is not { } from || row.AssignedAt >= from)));
             if (pageRows.Count < HoldoutOutcomeQuery.MaxLimit || pageRows[^1] is not { } last)
             {
                 break;
@@ -114,6 +120,6 @@ public static class AgentExperienceBenefit
             after = next;
         }
 
-        return ExperienceBenefitEstimator.Estimate(rows, options);
+        return accumulator.ToEstimate();
     }
 }

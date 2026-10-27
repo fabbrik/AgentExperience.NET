@@ -394,6 +394,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.TextSearchAnyTermScriptName,
                 PostgresExperienceRecordSchema.ExperienceInjectionsScriptName,
                 PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName,
+                PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1341,8 +1342,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
     }
 
     /// <summary>
@@ -1394,8 +1395,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("WHEN i.injection_count = 9223372036854775807 THEN i.injection_count", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
         Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
-        // Applied after every earlier script; 0027 follows it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        // Applied after every earlier script; 0027 and 0028 follow it.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
     }
 
     /// <summary>
@@ -1450,8 +1451,29 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("LEAST(@assigned_at, pg_catalog.clock_timestamp())", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
         Assert.EndsWith("ON CONFLICT (run_id, experience_id) DO NOTHING", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
 
+        // Applied after every earlier script; 0028 follows it.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    /// <summary>
+    /// Story 25.10: 0028 is one idempotent, non-concurrent index on each record's tenant and source run, and nothing else.
+    /// </summary>
+    [Fact]
+    public void The_source_run_script_creates_only_the_source_run_index()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal))).Trim();
+
+        Assert.Equal(
+            "CREATE INDEX IF NOT EXISTS ix_experience_records_source_run\n    ON agent_experience.experience_records (tenant_id, source_run_id);",
+            statements.ReplaceLineEndings("\n"));
+
+        // The header says why it is not CONCURRENTLY, the lock it takes, and how to build it out of band.
+        Assert.Contains("SHARE lock", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run", script, StringComparison.Ordinal);
+
         // The last script.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>

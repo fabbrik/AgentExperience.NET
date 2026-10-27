@@ -26,8 +26,24 @@ public sealed partial class PostgresExperienceRecordStore
     /// SHARE</c> in ID order, as <see cref="RecordInjectionSql"/> locks them: an erasure racing the write either waits for
     /// it and then deletes its rows through <c>0027</c>'s trigger, or runs first and leaves a tombstone this statement no
     /// longer selects.
+    /// <para>
+    /// The late-write guard: first, the run's own records (<c>source_run_id</c> is the run, in the caller's
+    /// tenant, found through <c>0028</c>'s index) are locked <c>FOR KEY SHARE</c> in ID order, by the IDs the statement's
+    /// snapshot found, and nothing is written when every one of them is by then a tombstone (while one is still live, the
+    /// run still has a record and is written). So an erasure of the run's record
+    /// that has started but not committed holds the write until it commits, and the write then sees the tombstone and
+    /// writes nothing; an erasure that starts while the write is in flight waits for it, and its trigger then deletes the
+    /// rows. The IDs are fixed in an array before the lock, so the re-check after a wait follows the record, not its
+    /// <c>source_run_id</c>, which the purge zeroes. An erasure committed before the write's snapshot is not seen: a
+    /// tombstone keeps no run (0010), so nothing in the schema says a run's record was erased once it has been.
+    /// </para>
     /// </summary>
     internal const string RecordHoldoutAssignmentSql =
+        "WITH run_record AS MATERIALIZED (SELECT d.deleted_at\n" +
+        $"FROM {Table} d\n" +
+        "WHERE d.experience_id = ANY (ARRAY(SELECT s.experience_id FROM " + Table + " s " +
+        "WHERE s.tenant_id = @tenant_id AND s.source_run_id = @run_id))\n" +
+        "ORDER BY d.experience_id FOR KEY SHARE OF d)\n" +
         $"INSERT INTO {HoldoutAssignmentsTable} (run_id, experience_id, revision, arm, tenant_id, application_id, project_id, " +
         "team_id, agent_id, user_id, assigned_at)\n" +
         "SELECT @run_id, r.experience_id, n.revision, @arm, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, " +
@@ -36,8 +52,15 @@ public sealed partial class PostgresExperienceRecordStore
         "JOIN ROWS FROM (pg_catalog.unnest(@experience_ids), pg_catalog.unnest(@revisions)) AS n(experience_id, revision) " +
         "ON n.experience_id = r.experience_id\n" +
         $"WHERE {RecordScopePredicate} AND {RecordLivePredicate}\n" +
+        $"AND {RunNotErasedPredicate}\n" +
         $"ORDER BY r.experience_id {RecordKeyShareLock}\n" +
         "ON CONFLICT (run_id, experience_id) DO NOTHING";
+
+    /// <summary>
+    /// The late-write guard's condition: the run's own records, once locked, are not all tombstones. No record yet (the
+    /// aggregate is null) or any one still live lets the write through; it reads every row, so every one is locked.
+    /// </summary>
+    internal const string RunNotErasedPredicate = "(SELECT pg_catalog.bool_and(run_record.deleted_at IS NOT NULL) FROM run_record) IS NOT TRUE";
 
     /// <inheritdoc />
     public bool TracksHoldout => true;

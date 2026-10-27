@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using AgentExperience.Core.Confidence;
 using AgentExperience.Core.Finalization;
+using AgentExperience.Core.Holdout;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using Microsoft.Agents.AI;
@@ -143,6 +144,96 @@ public sealed class AgentExperienceLessonsTests
         var html = ExperienceLessonsHtml.Render(page);
         Assert.Contains("<span>last injected not tracked</span>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("<span>last injected never</span>", html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Story 25.10: with <see cref="ExperienceLessonsQuery.IncludeMeasuredBenefit"/> off (the default) the holdout is not
+    /// read and the page is what it was; with it on, one estimate for the page's scope fills each measured lesson's
+    /// <see cref="ExperienceLesson.MeasuredBenefit"/>, and a lesson no assigned run named stays null.
+    /// </summary>
+    [Fact]
+    public async Task Measured_benefit_is_read_only_when_asked_for_and_set_only_on_measured_lessons()
+    {
+        var store = new Storage.InMemory.InMemoryExperienceRecordStore(new FrozenTimeProvider(InjectionRecords.Now));
+        var counting = new CountingStore(store);
+        await SeedHoldoutAsync(store);
+        var lessons = Lessons(counting, store);
+
+        var unasked = await lessons.ListAsync(Eligibility.Identity, new ExperienceLessonsQuery { Limit = ExperienceRecordQuery.MaxLimit });
+        var unaskedAgain = await lessons.ListAsync(Eligibility.Identity, new ExperienceLessonsQuery { Limit = ExperienceRecordQuery.MaxLimit, IncludeMeasuredBenefit = false });
+
+        Assert.Equal(0, counting.HoldoutReads);
+        Assert.All(unasked.Lessons, lesson => Assert.Null(lesson.MeasuredBenefit));
+        Assert.Equal(ExperienceLessonsHtml.Render(unasked), ExperienceLessonsHtml.Render(unaskedAgain));
+
+        var asked = await lessons.ListAsync(Eligibility.Identity, new ExperienceLessonsQuery { Limit = ExperienceRecordQuery.MaxLimit, IncludeMeasuredBenefit = true });
+
+        Assert.Equal(1, counting.HoldoutReads);
+        var measured = Assert.Single(asked.Lessons, lesson => lesson.MeasuredBenefit is not null);
+        Assert.Equal(InjectionRecords.Id(1), measured.ExperienceId);
+        Assert.Equal(InjectionRecords.Id(1), measured.MeasuredBenefit!.ExperienceId);
+        Assert.Equal(new ExperienceBenefitArm(3, 2), measured.MeasuredBenefit.Comparison.Treatment);
+        Assert.Equal(new ExperienceBenefitArm(2, 0), measured.MeasuredBenefit.Comparison.Holdout);
+        Assert.Equal(ExperienceBenefitVerdict.NoEvidence, measured.MeasuredBenefit.Comparison.Verdict);
+        Assert.Contains(asked.Lessons, lesson => lesson.ExperienceId == InjectionRecords.Id(2) && lesson.MeasuredBenefit is null);
+
+        // Everything else on the page is as without it.
+        Assert.Equal(ExperienceLessonsHtml.Render(unasked), ExperienceLessonsHtml.Render(asked));
+        Assert.Equal(
+            unasked.Lessons.Select(lesson => (lesson.ExperienceId, lesson.BlockText, lesson.IsEligible, lesson.LastInjectedAt)),
+            asked.Lessons.Select(lesson => (lesson.ExperienceId, lesson.BlockText, lesson.IsEligible, lesson.LastInjectedAt)));
+    }
+
+    [Fact]
+    public async Task Measured_benefit_from_a_store_that_does_not_track_the_holdout_is_null_for_every_lesson()
+    {
+        var store = new Storage.InMemory.InMemoryExperienceRecordStore(new FrozenTimeProvider(InjectionRecords.Now));
+        await SeedHoldoutAsync(store);
+
+        var page = await Lessons(new ReadOnlyForwarder(store), store).ListAsync(Eligibility.Identity, new ExperienceLessonsQuery { IncludeMeasuredBenefit = true });
+
+        Assert.NotEmpty(page.Lessons);
+        Assert.All(page.Lessons, lesson => Assert.Null(lesson.MeasuredBenefit));
+    }
+
+    /// <summary>
+    /// Lessons 1 and 2; five runs whose blocks named lesson 1 alone, three given it (two verified) and two denied it (both
+    /// failed), each with its own finalized record in the scope.
+    /// </summary>
+    private static async Task SeedHoldoutAsync(Storage.InMemory.InMemoryExperienceRecordStore store)
+    {
+        var authorization = Eligibility.Identity.Authorization;
+        var scope = Eligibility.Identity.Scope;
+        for (var n = 1; n <= 2; n++)
+        {
+            Assert.Equal(
+                ExperienceStoreOutcome.Created,
+                (await store.CreateAsync(authorization, Eligibility.Ok(n) with { CreatedAt = InjectionRecords.Now.AddMinutes(-n) }, CancellationToken.None)).Outcome);
+        }
+
+        var runs = new (HoldoutArm Arm, TaskVerificationStatus Status)[]
+        {
+            (HoldoutArm.Treatment, TaskVerificationStatus.Verified),
+            (HoldoutArm.Treatment, TaskVerificationStatus.Verified),
+            (HoldoutArm.Treatment, TaskVerificationStatus.Failed),
+            (HoldoutArm.Holdout, TaskVerificationStatus.Failed),
+            (HoldoutArm.Holdout, TaskVerificationStatus.Failed),
+        };
+        for (var i = 0; i < runs.Length; i++)
+        {
+            var runId = Guid.NewGuid();
+            Assert.Equal(
+                ExperienceStoreOutcome.Committed,
+                (await store.RecordHoldoutAssignmentAsync(
+                    authorization, scope, new HoldoutAssignment(runId, runs[i].Arm, [new(InjectionRecords.Id(1), 0)], InjectionRecords.Now), CancellationToken.None)).Outcome);
+            var runRecord = Eligibility.Ok(100 + i) with
+            {
+                SourceRunId = runId,
+                CreatedAt = InjectionRecords.Now.AddMinutes(-10 - i),
+                Outcome = new Outcome(runs[i].Status, [], null, InjectionRecords.Now),
+            };
+            Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(authorization, runRecord, CancellationToken.None)).Outcome);
+        }
     }
 
     /// <summary>
@@ -544,6 +635,22 @@ public sealed class AgentExperienceLessonsTests
 
         public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, Guid replacementExperienceId, CancellationToken cancellationToken) =>
             Count(inner.CheckSupersessionAsync(authorization, scope, experienceId, replacementExperienceId, cancellationToken));
+
+        private int _holdoutReads;
+
+        /// <summary>How many holdout reads were made (each also counts in <see cref="Calls"/>).</summary>
+        public int HoldoutReads => _holdoutReads;
+
+        public bool TracksHoldout => inner.TracksHoldout;
+
+        public Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(AuthorizationContext authorization, Scope scope, HoldoutAssignment assignment, CancellationToken cancellationToken) =>
+            Count(inner.RecordHoldoutAssignmentAsync(authorization, scope, assignment, cancellationToken));
+
+        public Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(AuthorizationContext authorization, HoldoutOutcomeQuery query, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _holdoutReads);
+            return Count(inner.QueryHoldoutOutcomesAsync(authorization, query, cancellationToken));
+        }
     }
 
     private static AIAgent Agent(IServiceProvider services, TwoCallModel model, IEnumerable<string> exits)

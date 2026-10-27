@@ -60,6 +60,29 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **New telemetry operation `benefit_refresh`** (measurements only: `Refreshed`, `NotRefreshed`, `OutcomeUnknown`), in
   `docs/telemetry-names.json` too.
 
+### Holdout hardening (story 25.10)
+
+- **The lessons view can show what the holdout measured.** `ExperienceLessonsQuery.IncludeMeasuredBenefit` (default
+  `false`) fills each lesson's new `ExperienceLesson.MeasuredBenefit` (an `ExperienceLessonBenefit`, or `null` when no
+  assigned run named it or the store does not record the holdout) from one estimate for the page's scope, over the
+  context provider's benefit window and threshold, so a host can see why a lesson stopped being injected. Off, nothing
+  more is read and the page is unchanged.
+- **The estimate holds one page at a time.** The new `ExperienceBenefitAccumulator` (Core) folds holdout rows run by run
+  and gives exactly what `ExperienceBenefitEstimator.Estimate` gives over the same rows, in memory that grows with runs
+  and lessons rather than rows. `AgentExperienceBenefit.EstimateAsync` and the benefit policy's refresh use it; a store
+  that pages one run's rows apart is refused with `InvalidOperationException` instead of counting the run twice.
+- **PostgreSQL: a holdout write that overlaps an erasure of its run's own record is refused.** The insert now also locks
+  the run's own records `FOR KEY SHARE` and writes nothing when all of them are by then tombstones, so an erasure under
+  way when the write starts makes it record nothing, and one that starts during the write removes its rows. Only a write
+  that overlaps the erasure is handled. **Known limit:** a write that starts after the erasure has committed still
+  records its rows, because an erased record keeps no run ID; those rows hold IDs only, never join an outcome, and are
+  counted as `Pending`.
+- **PostgreSQL: migration `0028_experience_records_source_run_id.sql`** adds `ix_experience_records_source_run` on
+  `experience_records (tenant_id, source_run_id)`, which the holdout's outcome read and the write's run lookup use
+  instead of scanning the tenant's records. It is a plain `CREATE INDEX` (the migrator runs in a transaction), which
+  blocks writes to `experience_records` while it builds; on a large table build it `CONCURRENTLY` first, as
+  [Applying the schema](docs/guide/deployment.md#applying-the-schema) shows. No privilege changes.
+
 ## 0.1.0-preview.16
 
 The Python and Go ports can now list what an agent learned and report the same OpenTelemetry spans and metrics as .NET.

@@ -1,4 +1,5 @@
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Holdout;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 
@@ -61,6 +62,11 @@ public sealed class AgentExperienceLessons
     /// <exception cref="ArgumentNullException"><paramref name="identity"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceLessonsQuery.Limit"/> is outside the store's bounds.</exception>
     /// <exception cref="ArgumentException"><see cref="ExperienceLessonsQuery.Statuses"/> is empty or holds an undefined status.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// With <see cref="ExperienceLessonsQuery.IncludeMeasuredBenefit"/>, the store paged a run's holdout rows apart (out of
+    /// the port's run-then-record order).
+    /// </exception>
+    /// <exception cref="ExperienceStoreException">With <see cref="ExperienceLessonsQuery.IncludeMeasuredBenefit"/>, the holdout read failed.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public async Task<ExperienceLessonsPage> ListAsync(
         ExperienceIdentity identity,
@@ -144,6 +150,12 @@ public sealed class AgentExperienceLessons
         // A store that answered as many records as were asked for may hold more than were read.
         hasMore |= records.Count >= probe;
 
+        // Story 25.10: opt-in, so the default page reads nothing more and is unchanged.
+        if (query.IncludeMeasuredBenefit && lessons.Count > 0)
+        {
+            await AddMeasuredBenefitAsync(identity, lessons, generatedAt, cancellationToken).ConfigureAwait(false);
+        }
+
         return new ExperienceLessonsPage(identity.Scope, ExperienceStoreOutcome.Found, lessons, generatedAt)
         {
             HasMore = hasMore,
@@ -171,6 +183,43 @@ public sealed class AgentExperienceLessons
                 $"{nameof(ListForDevelopmentIdentityAsync)} lists what {nameof(AgentExperienceOptions)}.{nameof(AgentExperienceOptions.UseDevelopmentIdentity)}() stored, "
                 + "and this setup does not use it. Call ListAsync(identity) with the identity from your own authentication instead.");
         return ListAsync(identity, query, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sets each listed lesson's <see cref="ExperienceLesson.MeasuredBenefit"/> from one estimate for the page's scope, over
+    /// the context provider's benefit window and threshold (<see cref="ExperienceBenefitPolicy.Window"/> and
+    /// <see cref="ExperienceBenefitPolicy.MinimumRunsPerArm"/>, whose defaults apply even with the policy off): the estimate
+    /// injection acts on. Left null for a lesson no assigned run named, and for every lesson when the store does not track
+    /// the holdout or refused the read.
+    /// </summary>
+    private async Task AddMeasuredBenefitAsync(
+        ExperienceIdentity identity,
+        List<ExperienceLesson> lessons,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var policy = _provider.BenefitPolicy;
+        var from = now - DateTimeOffset.MinValue > policy.Window ? now - policy.Window : DateTimeOffset.MinValue;
+        var estimate = await AgentExperienceBenefit.EstimateFromStoreAsync(
+            _store, identity.Authorization, identity.Scope, policy.EstimatorOptions, from, cancellationToken).ConfigureAwait(false);
+        if (estimate is not { Tracked: true, Outcome: ExperienceStoreOutcome.Found })
+        {
+            return;
+        }
+
+        var measured = new Dictionary<Guid, ExperienceLessonBenefit>();
+        foreach (var lesson in estimate.Lessons)
+        {
+            measured.TryAdd(lesson.ExperienceId, lesson);
+        }
+
+        for (var i = 0; i < lessons.Count; i++)
+        {
+            if (measured.TryGetValue(lessons[i].ExperienceId, out var benefit))
+            {
+                lessons[i] = lessons[i] with { MeasuredBenefit = benefit };
+            }
+        }
     }
 
     /// <summary>One record as a lesson. A record that cannot be rendered is a lesson marked so, never an exception.</summary>
@@ -256,6 +305,17 @@ public sealed record ExperienceLessonsQuery
     /// and so on), each marked with why. <see langword="true"/> by default.
     /// </summary>
     public bool IncludeIneligible { get; init; } = true;
+
+    /// <summary>
+    /// Whether to read what the injection holdout measured for each listed lesson into
+    /// <see cref="ExperienceLesson.MeasuredBenefit"/>: one benefit estimate for the page's scope, read as
+    /// <see cref="AgentExperienceBenefit.EstimateAsync"/> reads it, over the context provider's
+    /// <see cref="ExperienceBenefitPolicy.Window"/> and <see cref="ExperienceBenefitPolicy.MinimumRunsPerArm"/> (30 days and
+    /// 20 by default, whether or not the policy is on), so it shows why injection omits or prefers a lesson.
+    /// <see langword="false"/> by default: then nothing more is read and the page is as without it. A store failure on that
+    /// read is thrown as <see cref="ExperienceStoreException"/>.
+    /// </summary>
+    public bool IncludeMeasuredBenefit { get; init; }
 }
 
 /// <summary>One page of lessons from one scope.</summary>
@@ -347,6 +407,14 @@ public sealed record ExperienceLesson(
 
     /// <summary>How many injected blocks delivered this lesson in this scope; 0 when never (or not tracked).</summary>
     public long InjectionCount { get; init; }
+
+    /// <summary>
+    /// What the injection holdout measured for this lesson: treatment runs given it against holdout runs denied it, with
+    /// the verdict (<see cref="ExperienceBenefitVerdict.Hurts"/> is why the benefit policy omits it). Set only when the
+    /// query asked for it (<see cref="ExperienceLessonsQuery.IncludeMeasuredBenefit"/>); <see langword="null"/> otherwise,
+    /// when no assigned run in the window named it, or when the store does not track the holdout.
+    /// </summary>
+    public ExperienceLessonBenefit? MeasuredBenefit { get; init; }
 }
 
 /// <summary>Why retrieval would not currently use a lesson.</summary>

@@ -402,6 +402,18 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ExperienceHoldoutAssignmentsScriptName = "0027_experience_holdout_assignments.sql";
 
+    /// <summary>
+    /// The script that indexes each record's source run per tenant: <c>ix_experience_records_source_run</c> on
+    /// <c>agent_experience.experience_records (tenant_id, source_run_id)</c>, which the holdout's outcome read and the
+    /// holdout write's check for the run's own record look runs up by.
+    /// </summary>
+    /// <remarks>
+    /// A plain <c>CREATE INDEX</c> inside the migrator's transaction (<c>CONCURRENTLY</c> cannot run in one): it blocks
+    /// writes to <c>experience_records</c> while it builds. The script's header gives the out-of-band
+    /// <c>CREATE INDEX CONCURRENTLY</c> for a database that cannot take that. No privilege changes.
+    /// </remarks>
+    public const string ExperienceRecordsSourceRunScriptName = "0028_experience_records_source_run_id.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -409,7 +421,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0027</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0028</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -437,6 +449,7 @@ public static class PostgresExperienceRecordSchema
         TextSearchAnyTermScriptName,
         ExperienceInjectionsScriptName,
         ExperienceHoldoutAssignmentsScriptName,
+        ExperienceRecordsSourceRunScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

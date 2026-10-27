@@ -250,6 +250,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <summary>The confidence floor this provider's retrieval applies.</summary>
     internal double ConfidenceFloor => _retrieval.Policy.MinimumConfidence;
 
+    /// <summary>The benefit policy this provider was built with (its window and threshold apply even when it is off).</summary>
+    internal ExperienceBenefitPolicy BenefitPolicy => _options.Benefit;
+
     /// <summary>
     /// Why this provider's retrieval would never return <paramref name="record"/> today, whatever the task, or
     /// <see langword="null"/> when it could. For the read-only lessons view.
