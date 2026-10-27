@@ -2,6 +2,7 @@ using AgentExperience.Abstractions;
 using Npgsql;
 using NpgsqlTypes;
 using static AgentExperience.Storage.Postgres.ExperienceRecordParameters;
+using static AgentExperience.Storage.Postgres.ExperienceRecordRows;
 using static AgentExperience.Storage.Postgres.ExperienceRecordSql;
 using static AgentExperience.Storage.Postgres.ExperienceStoreFailures;
 
@@ -10,7 +11,8 @@ namespace AgentExperience.Storage.Postgres;
 /// <summary>
 /// The injection holdout's assignments. <c>0027</c>'s <c>agent_experience.experience_holdout_assignments</c>
 /// holds one row per captured run and record its block named, with the arm; <see cref="RecordHoldoutAssignmentAsync"/>
-/// inserts them in one statement per assigned block.
+/// inserts them in one statement per assigned block, and <see cref="QueryHoldoutOutcomesAsync"/> reads them back, a page at
+/// a time, with each run's own verified outcome.
 /// </summary>
 public sealed partial class PostgresExperienceRecordStore
 {
@@ -111,6 +113,109 @@ public sealed partial class PostgresExperienceRecordStore
         catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
         {
             throw Translate(ex, "record holdout assignment", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// The read's first part: a page of the caller's exact-scope assignment rows in (run, record) order, then, for each
+    /// run on the page, the run's own live record in exactly the same scope (the earliest created, then the lowest ID),
+    /// found with one semi-join rather than one probe per row. A record in another scope that names the same run is never
+    /// the run's record. The record columns keep ordinals 0-17, null when the run has no record; the row is 18-21.
+    /// Row-level security bounds both tables to the caller's bounds. The keyset predicate, when there is one, goes
+    /// between the two parts.
+    /// </summary>
+    internal const string QueryHoldoutOutcomesPrefix =
+        "WITH page AS (SELECT run_id, arm, experience_id, assigned_at\n" +
+        $"FROM {HoldoutAssignmentsTable}\n" +
+        $"WHERE {ScopePredicate}";
+
+    /// <summary>Resumes after the previous page's last row.</summary>
+    internal const string QueryHoldoutOutcomesAfterPredicate = " AND (run_id, experience_id) > (@after_run_id, @after_experience_id)";
+
+    internal const string QueryHoldoutOutcomesSuffix =
+        "\nORDER BY run_id, experience_id LIMIT @limit),\n" +
+        $"run_record AS (SELECT DISTINCT ON (source_run_id) {SelectColumns}\n" +
+        $"FROM {Table}\n" +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND source_run_id IN (SELECT run_id FROM page)\n" +
+        "ORDER BY source_run_id, created_at, experience_id)\n" +
+        "SELECT run_record.*, page.run_id, page.arm, page.experience_id, page.assigned_at\n" +
+        "FROM page LEFT JOIN run_record ON run_record.source_run_id = page.run_id\n" +
+        "ORDER BY page.run_id, page.experience_id";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// One statement per page (see <see cref="QueryHoldoutOutcomesPrefix"/>). The rows are read into memory and the
+    /// connection released before any key is fetched; then every sealed run record on the page is opened in one key-store
+    /// call, through the store's own read path. One sealed under a destroyed key reads as no outcome. Until the
+    /// application role has been granted <c>0027</c>'s table it throws <see cref="ExperienceStoreException"/>.
+    /// </remarks>
+    public async Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutOutcomeQuery(query);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, [], errors);
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, [], NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            var sql = QueryHoldoutOutcomesPrefix
+                + (query.After is null ? string.Empty : QueryHoldoutOutcomesAfterPredicate)
+                + QueryHoldoutOutcomesSuffix;
+
+            List<SnapshotRow> snapshot;
+            await using (var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false))
+            {
+                await using (var command = session.CreateCommand(sql))
+                {
+                    AddScopeParameters(command.Parameters, query.Scope);
+                    command.Parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+                    if (query.After is { } after)
+                    {
+                        command.Parameters.Add(new NpgsqlParameter<Guid>("after_run_id", after.RunId));
+                        command.Parameters.Add(new NpgsqlParameter<Guid>("after_experience_id", after.ExperienceId));
+                    }
+
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    snapshot = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
+                }
+
+                await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            // One record per run (every row of a run carries the same one), decoded together: sealed ones in one batch.
+            var runRows = snapshot.Where(row => !row.IsDBNull(0)).DistinctBy(row => row.GetGuid(18)).ToArray();
+            var records = await ReadRecordsAsync(runRows, _encryption, cancellationToken).ConfigureAwait(false);
+            var outcomes = new Dictionary<Guid, TaskVerificationStatus?>(runRows.Length);
+            for (var i = 0; i < runRows.Length; i++)
+            {
+                outcomes[runRows[i].GetGuid(18)] = records[i]?.Outcome?.Status;
+            }
+
+            var rows = snapshot.Select(row => new HoldoutOutcomeRow(
+                    row.GetGuid(18),
+                    Enum.Parse<HoldoutArm>(row.GetString(19)),
+                    row.GetGuid(20),
+                    row.GetFieldValue<DateTimeOffset>(21),
+                    outcomes.GetValueOrDefault(row.GetGuid(18))))
+                .ToList();
+            return new(ExperienceStoreOutcome.Found, rows, NoErrors);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "query holdout outcomes", cancellationToken);
         }
     }
 }

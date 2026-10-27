@@ -760,8 +760,11 @@ as the store's own statement now does (see [How the text channel matches](retrie
   `arm` (`Treatment` or `Holdout`), the record's six scope columns and `assigned_at`. The store writes it with one
   `INSERT … SELECT … ON CONFLICT DO NOTHING` per assigned block, which copies the scope from the record (live, in exactly
   the caller's scope), clamps the instant to `clock_timestamp()`, and keeps a run's first row for each record. In
-  encrypted mode the store skips a record whose key is destroyed. It holds no content. Join it to a run's outcome through
-  `experience_records.source_run_id = run_id`.
+  encrypted mode the store skips a record whose key is destroyed. It holds no content. `QueryHoldoutOutcomesAsync` reads
+  it back a page at a time, joined to each run's outcome through `experience_records.source_run_id = run_id` in the
+  same scope (one semi-join per page over the scope's records, served by `ix_experience_records_scope`; there is no
+  index on `source_run_id`), and decodes the run records' payloads through the store, opening sealed ones in one batch
+  after the connection is released.
 - **Concurrency.** The insert locks its records `FOR KEY SHARE` in ID order, as `0026`'s upsert does, so an erasure
   racing it either waits and then removes its rows, or runs first and leaves a tombstone the insert does not select.
 - A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is

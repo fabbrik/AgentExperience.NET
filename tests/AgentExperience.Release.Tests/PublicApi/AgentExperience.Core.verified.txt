@@ -386,6 +386,62 @@ namespace AgentExperience.Core.Finalization
         public static AgentExperience.Core.Finalization.StorageDecision Deny(string? reason = null) { }
     }
 }
+namespace AgentExperience.Core.Holdout
+{
+    public sealed class ExperienceBenefitArm : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitArm>
+    {
+        public ExperienceBenefitArm(int Runs, int Successes) { }
+        public double? Rate { get; }
+        public int Runs { get; init; }
+        public int Successes { get; init; }
+    }
+    public sealed class ExperienceBenefitComparison : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitComparison>
+    {
+        public ExperienceBenefitComparison(AgentExperience.Core.Holdout.ExperienceBenefitArm Treatment, AgentExperience.Core.Holdout.ExperienceBenefitArm Holdout, double? Difference, double? Lower, double? Upper, AgentExperience.Core.Holdout.ExperienceBenefitVerdict Verdict, int Unverified, int Pending, int MixedArm) { }
+        public double? Difference { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitArm Holdout { get; init; }
+        public double? Lower { get; init; }
+        public int MixedArm { get; init; }
+        public int Pending { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitArm Treatment { get; init; }
+        public int Unverified { get; init; }
+        public double? Upper { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitVerdict Verdict { get; init; }
+    }
+    public sealed class ExperienceBenefitEstimate : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitEstimate>
+    {
+        public ExperienceBenefitEstimate(AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceLessonBenefit> Lessons) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceLessonBenefit> Lessons { get; init; }
+        public int MinimumRunsPerArm { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall { get; init; }
+        public bool Tracked { get; init; }
+    }
+    public static class ExperienceBenefitEstimator
+    {
+        public const double Z = 1.959963984540054D;
+        public static AgentExperience.Core.Holdout.ExperienceBenefitEstimate Empty(AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null) { }
+        public static AgentExperience.Core.Holdout.ExperienceBenefitEstimate Estimate(System.Collections.Generic.IEnumerable<AgentExperience.Abstractions.HoldoutOutcomeRow> rows, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null) { }
+    }
+    public sealed class ExperienceBenefitOptions : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitOptions>
+    {
+        public const int DefaultMinimumRunsPerArm = 20;
+        public ExperienceBenefitOptions() { }
+        public int MinimumRunsPerArm { get; init; }
+    }
+    public enum ExperienceBenefitVerdict
+    {
+        NoEvidence = 0,
+        Helps = 1,
+        Hurts = 2,
+    }
+    public sealed class ExperienceLessonBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceLessonBenefit>
+    {
+        public ExperienceLessonBenefit(System.Guid ExperienceId, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
+        public System.Guid ExperienceId { get; init; }
+    }
+}
 namespace AgentExperience.Core.Indexing
 {
     public enum ExperienceDeindexingOutcome

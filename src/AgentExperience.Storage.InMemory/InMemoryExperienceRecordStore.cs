@@ -396,6 +396,69 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Committed, NoErrors));
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The rows in exactly the query's scope, ordered by run and then record (<see cref="Guid.CompareTo(Guid)"/>), each
+    /// joined to the stored record in exactly the row's scope whose <see cref="ExperienceRecord.SourceRunId"/> is its run
+    /// (the earliest created, then the lowest ID, when more than one does).
+    /// </remarks>
+    public Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutOutcomeQuery(query);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Invalid, [], errors));
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Denied, [], NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<HoldoutOutcomeQueryResult>(cancellationToken);
+        }
+
+        lock (_gate)
+        {
+            var page = HoldoutAssignments.Values
+                .Where(row => row.Scope == query.Scope)
+                .Where(row => query.After is not { } after
+                    || row.RunId.CompareTo(after.RunId) > 0
+                    || (row.RunId == after.RunId && row.ExperienceId.CompareTo(after.ExperienceId) > 0))
+                .OrderBy(row => row.RunId)
+                .ThenBy(row => row.ExperienceId)
+                .Take(query.Limit)
+                .ToList();
+
+            var outcomes = new Dictionary<Guid, TaskVerificationStatus?>();
+            var rows = new List<HoldoutOutcomeRow>(page.Count);
+            foreach (var row in page)
+            {
+                if (!outcomes.TryGetValue(row.RunId, out var outcome))
+                {
+                    var runRecord = _records.Values
+                        .Where(record => record.SourceRunId == row.RunId && record.Scope == row.Scope)
+                        .OrderBy(record => record.CreatedAt)
+                        .ThenBy(record => record.ExperienceId)
+                        .FirstOrDefault();
+                    outcome = runRecord?.Outcome?.Status;
+                    outcomes[row.RunId] = outcome;
+                }
+
+                rows.Add(new HoldoutOutcomeRow(row.RunId, row.Arm, row.ExperienceId, row.AssignedAt, outcome));
+            }
+
+            return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, rows, NoErrors));
+        }
+    }
+
     /// <summary>The holdout assignment rows, keyed on run and record. Internal, for tests.</summary>
     internal Dictionary<(Guid RunId, Guid ExperienceId), StoredHoldoutAssignment> HoldoutAssignments { get; } = [];
 

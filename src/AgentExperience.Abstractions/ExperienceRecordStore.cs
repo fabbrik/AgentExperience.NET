@@ -254,9 +254,9 @@ public interface IExperienceRecordStore
         QueryAsync(authorization, query, cancellationToken);
 
     /// <summary>
-    /// Whether this store records holdout assignments (<see cref="RecordHoldoutAssignmentAsync"/>).
-    /// <see langword="false"/> by default; a store that overrides that method overrides this to <see langword="true"/>, and
-    /// a decorator forwards both. The injection adapter skips the write and reports "not tracked" when it is
+    /// Whether this store records holdout assignments (<see cref="RecordHoldoutAssignmentAsync"/>) and reads them back
+    /// (<see cref="QueryHoldoutOutcomesAsync"/>). <see langword="false"/> by default; a store that overrides those two
+    /// overrides this to <see langword="true"/>, and a decorator forwards all three. The injection adapter skips the write and reports "not tracked" when it is
     /// <see langword="false"/>.
     /// </summary>
     bool TracksHoldout => false;
@@ -276,7 +276,8 @@ public interface IExperienceRecordStore
     /// assigned block, in the background, and never lets it fail or delay the invocation.
     /// </para>
     /// <para>
-    /// <b>Override both <see cref="TracksHoldout"/> and this method, or neither.</b> The default records nothing and
+    /// <b>Override all three of <see cref="TracksHoldout"/>, this method and <see cref="QueryHoldoutOutcomesAsync"/>, or
+    /// none of them.</b> The default records nothing and
     /// reports <see cref="ExperienceHoldoutRecordResult.Tracked"/> as <see langword="false"/>.
     /// </para>
     /// <para>
@@ -304,6 +305,41 @@ public interface IExperienceRecordStore
         HoldoutAssignment assignment,
         CancellationToken cancellationToken) =>
         Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
+
+    /// <summary>
+    /// Reads back the holdout assignment rows recorded in exactly <see cref="HoldoutOutcomeQuery.Scope"/>, a page at a
+    /// time in (run, record) order, each with the verified outcome of the run's own finalized record: the comparison
+    /// benefit estimation reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A row's <see cref="HoldoutOutcomeRow.RunOutcome"/> is the <see cref="Outcome.Status"/> of the live record in
+    /// exactly the row's scope whose <see cref="ExperienceRecord.SourceRunId"/> is the row's run (the earliest created,
+    /// then the lowest ID, should a caller-supplied run ID name more than one), read through the store's own read path so
+    /// a sealed record is opened. A record in another scope naming the same run is never used. It is
+    /// <see langword="null"/> when there is none: the run is not finalized yet, its record was written in another scope,
+    /// or it is sealed under a destroyed key. Erasing the run's
+    /// record removes the run's rows altogether.
+    /// </para>
+    /// <para>
+    /// <b>Override <see cref="TracksHoldout"/>, <see cref="RecordHoldoutAssignmentAsync"/> and this method together, or
+    /// none of them.</b> The default reads nothing and reports <see cref="HoldoutOutcomeQueryResult.Tracked"/> as
+    /// <see langword="false"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="query">The exact scope, the page size and where to resume.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Found"/> with the page (fewer rows than the limit means the last page),
+    /// <see cref="ExperienceStoreOutcome.Denied"/> when the scope lies outside <paramref name="authorization"/>, or
+    /// <see cref="ExperienceStoreOutcome.Invalid"/> for a malformed query. Neither refusal accesses storage.
+    /// </returns>
+    Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(HoldoutOutcomeQueryResult.NotTracked);
 
     /// <summary>
     /// Appends <paramref name="lifecycleEvent"/> and updates the record's projection
