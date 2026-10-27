@@ -2305,3 +2305,18 @@ Assignment, the `Withheld` outcome and the assignment row through the contract
 Retire a lesson when the environment it was learned under changes; inject
 nothing below a retrieval threshold; report the mismatched-lesson cost in every
 live experiment. Each is judged by the benefit 25.2 measures.
+
+### Story 25.8: Measure Any Memory Provider
+The holdout and benefit estimate wrap any MAF context provider, not only the
+library's own: on a held-out run the wrapped provider's context (Mem0, Zep,
+Letta or a host's own) is withheld, the run's arm is recorded, and 25.2's
+estimate answers whether that memory helps. Nothing in the wrapped provider
+changes. Starts with the .NET adapter; ports follow 25.6.
+
+### Story 25.9: Export Measured Lessons to Other Memory Stores
+A lesson that is verified and measured `Helps` can be exported, on request, to
+a host-supplied sink (a Mem0/Zep/Letta writer, a skills or instructions file),
+with its provenance and measured benefit, so agents that do not use this
+library's injection still get vetted lessons. Erasure and withdrawal of the
+source lesson are reported to the sink.
+
