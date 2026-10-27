@@ -128,17 +128,20 @@ public class TelemetryNamesFileTests
             }
 
             Operation(json, InjectionDiagnostics.Inject, adapterSource, true, Enum.GetNames<InjectionOutcome>());
-            Operation(
-                json,
-                InjectionDiagnostics.RecordInjection,
-                adapterSource,
-                false,
-                [
-                    InjectionDiagnostics.RecordedOutcome,
-                    InjectionDiagnostics.NotTrackedOutcome,
-                    InjectionDiagnostics.NotRecordedOutcome,
-                    InjectionDiagnostics.OutcomeUnknownOutcome,
-                ]);
+            foreach (var background in new[] { InjectionDiagnostics.RecordInjection, InjectionDiagnostics.RecordHoldout })
+            {
+                Operation(
+                    json,
+                    background,
+                    adapterSource,
+                    false,
+                    [
+                        InjectionDiagnostics.RecordedOutcome,
+                        InjectionDiagnostics.NotTrackedOutcome,
+                        InjectionDiagnostics.NotRecordedOutcome,
+                        InjectionDiagnostics.OutcomeUnknownOutcome,
+                    ]);
+            }
             json.WriteEndArray();
 
             json.WriteEndObject();

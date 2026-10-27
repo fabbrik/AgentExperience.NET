@@ -148,6 +148,70 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates a holdout assignment write: the run, a defined arm, at most one batch of records, none with an empty ID
+    /// or a negative revision, a set instant, and the scope.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateHoldoutAssignment(Scope scope, HoldoutAssignment? assignment)
+    {
+        var errors = new List<StoreValidationError>();
+        if (assignment is null)
+        {
+            errors.Add(new("Assignment", "is required."));
+            ValidateScope(scope, "Scope", errors);
+            return errors;
+        }
+
+        if (assignment.RunId == Guid.Empty)
+        {
+            errors.Add(new("Assignment.RunId", "must not be empty."));
+        }
+
+        if (!Enum.IsDefined(assignment.Arm))
+        {
+            errors.Add(new("Assignment.Arm", "must be a defined HoldoutArm value."));
+        }
+
+        if (assignment.Records is null)
+        {
+            errors.Add(new("Assignment.Records", "is required."));
+        }
+        else
+        {
+            if (assignment.Records.Count > ExperienceRecordGetManyResult.MaxCount)
+            {
+                errors.Add(new("Assignment.Records", $"must name at most {ExperienceRecordGetManyResult.MaxCount} records."));
+            }
+
+            for (var i = 0; i < assignment.Records.Count; i++)
+            {
+                if (assignment.Records[i] is not { } exposure)
+                {
+                    errors.Add(new($"Assignment.Records[{i}]", "is required."));
+                    continue;
+                }
+
+                if (exposure.ExperienceId == Guid.Empty)
+                {
+                    errors.Add(new($"Assignment.Records[{i}].ExperienceId", "must not be empty."));
+                }
+
+                if (exposure.Revision < 0)
+                {
+                    errors.Add(new($"Assignment.Records[{i}].Revision", "must not be negative."));
+                }
+            }
+        }
+
+        if (assignment.AssignedAt == default)
+        {
+            errors.Add(new("Assignment.AssignedAt", "must be set."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Validates a bounded history read: the scope, the record, the page bound, and the optional keyset
     /// cursor. A negative cursor is rejected rather than treated as "from the beginning", because a
     /// caller that computed one is asking for something it did not mean.

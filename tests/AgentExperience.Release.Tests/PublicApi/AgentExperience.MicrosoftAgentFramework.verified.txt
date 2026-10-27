@@ -263,6 +263,14 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
     }
+    public sealed class ExperienceHoldoutOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions>
+    {
+        public const string DefaultSalt = "agentexperience-holdout-v1";
+        public ExperienceHoldoutOptions() { }
+        public double Rate { get; init; }
+        public string Salt { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions Off { get; }
+    }
     public sealed class ExperienceInjectionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext>
     {
         public ExperienceInjectionContext(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> Messages, Microsoft.Agents.AI.AgentSession? Session, Microsoft.Agents.AI.AIAgent Agent) { }
@@ -305,6 +313,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions Holdout { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; set; }
@@ -335,6 +344,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool TextOnly { get; }
         public bool Truncated { get; init; }
         public AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> WithheldExperienceIds { get; init; }
     }
     public sealed class ExperienceInjectionSessionLimits : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits>
     {
@@ -468,6 +478,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         Failed = 6,
         Retracted = 7,
         SessionBudgetExhausted = 8,
+        Withheld = 9,
     }
     public enum ModelAuthoredLessonPolicy
     {

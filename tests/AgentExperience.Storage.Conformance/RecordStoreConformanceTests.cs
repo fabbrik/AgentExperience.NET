@@ -476,6 +476,83 @@ public abstract class RecordStoreConformanceTests
         Assert.Null(invalid.Injections);
     }
 
+    // ---------------------------------------------------------------- holdout assignments (story 25.1)
+
+    [Fact]
+    public void The_store_records_holdout_assignments_and_overrides_both_holdout_members()
+    {
+        AssertHoldoutTrackingIsConsistent(Store);
+        Assert.True(Store.TracksHoldout);
+    }
+
+    [Fact]
+    public async Task Recording_a_holdout_assignment_commits_whatever_it_matches_and_changes_nothing_about_the_records()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var other = Scope(tenant, team: "team-1");
+        var record = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var runId = Guid.NewGuid();
+
+        foreach (var arm in new[] { HoldoutArm.Holdout, HoldoutArm.Treatment })
+        {
+            // A record of this scope, one of another scope's (as a borrowed record would be), and an ID nothing holds.
+            var result = await Store.RecordHoldoutAssignmentAsync(
+                Authorize(tenant),
+                scope,
+                new HoldoutAssignment(runId, arm, [new(record.ExperienceId, record.Revision), new(Guid.NewGuid(), 0)], Time),
+                CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Committed, result.Outcome);
+            Assert.True(result.Tracked);
+            Assert.Empty(result.Errors);
+
+            var foreign = await Store.RecordHoldoutAssignmentAsync(
+                Authorize(tenant), other, new HoldoutAssignment(Guid.NewGuid(), arm, [new(record.ExperienceId, record.Revision)], Time), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Committed, foreign.Outcome);
+        }
+
+        var read = await Store.GetAsync(Authorize(tenant), scope, record.ExperienceId, CancellationToken.None);
+        Assert.Equal(Json(record), Json(read.Record));
+
+        var empty = await Store.RecordHoldoutAssignmentAsync(Authorize(tenant), scope, new HoldoutAssignment(runId, HoldoutArm.Holdout, [], Time), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, empty.Outcome);
+    }
+
+    [Theory]
+    [InlineData("denied")]
+    [InlineData("empty-run")]
+    [InlineData("undefined-arm")]
+    [InlineData("empty-id")]
+    [InlineData("negative-revision")]
+    [InlineData("too-many")]
+    [InlineData("unset-instant")]
+    [InlineData("no-assignment")]
+    [InlineData("blank-tenant")]
+    public async Task A_refused_holdout_assignment_is_denied_or_invalid(string refusal)
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var record = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var valid = new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Holdout, [new(record.ExperienceId, record.Revision)], Time);
+        var (authorization, requestScope, assignment) = refusal switch
+        {
+            "denied" => (Authorize(NewTenant()), scope, valid),
+            "empty-run" => (Authorize(tenant), scope, valid with { RunId = Guid.Empty }),
+            "undefined-arm" => (Authorize(tenant), scope, valid with { Arm = (HoldoutArm)7 }),
+            "empty-id" => (Authorize(tenant), scope, valid with { Records = [new(Guid.Empty, 0)] }),
+            "negative-revision" => (Authorize(tenant), scope, valid with { Records = [new(record.ExperienceId, -1)] }),
+            "too-many" => (Authorize(tenant), scope, valid with { Records = [.. Enumerable.Range(0, ExperienceRecordGetManyResult.MaxCount + 1).Select(_ => new RunExposure(Guid.NewGuid(), 0))] }),
+            "unset-instant" => (Authorize(tenant), scope, valid with { AssignedAt = default }),
+            "no-assignment" => (Authorize(tenant), scope, (HoldoutAssignment)null!),
+            _ => (Authorize(tenant), scope with { TenantId = " " }, valid),
+        };
+
+        var result = await Store.RecordHoldoutAssignmentAsync(authorization, requestScope, assignment, CancellationToken.None);
+
+        Assert.Equal(refusal == "denied" ? ExperienceStoreOutcome.Denied : ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(refusal != "denied", result.Errors.Count > 0);
+    }
+
     // ---------------------------------------------------------------- lifecycle commit
 
     [Fact]
@@ -1498,5 +1575,29 @@ public abstract class RecordStoreConformanceTests
             $"{store.GetType().Name} overrides TracksInjections: {capability}, RecordInjectionAsync: {record}, "
             + $"QueryWithInjectionsAsync: {query}. Override all three or none of them.");
         Assert.Equal(capability, store.TracksInjections);
+    }
+
+    /// <summary>
+    /// Story 25.1: fails unless <paramref name="store"/> overrides both of <see cref="IExperienceRecordStore.TracksHoldout"/>
+    /// and <see cref="IExperienceRecordStore.RecordHoldoutAssignmentAsync"/>, or neither, and its capability says which.
+    /// </summary>
+    /// <param name="store">The store, or decorator, to check.</param>
+    public static void AssertHoldoutTrackingIsConsistent(IExperienceRecordStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var map = store.GetType().GetInterfaceMap(typeof(IExperienceRecordStore));
+        bool Overrides(string name)
+        {
+            var index = Array.FindIndex(map.InterfaceMethods, method => method.Name == name);
+            Assert.True(index >= 0, $"IExperienceRecordStore has no member {name}.");
+            return map.TargetMethods[index].DeclaringType != typeof(IExperienceRecordStore);
+        }
+
+        var capability = Overrides("get_" + nameof(IExperienceRecordStore.TracksHoldout));
+        var record = Overrides(nameof(IExperienceRecordStore.RecordHoldoutAssignmentAsync));
+        Assert.True(
+            capability == record,
+            $"{store.GetType().Name} overrides TracksHoldout: {capability}, RecordHoldoutAssignmentAsync: {record}. Override both or neither.");
+        Assert.Equal(capability, store.TracksHoldout);
     }
 }

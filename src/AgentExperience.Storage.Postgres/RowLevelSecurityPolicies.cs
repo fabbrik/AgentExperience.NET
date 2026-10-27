@@ -2,7 +2,7 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// The canonical row-level security policies: every <c>rls_*</c> policy <c>0019</c> creates on this
-/// package's tables, <c>0026</c> on <c>experience_injections</c>, and the vectors package's <c>0020</c> creates on
+/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, and the vectors package's <c>0020</c> creates on
 /// <c>experience_embeddings</c>, as the exact DDL those scripts contain. The privileges call re-runs this DDL, under
 /// the migrator's lock, every time it enables row-level security, so a policy altered or dropped by hand since the
 /// migration is put back before anything is enabled; and
@@ -348,6 +348,22 @@ $body$;
         policies.Add(new(ApplicationRolePrivileges.InjectionsTable, "rls_injections_select", "SELECT", scope, null));
         policies.Add(new(ApplicationRolePrivileges.InjectionsTable, "rls_injections_insert", "INSERT", null, injectionWrite));
         policies.Add(new(ApplicationRolePrivileges.InjectionsTable, "rls_injections_update", "UPDATE", scope, injectionWrite));
+
+        // Story 25.1 (0027): a holdout assignment row, in its record's own scope only, and inserted only for a live record
+        // with that ID in exactly those scope columns. A grant never admits one.
+        var assignedRecord =
+            "EXISTS (\n" +
+            "            SELECT 1 FROM agent_experience.experience_records r\n" +
+            "            WHERE r.experience_id = experience_holdout_assignments.experience_id\n" +
+            "              AND r.tenant_id = experience_holdout_assignments.tenant_id\n" +
+            "              AND r.application_id = experience_holdout_assignments.application_id\n" +
+            "              AND r.project_id = experience_holdout_assignments.project_id\n" +
+            "              AND r.team_id IS NOT DISTINCT FROM experience_holdout_assignments.team_id\n" +
+            "              AND r.agent_id IS NOT DISTINCT FROM experience_holdout_assignments.agent_id\n" +
+            "              AND r.user_id IS NOT DISTINCT FROM experience_holdout_assignments.user_id\n" +
+            "              AND r.deleted_at IS NULL)";
+        policies.Add(new(ApplicationRolePrivileges.HoldoutAssignmentsTable, "rls_holdout_assignments_select", "SELECT", scope, null));
+        policies.Add(new(ApplicationRolePrivileges.HoldoutAssignmentsTable, "rls_holdout_assignments_insert", "INSERT", null, $"{scope}\n        AND {assignedRecord}"));
 
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_select", "SELECT", Readable(), null));
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_insert", "INSERT", null, scope));

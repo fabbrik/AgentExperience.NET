@@ -386,6 +386,22 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ExperienceInjectionsScriptName = "0026_experience_injections.sql";
 
+    /// <summary>
+    /// The script that records the injection holdout's assignments: it creates
+    /// <c>agent_experience.experience_holdout_assignments</c>, one row per captured run and record its block named, with
+    /// the arm (delivered or withheld), the record's rendered revision, its scope and an instant, which
+    /// <see cref="PostgresExperienceRecordStore.RecordHoldoutAssignmentAsync"/> inserts once per assigned block; a trigger
+    /// that deletes a record's rows, and its run's rows, when the record is erased; and the table's row-level security
+    /// policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then the injection adapter reports each assignment as not recorded and injects (or withholds)
+    /// anyway. No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceHoldoutAssignmentsScriptName = "0027_experience_holdout_assignments.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -393,7 +409,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0026</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0027</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -420,6 +436,7 @@ public static class PostgresExperienceRecordSchema
         TextSearchFunctionScriptName,
         TextSearchAnyTermScriptName,
         ExperienceInjectionsScriptName,
+        ExperienceHoldoutAssignmentsScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

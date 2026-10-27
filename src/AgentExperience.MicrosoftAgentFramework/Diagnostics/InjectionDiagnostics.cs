@@ -9,8 +9,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Diagnostics;
 /// <summary>
 /// The MAF adapter's one emission seam: the <see cref="ActivitySource"/> and <see cref="Meter"/>
 /// named <c>AgentExperience.MicrosoftAgentFramework</c>, the same three instruments Core emits, and
-/// the operations this assembly owns: <c>inject</c>, and <c>record_injection</c>, which records an injection after the
-/// block was handed over and emits measurements only, never a span.
+/// the operations this assembly owns: <c>inject</c>; <c>record_injection</c>, which records an injection after the
+/// block was handed over; and <c>record_holdout</c>, which records a run's holdout assignment. The last two emit
+/// measurements only, never a span.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -140,6 +141,13 @@ internal static class InjectionDiagnostics
     /// counted and timed on the same instruments, with one of the outcomes below.
     /// </summary>
     internal const string RecordInjection = "record_injection";
+
+    /// <summary>
+    /// The third operation this assembly owns: recording, in the background, which arm of the injection holdout a captured
+    /// run was assigned to and the records its block named. No span, like <see cref="RecordInjection"/>, and the same
+    /// outcomes.
+    /// </summary>
+    internal const string RecordHoldout = "record_holdout";
 
     /// <summary>The store recorded the injection.</summary>
     internal const string RecordedOutcome = "Recorded";
@@ -384,13 +392,24 @@ internal static class InjectionDiagnostics
     /// <param name="outcome">One of the record outcomes above.</param>
     /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
     /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>
-    internal static void InjectionRecorded(string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass)
+    internal static void InjectionRecorded(string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass) =>
+        BackgroundRecorded(RecordInjection, outcome, startTimestamp, errorClass);
+
+    /// <summary>
+    /// Counts and times one background write, <see cref="RecordInjection"/> or <see cref="RecordHoldout"/>, and counts a
+    /// failure when <paramref name="errorClass"/> is set. Never throws.
+    /// </summary>
+    /// <param name="operation"><see cref="RecordInjection"/> or <see cref="RecordHoldout"/>.</param>
+    /// <param name="outcome">One of the record outcomes above.</param>
+    /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
+    /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>
+    internal static void BackgroundRecorded(string operation, string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass)
     {
         try
         {
             var tags = new TagList
             {
-                { OperationDimension, RecordInjection },
+                { OperationDimension, operation },
                 { OutcomeDimension, outcome },
                 { NestedDimension, NotNested },
             };
@@ -409,7 +428,7 @@ internal static class InjectionDiagnostics
             {
                 Failures.Add(1, new TagList
                 {
-                    { OperationDimension, RecordInjection },
+                    { OperationDimension, operation },
                     { ErrorClassDimension, Name(failed) },
                     { NestedDimension, NotNested },
                 });

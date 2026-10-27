@@ -191,8 +191,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <param name="retrieval">Core's retrieval service. It owns eligibility, ranking, and the retrieval timeout.</param>
     /// <param name="store">The record store each selected candidate is re-read through, in the request's own authorization and scope.</param>
     /// <param name="options">Host configuration: the resolver, the limits, the risk decision, and the result callback.</param>
-    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/>, <see cref="ExperienceInjectionOptions.ApproachArguments"/> or <see cref="ExperienceInjectionOptions.SessionStateKey"/>, is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">Not exactly one of <see cref="ExperienceInjectionOptions.ResolveRequest"/> and <see cref="ExperienceInjectionOptions.ResolveRequestAsync"/> is set; or <see cref="ExperienceInjectionOptions.ApproachArguments"/>, <see cref="ExperienceInjectionOptions.SessionStateKey"/> or <see cref="ExperienceInjectionOptions.ReceivingAgent"/> is malformed; see their remarks.</exception>
+    /// <exception cref="ArgumentNullException">Any argument, or <see cref="ExperienceInjectionOptions.Limits"/>, <see cref="ExperienceInjectionOptions.TimeProvider"/>, <see cref="ExperienceInjectionOptions.ApproachArguments"/>, <see cref="ExperienceInjectionOptions.SessionStateKey"/> or <see cref="ExperienceInjectionOptions.Holdout"/>, is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Not exactly one of <see cref="ExperienceInjectionOptions.ResolveRequest"/> and <see cref="ExperienceInjectionOptions.ResolveRequestAsync"/> is set; or <see cref="ExperienceInjectionOptions.ApproachArguments"/>, <see cref="ExperienceInjectionOptions.SessionStateKey"/>, <see cref="ExperienceInjectionOptions.ReceivingAgent"/> or <see cref="ExperienceInjectionOptions.Holdout"/> is malformed; see their remarks.</exception>
     public ExperienceContextProvider(
         ExperienceRetrievalService retrieval,
         IExperienceRecordStore store,
@@ -687,6 +687,62 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return Nothing(trace, stopped ?? Quiet(omitted), omitted, retrieved, correlationId, stoppedFailure, session);
         }
 
+        // Story 25.1: the injection holdout. Decided once the block is built, so what a held-out run is denied is exactly
+        // what it would have been given, and before anything is staged. Only a run this agent's own capture scope captures
+        // takes part, and only with records to deliver; everything else is injected as it always was, and records nothing.
+        HoldoutAssignment? assignment = null;
+        IReadOnlyList<Guid>? withheld = null;
+        if (_options.Holdout.Active && payload.ExperienceIds.Count > 0 && CapturedRun(context.Agent) is { } runId)
+        {
+            assignment = new HoldoutAssignment(
+                runId,
+                HoldoutAssignmentFunction.Assign(runId, _options.Holdout.Salt, _options.Holdout.Rate),
+                Rendered(payload, recheckOutcome.Injectable),
+                _options.TimeProvider.GetUtcNow());
+
+            if (assignment.Arm == HoldoutArm.Holdout)
+            {
+                if (recheckOutcome.Withdrawn.Count == 0)
+                {
+                    return Withhold(trace, payload, omitted, retrieved, correlationId, session, request, assignment);
+                }
+
+                // Withdrawal notices are safety notices, not lessons: a held-out run is still told that a record it was
+                // given earlier is withdrawn. The block is rebuilt with the notices alone and delivered as a retraction.
+                withheld = payload.ExperienceIds;
+                try
+                {
+                    payload = HistoricalReferenceWriter.Write(
+                        [],
+                        _options.Limits,
+                        _approachArguments,
+                        recheckOutcome.Withdrawn,
+                        session?.RemainingBytes,
+                        _retrieval.IsContentConfirmed,
+                        _options.FailureDetail,
+                        _options.Rendering);
+                }
+                catch (Exception ex)
+                {
+                    // The run is held out whatever the notices did: its assignment is still recorded.
+                    StartRecordingHoldout(request, assignment);
+                    return Nothing(
+                        trace,
+                        InjectionOutcome.Failed,
+                        omitted,
+                        retrieved,
+                        correlationId,
+                        new InjectionFailure($"Building the Historical Reference threw {ex.GetType().FullName}.", ex),
+                        session);
+                }
+
+                if (payload.IsEmpty)
+                {
+                    return Withhold(trace, payload, omitted, retrieved, correlationId, session, request, assignment, withheld);
+                }
+            }
+        }
+
         if (session is not null)
         {
             // Staged before the block is handed over, and saved: a block the account does not know about
@@ -750,6 +806,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             retrieved?.VectorFallback)
         {
             RetractedExperienceIds = payload.RetractedExperienceIds,
+            WithheldExperienceIds = withheld ?? NoIds,
             Session = session?.Usage(),
         });
 
@@ -757,16 +814,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // is captured as. This is the exposure confidence evidence about reusing them in that run is later
         // checked against. Recorded last, once everything that could fail has run, so a block that is not
         // handed over is never claimed as delivered.
-        var delivered = new List<RunExposure>(payload.ExperienceIds.Count);
-        foreach (var experienceId in payload.ExperienceIds)
+        if (withheld is null)
         {
-            if (recheckOutcome.Injectable.Find(candidate => candidate.Record.ExperienceId == experienceId) is { } rendered)
-            {
-                delivered.Add(new RunExposure(experienceId, rendered.Record.Revision));
-            }
+            RecordExposures(context.Agent, assignment is null ? Rendered(payload, recheckOutcome.Injectable) : [.. assignment.Records]);
         }
-
-        RecordExposures(context.Agent, delivered);
 
         // Story 21.8: when each delivered record was injected, for the lessons view. Started last, in the background,
         // so the block is handed over and the model called without waiting for the store.
@@ -775,7 +826,86 @@ public sealed class ExperienceContextProvider : AIContextProvider
             StartRecordingInjection(request, payload.ExperienceIds);
         }
 
+        // Story 25.1: the treatment arm's assignment, recorded the same way.
+        if (assignment is not null)
+        {
+            StartRecordingHoldout(request, assignment);
+        }
+
         return injected;
+    }
+
+    /// <summary>
+    /// The records <paramref name="payload"/> names, each at the revision it was rendered from: what the block delivers,
+    /// or would have delivered.
+    /// </summary>
+    private static List<RunExposure> Rendered(HistoricalReferencePayload payload, List<RankedExperience> injectable)
+    {
+        var rendered = new List<RunExposure>(payload.ExperienceIds.Count);
+        foreach (var experienceId in payload.ExperienceIds)
+        {
+            if (injectable.Find(candidate => candidate.Record.ExperienceId == experienceId) is { } candidate)
+            {
+                rendered.Add(new RunExposure(experienceId, candidate.Record.Revision));
+            }
+        }
+
+        return rendered;
+    }
+
+    /// <summary>
+    /// The run this invocation is captured as, when <c>UseExperienceCapture</c> on the same flow captures this very agent
+    /// (the condition <see cref="RecordExposures"/> applies); otherwise <see langword="null"/>.
+    /// </summary>
+    private static Guid? CapturedRun(AIAgent? agent) =>
+        CaptureScope.Current is { } capture && capture.Captures(agent) ? capture.RunId : null;
+
+    /// <summary>
+    /// The holdout arm: the built block is withheld. Nothing is staged (the session's account is saved as it stands, as on
+    /// every path that injects nothing), no message is returned, no exposure and no injection are recorded, and the result
+    /// names what was withheld. The assignment is recorded in the background.
+    /// </summary>
+    private AIContext Withhold(
+        InjectionTrace trace,
+        HistoricalReferencePayload payload,
+        List<OmittedExperience> omitted,
+        ExperienceRetrievalResult? retrieved,
+        string? correlationId,
+        SessionTracker? session,
+        RetrieveExperienceRequest request,
+        HoldoutAssignment assignment,
+        IReadOnlyList<Guid>? withheld = null)
+    {
+        if (session is not null)
+        {
+            try
+            {
+                session.Save();
+            }
+            catch (Exception)
+            {
+                // Written again on the next invocation.
+            }
+        }
+
+        Report(trace, new ExperienceInjectionResult(
+            InjectionOutcome.Withheld,
+            NoIds,
+            omitted,
+            retrieved?.Excluded ?? NoExclusions,
+            retrieved?.Truncated ?? false,
+            retrieved?.EnvironmentUnrestricted ?? false,
+            PayloadBytes: 0,
+            correlationId,
+            Failure: null,
+            retrieved?.VectorFallback)
+        {
+            WithheldExperienceIds = withheld ?? payload.ExperienceIds,
+            Session = session?.Usage(),
+        });
+
+        StartRecordingHoldout(request, assignment);
+        return new AIContext();
     }
 
     /// <summary>
@@ -787,20 +917,70 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// </summary>
     private void StartRecordingInjection(RetrieveExperienceRequest request, IReadOnlyList<Guid> experienceIds)
     {
+        var authorization = request.Authorization;
+        var scope = request.Scope;
+        var ids = experienceIds.ToArray();
+        StartRecording(
+            InjectionDiagnostics.RecordInjection,
+            () => _store.TracksInjections,
+            ids.Length,
+            () =>
+            {
+                var injectedAt = _options.TimeProvider.GetUtcNow();
+                return async (offset, length, token) =>
+                {
+                    var recorded = await _store.RecordInjectionAsync(authorization, scope, ids[offset..(offset + length)], injectedAt, token).ConfigureAwait(false);
+                    return new RecordAnswer(recorded is { Outcome: ExperienceStoreOutcome.Committed }, recorded?.Tracked ?? true);
+                };
+            });
+    }
+
+    /// <summary>
+    /// Starts recording, in the background, the holdout <paramref name="assignment"/> of the invocation's run in the
+    /// request's scope. Never throws and never waits, exactly as <see cref="StartRecordingInjection"/>, and reported the
+    /// same way, as the <c>record_holdout</c> operation.
+    /// </summary>
+    private void StartRecordingHoldout(RetrieveExperienceRequest request, HoldoutAssignment assignment)
+    {
+        var authorization = request.Authorization;
+        var scope = request.Scope;
+        var records = assignment.Records.ToArray();
+        StartRecording(
+            InjectionDiagnostics.RecordHoldout,
+            () => _store.TracksHoldout,
+            records.Length,
+            () => async (offset, length, token) =>
+            {
+                var recorded = await _store.RecordHoldoutAssignmentAsync(
+                    authorization,
+                    scope,
+                    assignment with { Records = records[offset..(offset + length)] },
+                    token).ConfigureAwait(false);
+                return new RecordAnswer(recorded is { Outcome: ExperienceStoreOutcome.Committed }, recorded?.Tracked ?? true);
+            });
+    }
+
+    /// <summary>What one background write answered: whether it committed, and whether the store tracks what it was asked to record.</summary>
+    private readonly record struct RecordAnswer(bool Committed, bool Tracked);
+
+    /// <summary>
+    /// Starts one background record of <paramref name="count"/> items, reported as <paramref name="operation"/>: skipped
+    /// and reported as not tracked when <paramref name="tracks"/> says the store does not record them, otherwise run on
+    /// the thread pool by <see cref="RecordAsync"/> and tracked until it ends. Never throws.
+    /// </summary>
+    private void StartRecording(string operation, Func<bool> tracks, int count, Func<Func<int, int, CancellationToken, Task<RecordAnswer>>> prepare)
+    {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            if (!_store.TracksInjections)
+            if (!tracks())
             {
-                InjectionDiagnostics.InjectionRecorded(InjectionDiagnostics.NotTrackedOutcome, started, errorClass: null);
+                InjectionDiagnostics.BackgroundRecorded(operation, InjectionDiagnostics.NotTrackedOutcome, started, errorClass: null);
                 return;
             }
 
-            var injectedAt = _options.TimeProvider.GetUtcNow();
-            var ids = experienceIds.ToArray();
-            var authorization = request.Authorization;
-            var scope = request.Scope;
-            var work = Task.Run(() => RecordInjectionAsync(authorization, scope, ids, injectedAt, started), CancellationToken.None);
+            var write = prepare();
+            var work = Task.Run(() => RecordAsync(operation, count, write, started), CancellationToken.None);
             _recordings.TryAdd(work, 0);
             _ = work.ContinueWith(
                 done => _recordings.TryRemove(done, out _),
@@ -811,18 +991,18 @@ public sealed class ExperienceContextProvider : AIContextProvider
         catch (Exception)
         {
             // A store whose capability throws, or a scheduler that refuses the work: telemetry only.
-            InjectionDiagnostics.InjectionRecorded(InjectionDiagnostics.NotRecordedOutcome, started, ExperienceOperationErrorClass.Unexpected);
+            InjectionDiagnostics.BackgroundRecorded(operation, InjectionDiagnostics.NotRecordedOutcome, started, ExperienceOperationErrorClass.Unexpected);
         }
     }
 
     /// <summary>
-    /// The background record: the IDs in chunks of at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>, all
+    /// The background record: the items in chunks of at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>, all
     /// within <see cref="InjectionRecordTimeout"/> on the provider's clock. Each write is awaited with a timeout rather
     /// than trusted to honour its token: a store that ignores cancellation is abandoned, counted against
     /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> like an abandoned eligibility read, and its fault
     /// observed once it ends. Never throws.
     /// </summary>
-    private async Task RecordInjectionAsync(AuthorizationContext authorization, Scope scope, Guid[] ids, DateTimeOffset injectedAt, long started)
+    private async Task RecordAsync(string operation, int count, Func<int, int, CancellationToken, Task<RecordAnswer>> writeChunk, long started)
     {
         var outcome = InjectionDiagnostics.RecordedOutcome;
         ExperienceOperationErrorClass? errorClass = null;
@@ -831,7 +1011,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             var clock = _options.TimeProvider;
             var since = clock.GetTimestamp();
             var chunkSize = Math.Clamp(InjectionRecordChunkSize, 1, ExperienceRecordGetManyResult.MaxCount);
-            for (var offset = 0; offset < ids.Length; offset += chunkSize)
+            for (var offset = 0; offset < count; offset += chunkSize)
             {
                 if (Volatile.Read(ref _abandonedRecords) >= _options.Limits.MaxAbandonedReads)
                 {
@@ -844,13 +1024,14 @@ public sealed class ExperienceContextProvider : AIContextProvider
                 var left = InjectionRecordTimeout - clock.GetElapsedTime(since);
                 if (left <= TimeSpan.Zero)
                 {
-                    throw new TimeoutException("The injection record ran out of time.");
+                    throw new TimeoutException("The record ran out of time.");
                 }
 
-                var chunk = ids[offset..Math.Min(ids.Length, offset + chunkSize)];
+                var from = offset;
+                var length = Math.Min(count, offset + chunkSize) - offset;
                 var source = new CancellationTokenSource();
-                var write = Task.Run(() => _store.RecordInjectionAsync(authorization, scope, chunk, injectedAt, source.Token), CancellationToken.None);
-                ExperienceInjectionRecordResult? recorded;
+                var write = Task.Run(() => writeChunk(from, length, source.Token), CancellationToken.None);
+                RecordAnswer recorded;
                 var abandoned = false;
                 try
                 {
@@ -870,7 +1051,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
                     }
                 }
 
-                if (recorded is not { Outcome: ExperienceStoreOutcome.Committed })
+                if (!recorded.Committed)
                 {
                     outcome = InjectionDiagnostics.NotRecordedOutcome;
                     break;
@@ -899,7 +1080,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             errorClass = ex is ExperienceStoreException ? ExperienceOperationErrorClass.Infrastructure : ExperienceOperationErrorClass.Unexpected;
         }
 
-        InjectionDiagnostics.InjectionRecorded(outcome, started, errorClass);
+        InjectionDiagnostics.BackgroundRecorded(operation, outcome, started, errorClass);
     }
 
     /// <summary>

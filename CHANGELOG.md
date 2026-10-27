@@ -6,7 +6,27 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### The injection holdout: withhold the block on a share of runs and record both arms (story 25.1)
+
+- **`ExperienceInjectionOptions.Holdout`** (`ExperienceHoldoutOptions { Rate, Salt }`, off by default with `Rate = 0`).
+  On a deterministic, run-ID-derived share of captured runs that have a block to inject, the provider builds the block
+  and then withholds it: no message, nothing staged in the session, no exposure, no "last injected", and the result is
+  the new `InjectionOutcome.Withheld` with `ExperienceInjectionResult.WithheldExperienceIds`. The other runs are
+  injected as before. The arm is SHA-256 over the run ID (RFC 4122 byte order) and the salt, so every invocation of a
+  run lands in the same arm. Only invocations captured by the agent's own `UseExperienceCapture` take part. A rate
+  outside 0..1 or not a number, or an empty salt, throws when the provider is constructed. See
+  [Measuring benefit: the holdout](docs/guide/injection.md#measuring-benefit-the-holdout).
+- **Both arms are recorded**, in the background, through the new optional store capability
+  `IExperienceRecordStore.TracksHoldout` / `RecordHoldoutAssignmentAsync(authorization, scope, HoldoutAssignment, ct)`
+  (`HoldoutArm`, `HoldoutAssignment`, `ExperienceHoldoutRecordResult`); the default records nothing, so existing stores
+  keep compiling. The outcome is the new `record_holdout` telemetry operation (`Recorded`, `NotTracked`, `NotRecorded`,
+  `OutcomeUnknown`). Rows hold IDs, revisions, the arm, the scope and an instant, never content, and only for records in
+  the invocation's own scope.
+- **PostgreSQL: migration `0027_experience_holdout_assignments.sql`** adds `agent_experience.experience_holdout_assignments`
+  (keyed on run and record, `ON CONFLICT DO NOTHING`), an erasure trigger that removes a record's rows and its own run's
+  rows, and its row-level security policies. Re-run `ApplyApplicationRolePrivilegesAsync` after migrating: the role gets
+  `SELECT` and `INSERT`. The table is .NET-only, so the contract is unchanged; in a mixed fleet run the .NET privileges
+  call after the contract's files. The in-memory store records assignments too.
 
 ## 0.1.0-preview.16
 

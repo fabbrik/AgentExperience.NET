@@ -254,6 +254,58 @@ public interface IExperienceRecordStore
         QueryAsync(authorization, query, cancellationToken);
 
     /// <summary>
+    /// Whether this store records holdout assignments (<see cref="RecordHoldoutAssignmentAsync"/>).
+    /// <see langword="false"/> by default; a store that overrides that method overrides this to <see langword="true"/>, and
+    /// a decorator forwards both. The injection adapter skips the write and reports "not tracked" when it is
+    /// <see langword="false"/>.
+    /// </summary>
+    bool TracksHoldout => false;
+
+    /// <summary>
+    /// Records which arm of the injection holdout a captured run was assigned to, and the records its block named:
+    /// delivered (<see cref="HoldoutArm.Treatment"/>) or withheld (<see cref="HoldoutArm.Holdout"/>). One row per run and
+    /// record, for each named record that is a live record in exactly <paramref name="scope"/>; an ID that names nothing
+    /// there -- a record another scope lent through a grant, one erased since, one that never existed -- is skipped
+    /// without a word, so the call reveals nothing across scopes. A row that already exists for the run and record is
+    /// left as it is, so recording the same run again writes nothing new.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is the comparison benefit estimation reads: the run's own record, once finalized, carries the outcome, and these
+    /// rows say whether that run was given the records or had them withheld. The injection adapter calls it once per
+    /// assigned block, in the background, and never lets it fail or delay the invocation.
+    /// </para>
+    /// <para>
+    /// <b>Override both <see cref="TracksHoldout"/> and this method, or neither.</b> The default records nothing and
+    /// reports <see cref="ExperienceHoldoutRecordResult.Tracked"/> as <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// A row holds IDs, a revision, the arm, the scope and an instant: never content. It never changes a record, its
+    /// revision or its <see cref="ExperienceRecord.UpdatedAt"/>. A store clamps <see cref="HoldoutAssignment.AssignedAt"/>
+    /// to its own clock. Erasing a named record removes its rows, and so does erasing the run's own record.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the block was built in: the invocation's own.</param>
+    /// <param name="assignment">
+    /// The run, its arm, and the records the block named (at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>,
+    /// none with an empty ID or a negative revision; a record named twice counts once, at its first revision).
+    /// </param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Committed"/> when the write ran (whatever it matched),
+    /// <see cref="ExperienceStoreOutcome.Denied"/> when <paramref name="scope"/> lies outside
+    /// <paramref name="authorization"/>, or <see cref="ExperienceStoreOutcome.Invalid"/> for a malformed request.
+    /// Neither refusal accesses storage.
+    /// </returns>
+    Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        HoldoutAssignment assignment,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
+
+    /// <summary>
     /// Appends <paramref name="lifecycleEvent"/> and updates the record's projection
     /// (<see cref="ExperienceRecord.Status"/>, <see cref="ExperienceRecord.Revision"/>,
     /// <see cref="ExperienceRecord.UpdatedAt"/>) in one transaction: both writes commit together or
