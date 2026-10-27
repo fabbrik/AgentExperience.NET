@@ -84,9 +84,14 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - `RecordHoldoutAssignmentAsync` commits whatever it matches (a record in another scope, or one nothing holds, is
   skipped without a word) and changes nothing about the records; an empty run ID, an undefined arm, an empty record ID,
   a negative revision, too many records, an unset instant, no assignment or a malformed scope is `Invalid`, and a scope
-  outside the authorization is `Denied`. `TracksHoldout` is `true`, and a store overrides it and
-  `RecordHoldoutAssignmentAsync` together; `RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(store)` checks
-  that for any store or decorator. The rows themselves have no port read: each store's own tests check them.
+  outside the authorization is `Denied`. `TracksHoldout` is `true`, and a store overrides it,
+  `RecordHoldoutAssignmentAsync` and `QueryHoldoutOutcomesAsync` together;
+  `RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(store)` checks that for any store or decorator.
+- `QueryHoldoutOutcomesAsync` (story 25.2) reads back exactly the scope's rows in (run, record) order, pages after a
+  cursor without gaps or repeats, and gives each row the outcome status of the run's own record in exactly the row's
+  scope (none when the run has no record there, even if an earlier record in another scope or tenant names the run,
+  whatever the caller's bounds). A limit outside 1..1000, a cursor with an empty ID, no query or a
+  malformed scope is `Invalid`; a scope outside the authorization is `Denied`.
 
 **Candidate source**
 

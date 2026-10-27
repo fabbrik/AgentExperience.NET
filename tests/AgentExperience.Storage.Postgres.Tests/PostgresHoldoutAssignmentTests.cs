@@ -1,3 +1,4 @@
+using AgentExperience.Core.KeyManagement;
 using Npgsql;
 using static AgentExperience.Storage.Postgres.Tests.TestRecords;
 
@@ -143,6 +144,151 @@ public sealed class PostgresHoldoutAssignmentTests(PostgresFixture fixture)
 
         Assert.Equal(1L, await CountAsync("run_id = @id", runId));
     }
+
+    // ---- Reading outcomes back (story 25.2) ----------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Holdout_outcomes_join_each_run_to_its_own_live_record_in_the_same_tenant_only()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await CreateAsync(auth, scope);
+        var verified = Guid.NewGuid();
+        var failed = Guid.NewGuid();
+        var pending = Guid.NewGuid();
+        foreach (var (run, arm) in new[] { (verified, HoldoutArm.Treatment), (failed, HoldoutArm.Holdout), (pending, HoldoutArm.Holdout) })
+        {
+            await RecordAsync(auth, scope, new HoldoutAssignment(run, arm, [new(lesson, 0)], DateTimeOffset.UtcNow));
+        }
+
+        await CreateRunRecordAsync(auth, scope, verified, TaskVerificationStatus.Verified);
+        await CreateRunRecordAsync(auth, scope, failed, TaskVerificationStatus.Failed);
+
+        // Another tenant names the pending run (a run id is caller-supplied): never this tenant's outcome.
+        var otherTenant = NewTenant();
+        await CreateRunRecordAsync(Authorize(otherTenant), Scope(otherTenant), pending, TaskVerificationStatus.Verified);
+
+        var result = await _store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+        Assert.Equal(
+            new (Guid, HoldoutArm, TaskVerificationStatus?)[]
+            {
+                (verified, HoldoutArm.Treatment, TaskVerificationStatus.Verified),
+                (failed, HoldoutArm.Holdout, TaskVerificationStatus.Failed),
+                (pending, HoldoutArm.Holdout, null),
+            }.OrderBy(row => row.Item1),
+            result.Rows.Select(row => (row.RunId, row.Arm, row.RunOutcome)));
+
+        // The other tenant reads none of this tenant's rows, and its own scope has none.
+        var foreign = await _store.QueryHoldoutOutcomesAsync(Authorize(otherTenant), new HoldoutOutcomeQuery(Scope(otherTenant)), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, foreign.Outcome);
+        Assert.Empty(foreign.Rows);
+        var denied = await _store.QueryHoldoutOutcomesAsync(Authorize(otherTenant), new HoldoutOutcomeQuery(scope), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Denied, denied.Outcome);
+    }
+
+    [Fact]
+    public async Task An_erased_run_record_takes_its_run_s_rows_out_of_the_read()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await CreateAsync(auth, scope);
+        var kept = Guid.NewGuid();
+        var erased = Guid.NewGuid();
+        await RecordAsync(auth, scope, new HoldoutAssignment(kept, HoldoutArm.Treatment, [new(lesson, 0)], DateTimeOffset.UtcNow));
+        await RecordAsync(auth, scope, new HoldoutAssignment(erased, HoldoutArm.Holdout, [new(lesson, 0)], DateTimeOffset.UtcNow));
+        await CreateRunRecordAsync(auth, scope, kept, TaskVerificationStatus.Verified);
+        var erasedRecord = await CreateRunRecordAsync(auth, scope, erased, TaskVerificationStatus.Failed);
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.DeleteAsync(auth, scope, erasedRecord, CancellationToken.None)).Outcome);
+
+        var result = await _store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+        var row = Assert.Single(result.Rows);
+        Assert.Equal((kept, (TaskVerificationStatus?)TaskVerificationStatus.Verified), (row.RunId, row.RunOutcome));
+    }
+
+    [Fact]
+    public async Task A_sealed_run_record_is_opened_for_its_outcome_and_one_under_a_destroyed_key_is_pending()
+    {
+        var keys = new EnvelopeExperienceKeyStore(LocalExperienceKeyEncryptionKey.Generate("holdout-kek"), new InMemoryExperienceWrappedKeyRepository());
+        var store = new PostgresExperienceRecordStore(fixture.DataSource, encryption: new ExperienceEncryption(keys));
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = Minimal(scope);
+        Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(auth, lesson, CancellationToken.None)).Outcome);
+        var opened = Guid.NewGuid();
+        var shredded = Guid.NewGuid();
+        var openedRecord = RunRecord(scope, opened, TaskVerificationStatus.Verified);
+        var shreddedRecord = RunRecord(scope, shredded, TaskVerificationStatus.Failed);
+        foreach (var (run, record) in new[] { (opened, openedRecord), (shredded, shreddedRecord) })
+        {
+            Assert.Equal(ExperienceStoreOutcome.Committed, (await store.RecordHoldoutAssignmentAsync(
+                auth, scope, new HoldoutAssignment(run, HoldoutArm.Treatment, [new(lesson.ExperienceId, 0)], DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+            Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(auth, record, CancellationToken.None)).Outcome);
+        }
+
+        // The payload is sealed at rest: the status is not readable without the key.
+        await using (var command = fixture.RawDataSource.CreateCommand("SELECT payload_version FROM agent_experience.experience_records WHERE experience_id = @id"))
+        {
+            command.Parameters.Add(new NpgsqlParameter<Guid>("id", openedRecord.ExperienceId));
+            Assert.NotEqual(1, (int)(await command.ExecuteScalarAsync())!);
+        }
+
+        // A key destroyed with no tombstone yet (a delete whose commit failed): the record is erased, so no outcome.
+        await keys.DestroyKeyAsync(new(shreddedRecord.ExperienceId, scope), CancellationToken.None);
+
+        var result = await store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+
+        Assert.Equal(
+            new (Guid, TaskVerificationStatus?)[] { (opened, TaskVerificationStatus.Verified), (shredded, null) }.OrderBy(row => row.Item1),
+            result.Rows.Select(row => (row.RunId, row.RunOutcome)));
+    }
+
+    [Fact]
+    public async Task The_read_is_one_bounded_page_after_the_cursor()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lessons = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            lessons.Add(await CreateAsync(auth, scope));
+        }
+
+        var runs = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToList();
+        foreach (var run in runs)
+        {
+            await RecordAsync(auth, scope, new HoldoutAssignment(run, HoldoutArm.Holdout, [.. lessons.Select(id => new RunExposure(id, 0))], DateTimeOffset.UtcNow));
+            await CreateRunRecordAsync(auth, scope, run, TaskVerificationStatus.Failed);
+        }
+
+        // PostgreSQL's uuid order is the byte order of the canonical text, which .NET's Guid comparison agrees with.
+        var expected = runs.SelectMany(run => lessons.Select(lesson => (run, lesson)))
+            .OrderBy(pair => pair.run.ToString(), StringComparer.Ordinal)
+            .ThenBy(pair => pair.lesson.ToString(), StringComparer.Ordinal)
+            .ToList();
+        var first = await _store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope, 5), CancellationToken.None);
+        Assert.Equal(expected.Take(5), first.Rows.Select(row => (row.RunId, row.ExperienceId)));
+        var rest = await _store.QueryHoldoutOutcomesAsync(
+            auth, new HoldoutOutcomeQuery(scope, 1000, new(first.Rows[^1].RunId, first.Rows[^1].ExperienceId)), CancellationToken.None);
+        Assert.Equal(expected.Skip(5), rest.Rows.Select(row => (row.RunId, row.ExperienceId)));
+        Assert.All(rest.Rows, row => Assert.Equal(TaskVerificationStatus.Failed, row.RunOutcome));
+    }
+
+    private async Task<Guid> CreateRunRecordAsync(AuthorizationContext auth, Scope scope, Guid runId, TaskVerificationStatus status)
+    {
+        var record = RunRecord(scope, runId, status);
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, record, CancellationToken.None)).Outcome);
+        return record.ExperienceId;
+    }
+
+    private static ExperienceRecord RunRecord(Scope scope, Guid runId, TaskVerificationStatus status) =>
+        Minimal(scope) with { SourceRunId = runId, Outcome = new Outcome(status, [], null, DateTimeOffset.UtcNow) };
 
     private async Task<Guid> CreateAsync(AuthorizationContext auth, Scope scope)
     {

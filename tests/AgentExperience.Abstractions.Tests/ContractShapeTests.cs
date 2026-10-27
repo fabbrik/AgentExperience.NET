@@ -311,13 +311,16 @@ public class ContractShapeTests
         Assert.Equal(
             [
                 "CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "GetManyAsync",
-                "QueryAsync", "QueryWithInjectionsAsync", "RecordHoldoutAssignmentAsync", "RecordInjectionAsync",
+                "QueryAsync", "QueryHoldoutOutcomesAsync", "QueryWithInjectionsAsync", "RecordHoldoutAssignmentAsync", "RecordInjectionAsync",
             ],
             methods.Select(m => m.Name));
 
         // The lessons view's injection read and the provider's injection write both have default implementations, so an
-        // existing store keeps compiling (and reads as not tracking injections); override all three or none.
-        Assert.All(methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync" or "RecordHoldoutAssignmentAsync"), method => Assert.False(method.IsAbstract));
+        // existing store keeps compiling (and reads as not tracking injections); override all three or none. The holdout's
+        // write and read (stories 25.1 and 25.2) have defaults for the same reason.
+        Assert.All(
+            methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync" or "RecordHoldoutAssignmentAsync" or "QueryHoldoutOutcomesAsync"),
+            method => Assert.False(method.IsAbstract));
         Assert.All(methods, method =>
         {
             var parameters = method.GetParameters();
@@ -358,6 +361,9 @@ public class ContractShapeTests
 
         Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[7].ReturnType);
         Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[7].GetParameters().Select(p => p.ParameterType));
+
+        Assert.Equal(typeof(Task<HoldoutOutcomeQueryResult>), methods[8].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(HoldoutOutcomeQuery), typeof(CancellationToken)], methods[8].GetParameters().Select(p => p.ParameterType));
     }
 
     // Story 5.6: the embedding port's batch call is additive, so a generator written before it still compiles.

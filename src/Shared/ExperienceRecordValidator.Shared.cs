@@ -212,6 +212,41 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
+    /// Validates a holdout outcome read: the scope, the page bound, and the optional resume point, whose IDs
+    /// must both be set.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateHoldoutOutcomeQuery(HoldoutOutcomeQuery? query)
+    {
+        var errors = new List<StoreValidationError>();
+        if (query is null)
+        {
+            errors.Add(new("Query", "is required."));
+            return errors;
+        }
+
+        ValidateScope(query.Scope, "Scope", errors);
+        if (query.Limit is < HoldoutOutcomeQuery.MinLimit or > HoldoutOutcomeQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {HoldoutOutcomeQuery.MinLimit} and {HoldoutOutcomeQuery.MaxLimit}."));
+        }
+
+        if (query.After is { } after)
+        {
+            if (after.RunId == Guid.Empty)
+            {
+                errors.Add(new("After.RunId", "must not be empty."));
+            }
+
+            if (after.ExperienceId == Guid.Empty)
+            {
+                errors.Add(new("After.ExperienceId", "must not be empty."));
+            }
+        }
+
+        return errors;
+    }
+
+    /// <summary>
     /// Validates a bounded history read: the scope, the record, the page bound, and the optional keyset
     /// cursor. A negative cursor is rejected rather than treated as "from the beginning", because a
     /// caller that computed one is asking for something it did not mean.

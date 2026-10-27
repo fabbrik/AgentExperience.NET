@@ -479,7 +479,7 @@ public abstract class RecordStoreConformanceTests
     // ---------------------------------------------------------------- holdout assignments (story 25.1)
 
     [Fact]
-    public void The_store_records_holdout_assignments_and_overrides_both_holdout_members()
+    public void The_store_records_holdout_assignments_and_overrides_every_holdout_member()
     {
         AssertHoldoutTrackingIsConsistent(Store);
         Assert.True(Store.TracksHoldout);
@@ -552,6 +552,172 @@ public abstract class RecordStoreConformanceTests
         Assert.Equal(refusal == "denied" ? ExperienceStoreOutcome.Denied : ExperienceStoreOutcome.Invalid, result.Outcome);
         Assert.Equal(refusal != "denied", result.Errors.Count > 0);
     }
+
+    // ---------------------------------------------------------------- holdout outcomes (story 25.2)
+
+    [Fact]
+    public async Task Holdout_outcomes_read_back_each_row_with_its_run_s_verified_outcome_in_run_then_record_order()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var other = Scope(tenant, team: "team-1");
+        var lessonA = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var lessonB = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var foreignLesson = await CreateAsync(tenant, Record(other, ExperienceStatus.Validated));
+
+        var verified = Guid.NewGuid();
+        var failed = Guid.NewGuid();
+        var unknown = Guid.NewGuid();
+        var pending = Guid.NewGuid();
+        var foreignRun = Guid.NewGuid();
+        await Assign(auth, scope, verified, HoldoutArm.Treatment, lessonA, lessonB);
+        await Assign(auth, scope, failed, HoldoutArm.Holdout, lessonA);
+        await Assign(auth, scope, unknown, HoldoutArm.Treatment, lessonB);
+        await Assign(auth, scope, pending, HoldoutArm.Holdout, lessonA);
+        await Assign(auth, other, foreignRun, HoldoutArm.Treatment, foreignLesson);
+
+        // The runs' own finalized records; the pending run has none yet.
+        await CreateAsync(tenant, RunRecord(scope, verified, TaskVerificationStatus.Verified));
+        await CreateAsync(tenant, RunRecord(scope, failed, TaskVerificationStatus.Failed));
+        await CreateAsync(tenant, RunRecord(scope, unknown, TaskVerificationStatus.Unknown));
+
+        // Another tenant's record naming the same run is never its outcome.
+        var otherTenant = NewTenant();
+        await CreateAsync(otherTenant, RunRecord(Scope(otherTenant), pending, TaskVerificationStatus.Verified));
+
+        var result = await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+        Assert.True(result.Tracked);
+        Assert.Empty(result.Errors);
+        var expected = new[]
+        {
+            (verified, HoldoutArm.Treatment, lessonA.ExperienceId, (TaskVerificationStatus?)TaskVerificationStatus.Verified),
+            (verified, HoldoutArm.Treatment, lessonB.ExperienceId, TaskVerificationStatus.Verified),
+            (failed, HoldoutArm.Holdout, lessonA.ExperienceId, TaskVerificationStatus.Failed),
+            (unknown, HoldoutArm.Treatment, lessonB.ExperienceId, TaskVerificationStatus.Unknown),
+            (pending, HoldoutArm.Holdout, lessonA.ExperienceId, null),
+        }.OrderBy(row => row.Item1).ThenBy(row => row.Item3).ToList();
+        Assert.Equal(expected, result.Rows.Select(row => (row.RunId, row.Arm, row.ExperienceId, row.RunOutcome)));
+        Assert.All(result.Rows, row => Assert.NotEqual(default, row.AssignedAt));
+
+        // Only the exact scope's rows: the other scope reads its own and nothing of this one's.
+        var foreign = await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(other), CancellationToken.None);
+        Assert.Equal([(foreignRun, foreignLesson.ExperienceId)], foreign.Rows.Select(row => (row.RunId, row.ExperienceId)));
+    }
+
+    [Fact]
+    public async Task Holdout_outcomes_page_by_run_and_record_without_gaps_or_repeats()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lessons = new List<ExperienceRecord>();
+        for (var i = 0; i < 3; i++)
+        {
+            lessons.Add(await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated)));
+        }
+
+        for (var i = 0; i < 4; i++)
+        {
+            await Assign(auth, scope, Guid.NewGuid(), HoldoutArm.Treatment, [.. lessons]);
+        }
+
+        var all = (await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None)).Rows;
+        Assert.Equal(12, all.Count);
+
+        var paged = new List<HoldoutOutcomeRow>();
+        HoldoutOutcomeCursor? after = null;
+        while (true)
+        {
+            var page = await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope, 5, after), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Found, page.Outcome);
+            paged.AddRange(page.Rows);
+            if (page.Rows.Count < 5)
+            {
+                break;
+            }
+
+            after = new(page.Rows[^1].RunId, page.Rows[^1].ExperienceId);
+        }
+
+        Assert.Equal(all.Select(row => (row.RunId, row.ExperienceId)), paged.Select(row => (row.RunId, row.ExperienceId)));
+    }
+
+    [Fact]
+    public async Task Only_a_run_record_in_exactly_the_row_s_scope_is_the_run_s_outcome()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant, team: "team-1");
+        var other = Scope(tenant, team: "team-9");
+        var lesson = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+        var shared = Guid.NewGuid();
+        var elsewhere = Guid.NewGuid();
+        await Assign(Authorize(tenant), scope, shared, HoldoutArm.Holdout, lesson);
+        await Assign(Authorize(tenant), scope, elsewhere, HoldoutArm.Holdout, lesson);
+
+        // Two records name the shared run: the other scope's, created first, and this scope's, created later. Only this
+        // scope's counts. The run finalized only in another scope has no outcome here.
+        await CreateAsync(tenant, RunRecord(other, shared, TaskVerificationStatus.Verified, Time.AddMinutes(-10)));
+        await CreateAsync(tenant, RunRecord(scope, shared, TaskVerificationStatus.Failed, Time));
+        await CreateAsync(tenant, RunRecord(other, elsewhere, TaskVerificationStatus.Verified));
+
+        var expected = new (Guid, TaskVerificationStatus?)[] { (shared, TaskVerificationStatus.Failed), (elsewhere, null) }.OrderBy(row => row.Item1).ToList();
+
+        // The same answer whether or not the caller's bounds reach the other scope.
+        foreach (var authorization in new[] { Authorize(tenant), Authorize(tenant) with { TeamId = "team-1" } })
+        {
+            var result = await Store.QueryHoldoutOutcomesAsync(authorization, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+            Assert.Equal(expected, result.Rows.Select(row => (row.RunId, row.RunOutcome)));
+        }
+    }
+
+    [Theory]
+    [InlineData("denied")]
+    [InlineData("limit-zero")]
+    [InlineData("limit-too-big")]
+    [InlineData("empty-after-run")]
+    [InlineData("empty-after-record")]
+    [InlineData("no-query")]
+    [InlineData("blank-tenant")]
+    public async Task A_refused_holdout_outcome_read_is_denied_or_invalid(string refusal)
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var valid = new HoldoutOutcomeQuery(scope);
+        var (authorization, query) = refusal switch
+        {
+            "denied" => (Authorize(NewTenant()), valid),
+            "limit-zero" => (Authorize(tenant), valid with { Limit = 0 }),
+            "limit-too-big" => (Authorize(tenant), valid with { Limit = HoldoutOutcomeQuery.MaxLimit + 1 }),
+            "empty-after-run" => (Authorize(tenant), valid with { After = new(Guid.Empty, Guid.NewGuid()) }),
+            "empty-after-record" => (Authorize(tenant), valid with { After = new(Guid.NewGuid(), Guid.Empty) }),
+            "no-query" => (Authorize(tenant), (HoldoutOutcomeQuery)null!),
+            _ => (Authorize(tenant), valid with { Scope = scope with { TenantId = " " } }),
+        };
+
+        var result = await Store.QueryHoldoutOutcomesAsync(authorization, query, CancellationToken.None);
+
+        Assert.Equal(refusal == "denied" ? ExperienceStoreOutcome.Denied : ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(refusal != "denied", result.Errors.Count > 0);
+        Assert.Empty(result.Rows);
+    }
+
+    private async Task Assign(AuthorizationContext auth, Scope scope, Guid runId, HoldoutArm arm, params ExperienceRecord[] lessons)
+    {
+        var result = await Store.RecordHoldoutAssignmentAsync(
+            auth, scope, new HoldoutAssignment(runId, arm, [.. lessons.Select(lesson => new RunExposure(lesson.ExperienceId, lesson.Revision))], Time), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, result.Outcome);
+    }
+
+    private static ExperienceRecord RunRecord(Scope scope, Guid runId, TaskVerificationStatus status, DateTimeOffset? createdAt = null) =>
+        Record(scope, status == TaskVerificationStatus.Verified ? ExperienceStatus.Validated : ExperienceStatus.Quarantined, createdAt: createdAt) with
+        {
+            SourceRunId = runId,
+            Outcome = new Outcome(status, [], null, Time),
+        };
 
     // ---------------------------------------------------------------- lifecycle commit
 
@@ -1578,8 +1744,9 @@ public abstract class RecordStoreConformanceTests
     }
 
     /// <summary>
-    /// Story 25.1: fails unless <paramref name="store"/> overrides both of <see cref="IExperienceRecordStore.TracksHoldout"/>
-    /// and <see cref="IExperienceRecordStore.RecordHoldoutAssignmentAsync"/>, or neither, and its capability says which.
+    /// Stories 25.1 and 25.2: fails unless <paramref name="store"/> overrides all three of
+    /// <see cref="IExperienceRecordStore.TracksHoldout"/>, <see cref="IExperienceRecordStore.RecordHoldoutAssignmentAsync"/>
+    /// and <see cref="IExperienceRecordStore.QueryHoldoutOutcomesAsync"/>, or none, and its capability says which.
     /// </summary>
     /// <param name="store">The store, or decorator, to check.</param>
     public static void AssertHoldoutTrackingIsConsistent(IExperienceRecordStore store)
@@ -1595,9 +1762,11 @@ public abstract class RecordStoreConformanceTests
 
         var capability = Overrides("get_" + nameof(IExperienceRecordStore.TracksHoldout));
         var record = Overrides(nameof(IExperienceRecordStore.RecordHoldoutAssignmentAsync));
+        var query = Overrides(nameof(IExperienceRecordStore.QueryHoldoutOutcomesAsync));
         Assert.True(
-            capability == record,
-            $"{store.GetType().Name} overrides TracksHoldout: {capability}, RecordHoldoutAssignmentAsync: {record}. Override both or neither.");
+            capability == record && record == query,
+            $"{store.GetType().Name} overrides TracksHoldout: {capability}, RecordHoldoutAssignmentAsync: {record}, "
+            + $"QueryHoldoutOutcomesAsync: {query}. Override all three or none of them.");
         Assert.Equal(capability, store.TracksHoldout);
     }
 }

@@ -807,6 +807,16 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         OnRecordHoldout?.Invoke(authorization, scope, assignment, cancellationToken)
             ?? Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
 
+    /// <summary>What <see cref="QueryHoldoutOutcomesAsync"/> answers, when set; otherwise the port's default (nothing, not tracked).</summary>
+    public Func<AuthorizationContext, HoldoutOutcomeQuery, CancellationToken, Task<HoldoutOutcomeQueryResult>>? OnQueryHoldout { get; set; }
+
+    public Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken) =>
+        OnQueryHoldout?.Invoke(authorization, query, cancellationToken)
+            ?? Task.FromResult(HoldoutOutcomeQueryResult.NotTracked);
+
     public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Injection must not read history.");
 

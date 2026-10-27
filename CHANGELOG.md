@@ -28,6 +28,23 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `SELECT` and `INSERT`. The table is .NET-only, so the contract is unchanged; in a mixed fleet run the .NET privileges
   call after the contract's files. The in-memory store records assignments too.
 
+### Estimate benefit from verified outcomes (story 25.2)
+
+- **`AgentExperienceBenefit.EstimateAsync(services, authorization, scope, options?, ct)`** compares how often the
+  holdout's two arms verified, overall and per lesson: per arm the runs, successes and rate, the difference (treatment
+  minus holdout) with a 95% Newcombe hybrid-score interval, and a verdict (`ExperienceBenefitVerdict.NoEvidence`,
+  `Helps`, `Hurts`) that stays `NoEvidence` until each arm has `MinimumRunsPerArm` runs (20 by default) and the interval
+  excludes zero. A run's outcome is its own finalized record's; `Unknown` outcomes, runs not finalized yet and runs
+  recorded in both arms are left out of the rates and counted. The arithmetic is the pure
+  `ExperienceBenefitEstimator.Estimate` in Core. Nothing about ranking, confidence or injection changes. See
+  [Reading the estimate](docs/guide/injection.md#reading-the-estimate).
+- **New optional store read `IExperienceRecordStore.QueryHoldoutOutcomesAsync`** (`HoldoutOutcomeQuery`,
+  `HoldoutOutcomeCursor`, `HoldoutOutcomeRow`, `HoldoutOutcomeQueryResult`): a keyset-paged read of one scope's
+  assignment rows, each with its run's outcome status, under the caller's authorization. The default reads nothing and
+  reports not tracked; a store overrides `TracksHoldout`, `RecordHoldoutAssignmentAsync` and this read together, which
+  the conformance suite's `AssertHoldoutTrackingIsConsistent` now checks. The in-memory and PostgreSQL stores implement
+  it (PostgreSQL in one statement per page, opening sealed records; no migration).
+
 ## 0.1.0-preview.16
 
 The Python and Go ports can now list what an agent learned and report the same OpenTelemetry spans and metrics as .NET.

@@ -1131,3 +1131,50 @@ the arms.
   own record removes that run's rows. In PostgreSQL the rows are migration `0027`'s
   `agent_experience.experience_holdout_assignments` (see [the schema](postgres-schema.md)); the in-memory store keeps
   them in memory. The Python and Go ports do not take part yet.
+
+### Reading the estimate
+
+`AgentExperienceBenefit.EstimateAsync(services, authorization, scope)` reads the holdout's rows in exactly that scope,
+each with its run's verified outcome, and compares the arms:
+
+```csharp
+var estimate = await AgentExperienceBenefit.EstimateAsync(app.Services, authorization, scope);
+Console.WriteLine($"{estimate.Overall.Verdict}: {estimate.Overall.Treatment.Rate:P0} with lessons, " +
+    $"{estimate.Overall.Holdout.Rate:P0} without ({estimate.Overall.Lower:+0.00;-0.00} to {estimate.Overall.Upper:+0.00;-0.00})");
+foreach (var lesson in estimate.Lessons)
+{
+    Console.WriteLine($"{lesson.ExperienceId}: {lesson.Comparison.Verdict}");
+}
+```
+
+- **A run's outcome is its own record's.** The run's finalized record (the live record whose `SourceRunId` is the run,
+  in exactly the scope the injection request used) carries the verified outcome: `Verified` counts as a success,
+  `Failed` as a failure. A run whose outcome is `Unknown` is left out of the rates and counted as `Unverified`; one with
+  no such record yet (not finalized, or sealed under a destroyed key) is counted as `Pending`; one recorded in both arms
+  (the rate or salt changed while it ran) is counted as `MixedArm`. Only assignment rows count: exposure alone never
+  makes a run part of the comparison.
+- **Capture and injection must use the same scope.** A run whose record is written in a different scope from its
+  injection request (`ExperienceRunDescriptor`'s scope against `RetrieveExperienceRequest`'s) is never matched to its
+  outcome and stays `Pending`, however long you wait. A record in another scope that reuses the run's ID is ignored.
+- **Per arm**, `Runs`, `Successes` and `Rate`; then `Difference` (treatment rate minus holdout rate) with a 95% interval,
+  `Lower` to `Upper`: Newcombe's hybrid score interval, built from each arm's Wilson score interval, which stays inside
+  -1..1 and behaves when a rate is 0 or 1. Both are `null` while either arm has no runs.
+- **The verdict** is `NoEvidence` until each arm has at least `MinimumRunsPerArm` runs (20 by default, settable through
+  `ExperienceBenefitOptions`); then `Helps` when the whole interval is above zero, `Hurts` when it is below, and
+  `NoEvidence` when it spans zero. `NoEvidence` is not "no effect": it means the data cannot yet support a claim.
+- **Per lesson**, the same comparison over the runs whose blocks named that lesson: holdout runs were denied it,
+  treatment runs were given it. Runs usually name several lessons, so per-lesson estimates are not independent.
+- **Many lessons means many comparisons.** Each per-lesson verdict is a separate 95% test, so with dozens of lessons
+  some `Helps` or `Hurts` will turn up by chance alone. Trust the overall verdict first, and treat a lone per-lesson
+  verdict as a lead to confirm, not a finding.
+- **Do not stop when it looks good.** The interval assumes you look once. Checking the verdict again and again and
+  stopping the first time it says `Helps` (or `Hurts`) overstates it. Decide in advance how many runs to wait for, or
+  require the verdict to hold over a long stretch.
+- **Watch `Pending` and `Unverified`.** Those runs are left out of the rates. If failing runs finalize less often, or
+  more often end `Unknown`, in one arm than the other, the rates are biased. Large or lopsided counts there mean the
+  verdict should not be trusted yet.
+- **What it reads.** The store's `QueryHoldoutOutcomesAsync`, a page of up to 1,000 rows at a time, under the caller's
+  authorization (row-level security bounds it in PostgreSQL), decoding sealed records through the store. A store that
+  does not record the holdout gives an empty estimate with `Tracked = false`; a scope outside the authorization gives an
+  empty one whose `Outcome` is `Denied`. The estimate changes nothing about ranking, confidence or injection, and the
+  arithmetic is `ExperienceBenefitEstimator.Estimate`, pure and usable on rows read any other way.
