@@ -23,7 +23,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
     [
         "experience_records", "lifecycle_events", "confidence_evidence", "experience_grants", "experience_grant_events",
         "experience_grant_access", "reuse_feedback", "reuse_feedback_exposures", "experience_injections",
-        "experience_holdout_assignments",
+        "experience_holdout_assignments", "experience_provider_holdout_assignments",
     ];
 
     // ---------------------------------------------------------------- nothing declared
@@ -197,6 +197,48 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
 
         // The same row for its own live record, in its own scope, is admitted.
         Assert.Equal(1L, await ScalarAsync<long>(world.Owner, null, "SELECT count(*) FROM agent_experience.experience_injections WHERE experience_id = @id", ("id", a)));
+    }
+
+    // ---------------------------------------------------------------- provider holdout assignments (story 25.8)
+
+    [Fact]
+    public async Task A_provider_holdout_row_is_written_and_read_only_inside_the_declared_bounds()
+    {
+        await using var world = await RlsWorldAsync("rls_prov_holdout");
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var store = new PostgresExperienceRecordStore(world.App);
+        var runA = Guid.NewGuid();
+        foreach (var (tenant, run) in new[] { (tenantA, runA), (tenantB, Guid.NewGuid()) })
+        {
+            Assert.Equal(
+                ExperienceStoreOutcome.Committed,
+                (await store.RecordProviderHoldoutAssignmentAsync(
+                    Authorize(tenant), Scope(tenant), new ProviderHoldoutAssignment(run, "mem0", HoldoutArm.Holdout, DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+        }
+
+        const string All = "SELECT count(*) FROM agent_experience.experience_provider_holdout_assignments";
+        Assert.Equal(2L, await ScalarAsync<long>(world.Owner, All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantA), All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantB), All));
+        Assert.Equal(0L, await ScalarAsync<long>(world.App, All));
+
+        // The insert with its scope replaced by tenant B's, run in tenant A's bounds, is refused.
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App,
+            Authorize(tenantA),
+            PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql,
+            [("run_id", Guid.NewGuid()), ("provider_key", "mem0"), ("arm", "Holdout"), ("assigned_at", DateTimeOffset.UtcNow)],
+            Scope(tenantB)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, refused.SqlState);
+
+        // The application role can neither update nor remove a row: the table is append and read.
+        var update = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "UPDATE agent_experience.experience_provider_holdout_assignments SET arm = 'Treatment' WHERE run_id = @id", ("id", runA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, update.SqlState);
+        var removal = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "DELETE FROM agent_experience.experience_provider_holdout_assignments WHERE run_id = @id", ("id", runA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, removal.SqlState);
     }
 
     // ---------------------------------------------------------------- holdout assignments (story 25.1)
@@ -448,6 +490,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         { "reuse_feedback_exposures", "experience_id" },
         { "experience_injections", "experience_id" },
         { "experience_holdout_assignments", "run_id" },
+        { "experience_provider_holdout_assignments", "run_id" },
     };
 
     [Theory]
@@ -1113,6 +1156,11 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
             var assigned = await new PostgresExperienceRecordStore(App).RecordHoldoutAssignmentAsync(
                 Authorize(tenant), owner, new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Holdout, [new(record, 1)], DateTimeOffset.UtcNow), CancellationToken.None);
             Assert.Equal(ExperienceStoreOutcome.Committed, assigned.Outcome);
+
+            // Story 25.8: a measured provider's holdout row in the owner's scope.
+            var measured = await new PostgresExperienceRecordStore(App).RecordProviderHoldoutAssignmentAsync(
+                Authorize(tenant), owner, new ProviderHoldoutAssignment(Guid.NewGuid(), "mem0", HoldoutArm.Holdout, DateTimeOffset.UtcNow), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Committed, measured.Outcome);
         }
 
         public async ValueTask DisposeAsync()

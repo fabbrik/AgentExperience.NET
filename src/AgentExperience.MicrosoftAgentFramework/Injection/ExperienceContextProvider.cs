@@ -182,10 +182,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// </summary>
     private int _abandonedReads;
 
-    /// <summary>The background injection records still running, so a test can wait for them.</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Task, byte> _recordings = new();
-
-    private int _abandonedRecords;
+    /// <summary>The background injection and holdout records, shared with <see cref="ExperienceHoldoutContextProvider"/>.</summary>
+    private readonly BackgroundRecorder _recorder;
 
     /// <summary>
     /// Creates a provider over Core's retrieval service, the record store its final eligibility check
@@ -221,6 +219,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         _stateKey = options.SessionStateKey;
         _stateKeys = Array.AsReadOnly(new[] { _stateKey });
         _benefit = options.Benefit.Enabled ? new ExperienceBenefitCache(store, options.Benefit, options.TimeProvider) : null;
+        _recorder = new BackgroundRecorder(options.TimeProvider, options.Limits.MaxAbandonedReads);
     }
 
     /// <summary>
@@ -249,6 +248,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
 
     /// <summary>The confidence floor this provider's retrieval applies.</summary>
     internal double ConfidenceFloor => _retrieval.Policy.MinimumConfidence;
+
+    /// <summary>The injection holdout this provider was built with, which the one-call setup's measured memory providers default to.</summary>
+    internal ExperienceHoldoutOptions HoldoutOptions => _options.Holdout;
 
     /// <summary>The benefit policy this provider was built with (its window and threshold apply even when it is off).</summary>
     internal ExperienceBenefitPolicy BenefitPolicy => _options.Benefit;
@@ -939,7 +941,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var authorization = request.Authorization;
         var scope = request.Scope;
         var ids = experienceIds.ToArray();
-        StartRecording(
+        _recorder.Start(
             InjectionDiagnostics.RecordInjection,
             () => _store.TracksInjections,
             ids.Length,
@@ -964,7 +966,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var authorization = request.Authorization;
         var scope = request.Scope;
         var records = assignment.Records.ToArray();
-        StartRecording(
+        _recorder.Start(
             InjectionDiagnostics.RecordHoldout,
             () => _store.TracksHoldout,
             records.Length,
@@ -979,175 +981,25 @@ public sealed class ExperienceContextProvider : AIContextProvider
             });
     }
 
-    /// <summary>What one background write answered: whether it committed, and whether the store tracks what it was asked to record.</summary>
-    private readonly record struct RecordAnswer(bool Committed, bool Tracked);
-
-    /// <summary>
-    /// Starts one background record of <paramref name="count"/> items, reported as <paramref name="operation"/>: skipped
-    /// and reported as not tracked when <paramref name="tracks"/> says the store does not record them, otherwise run on
-    /// the thread pool by <see cref="RecordAsync"/> and tracked until it ends. Never throws.
-    /// </summary>
-    private void StartRecording(string operation, Func<bool> tracks, int count, Func<Func<int, int, CancellationToken, Task<RecordAnswer>>> prepare)
-    {
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
-        try
-        {
-            if (!tracks())
-            {
-                InjectionDiagnostics.BackgroundRecorded(operation, InjectionDiagnostics.NotTrackedOutcome, started, errorClass: null);
-                return;
-            }
-
-            var write = prepare();
-            var work = Task.Run(() => RecordAsync(operation, count, write, started), CancellationToken.None);
-            _recordings.TryAdd(work, 0);
-            _ = work.ContinueWith(
-                done => _recordings.TryRemove(done, out _),
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
-        catch (Exception)
-        {
-            // A store whose capability throws, or a scheduler that refuses the work: telemetry only.
-            InjectionDiagnostics.BackgroundRecorded(operation, InjectionDiagnostics.NotRecordedOutcome, started, ExperienceOperationErrorClass.Unexpected);
-        }
-    }
-
-    /// <summary>
-    /// The background record: the items in chunks of at most <see cref="ExperienceRecordGetManyResult.MaxCount"/>, all
-    /// within <see cref="InjectionRecordTimeout"/> on the provider's clock. Each write is awaited with a timeout rather
-    /// than trusted to honour its token: a store that ignores cancellation is abandoned, counted against
-    /// <see cref="ExperienceInjectionLimits.MaxAbandonedReads"/> like an abandoned eligibility read, and its fault
-    /// observed once it ends. Never throws.
-    /// </summary>
-    private async Task RecordAsync(string operation, int count, Func<int, int, CancellationToken, Task<RecordAnswer>> writeChunk, long started)
-    {
-        var outcome = InjectionDiagnostics.RecordedOutcome;
-        ExperienceOperationErrorClass? errorClass = null;
-        try
-        {
-            var clock = _options.TimeProvider;
-            var since = clock.GetTimestamp();
-            var chunkSize = Math.Clamp(InjectionRecordChunkSize, 1, ExperienceRecordGetManyResult.MaxCount);
-            for (var offset = 0; offset < count; offset += chunkSize)
-            {
-                if (Volatile.Read(ref _abandonedRecords) >= _options.Limits.MaxAbandonedReads)
-                {
-                    // Too many earlier writes are still running against the store: another would only add to them.
-                    outcome = InjectionDiagnostics.NotRecordedOutcome;
-                    errorClass = ExperienceOperationErrorClass.Timeout;
-                    break;
-                }
-
-                var left = InjectionRecordTimeout - clock.GetElapsedTime(since);
-                if (left <= TimeSpan.Zero)
-                {
-                    throw new TimeoutException("The record ran out of time.");
-                }
-
-                var from = offset;
-                var length = Math.Min(count, offset + chunkSize) - offset;
-                var source = new CancellationTokenSource();
-                var write = Task.Run(() => writeChunk(from, length, source.Token), CancellationToken.None);
-                RecordAnswer recorded;
-                var abandoned = false;
-                try
-                {
-                    recorded = await write.WaitAsync(left, clock).ConfigureAwait(false);
-                }
-                catch (TimeoutException) when (!write.IsCompleted)
-                {
-                    abandoned = true;
-                    AbandonRecord(write, source);
-                    throw;
-                }
-                finally
-                {
-                    if (!abandoned)
-                    {
-                        source.Dispose();
-                    }
-                }
-
-                if (!recorded.Committed)
-                {
-                    outcome = InjectionDiagnostics.NotRecordedOutcome;
-                    break;
-                }
-
-                if (!recorded.Tracked)
-                {
-                    outcome = InjectionDiagnostics.NotTrackedOutcome;
-                    break;
-                }
-            }
-        }
-        catch (TimeoutException)
-        {
-            outcome = InjectionDiagnostics.OutcomeUnknownOutcome;
-            errorClass = ExperienceOperationErrorClass.Timeout;
-        }
-        catch (OperationCanceledException)
-        {
-            outcome = InjectionDiagnostics.OutcomeUnknownOutcome;
-            errorClass = ExperienceOperationErrorClass.Cancelled;
-        }
-        catch (Exception ex)
-        {
-            outcome = InjectionDiagnostics.NotRecordedOutcome;
-            errorClass = ex is ExperienceStoreException ? ExperienceOperationErrorClass.Infrastructure : ExperienceOperationErrorClass.Unexpected;
-        }
-
-        InjectionDiagnostics.BackgroundRecorded(operation, outcome, started, errorClass);
-    }
-
-    /// <summary>
-    /// Hands an injection write that overran its bound off to run itself down: counts it, cancels its token off the
-    /// recording's own path, and once it and the cancellation have ended, observes its fault, stops counting it and
-    /// disposes the token source. The same hand-off as <see cref="Abandon"/>.
-    /// </summary>
-    private void AbandonRecord(Task write, CancellationTokenSource source)
-    {
-        Interlocked.Increment(ref _abandonedRecords);
-        var cancelling = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    await source.CancelAsync().ConfigureAwait(false);
-                }
-                catch (Exception)
-                {
-                    // A throwing cancellation callback changes nothing about the report.
-                }
-            },
-            CancellationToken.None);
-
-        _ = Task.WhenAll(write, cancelling).ContinueWith(
-            completed =>
-            {
-                _ = completed.Exception;
-                _ = write.Exception;
-                source.Dispose();
-                Interlocked.Decrement(ref _abandonedRecords);
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
     /// <summary>How long one background injection record may take, all chunks together; a few seconds by default.</summary>
-    internal TimeSpan InjectionRecordTimeout { get; set; } = DefaultInjectionRecordTimeout;
+    internal TimeSpan InjectionRecordTimeout
+    {
+        get => _recorder.Timeout;
+        set => _recorder.Timeout = value;
+    }
 
     /// <summary>How many IDs one write names: the store's maximum, <see cref="ExperienceRecordGetManyResult.MaxCount"/>. Lower only in tests.</summary>
-    internal int InjectionRecordChunkSize { get; set; } = ExperienceRecordGetManyResult.MaxCount;
+    internal int InjectionRecordChunkSize
+    {
+        get => _recorder.ChunkSize;
+        set => _recorder.ChunkSize = value;
+    }
 
     /// <summary>The default <see cref="InjectionRecordTimeout"/>.</summary>
-    internal static readonly TimeSpan DefaultInjectionRecordTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan DefaultInjectionRecordTimeout = BackgroundRecorder.DefaultTimeout;
 
     /// <summary>Completes once every background injection record started so far has ended. For tests.</summary>
-    internal Task InjectionRecordsSettledAsync() => Task.WhenAll(_recordings.Keys);
+    internal Task InjectionRecordsSettledAsync() => _recorder.SettledAsync();
 
     /// <summary>Completes once every benefit refresh started so far has ended. For tests.</summary>
     internal Task BenefitRefreshesSettledAsync() => _benefit?.SettledAsync() ?? Task.CompletedTask;
@@ -1156,7 +1008,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     internal ExperienceBenefitCache? BenefitCache => _benefit;
 
     /// <summary>How many abandoned injection writes are still running against the store. For tests.</summary>
-    internal int AbandonedInjectionRecords => Volatile.Read(ref _abandonedRecords);
+    internal int AbandonedInjectionRecords => _recorder.Abandoned;
 
     /// <summary>
     /// Records <paramref name="exposures"/> on the run this invocation is captured as, when it is captured by

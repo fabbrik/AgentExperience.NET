@@ -211,6 +211,70 @@ internal static partial class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>Validates a provider holdout write: the run, the provider key, a defined arm, a set instant, and the scope.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateProviderHoldoutAssignment(Scope scope, ProviderHoldoutAssignment? assignment)
+    {
+        var errors = new List<StoreValidationError>();
+        if (assignment is null)
+        {
+            errors.Add(new("Assignment", "is required."));
+            ValidateScope(scope, "Scope", errors);
+            return errors;
+        }
+
+        if (assignment.RunId == Guid.Empty)
+        {
+            errors.Add(new("Assignment.RunId", "must not be empty."));
+        }
+
+        if (!ProviderHoldoutAssignment.IsValidProviderKey(assignment.ProviderKey))
+        {
+            errors.Add(new("Assignment.ProviderKey", $"must be 1 to {ProviderHoldoutAssignment.MaxProviderKeyLength} characters of A-Z, a-z, 0-9, '.', '_' and '-'."));
+        }
+
+        if (!Enum.IsDefined(assignment.Arm))
+        {
+            errors.Add(new("Assignment.Arm", "must be a defined HoldoutArm value."));
+        }
+
+        if (assignment.AssignedAt == default)
+        {
+            errors.Add(new("Assignment.AssignedAt", "must be set."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>Validates a provider holdout read: the scope, the provider key, the page bound, and the optional resume point.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateProviderHoldoutOutcomeQuery(ProviderHoldoutOutcomeQuery? query)
+    {
+        var errors = new List<StoreValidationError>();
+        if (query is null)
+        {
+            errors.Add(new("Query", "is required."));
+            return errors;
+        }
+
+        ValidateScope(query.Scope, "Scope", errors);
+        if (!ProviderHoldoutAssignment.IsValidProviderKey(query.ProviderKey))
+        {
+            errors.Add(new("ProviderKey", $"must be 1 to {ProviderHoldoutAssignment.MaxProviderKeyLength} characters of A-Z, a-z, 0-9, '.', '_' and '-'."));
+        }
+
+        if (query.Limit is < ProviderHoldoutOutcomeQuery.MinLimit or > ProviderHoldoutOutcomeQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ProviderHoldoutOutcomeQuery.MinLimit} and {ProviderHoldoutOutcomeQuery.MaxLimit}."));
+        }
+
+        if (query.AfterRunId == Guid.Empty)
+        {
+            errors.Add(new("AfterRunId", "must not be empty."));
+        }
+
+        return errors;
+    }
+
     /// <summary>
     /// Validates a holdout outcome read: the scope, the page bound, and the optional resume point, whose IDs
     /// must both be set.

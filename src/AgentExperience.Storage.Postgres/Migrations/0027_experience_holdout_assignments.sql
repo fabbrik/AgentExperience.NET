@@ -26,7 +26,10 @@
 -- transaction, the sweeps included), and the tombstone transition deletes, through the trigger below, every row that
 -- names the record as a lesson and every row of the run the record was captured from (the record's source_run_id
 -- before the purge zeroes it, in the record's own tenant only: a run id is a caller-supplied value, so another tenant's
--- record naming the same run must not erase this tenant's rows), so neither the lesson nor the run outlives its erasure here. The trigger runs as whoever
+-- record naming the same run must not erase this tenant's rows), so neither the lesson nor the run outlives its erasure here.
+-- A run's rows go only when its last live record in the tenant is erased: erasing one of several records of a run
+-- that still has a live one keeps them. Two of a run's records erased concurrently each still see the other as live, so
+-- the run's rows can outlive both; they then never join an outcome and count as pending. The trigger runs as whoever
 -- tombstones the record: the owner, inside the SECURITY DEFINER purge, which row-level security never binds. A record
 -- row is never deleted (0010's experience_records_no_delete refuses it); the foreign key's cascade covers one removed
 -- anyway, by an owner who disabled that guard. In encrypted mode the store also skips a record whose key is already
@@ -88,9 +91,17 @@ AS $body$
 BEGIN
     IF NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
         DELETE FROM agent_experience.experience_holdout_assignments
-        WHERE experience_id = NEW.experience_id
-           OR (run_id = OLD.source_run_id AND OLD.source_run_id <> '00000000-0000-0000-0000-000000000000'::uuid
-               AND tenant_id = OLD.tenant_id);
+        WHERE experience_id = NEW.experience_id;
+
+        -- The run's rows go only with its last live record in the tenant: a run with another live record keeps them.
+        IF OLD.source_run_id <> '00000000-0000-0000-0000-000000000000'::uuid AND NOT EXISTS (
+            SELECT 1 FROM agent_experience.experience_records r
+            WHERE r.tenant_id = OLD.tenant_id AND r.source_run_id = OLD.source_run_id
+              AND r.deleted_at IS NULL AND r.experience_id <> NEW.experience_id)
+        THEN
+            DELETE FROM agent_experience.experience_holdout_assignments
+            WHERE run_id = OLD.source_run_id AND tenant_id = OLD.tenant_id;
+        END IF;
     END IF;
 
     RETURN NULL;

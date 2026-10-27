@@ -128,7 +128,7 @@ public class TelemetryNamesFileTests
             }
 
             Operation(json, InjectionDiagnostics.Inject, adapterSource, true, Enum.GetNames<InjectionOutcome>());
-            foreach (var background in new[] { InjectionDiagnostics.RecordInjection, InjectionDiagnostics.RecordHoldout })
+            foreach (var background in new[] { InjectionDiagnostics.RecordInjection, InjectionDiagnostics.RecordHoldout, InjectionDiagnostics.RecordProviderHoldout })
             {
                 Operation(
                     json,

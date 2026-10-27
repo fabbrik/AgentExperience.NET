@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0028` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0029` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -774,8 +774,11 @@ as the store's own statement now does (see [How the text channel matches](retrie
   no `source_run_id`; such a write records its rows, which hold IDs only, never join a run's outcome and are counted as
   `Pending`. With row-level security on, only run records inside the operation's bounds are locked.
 - A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is
-  tombstoned, every row naming it and every row of the run it was captured from (its `source_run_id` before the purge
-  zeroes it), so erasing a lesson or a run's own record takes its rows with it on every erasure path.
+  tombstoned, every row naming it, and, when it was the run's last live record in its tenant, every row of the run it
+  was captured from (its `source_run_id` before the purge zeroes it), so erasing a lesson or a run's own records takes
+  their rows with them on every erasure path, while a run that still has a live record keeps its measurement. Two of a
+  run's records erased concurrently can each see the other as live and leave the run's rows; those never join an
+  outcome and count as `Pending`.
 - Its row-level security policies (`rls_holdout_assignments_select`, `_insert`): the row's scope inside the declared
   bounds, and, for an insert, a live record with that ID in exactly those scope columns. A grant never admits one.
 - The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
@@ -795,6 +798,35 @@ tenant's records. Nothing else changes: no column, constraint, trigger, policy o
   cannot run. The build takes a `SHARE` lock on `experience_records`, blocking every write to it (not reads) until it
   finishes. On a large table, build it out of band first, as the script's header and
   [Applying the schema](deployment.md#applying-the-schema) show; the script's `IF NOT EXISTS` then makes it a no-op.
+
+### 0029: a measured memory provider's holdout assignments
+
+`0029_experience_provider_holdout_assignments.sql` records which arm of a measured memory provider's holdout each
+captured run was assigned to (see [Measuring another memory provider](injection.md#measuring-another-memory-provider)):
+
+- `agent_experience.experience_provider_holdout_assignments`: one row per tenant, captured run and provider key, keyed
+  on `(tenant_id, run_id, provider_key)` (no foreign key: the run's record is written later, at finalization), with the `arm`
+  (`Treatment` or `Holdout`), the caller's six scope columns (the scope the run was captured in) and `assigned_at`. A
+  check constraint holds the key to 1-100 characters of `[A-Za-z0-9._-]`. The store writes it with one
+  `INSERT … SELECT … ON CONFLICT DO NOTHING` per invocation that took part, clamping the instant to `clock_timestamp()`
+  and keeping a run's first row per key. It holds no content and nothing about the provider's memory items. The key
+  includes the tenant, so a run ID another tenant reuses (run IDs a host supplies through `ContinuesRunId`) never
+  suppresses this tenant's row.
+  `QueryProviderHoldoutOutcomesAsync` reads one key's rows back a page at a time in run order, joined to each run's
+  outcome exactly as `0027`'s rows are (served by `0028`'s index and by
+  `experience_provider_holdout_assignments_key_idx` on `(tenant_id, provider_key, run_id)`).
+- **Concurrency** is `0027`'s late-write guard: the insert first locks the run's own records `FOR KEY SHARE` and writes
+  nothing when all of them are by then tombstones, so an erasure of the run's record that overlaps the write serialises
+  with it in either order. The same known limit applies to an erasure committed before the write started.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is
+  tombstoned and was the run's last live record in its tenant, every row of the run it was captured from, in that tenant
+  only (a run ID is caller-supplied), with `0027`'s concurrent-erasure caveat.
+- Its row-level security policies (`rls_provider_holdout_assignments_select`, `_insert`): the row's scope inside the
+  declared bounds. The row names no record, so there is no record to check.
+- The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**; until then assignments are reported as not recorded and the
+  agent runs on. The table is .NET-only, as `0027`'s is.
+- No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
 

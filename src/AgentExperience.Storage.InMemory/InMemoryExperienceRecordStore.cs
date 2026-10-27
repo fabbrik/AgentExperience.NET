@@ -478,6 +478,123 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     internal sealed record StoredHoldoutAssignment(Guid RunId, Guid ExperienceId, long Revision, HoldoutArm Arm, Scope Scope, DateTimeOffset AssignedAt);
 
     /// <inheritdoc />
+    public bool TracksProviderHoldout => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The instant is clamped to this store's clock. A row that already exists for a run and key is kept as it is. This
+    /// store has no erasure, so no row is ever removed and no write is ever refused for an erased run.
+    /// </remarks>
+    public Task<ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ProviderHoldoutAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateProviderHoldoutAssignment(scope, assignment);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Invalid, errors));
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Denied, NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ExperienceHoldoutRecordResult>(cancellationToken);
+        }
+
+        var now = StoredSnapshots.Timestamp(_timeProvider.GetUtcNow());
+        var at = StoredSnapshots.Timestamp(assignment.AssignedAt);
+        if (at > now)
+        {
+            at = now;
+        }
+
+        lock (_gate)
+        {
+            ProviderHoldoutAssignments.TryAdd(
+                (scope.TenantId, assignment.RunId, assignment.ProviderKey),
+                new StoredProviderHoldoutAssignment(assignment.RunId, assignment.ProviderKey, assignment.Arm, scope, at));
+        }
+
+        return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Committed, NoErrors));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The key's rows in exactly the query's scope, ordered by run (<see cref="Guid.CompareTo(Guid)"/>), each joined to
+    /// the stored record in exactly the row's scope whose <see cref="ExperienceRecord.SourceRunId"/> is its run (the
+    /// earliest created, then the lowest ID, when more than one does), as <see cref="QueryHoldoutOutcomesAsync"/> joins it.
+    /// </remarks>
+    public Task<ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        ProviderHoldoutOutcomeQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+
+        var errors = ExperienceRecordValidator.ValidateProviderHoldoutOutcomeQuery(query);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ProviderHoldoutOutcomeQueryResult(ExperienceStoreOutcome.Invalid, [], errors));
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return Task.FromResult(new ProviderHoldoutOutcomeQueryResult(ExperienceStoreOutcome.Denied, [], NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ProviderHoldoutOutcomeQueryResult>(cancellationToken);
+        }
+
+        lock (_gate)
+        {
+            var rows = ProviderHoldoutAssignments.Values
+                .Where(row => row.Scope == query.Scope && string.Equals(row.ProviderKey, query.ProviderKey, StringComparison.Ordinal))
+                .Where(row => query.AfterRunId is not { } after || row.RunId.CompareTo(after) > 0)
+                .OrderBy(row => row.RunId)
+                .Take(query.Limit)
+                .Select(row => new ProviderHoldoutOutcomeRow(
+                    row.RunId,
+                    row.ProviderKey,
+                    row.Arm,
+                    row.AssignedAt,
+                    _records.Values
+                        .Where(record => record.SourceRunId == row.RunId && record.Scope == row.Scope)
+                        .OrderBy(record => record.CreatedAt)
+                        .ThenBy(record => record.ExperienceId)
+                        .FirstOrDefault()?.Outcome?.Status))
+                .ToList();
+
+            return Task.FromResult(new ProviderHoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, rows, NoErrors));
+        }
+    }
+
+    /// <summary>The provider holdout rows, keyed on tenant, run and provider key. Internal, for tests.</summary>
+    internal Dictionary<(string TenantId, Guid RunId, string ProviderKey), StoredProviderHoldoutAssignment> ProviderHoldoutAssignments { get; } = [];
+
+    /// <summary>A copy of every provider holdout row, taken under the store's lock. For tests.</summary>
+    internal IReadOnlyList<StoredProviderHoldoutAssignment> ReadProviderHoldoutAssignments()
+    {
+        lock (_gate)
+        {
+            return [.. ProviderHoldoutAssignments.Values];
+        }
+    }
+
+    /// <summary>One provider holdout row: the run, the key, the arm, the scope and an instant.</summary>
+    internal sealed record StoredProviderHoldoutAssignment(Guid RunId, string ProviderKey, HoldoutArm Arm, Scope Scope, DateTimeOffset AssignedAt);
+
+    /// <inheritdoc />
     public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
         AuthorizationContext authorization,
         Scope scope,

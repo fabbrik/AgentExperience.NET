@@ -7,6 +7,7 @@
     public static class AgentExperienceBenefit
     {
         public static System.Threading.Tasks.Task<AgentExperience.Core.Holdout.ExperienceBenefitEstimate> EstimateAsync(System.IServiceProvider services, AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.Task<AgentExperience.Core.Holdout.ExperienceProviderBenefitEstimate> EstimateProviderAsync(System.IServiceProvider services, AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, string providerKey, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public enum AgentExperienceEmbeddings
     {
@@ -283,6 +284,16 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         protected override System.Threading.Tasks.ValueTask InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ExperienceHoldoutContextProvider : Microsoft.Agents.AI.AIContextProvider
+    {
+        public ExperienceHoldoutContextProvider(Microsoft.Agents.AI.AIContextProvider inner, string providerKey, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions holdout, AgentExperience.Abstractions.IExperienceRecordStore store, System.Func<AgentExperience.Abstractions.Scope, AgentExperience.Abstractions.AuthorizationContext?>? authorize = null, System.TimeProvider? timeProvider = null) { }
+        public Microsoft.Agents.AI.AIContextProvider InnerProvider { get; }
+        public string ProviderKey { get; }
+        public override System.Collections.Generic.IReadOnlyList<string> StateKeys { get; }
+        public override object? GetService(System.Type serviceType, object? serviceKey = null) { }
+        protected override System.Threading.Tasks.ValueTask InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext context, System.Threading.CancellationToken cancellationToken = default) { }
+        protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public sealed class ExperienceHoldoutOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions>
     {
@@ -600,5 +611,6 @@ namespace Microsoft.Extensions.DependencyInjection
         public static AgentExperience.MicrosoftAgentFramework.IAgentExperienceBuilder AddAgentExperience(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<AgentExperience.MicrosoftAgentFramework.AgentExperienceOptions> configure) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceContextProvider GetAgentExperienceContextProvider(this System.IServiceProvider services) { }
         public static AgentExperience.MicrosoftAgentFramework.AgentExperienceLessons GetAgentExperienceLessons(this System.IServiceProvider services) { }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutContextProvider UseMeasuredMemory(this System.IServiceProvider services, Microsoft.Agents.AI.AIContextProvider memory, string providerKey, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions? holdout = null) { }
     }
 }

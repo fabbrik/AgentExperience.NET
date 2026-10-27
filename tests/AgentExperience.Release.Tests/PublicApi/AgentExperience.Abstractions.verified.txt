@@ -885,6 +885,7 @@
     {
         bool TracksHoldout { get; }
         bool TracksInjections { get; }
+        bool TracksProviderHoldout { get; }
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken);
@@ -894,9 +895,11 @@
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.HoldoutOutcomeQuery query, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ProviderHoldoutOutcomeQuery query, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryWithInjectionsAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.HoldoutAssignment assignment, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceInjectionRecordResult> RecordInjectionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, System.DateTimeOffset injectedAt, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ProviderHoldoutAssignment assignment, System.Threading.CancellationToken cancellationToken);
     }
     public interface IExperienceReuseFeedbackStore
     {
@@ -946,6 +949,45 @@
         public string? SourceVersion { get; init; }
         public bool Equals(AgentExperience.Abstractions.Provenance? other) { }
         public override int GetHashCode() { }
+    }
+    public sealed class ProviderHoldoutAssignment : System.IEquatable<AgentExperience.Abstractions.ProviderHoldoutAssignment>
+    {
+        public const int MaxProviderKeyLength = 100;
+        public ProviderHoldoutAssignment(System.Guid RunId, string ProviderKey, AgentExperience.Abstractions.HoldoutArm Arm, System.DateTimeOffset AssignedAt) { }
+        public AgentExperience.Abstractions.HoldoutArm Arm { get; init; }
+        public System.DateTimeOffset AssignedAt { get; init; }
+        public string ProviderKey { get; init; }
+        public System.Guid RunId { get; init; }
+        public static bool IsValidProviderKey(string? providerKey) { }
+    }
+    public sealed class ProviderHoldoutOutcomeQuery : System.IEquatable<AgentExperience.Abstractions.ProviderHoldoutOutcomeQuery>
+    {
+        public const int DefaultLimit = 500;
+        public const int MaxLimit = 1000;
+        public const int MinLimit = 1;
+        public ProviderHoldoutOutcomeQuery(AgentExperience.Abstractions.Scope Scope, string ProviderKey, int Limit = 500, System.Guid? AfterRunId = default) { }
+        public System.Guid? AfterRunId { get; init; }
+        public int Limit { get; init; }
+        public string ProviderKey { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public sealed class ProviderHoldoutOutcomeQueryResult : System.IEquatable<AgentExperience.Abstractions.ProviderHoldoutOutcomeQueryResult>
+    {
+        public ProviderHoldoutOutcomeQueryResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ProviderHoldoutOutcomeRow> Rows, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ProviderHoldoutOutcomeRow> Rows { get; init; }
+        public bool Tracked { get; init; }
+        public static AgentExperience.Abstractions.ProviderHoldoutOutcomeQueryResult NotTracked { get; }
+    }
+    public sealed class ProviderHoldoutOutcomeRow : System.IEquatable<AgentExperience.Abstractions.ProviderHoldoutOutcomeRow>
+    {
+        public ProviderHoldoutOutcomeRow(System.Guid RunId, string ProviderKey, AgentExperience.Abstractions.HoldoutArm Arm, System.DateTimeOffset AssignedAt, AgentExperience.Abstractions.TaskVerificationStatus? RunOutcome) { }
+        public AgentExperience.Abstractions.HoldoutArm Arm { get; init; }
+        public System.DateTimeOffset AssignedAt { get; init; }
+        public string ProviderKey { get; init; }
+        public System.Guid RunId { get; init; }
+        public AgentExperience.Abstractions.TaskVerificationStatus? RunOutcome { get; init; }
     }
     public sealed class RawPayload : System.IEquatable<AgentExperience.Abstractions.RawPayload>
     {

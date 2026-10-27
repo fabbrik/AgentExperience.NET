@@ -395,6 +395,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ExperienceInjectionsScriptName,
                 PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName,
                 PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName,
+                PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1342,8 +1343,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
     }
 
     /// <summary>
@@ -1395,8 +1396,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("WHEN i.injection_count = 9223372036854775807 THEN i.injection_count", PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
         Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
-        // Applied after every earlier script; 0027 and 0028 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+        // Applied after every earlier script; 0027 to 0029 follow it.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     /// <summary>
@@ -1427,7 +1428,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
             StringComparison.Ordinal);
         Assert.Contains("CHECK (arm IN ('Treatment', 'Holdout'))", statements, StringComparison.Ordinal);
         Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
-        Assert.Contains("OR (run_id = OLD.source_run_id", statements, StringComparison.Ordinal);
+        Assert.Contains("WHERE run_id = OLD.source_run_id AND tenant_id = OLD.tenant_id", statements, StringComparison.Ordinal);
+        Assert.Contains("AND r.deleted_at IS NULL AND r.experience_id <> NEW.experience_id", statements, StringComparison.Ordinal);
         Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_holdout_assignments_cleared", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
@@ -1451,8 +1453,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("LEAST(@assigned_at, pg_catalog.clock_timestamp())", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
         Assert.EndsWith("ON CONFLICT (run_id, experience_id) DO NOTHING", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
 
-        // Applied after every earlier script; 0028 follows it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        // Applied after every earlier script; 0028 and 0029 follow it.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
     }
 
     /// <summary>
@@ -1472,8 +1474,57 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("SHARE lock", script, StringComparison.Ordinal);
         Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run", script, StringComparison.Ordinal);
 
+        // Applied after every earlier script; 0029 follows it.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    /// <summary>
+    /// Story 25.8: 0029 creates the provider holdout table, its erasure trigger (the erased record's own run's rows, in its
+    /// tenant) and exactly its two canonical policies, and switches nothing on, grants nothing and defines no SECURITY
+    /// DEFINER function.
+    /// </summary>
+    [Fact]
+    public void The_provider_holdout_script_creates_the_table_its_erasure_trigger_and_its_canonical_policies_only()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        Assert.Equal(
+            ["rls_provider_holdout_assignments_insert", "rls_provider_holdout_assignments_select"],
+            RowLevelSecurityPolicies.NamesFor(ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable));
+        foreach (var policy in RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable))
+        {
+            Assert.Equal(1, CountOccurrences(statements, policy.Ddl));
+        }
+
+        Assert.Equal(2, CountOccurrences(statements, "CREATE POLICY "));
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_provider_holdout_assignments (", statements, StringComparison.Ordinal);
+        Assert.Contains("CONSTRAINT experience_provider_holdout_assignments_pkey PRIMARY KEY (tenant_id, run_id, provider_key)", statements, StringComparison.Ordinal);
+        Assert.Contains("CHECK (arm IN ('Treatment', 'Holdout'))", statements, StringComparison.Ordinal);
+        Assert.Contains("CHECK (provider_key ~ '^[A-Za-z0-9._-]{1,100}$')", statements, StringComparison.Ordinal);
+        Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+        Assert.Contains("WHERE run_id = OLD.source_run_id AND tenant_id = OLD.tenant_id", statements, StringComparison.Ordinal);
+        Assert.Contains("AND r.deleted_at IS NULL AND r.experience_id <> NEW.experience_id", statements, StringComparison.Ordinal);
+        Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_provider_holdout_assignments_cleared", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("REFERENCES", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("payload", statements, StringComparison.Ordinal);
+
+        // Append and read only, granted only when the table exists, and left out of the contract's privileges files.
+        var manifest = Assert.Single(ApplicationRolePrivileges.Tables, t => t.Name == ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable);
+        Assert.Empty(manifest.UpdateColumns);
+        Assert.False(manifest.Delete);
+        Assert.True(manifest.Optional);
+
+        // The insert writes the caller's own scope, behind 25.10's late-write guard, clamped, and never twice.
+        Assert.Contains(PostgresExperienceRecordStore.RunNotErasedPredicate, PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql, StringComparison.Ordinal);
+        Assert.Contains("LEAST(@assigned_at, pg_catalog.clock_timestamp())", PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql, StringComparison.Ordinal);
+        Assert.EndsWith("ON CONFLICT (tenant_id, run_id, provider_key) DO NOTHING", PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql, StringComparison.Ordinal);
+
         // The last script.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>
@@ -1502,7 +1553,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         foreach (var policy in RowLevelSecurityPolicies.All)
         {
             Assert.Equal(
-                policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable or ApplicationRolePrivileges.HoldoutAssignmentsTable ? 0 : 1,
+                policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable or ApplicationRolePrivileges.HoldoutAssignmentsTable
+                    or ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable ? 0 : 1,
                 CountOccurrences(statements, policy.Ddl));
         }
 

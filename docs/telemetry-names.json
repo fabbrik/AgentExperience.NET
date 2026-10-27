@@ -261,6 +261,17 @@
       ]
     },
     {
+      "operation": "record_provider_holdout",
+      "source": "AgentExperience.MicrosoftAgentFramework",
+      "span": false,
+      "outcomes": [
+        "Recorded",
+        "NotTracked",
+        "NotRecorded",
+        "OutcomeUnknown"
+      ]
+    },
+    {
       "operation": "benefit_refresh",
       "source": "AgentExperience.MicrosoftAgentFramework",
       "span": false,
