@@ -60,6 +60,14 @@ public sealed class LiveConfiguration
     public const string ResultsDirectoryVariable = "AGENTEXPERIENCE_LIVE_RESULTS_DIR";
 
     /// <summary>
+    /// Optional, real-task experiment only (amendment 7): the model its learning phase uses, on the same provider as the run.
+    /// Unset, or equal to the provider's model, means one model does both phases.
+    /// </summary>
+    public const string LearningModelVariable = "AGENTEXPERIENCE_LIVE_LEARNING_MODEL";
+    public const string LearningInputPriceVariable = "AGENTEXPERIENCE_LIVE_LEARNING_PRICE_INPUT_PER_MTOK";
+    public const string LearningOutputPriceVariable = "AGENTEXPERIENCE_LIVE_LEARNING_PRICE_OUTPUT_PER_MTOK";
+
+    /// <summary>
     /// Gemini's current stable low-cost model (ai.google.dev/gemini-api/docs/models, checked 2026-09-26: "Gemini 3.1
     /// Flash-Lite is recommended as a stable, long-term model optimized for low-cost and high-volume tasks").
     /// </summary>
@@ -104,8 +112,9 @@ public sealed class LiveConfiguration
 
     private readonly string _apiKey;
 
-    private LiveConfiguration(LiveProvider provider, string apiKey, string model, Uri endpoint, LiveBudget? budget, TimeSpan minimumInterval, double? inputPrice, double? outputPrice, string priceSource, string? resultsDirectory)
+    private LiveConfiguration(LiveProvider provider, string apiKey, string model, Uri endpoint, LiveBudget? budget, TimeSpan minimumInterval, double? inputPrice, double? outputPrice, string priceSource, string? resultsDirectory, LearningModelSettings? learning = null)
     {
+        Learning = learning;
         Provider = provider;
         _apiKey = apiKey;
         Model = model;
@@ -138,6 +147,12 @@ public sealed class LiveConfiguration
     public string PriceSource { get; }
 
     public string? ResultsDirectory { get; }
+
+    /// <summary>The learning phase's own model and prices for a cross-model real-task run, or <see langword="null"/>.</summary>
+    public LearningModelSettings? Learning { get; }
+
+    /// <summary>The learning model, or <see langword="null"/> when one model does both phases.</summary>
+    public string? LearningModel => Learning?.Model;
 
     /// <summary>The provider's name as reports and the ledger spell it.</summary>
     public string ProviderName => Provider switch
@@ -206,7 +221,56 @@ public sealed class LiveConfiguration
         return options;
     }
 
+    /// <summary>
+    /// The real-task experiment's descriptor: <see cref="Describe"/>, plus the learning model and its prices for a
+    /// cross-model run. The other experiments use <see cref="Describe"/> and never see a learning model.
+    /// </summary>
+    public RunDescriptor DescribeRealTask() => Learning is not { } learning
+        ? Describe()
+        : Describe() with
+        {
+            LearningModel = learning.Model,
+            LearningInputUsdPerMillionTokens = learning.InputPrice,
+            LearningOutputUsdPerMillionTokens = learning.OutputPrice,
+            LearningPriceSource = learning.PriceSource,
+        };
+
+    /// <summary>
+    /// The same provider, key, endpoint and plumbing (OpenRouter routing, the empty-completion guard, Anthropic's output
+    /// cap) for the learning model: <see cref="CreateChatClient"/> on the result is the learning phase's client.
+    /// </summary>
+    public LiveConfiguration ForLearning() => Learning is not { } learning
+        ? this
+        : new LiveConfiguration(Provider, _apiKey, learning.Model, Endpoint, Budget, MinimumCallInterval, learning.InputPrice, learning.OutputPrice, learning.PriceSource, ResultsDirectory);
+
     public override string ToString() => $"{ProviderName} model={Model} host={Describe().EndpointHost} (key redacted)";
+
+    /// <summary>
+    /// The rule every provider's model variable is held to: letters, digits, '-', '.' and '_', plus ':' for Ollama tags
+    /// and '/' and ':' for OpenRouter ids. A <see langword="null"/> provider (a scripted run) takes the widest of them.
+    /// </summary>
+    internal static bool IsValidModelName(string model, LiveProvider? provider) =>
+        model.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_'
+            || (provider is LiveProvider.Ollama or null && character == ':')
+            || (provider is LiveProvider.OpenRouter or null && character is '/' or ':'));
+
+    /// <summary>
+    /// Reads <see cref="LearningModelVariable"/> alone, for a scripted run, which has no provider: the widest provider rule
+    /// applies. The model is <see langword="null"/> when the variable is unset or equals <paramref name="evaluationModel"/>.
+    /// </summary>
+    public static (string? Model, string? Error) ReadScriptedLearningModel(Func<string, string?> variable, string evaluationModel)
+    {
+        ArgumentNullException.ThrowIfNull(variable);
+        var value = variable(LearningModelVariable) is { } text && !string.IsNullOrWhiteSpace(text) ? text.Trim() : null;
+        if (value is null || value == evaluationModel)
+        {
+            return (null, null);
+        }
+
+        return IsValidModelName(value, null)
+            ? (value, null)
+            : (null, $"{LearningModelVariable} may contain only letters, digits, '-', '.', '_', '/' and ':'.");
+    }
 
     internal static string RedactedAzureHost(string host) =>
         host.IndexOf('.', StringComparison.Ordinal) is var dot and > 0 ? "<resource>" + host[dot..] : "<resource>";
@@ -377,9 +441,22 @@ public sealed class LiveConfiguration
                 return (ConfigurationOutcome.Invalid, null, $"{ProviderVariable} must be 'gemini', 'azure', 'anthropic', 'ollama' or 'openrouter'.");
         }
 
-        if (model.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_' || (provider == LiveProvider.Ollama && character == ':') || (provider == LiveProvider.OpenRouter && character is '/' or ':'))))
+        if (!IsValidModelName(model, provider))
         {
             return (ConfigurationOutcome.Invalid, null, "The model or deployment name may contain only letters, digits, '-', '.' and '_'.");
+        }
+
+        // Amendment 7: an optional learning model on the same provider, held to the same rule as the provider's model
+        // variable. One equal to the run's model is a same-model run, exactly as if unset.
+        var learningModel = Get(LearningModelVariable);
+        if (learningModel is not null && !IsValidModelName(learningModel, provider))
+        {
+            return (ConfigurationOutcome.Invalid, null, $"{LearningModelVariable} may contain only the characters the provider's model variable allows (letters, digits, '-', '.' and '_').");
+        }
+
+        if (learningModel == model)
+        {
+            learningModel = null;
         }
 
         var inputText = Get(InputPriceVariable);
@@ -410,8 +487,37 @@ public sealed class LiveConfiguration
             priceSource = $"none: no built-in price for this model; set {InputPriceVariable} and {OutputPriceVariable} to estimate cost";
         }
 
+        LearningModelSettings? learning = null;
+        if (learningModel is not null)
+        {
+            var learningInputText = Get(LearningInputPriceVariable);
+            var learningOutputText = Get(LearningOutputPriceVariable);
+            if (learningInputText is not null || learningOutputText is not null)
+            {
+                if (!double.TryParse(learningInputText, NumberStyles.Float, CultureInfo.InvariantCulture, out var learningInput) || learningInput < 0
+                    || !double.TryParse(learningOutputText, NumberStyles.Float, CultureInfo.InvariantCulture, out var learningOutput) || learningOutput < 0)
+                {
+                    return (ConfigurationOutcome.Invalid, null, $"Set both {LearningInputPriceVariable} and {LearningOutputPriceVariable} as non-negative USD per million tokens.");
+                }
+
+                learning = new LearningModelSettings(learningModel, learningInput, learningOutput, $"{LearningInputPriceVariable} and {LearningOutputPriceVariable}, as set for this run");
+            }
+            else if (provider == LiveProvider.Ollama)
+            {
+                learning = new LearningModelSettings(learningModel, 0, 0, "local model on the host's own hardware: no per-token price (the cost is time and electricity, not estimated)");
+            }
+            else if (KnownPrices.TryGetValue((provider, learningModel), out var knownLearning))
+            {
+                learning = new LearningModelSettings(learningModel, knownLearning.Input, knownLearning.Output, knownLearning.Source);
+            }
+            else
+            {
+                learning = new LearningModelSettings(learningModel, null, null, $"none: no built-in price for the learning model; set {LearningInputPriceVariable} and {LearningOutputPriceVariable} to estimate its cost");
+            }
+        }
+
         return (ConfigurationOutcome.Ready,
-            new LiveConfiguration(provider, apiKey, model, endpoint, budget, interval, inputPrice, outputPrice, priceSource, Get(ResultsDirectoryVariable)),
+            new LiveConfiguration(provider, apiKey, model, endpoint, budget, interval, inputPrice, outputPrice, priceSource, Get(ResultsDirectoryVariable), learning),
             string.Empty);
     }
 
@@ -448,3 +554,6 @@ public sealed class LiveConfiguration
         return long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value) && value > 0;
     }
 }
+
+/// <summary>The learning phase's model and prices in a cross-model real-task run (amendment 7). Nothing secret.</summary>
+public sealed record LearningModelSettings(string Model, double? InputPrice, double? OutputPrice, string PriceSource);

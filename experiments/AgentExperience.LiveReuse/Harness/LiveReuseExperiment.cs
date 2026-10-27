@@ -58,6 +58,32 @@ public sealed record RunDescriptor(
     /// provider's own default applies). Set for Anthropic, whose Messages API requires <c>max_tokens</c>.
     /// </summary>
     public int? MaxOutputTokens { get; init; }
+
+    /// <summary>
+    /// The model the real-task experiment's learning phase used, when it differs from <see cref="RequestedModel"/> (a
+    /// cross-model run, real-task amendment 7); <see langword="null"/> when one model did both phases.
+    /// </summary>
+    public string? LearningModel { get; init; }
+
+    /// <summary>The learning model's input price, if one is known. Used only when <see cref="LearningModel"/> is set.</summary>
+    public double? LearningInputUsdPerMillionTokens { get; init; }
+
+    /// <summary>The learning model's output price, if one is known. Used only when <see cref="LearningModel"/> is set.</summary>
+    public double? LearningOutputUsdPerMillionTokens { get; init; }
+
+    /// <summary>Where the learning model's prices came from. Used only when <see cref="LearningModel"/> is set.</summary>
+    public string? LearningPriceSource { get; init; }
+
+    /// <summary>
+    /// The ledger's model column: <see cref="RequestedModel"/>, or <c>learning→evaluation</c> for a cross-model run, so the
+    /// confirmatory slot is kept per (provider, learning model, evaluation model) without a new column.
+    /// </summary>
+    public string LedgerModel => LearningModel is null ? RequestedModel : LearningModel + "→" + RequestedModel;
+
+    /// <summary>This descriptor with the learning phase's prices, for the learning phase's cost.</summary>
+    public RunDescriptor LearningPhaseDescriptor() => LearningModel is null
+        ? this
+        : this with { InputUsdPerMillionTokens = LearningInputUsdPerMillionTokens, OutputUsdPerMillionTokens = LearningOutputUsdPerMillionTokens, PriceSource = LearningPriceSource ?? "none" };
 }
 
 /// <summary>One learning run or evaluation trial, as recorded. No prompt, no message text, no key.</summary>

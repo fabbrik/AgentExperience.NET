@@ -111,3 +111,31 @@ internal sealed class RetryingChatClient(IChatClient inner, int maxTries, IReadO
         classification.Contains("(HTTP 429)", StringComparison.Ordinal) || classification.Contains("(HTTP 5", StringComparison.Ordinal)
         || RealTaskExperiment.IsUnreachable(classification);
 }
+
+/// <summary>
+/// A cross-model run's phase switch (amendment 7): while the learning phase is on, every call goes to the learning model,
+/// otherwise to the evaluation model. It sits under the retry rule and the meter, so both models share them.
+/// </summary>
+internal sealed class PhaseRoutingChatClient(IChatClient evaluation, IChatClient learning) : IChatClient
+{
+    private bool _learningPhase;
+
+    private IChatClient Current => _learningPhase ? learning : evaluation;
+
+    /// <summary>Routes the calls that follow to the learning model (<see langword="true"/>) or the evaluation model.</summary>
+    public void UseLearning(bool learningPhase) => _learningPhase = learningPhase;
+
+    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        Current.GetResponseAsync(messages, options, cancellationToken);
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        Current.GetStreamingResponseAsync(messages, options, cancellationToken);
+
+    public object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType == typeof(PhaseRoutingChatClient) ? this : Current.GetService(serviceType, serviceKey);
+
+    /// <summary>The two models belong to the caller, which disposes them.</summary>
+    public void Dispose()
+    {
+    }
+}
