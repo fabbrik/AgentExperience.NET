@@ -816,11 +816,14 @@
     }
     public sealed class HoldoutOutcomeRow : System.IEquatable<AgentExperience.Abstractions.HoldoutOutcomeRow>
     {
+        public const string ModelMetadataKey = "agentexperience.model";
         public HoldoutOutcomeRow(System.Guid RunId, AgentExperience.Abstractions.HoldoutArm Arm, System.Guid ExperienceId, System.DateTimeOffset AssignedAt, AgentExperience.Abstractions.TaskVerificationStatus? RunOutcome) { }
         public AgentExperience.Abstractions.HoldoutArm Arm { get; init; }
         public System.DateTimeOffset AssignedAt { get; init; }
         public System.Guid ExperienceId { get; init; }
+        public string? LessonModel { get; init; }
         public System.Guid RunId { get; init; }
+        public string? RunModel { get; init; }
         public AgentExperience.Abstractions.TaskVerificationStatus? RunOutcome { get; init; }
     }
     public sealed class HumanReuseAssessment : System.IEquatable<AgentExperience.Abstractions.HumanReuseAssessment>

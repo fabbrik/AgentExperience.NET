@@ -60,6 +60,28 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **New telemetry operation `benefit_refresh`** (measurements only: `Refreshed`, `NotRefreshed`, `OutcomeUnknown`), in
   `docs/telemetry-names.json` too.
 
+### Know which model learned and which model used it (story 25.4)
+
+- **Capture records the model.** At run start `UseExperienceCapture` adds `Environment.Metadata["agentexperience.model"]`
+  (`HoldoutOutcomeRow.ModelMetadataKey`): the agent's chat client's `ChatClientMetadata.DefaultModelId`, found through the
+  agent's `GetService`, trimmed and capped at 256 characters. A host environment that already sets the key keeps its
+  value; with no model id the key is absent. A record keeps its source run's environment, so a lesson names the model
+  that learned it. Nothing is inferred from text. No contract or schema change. The key is the holdout's bookkeeping
+  only: the default reflector does not list it as a precondition, the block's environment line does not show it, and
+  retrieval ignores it in required and preferred environment attributes and hides it from the environment scorer, so a
+  lesson learned on one model reads and ranks the same for an agent on any other.
+- **The holdout read carries both models.** `HoldoutOutcomeRow.RunModel` (the run's own record) and `LessonModel` (the
+  named lesson's record), new optional init-only members, `null` when absent. The in-memory and PostgreSQL stores fill
+  them from the records the read already opens; PostgreSQL reads the lessons in the same statement and decodes sealed
+  ones in the same key-store batch.
+- **`ExperienceBenefitOptions.SplitByModel`** (default `false`, when the estimate is unchanged). On, the estimate adds
+  `ByConsumingModel` (`ExperienceModelBenefit` per run model, unrecorded ones as `ExperienceBenefitEstimate.UnknownModel`)
+  and each lesson `ByModelPair` (`ExperienceModelPairBenefit` per producing and consuming model), every group decided
+  by the same rules and minimum. `ExperienceBenefitAccumulator` and `AgentExperienceBenefit.EstimateAsync` pass it through.
+- **`ExperienceBenefitPolicy.PerModel`** (default `false`). On, the benefit policy acts on the verdicts for the invoking
+  agent's own model, falling back to the pooled verdict wherever that model's group has `NoEvidence`. See
+  [Per model](docs/guide/injection.md#per-model).
+
 ### Holdout hardening (story 25.10)
 
 - **The lessons view can show what the holdout measured.** `ExperienceLessonsQuery.IncludeMeasuredBenefit` (default

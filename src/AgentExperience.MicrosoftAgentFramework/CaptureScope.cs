@@ -84,6 +84,12 @@ internal sealed class CaptureScope
     /// <summary>The identity the run was opened under, in the one-call setup; <see langword="null"/> under the explicit wiring.</summary>
     internal ExperienceIdentity? Identity { get; private init; }
 
+    /// <summary>
+    /// The model the run records (its environment's <see cref="HoldoutOutcomeRow.ModelMetadataKey"/> entry), or
+    /// <see langword="null"/> when it records none.
+    /// </summary>
+    internal string? Model { get; private init; }
+
     /// <summary>The scope the run is captured, and its record finalized, in: the descriptor's.</summary>
     internal Scope Scope => _descriptor.Scope;
 
@@ -204,6 +210,7 @@ internal sealed class CaptureScope
         Guid? assignedRunId = descriptor.ContinuesRunId;
         Guid runId;
         DateTimeOffset runStartedAt;
+        string? runModel;
         DateTimeOffset startedAt;
         long startTimestamp;
         try
@@ -268,7 +275,9 @@ internal sealed class CaptureScope
                 RecordedAt: startedAt,
                 CorrelationId: Activity.Current is { IdFormat: ActivityIdFormat.W3C } activity ? activity.TraceId.ToHexString() : null);
 
-            var started = service.StartRun(runId, descriptor.TaskId, descriptor.TaskDescription, descriptor.Scope, options.Environment, provenance, startedAt);
+            // Story 25.4: the model the agent's chat client reports, unless the host's environment already names one.
+            var environment = AgentModel.WithModel(options.Environment, AgentModel.Of(agent));
+            var started = service.StartRun(runId, descriptor.TaskId, descriptor.TaskDescription, descriptor.Scope, environment, provenance, startedAt);
             if (started is null || started.Outcome is not (StartRunOutcome.Started or StartRunOutcome.Continued))
             {
                 Report(options, new ExperienceCaptureFailure(ExperienceCaptureFailureStage.StartRun, runId, $"StartRun returned {started?.Outcome.ToString() ?? "null"}; the invocation runs uncaptured.", null));
@@ -281,6 +290,9 @@ internal sealed class CaptureScope
             runStartedAt = started.Outcome == StartRunOutcome.Continued && started.Run is { } existing
                 ? existing.StartedAt
                 : startedAt;
+
+            // A continued run keeps the environment it was opened with, and so the model.
+            runModel = AgentModel.Recorded(started.Run?.Environment ?? environment);
         }
         catch (Exception ex)
         {
@@ -305,6 +317,7 @@ internal sealed class CaptureScope
         {
             Agent = agent,
             Identity = runIdentity,
+            Model = runModel,
         };
 
         if (session is not null)

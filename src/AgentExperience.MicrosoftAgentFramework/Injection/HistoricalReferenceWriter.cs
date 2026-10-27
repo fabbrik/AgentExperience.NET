@@ -2068,7 +2068,8 @@ public static class HistoricalReferenceWriter
 
         if (environment.Metadata is { Count: > 0 } metadata)
         {
-            foreach (var (key, value) in metadata.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+            // The recorded model is the holdout's bookkeeping: shown, it would read as "only for this model".
+            foreach (var (key, value) in metadata.Where(entry => !AgentExperience.Core.Holdout.ModelMetadata.IsModelKey(entry.Key)).OrderBy(entry => entry.Key, StringComparer.Ordinal))
             {
                 text.Append("; ").Append(Clean(key)).Append(' ').Append(Clean(value));
             }

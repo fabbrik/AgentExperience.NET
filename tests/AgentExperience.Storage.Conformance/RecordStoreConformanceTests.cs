@@ -729,6 +729,54 @@ public abstract class RecordStoreConformanceTests
         Assert.Empty(result.Rows);
     }
 
+    // ---------------------------------------------------------------- holdout models (story 25.4)
+
+    [Fact]
+    public async Task Holdout_outcomes_carry_the_run_s_model_and_the_lesson_s_model_from_the_records_read()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var learnedByA = await CreateAsync(tenant, WithModel(Record(scope, ExperienceStatus.Validated), "model-a"));
+        var unlabelled = await CreateAsync(tenant, Record(scope, ExperienceStatus.Validated));
+
+        var onB = Guid.NewGuid();
+        var noModel = Guid.NewGuid();
+        var pending = Guid.NewGuid();
+        await Assign(auth, scope, onB, HoldoutArm.Treatment, learnedByA, unlabelled);
+        await Assign(auth, scope, noModel, HoldoutArm.Holdout, learnedByA);
+        await Assign(auth, scope, pending, HoldoutArm.Holdout, unlabelled);
+        await CreateAsync(tenant, WithModel(RunRecord(scope, onB, TaskVerificationStatus.Verified), "model-b"));
+        await CreateAsync(tenant, RunRecord(scope, noModel, TaskVerificationStatus.Failed));
+
+        var result = await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+        var expected = new[]
+        {
+            (onB, learnedByA.ExperienceId, (string?)"model-b", (string?)"model-a"),
+            (onB, unlabelled.ExperienceId, "model-b", null),
+            (noModel, learnedByA.ExperienceId, null, "model-a"),
+            (pending, unlabelled.ExperienceId, null, null),
+        }.OrderBy(row => row.Item1).ThenBy(row => row.Item2).ToList();
+        Assert.Equal(expected, result.Rows.Select(row => (row.RunId, row.ExperienceId, row.RunModel, row.LessonModel)));
+
+        // Paging still reads the models of exactly the rows on each page.
+        var first = await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope, 1), CancellationToken.None);
+        var rest = await Store.QueryHoldoutOutcomesAsync(
+            auth, new HoldoutOutcomeQuery(scope, HoldoutOutcomeQuery.DefaultLimit, new(first.Rows[0].RunId, first.Rows[0].ExperienceId)), CancellationToken.None);
+        Assert.Equal(expected, first.Rows.Concat(rest.Rows).Select(row => (row.RunId, row.ExperienceId, row.RunModel, row.LessonModel)));
+    }
+
+    private static ExperienceRecord WithModel(ExperienceRecord record, string model) =>
+        record with
+        {
+            Environment = record.Environment with
+            {
+                Metadata = new Dictionary<string, string>(record.Environment.Metadata, StringComparer.Ordinal) { [HoldoutOutcomeRow.ModelMetadataKey] = model },
+            },
+        };
+
     private async Task Assign(AuthorizationContext auth, Scope scope, Guid runId, HoldoutArm arm, params ExperienceRecord[] lessons)
     {
         var result = await Store.RecordHoldoutAssignmentAsync(

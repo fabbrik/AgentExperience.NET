@@ -417,7 +417,9 @@ namespace AgentExperience.Core.Holdout
     }
     public sealed class ExperienceBenefitEstimate : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitEstimate>
     {
+        public const string UnknownModel = "unknown";
         public ExperienceBenefitEstimate(AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceLessonBenefit> Lessons) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceModelBenefit>? ByConsumingModel { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceLessonBenefit> Lessons { get; init; }
         public int MinimumRunsPerArm { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
@@ -435,6 +437,7 @@ namespace AgentExperience.Core.Holdout
         public const int DefaultMinimumRunsPerArm = 20;
         public ExperienceBenefitOptions() { }
         public int MinimumRunsPerArm { get; init; }
+        public bool SplitByModel { get; init; }
     }
     public enum ExperienceBenefitVerdict
     {
@@ -445,8 +448,22 @@ namespace AgentExperience.Core.Holdout
     public sealed class ExperienceLessonBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceLessonBenefit>
     {
         public ExperienceLessonBenefit(System.Guid ExperienceId, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceModelPairBenefit>? ByModelPair { get; init; }
         public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
         public System.Guid ExperienceId { get; init; }
+    }
+    public sealed class ExperienceModelBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceModelBenefit>
+    {
+        public ExperienceModelBenefit(string Model, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
+        public string Model { get; init; }
+    }
+    public sealed class ExperienceModelPairBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceModelPairBenefit>
+    {
+        public ExperienceModelPairBenefit(string LessonModel, string RunModel, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
+        public string LessonModel { get; init; }
+        public string RunModel { get; init; }
     }
     public sealed class ExperienceProviderBenefitEstimate : System.IEquatable<AgentExperience.Core.Holdout.ExperienceProviderBenefitEstimate>
     {

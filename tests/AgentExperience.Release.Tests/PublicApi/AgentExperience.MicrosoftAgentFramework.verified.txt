@@ -312,6 +312,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public ExperienceBenefitPolicy() { }
         public bool Enabled { get; init; }
         public int MinimumRunsPerArm { get; init; }
+        public bool PerModel { get; init; }
         public bool PreferMeasuredHelpful { get; init; }
         public System.TimeSpan RefreshInterval { get; init; }
         public System.TimeSpan RefreshTimeout { get; init; }

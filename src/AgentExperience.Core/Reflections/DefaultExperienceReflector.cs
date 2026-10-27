@@ -243,7 +243,9 @@ public sealed class DefaultExperienceReflector : IExperienceReflector
         AddPrecondition("Runtime version", environment.RuntimeVersion);
         AddPrecondition("Operating system", environment.OperatingSystem);
         AddPrecondition("Application version", environment.ApplicationVersion);
-        foreach (var entry in environment.Metadata.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        // The recorded model is the holdout's bookkeeping, not a precondition: a lesson learned on one model is not
+        // limited to it.
+        foreach (var entry in environment.Metadata.Where(kv => !Holdout.ModelMetadata.IsModelKey(kv.Key)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             AddPrecondition(Invariant($"Environment metadata [{entry.Key}]"), entry.Value);
         }
