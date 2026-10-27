@@ -24,6 +24,7 @@
     }
     public sealed class AgentExperienceLessons
     {
+        public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonExportResult> ExportMeasuredAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.Export.IExperienceLessonSink sink, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListForDevelopmentIdentityAsync(AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
     }
@@ -251,6 +252,48 @@
         public static System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>> ToolSucceeded(string toolName, string? checkId = null, string? artifactRevision = null) { }
     }
     public interface IAgentExperienceBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
+}
+namespace AgentExperience.MicrosoftAgentFramework.Export
+{
+    public sealed class ExperienceLessonExportResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonExportResult>
+    {
+        public ExperienceLessonExportResult(AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> Lessons, AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult? Sync, System.DateTimeOffset ExportedAt) { }
+        public System.DateTimeOffset ExportedAt { get; init; }
+        public bool HoldoutTracked { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> Lessons { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult? Sync { get; init; }
+    }
+    public sealed class ExperienceLessonSyncResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult>
+    {
+        public ExperienceLessonSyncResult(int Added, int Updated, int Removed) { }
+        public int Added { get; init; }
+        public int Removed { get; init; }
+        public int Updated { get; init; }
+    }
+    public sealed class ExportedLesson : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson>
+    {
+        public ExportedLesson(System.Guid ExperienceId, long Revision, string TaskId, string LessonText, AgentExperience.Core.Holdout.ExperienceBenefitComparison MeasuredBenefit, System.DateTimeOffset ExportedAt) { }
+        public System.Guid ExperienceId { get; init; }
+        public System.DateTimeOffset ExportedAt { get; init; }
+        public string LessonText { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison MeasuredBenefit { get; init; }
+        public long Revision { get; init; }
+        public string TaskId { get; init; }
+    }
+    public interface IExperienceLessonSink
+    {
+        System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult> SyncAsync(AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> current, System.Threading.CancellationToken cancellationToken);
+    }
+    public sealed class MarkdownLessonFileSink : AgentExperience.MicrosoftAgentFramework.Export.IExperienceLessonSink
+    {
+        public const string ExportedLinePrefix = "Exported: ";
+        public const string LessonHeadingPrefix = "## Lesson ";
+        public MarkdownLessonFileSink(string path, System.TimeProvider? timeProvider = null) { }
+        public string Path { get; }
+        public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult> SyncAsync(AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> current, System.Threading.CancellationToken cancellationToken) { }
+    }
 }
 namespace AgentExperience.MicrosoftAgentFramework.Injection
 {
