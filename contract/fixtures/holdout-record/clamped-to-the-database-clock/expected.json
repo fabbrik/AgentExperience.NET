@@ -1,0 +1,17 @@
+{
+  "experience_holdout_assignments": [
+    {
+      "run_id": "00000073-0000-4000-8000-000000000901",
+      "experience_id": "00000073-0000-4000-8000-000000000001",
+      "revision": "1",
+      "arm": "Holdout",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "assigned_at": "database-clock"
+    }
+  ]
+}

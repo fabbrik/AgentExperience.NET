@@ -6,6 +6,25 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### The holdout in Python and Go: contract 1.8 (story 25.6)
+
+- **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral
+  contract: the assignment function (`holdout-assign` fixtures: run ID and salt to fraction and arm), the withholding
+  on the injection path, the statement that records an assignment (`sql/record-holdout-assignment.sql`, the .NET
+  store's line for line, with `holdout-record` fixtures on PostgreSQL) and the application role's grants on migration
+  `0027`'s table (`sql/application-role-privileges-1.8.sql`, run after the 1.0, 1.4 and 1.6 files). Every 1.0-1.7 file
+  is unchanged.
+- **The Python and Go ports take part**, behind the same opt-in option, off by default: Python
+  `use_agent_experience(..., holdout=HoldoutOptions(rate=..., salt=...))`, Go `HoldoutOptions{Rate, Salt}` on the Agent
+  Framework options. A held-out run's block is withheld (outcome `Withheld`), both arms are recorded in the background
+  (telemetry operation `record_holdout`), and an invalid rate or an empty salt is refused at construction. In a mixed
+  fleet sharing one PostgreSQL store, `AgentExperienceBenefit.EstimateAsync` counts the Python and Go agents' runs with
+  the .NET ones; a .NET test estimates over rows a Python and a Go agent wrote. The estimate, the benefit policy,
+  measuring another memory provider, exporting lessons and recording the run's model stay .NET-only.
+- **Upgrading a mixed fleet:** apply `sql/application-role-privileges-1.8.sql` after the contract's other privileges
+  files (or run the .NET privileges call last); without it a port's assignments are reported `NotRecorded` and
+  injection carries on.
+
 ### The injection holdout: withhold the block on a share of runs and record both arms (story 25.1)
 
 - **`ExperienceInjectionOptions.Holdout`** (`ExperienceHoldoutOptions { Rate, Salt }`, off by default with `Rate = 0`).

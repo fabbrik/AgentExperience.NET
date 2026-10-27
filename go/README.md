@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.7, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.7 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5 and 1.6 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.8, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.8 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6 and 1.7 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -194,6 +194,7 @@ for _, lesson := range page.Lessons {
 - **Semantic retrieval** (contract 1.6), with an embedder you register (below). Injection then runs the text and the
   vector channel together, merges them and ranks as before; each stored record's summary is embedded in the
   background.
+- **The injection holdout** (contract 1.8), off by default; see [Measuring benefit](#measuring-benefit-the-holdout).
 - **The task text, and where history sits.** Capture records the task text of the invocation's own input. In the Go
   SDK a session's history provider always runs before the context providers, so injection sees the replayed history,
   then the new input, and derives the task text from both, as .NET's `ChatClientAgent`-level provider does: a request
@@ -227,6 +228,39 @@ JSON object's top-level members, else the last match in the text, with .NET's `\
 the error class's matcher, not Go's RE2). A blank tool name or check ID panics, as an invalid pattern does in
 `regexp.MustCompile`.
 
+### Measuring benefit: the holdout
+
+The .NET library can estimate whether its lessons help, by comparing the verified outcomes of runs that were given
+them with runs they were withheld from ([Injection: measuring benefit](../docs/guide/injection.md#measuring-benefit-the-holdout)).
+A Go agent takes part with `Holdout`:
+
+```go
+options := maf.Options{Store: store, Identity: identity, Verify: verify,
+	Holdout: maf.HoldoutOptions{Rate: 0.1}} // Salt: ae.DefaultHoldoutSalt when empty
+```
+
+- **Off by default.** The zero value (rate 0) changes nothing. A rate that is NaN, below 0 or above 1 is refused by
+  `UseAgentExperience`. An empty `Salt` is `ae.DefaultHoldoutSalt` (`agentexperience-holdout-v1`), Go's zero-value
+  idiom: where .NET and Python refuse an explicitly empty salt, Go cannot tell one from an unset one.
+- **Who takes part.** Only an invocation captured by the same `UseAgentExperience` call whose block names at least
+  one record. Its arm is `ae.AssignHoldout(runID, salt, rate)`: SHA-256 over the run ID's bytes and the salt, the
+  first 8 bytes over 2^64, held out when below the rate. It is the arm .NET and Python assign the same run
+  (the contract's `holdout-assign` fixtures pin it).
+- **A held-out invocation** gets no block (it is built first, so what is withheld is exactly what would have been
+  delivered): no message, no exposure on the run, no injection record. The `inject` outcome is `Withheld`, and
+  `OnWithheld` is told the withheld records (`InjectionResult.WithheldExperienceIDs`). This port has no withdrawal
+  notices, so a held-out invocation never owes any.
+- **A treatment invocation** is injected exactly as without the holdout.
+- **Both arms are recorded** in the background, like injections: through a store that is an `ae.HoldoutRecorder` (the
+  PostgreSQL store runs the contract's `sql/record-holdout-assignment.sql`; the in-memory store keeps the rows), bounded
+  by `InjectionRecordTimeout`, fail-open, and never delaying the invocation. `OnHoldoutRecorded` reports how it ended
+  (`Recorded`, `NotTracked`, `NotRecorded` or `OutcomeUnknown`, the `record_holdout` operation), and `Close` awaits it.
+  On PostgreSQL the application role needs the grants of `sql/application-role-privileges-1.8.sql`.
+
+Rows a Go agent writes are read by the .NET estimate unchanged (`AgentExperienceBenefit.EstimateAsync`), together with
+the .NET and Python agents' in the same scope. The estimate itself, acting on it, measuring another memory provider,
+exporting lessons and recording the run's model are .NET-only.
+
 ### Telemetry: the same spans and metrics as .NET
 
 The optional module `.../go/telemetry` (the OpenTelemetry API only; no SDK, no exporter) reports the operations the port
@@ -241,7 +275,7 @@ disable := telemetry.Enable() // the global providers your application configure
 defer disable()
 ```
 
-It emits `inject`, `retrieve`, `record_injection`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
+It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
 `verify`, `reflect`, `finalize` and `index` (the background embedding write): the operations this port performs, and no
 other. The core and the integration import no OpenTelemetry: they call the observer hook (`ae.SetObserver`, one atomic
 load when nothing is registered), and `go/telemetry` is the adapter. A provider, exporter or observer that fails or
@@ -289,14 +323,15 @@ Python agents on the same database.
   see [See what it learned](#see-what-it-learned-the-lessons-view).
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
-  1.4), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
+  1.4) and holdout assignments (`RecordHoldoutAssignment`, contract 1.8), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
   page (`ListLessonRecords`, contract 1.7), every transaction first declaring its bounds. The contract's statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
   contract's two files, in this order: `sql/application-role-privileges.sql`, then
   `sql/application-role-privileges-1.4.sql` (without the second, every injection is still made and its record is
-  reported `NotRecorded`). `Search` skips a sealed
+  reported `NotRecorded`), then `sql/application-role-privileges-1.6.sql` and `sql/application-role-privileges-1.8.sql`
+  (without the last, the holdout still withholds and each assignment is reported `NotRecorded`). `Search` skips a sealed
   row (`payload_version` 2), and `Get` answers `ErrSealed` for one (and `nil, nil` for none).
   - **Connections are the host's.** `NewStore` takes anything that begins a transaction: a `*pgxpool.Pool`, a
     `*pgx.Conn` or a `pgx.Tx`, each connecting as the application role. `Open` is the convenience that builds a pool
@@ -372,8 +407,8 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.7: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view and telemetry. These .NET features have no counterpart here, so a mixed
+The port covers contract 1.0 to 1.8: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout and telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
@@ -381,6 +416,8 @@ injection recording, the lessons view and telemetry. These .NET features have no
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
+- **Benefit estimation and acting on it**, measuring another memory provider, exporting lessons and recording the
+  run's model: the port withholds and records the holdout, and the .NET estimate reads its rows.
 
 What the port does write or read follows the same contract the .NET library is tested against.
 
@@ -396,7 +433,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.7 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.8 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -426,17 +463,24 @@ cancellation, parallel calls), runs the quick start and compares its output
   .NET and checked against it on every build) are written into PostgreSQL, and a Go agent on their scope is injected
   with the one its task matches; a quarantined one never, and another agent's scope none. No .NET process runs at test
   time: the fixtures are the .NET-written records.
+- *The holdout, Go writes, .NET estimates* (contract 1.8, PostgreSQL leg). A Go agent with the holdout at rate 0.5
+  learns a lesson, then runs eight measured runs (three held out, five treated, some verified and some failed); the
+  rows it wrote (records, initial events and holdout assignments) must be exactly
+  [`go-agent-holdout-rows.json`](maf/testdata/cross-language/go-agent-holdout-rows.json), each measured run's rows in
+  the arm `ae.AssignHoldout` gives it. The .NET contract tests insert them, with the Python agent's, into one database
+  and run the .NET benefit estimate over the scope.
 
 **PostgreSQL** (the `postgres` build tag, in `postgres/pgtest/` and `maf/`, Go 1.26): in `postgres/pgtest/`, each
 finalize fixture is written through the Go store and read back row for row, every search fixture is run and ranked,
-every record-injection fixture is run, every embedding-write and vector-search fixture is run, and sealed rows, tombstones, the exact scope, row-level security, `recorded_at` and concurrent use on a pool are
+every record-injection and holdout-record fixture is run (the late-write guard's race staged as the contract says), every embedding-write and vector-search fixture is run, and sealed rows, tombstones, the exact scope, row-level security, `recorded_at` and concurrent use on a pool are
 checked; in `maf/`, the cross-language tests run. Both use the server helper the `pgtest` package is (its roles are
 made under an advisory lock, so test binaries may share one server). Each test database (dropped when its test ends) is migrated with the .NET migrator's own
 scripts from [`src/AgentExperience.Storage.Postgres/Migrations`](../src/AgentExperience.Storage.Postgres/Migrations),
 in order, and given the application role's privileges from the contract's
 [`sql/application-role-privileges.sql`](../contract/sql/application-role-privileges.sql) then
-[`sql/application-role-privileges-1.4.sql`](../contract/sql/application-role-privileges-1.4.sql) and
-[`sql/application-role-privileges-1.6.sql`](../contract/sql/application-role-privileges-1.6.sql); from contract 1.6 the
+[`sql/application-role-privileges-1.4.sql`](../contract/sql/application-role-privileges-1.4.sql),
+[`sql/application-role-privileges-1.6.sql`](../contract/sql/application-role-privileges-1.6.sql) and
+[`sql/application-role-privileges-1.8.sql`](../contract/sql/application-role-privileges-1.8.sql); from contract 1.6 the
 vectors package's migrations (`src/AgentExperience.Storage.Postgres.Vectors/Migrations`) follow, after a superuser ran
 `CREATE EXTENSION vector`. The server is a testcontainers-go `pgvector/pgvector` container
 (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or the server `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` name (a

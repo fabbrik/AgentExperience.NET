@@ -467,7 +467,7 @@ internal static class PortAgentRowsPostgres
     /// Inserts one raw row as the application role, under bounds declared for its scope: each column's value is the
     /// text the port's test read from PostgreSQL, cast back to the column's own type by PostgreSQL.
     /// </summary>
-    private static async Task InsertRawAsync(NpgsqlDataSource application, string table, JsonObject row)
+    internal static async Task InsertRawAsync(NpgsqlDataSource application, string table, JsonObject row)
     {
         await using var connection = await application.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -522,7 +522,7 @@ internal static class PortAgentRowsPostgres
         await declare.ExecuteNonQueryAsync();
     }
 
-    private static Scope ScopeOf(JsonNode columns) => new(
+    internal static Scope ScopeOf(JsonNode columns) => new(
         columns["tenant_id"]!.GetValue<string>(),
         columns["application_id"]!.GetValue<string>(),
         columns["project_id"]!.GetValue<string>(),

@@ -46,6 +46,12 @@
 //     one, implement ae.Embedder (ModelID, Dimension, Embed) over your provider's client and set Options.Embedder; no
 //     embedding model is a dependency of this module.
 //
+//   - The injection holdout (contract 1.8), with Options.Holdout. On a deterministic share (Rate) of captured runs whose
+//     block names a record, the block is built and then withheld: no message, no exposure, no injection record, and
+//     OnWithheld is told what was withheld. Every assigned run, either arm, is recorded in the background through a
+//     store that is an ae.HoldoutRecorder (the PostgreSQL store, the in-memory store), so the .NET benefit estimate
+//     compares the runs of every language. Off by default (rate 0): nothing then changes.
+//
 //   - The lessons view (contract 1.7), read-only. LessonsOf(&config) (or the provider's Lessons method, or NewLessons for
 //     the options alone) lists what has been learned in a scope: each lesson's status, confidence and checks, the
 //     block text an agent would be shown for it, why retrieval would not use it, and when it was last injected, from
@@ -63,6 +69,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"runtime"
@@ -188,6 +195,29 @@ type InjectionResult struct {
 	ByteCount      int
 	Truncated      bool
 	VectorFallback *ae.VectorFallback
+	// WithheldExperienceIDs are the records a held-out invocation's block named and did not deliver (contract 1.8):
+	// set only in what OnWithheld is told, where ExperienceIDs is empty and ByteCount 0.
+	WithheldExperienceIDs []ae.UUID
+}
+
+// HoldoutOptions are the injection holdout (contract 1.8). The zero value is off.
+//
+// Who takes part: only an invocation captured by the same UseAgentExperience call (whose run started), whose built
+// block names at least one record. The arm is ae.AssignHoldout(run ID, Salt, Rate), a pure function, so every
+// invocation of a run lands in the same arm, and the arm is the one the .NET and Python integrations assign. A
+// held-out invocation gets no block (the block is built first, so what is withheld is exactly what would have been
+// delivered): no message, no exposure on the run, no injection record; the inject outcome is Withheld and OnWithheld
+// is told. A treatment invocation is injected exactly as without the holdout. Both arms are recorded in the
+// background (the record_holdout operation, OnHoldoutRecorded), and never delay or fail the invocation. This port has
+// no withdrawal notices, so a held-out invocation never owes any.
+type HoldoutOptions struct {
+	// Rate is the share of eligible runs whose block is withheld, from 0 (off, the default) to 1 (every one). NaN, a
+	// negative rate or one above 1 is refused by UseAgentExperience.
+	Rate float64
+	// Salt is mixed into every assignment, so two experiments over the same runs draw different arms;
+	// ae.DefaultHoldoutSalt when empty. (Go cannot tell an empty salt from an unset one, so empty means the default
+	// here, where .NET and Python refuse an explicitly empty salt.) Changing it re-draws every run.
+	Salt string
 }
 
 // IdentityContext is what an identity resolver is given: the agent and the caller's session. Never model output.
@@ -236,6 +266,13 @@ type Options struct {
 	OnInjected          func(InjectionResult)
 	OnFinalized         func(ae.FinalizedExperience)
 	OnInjectionRecorded func(InjectionRecordResult)
+	// Holdout is the injection holdout (contract 1.8); off when zero.
+	Holdout HoldoutOptions
+	// OnWithheld is told, for a held-out invocation, what its block withheld (InjectionResult.WithheldExperienceIDs);
+	// OnHoldoutRecorded how recording each assignment ended, from the recording's own goroutine. Each is optional, and a
+	// panic in one is recovered and ignored.
+	OnWithheld        func(InjectionResult)
+	OnHoldoutRecorded func(HoldoutRecordResult)
 	// Clock is ae.Now when nil.
 	Clock func() ae.Instant
 	// NewID is ae.NewRandomUUID when nil.
@@ -353,6 +390,12 @@ func newSettings(options Options) (*settings, error) {
 	}
 	if options.MinVectorRelevance != nil && !(*options.MinVectorRelevance >= 0 && *options.MinVectorRelevance <= 1) {
 		return nil, errors.New("maf: the minimum vector relevance must be a number from 0 to 1")
+	}
+	if math.IsNaN(options.Holdout.Rate) || options.Holdout.Rate < 0 || options.Holdout.Rate > 1 {
+		return nil, errors.New("maf: the holdout rate must be a number from 0 to 1")
+	}
+	if options.Holdout.Salt == "" {
+		options.Holdout.Salt = ae.DefaultHoldoutSalt
 	}
 	if options.Clock == nil {
 		options.Clock = ae.Now

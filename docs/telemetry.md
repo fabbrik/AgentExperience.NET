@@ -386,15 +386,16 @@ returned error in Go).
 | `finalize` | Core | `finalize` | `Finalize` | `Validated`, `Quarantined`. It covers verification, reflection, record creation and the initial event; the store write is not a separate `lifecycle.commit` |
 | `retrieve` | Core | the text and vector search and the ranking inside an injection | the same | `Completed`, `Failed` (the text search failed) |
 | `index` | Core | the background embedding write after a record is stored | the same | `Indexed`, `Stale`, `Missing`, `ProviderFailed`, `IndexFailed` |
-| `inject` | MAF | the context provider | the context provider | `Injected`, `NothingToInject`, `Skipped`, `RetrievalFailed`, `Failed` |
+| `inject` | MAF | the context provider | the context provider | `Injected`, `NothingToInject`, `Skipped`, `RetrievalFailed`, `Failed`, `Withheld` (the injection holdout withheld the block, contract 1.8) |
 | `record_injection` | MAF | the background injection record (measurements only, no span) | the same | `Recorded`, `NotTracked`, `NotRecorded`, `OutcomeUnknown`, with the failure classes of the table above |
+| `record_holdout` | MAF | the background holdout assignment record (measurements only, no span), when the holdout is on | the same | the same four as `record_injection` |
 
 The ports never emit `lifecycle.commit`, `confidence.apply`, `deindex`, `reindex`, `reuse_feedback`, `delete`,
 `retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal` or `record.authorship.backfill`: they do not perform
 them. Differences from .NET that a dashboard should know:
 
 - `nested` is `true` for `verify` and `reflect` inside `finalize`, and `false` for everything else: `inject`,
-  `record_injection` and `index` are never nested, and the `retrieve` inside an `inject` is on the Core meter, so `false`.
+  `record_injection`, `record_holdout` and `index` are never nested, and the `retrieve` inside an `inject` is on the Core meter, so `false`.
   A span's parent is the span that ran it, or the host's current span.
 - The ports set only these span attributes beyond the common ones: `run_id`, `attempt_id`, `experience_id`,
   `reflection_id`, `stage` (on `finalize`: `Load`, `Evaluate`, `Reflect` or `CreateRecord`, the last stage reached) and

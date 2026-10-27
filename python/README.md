@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.7, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.7 (and so every 1.0 to 1.6 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.8, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.8 (and so every 1.0 to 1.7 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -165,6 +165,36 @@ for lesson in page.lessons:                             # newest first
   port renders no HTML and maps no endpoint.
 - **Stores.** `InMemoryExperienceStore` and `PostgresExperienceStore` have `list_lessons_page`; PostgreSQL runs the
   contract's `sql/list-experience-lessons.sql` as written and needs no grants beyond 1.0 and 1.4.
+
+### Measuring benefit: the injection holdout
+
+Off by default. With `holdout=HoldoutOptions(rate=0.1)` (contract 1.8), about one in ten captured runs that have a
+block to inject has it withheld, and both arms are recorded, so the .NET library's benefit estimate
+(`AgentExperienceBenefit.EstimateAsync`) counts this agent's runs alongside .NET's and Go's in the same store:
+
+```python
+from agentexperience.maf import HoldoutOptions
+
+agent = use_agent_experience(agent, store=store, identity=identity, verify=verify,
+                             holdout=HoldoutOptions(rate=0.1), on_holdout_recorded=print)
+```
+
+- **Deterministic.** The arm is a pure function of the run ID and `salt` (default `agentexperience-holdout-v1`), the
+  same SHA-256 rule .NET uses (`agentexperience.assign_holdout`), so a run lands in the same arm in every language. A
+  rate that is not a number from 0 to 1, or an empty salt, raises when `HoldoutOptions` is built.
+- **Who takes part.** Only a captured run of this agent whose block names at least one record; a streamed (uncaptured)
+  invocation, or one with nothing to inject, is injected as before and assigned nothing.
+- **A held-out run** gets no block, records no exposure and no injection, and is reported `Withheld` (the `inject`
+  operation's outcome, and `InjectionResult.outcome` with `withheld_experience_ids`). A treatment run is injected exactly
+  as before. At rate 0 nothing changes at all.
+- **Recording** runs in the background like an injection record, never delaying or failing the invocation, and is
+  reported through `on_holdout_recorded` and the `record_holdout` telemetry operation (`Recorded`, `NotTracked`,
+  `NotRecorded`, `OutcomeUnknown`). `InMemoryExperienceStore` and `PostgresExperienceStore` have
+  `record_holdout_assignment`; PostgreSQL runs the contract's `sql/record-holdout-assignment.sql` as written and needs
+  the grants of `sql/application-role-privileges-1.8.sql` (or the .NET privileges call). Without them each assignment is
+  reported `NotRecorded` and injection goes on.
+- **Same scope for capture and injection**, as in .NET: a run's outcome is its own finalized record in exactly that
+  scope, so a run finalized elsewhere is never matched and stays pending in the estimate.
 
 ### Telemetry: the same spans and metrics as .NET
 
@@ -339,11 +369,15 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.7: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view and telemetry. These .NET features have no counterpart here, so a mixed
-.NET and Python deployment should keep them on the .NET side:
+The port covers contract 1.0 to 1.8: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout and telemetry. These .NET features have no counterpart
+here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
+- **Reading the holdout:** the benefit estimate, the benefit policy, measuring another memory provider, exporting
+  lessons, and recording the run's model. The port records its arms; .NET estimates over them.
+- **Withdrawal notices:** the port keeps no per-session account of what it injected, so it never retracts a record;
+  a held-out invocation is always `Withheld`, never a notices-only `Retracted` block.
 - **Sharing:** grants, and so the grant-disclosure choices.
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.

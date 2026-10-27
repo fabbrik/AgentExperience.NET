@@ -142,17 +142,27 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 		if recovered := recover(); recovered != nil {
 			result.Outcome, result.Err = InjectionNotRecorded, panicError{recovered}
 		}
-		op.DoneWithClass(string(result.Outcome), recordErrorClass(result))
+		op.DoneWithClass(string(result.Outcome), recordErrorClass(result.Outcome, result.Err))
 		s.reportInjectionRecorded(result)
 	}()
-	ctx, cancel := context.WithTimeout(ctx, s.InjectionRecordTimeout)
+	result.Outcome, result.Err = p.writeChunks(ctx, len(ids), func(ctx context.Context, start, end int) error {
+		return recorder.RecordInjection(ctx, identity.Authorization(), identity.Scope, ids[start:end], injectedAt)
+	})
+}
+
+// writeChunks runs write over [0, count) in chunks of at most ae.MaxRecordInjectionIDs, all within
+// InjectionRecordTimeout: the background write of record_injection and record_holdout. Each call runs in its own
+// goroutine and is awaited against the timeout rather than trusted to honour its context: one that overruns it is
+// abandoned, counted until it ends, and while MaxAbandonedInjectionRecords are still running no new one starts.
+func (p *ContextProvider) writeChunks(ctx context.Context, count int,
+	write func(ctx context.Context, start, end int) error) (InjectionRecordOutcome, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.settings.InjectionRecordTimeout)
 	defer cancel()
-	for start := 0; start < len(ids); start += ae.MaxRecordInjectionIDs {
+	for start := 0; start < count; start += ae.MaxRecordInjectionIDs {
 		if p.abandoned.Load() >= MaxAbandonedInjectionRecords {
-			result.Outcome, result.Err = InjectionNotRecorded, errTooManyAbandoned
-			return
+			return InjectionNotRecorded, errTooManyAbandoned
 		}
-		chunk := ids[start:min(len(ids), start+ae.MaxRecordInjectionIDs)]
+		end := min(count, start+ae.MaxRecordInjectionIDs)
 		done := make(chan error, 1)
 		go func() {
 			defer func() {
@@ -160,16 +170,15 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 					done <- panicError{recovered}
 				}
 			}()
-			done <- recorder.RecordInjection(ctx, identity.Authorization(), identity.Scope, chunk, injectedAt)
+			done <- write(ctx, start, end)
 		}()
 		select {
 		case err := <-done:
 			if err != nil {
-				result.Outcome, result.Err = InjectionNotRecorded, err
 				if ctx.Err() != nil {
-					result.Outcome = InjectionOutcomeUnknown
+					return InjectionOutcomeUnknown, err
 				}
-				return
+				return InjectionNotRecorded, err
 			}
 		case <-ctx.Done():
 			p.abandoned.Add(1)
@@ -177,35 +186,108 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 				<-done
 				p.abandoned.Add(-1)
 			}()
-			result.Outcome, result.Err = InjectionOutcomeUnknown, ctx.Err()
-			return
+			return InjectionOutcomeUnknown, ctx.Err()
 		}
 	}
+	return InjectionRecorded, nil
 }
 
-// recordErrorClass is the error.class a record_injection that failed counts, as .NET's table has it: a timeout or a
-// cancellation is OutcomeUnknown (Timeout, Cancelled); too many earlier writes still running is NotRecorded (Timeout);
-// a store that failed is Infrastructure, or Unexpected for anything else; a refusal is an answer and counts nothing.
-func recordErrorClass(result InjectionRecordResult) string {
-	switch result.Outcome {
+// HoldoutRecordResult is how recording one holdout assignment ended (contract 1.8), with the outcomes .NET reports
+// for its record_holdout operation (InjectionRecorded, InjectionNotTracked, InjectionNotRecorded,
+// InjectionOutcomeUnknown): the run, its arm, the records its block named, and the error, when there was one (never
+// record content).
+type HoldoutRecordResult struct {
+	Outcome       InjectionRecordOutcome
+	RunID         ae.UUID
+	Arm           ae.HoldoutArm
+	ExperienceIDs []ae.UUID
+	Err           error
+}
+
+// startHoldout records, in a goroutine, a run's holdout assignment in the identity's scope, exactly as startRecording
+// records an injection: it never blocks and never panics, and is reported as the record_holdout operation and through
+// OnHoldoutRecorded.
+func (p *ContextProvider) startHoldout(ctx context.Context, identity *ae.Identity, assignment ae.HoldoutAssignment) {
+	s := p.settings
+	assignment.Records = append([]ae.RunExposure(nil), assignment.Records...)
+	ids := make([]ae.UUID, len(assignment.Records))
+	for i, record := range assignment.Records {
+		ids[i] = record.ExperienceID
+	}
+	result := HoldoutRecordResult{Outcome: InjectionRecorded, RunID: assignment.RunID, Arm: assignment.Arm,
+		ExperienceIDs: ids}
+	recorder, ok := s.Store.(ae.HoldoutRecorder)
+	if !ok {
+		_, op := ae.Observe(ctx, "record_holdout", false)
+		op.Done(string(InjectionNotTracked))
+		result.Outcome = InjectionNotTracked
+		s.reportHoldoutRecorded(result)
+		return
+	}
+	base := context.WithoutCancel(ctx)
+	scoped := *identity
+	p.beginRecording()
+	go func() {
+		defer p.endRecording()
+		_, op := ae.Observe(base, "record_holdout", false)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				result.Outcome, result.Err = InjectionNotRecorded, panicError{recovered}
+			}
+			op.DoneWithClass(string(result.Outcome), recordErrorClass(result.Outcome, result.Err))
+			s.reportHoldoutRecorded(result)
+		}()
+		result.Outcome, result.Err = p.writeChunks(base, len(assignment.Records),
+			func(ctx context.Context, start, end int) error {
+				chunk := assignment
+				chunk.Records = assignment.Records[start:end]
+				return recorder.RecordHoldoutAssignment(ctx, scoped.Authorization(), scoped.Scope, chunk)
+			})
+	}()
+}
+
+// reportWithheld tells OnWithheld, recovering a panic in it.
+func (s *settings) reportWithheld(result InjectionResult) {
+	if s.OnWithheld == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	s.OnWithheld(result)
+}
+
+// reportHoldoutRecorded tells OnHoldoutRecorded, recovering a panic in it.
+func (s *settings) reportHoldoutRecorded(result HoldoutRecordResult) {
+	if s.OnHoldoutRecorded == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	s.OnHoldoutRecorded(result)
+}
+
+// recordErrorClass is the error.class a record_injection or record_holdout that failed counts, as .NET's table has it:
+// a timeout or a cancellation is OutcomeUnknown (Timeout, Cancelled); too many earlier writes still running is
+// NotRecorded (Timeout); a store that failed is Infrastructure, or Unexpected for anything else; a refusal is an answer
+// and counts nothing.
+func recordErrorClass(outcome InjectionRecordOutcome, err error) string {
+	switch outcome {
 	case InjectionRecorded, InjectionNotTracked:
 		return ""
 	case InjectionOutcomeUnknown:
-		if errors.Is(result.Err, context.Canceled) {
+		if errors.Is(err, context.Canceled) {
 			return ae.ErrorClassCancelled
 		}
 		return ae.ErrorClassTimeout
 	}
 	switch {
-	case result.Err == nil || errors.Is(result.Err, ae.ErrAuthorizationDenied):
+	case err == nil || errors.Is(err, ae.ErrAuthorizationDenied):
 		return ""
-	case errors.Is(result.Err, errTooManyAbandoned):
+	case errors.Is(err, errTooManyAbandoned):
 		return ae.ErrorClassTimeout
 	}
-	if _, panicked := result.Err.(panicError); panicked {
+	if _, panicked := err.(panicError); panicked {
 		return ae.ErrorClassUnexpected
 	}
-	if class := ae.ClassifyError(result.Err); class == ae.ErrorClassUnexpected {
+	if class := ae.ClassifyError(err); class == ae.ErrorClassUnexpected {
 		return class
 	}
 	return ae.ErrorClassInfrastructure

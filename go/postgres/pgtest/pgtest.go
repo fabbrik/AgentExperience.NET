@@ -7,7 +7,8 @@
 // (src/AgentExperience.Storage.Postgres/Migrations/*.sql) in name order, one transaction per script, as the owner
 // role, which is what ExperienceSchemaMigrator.MigrateAsync does. The application role's privileges are the
 // contract's sql/application-role-privileges.sql then, from contract 1.4, sql/application-role-privileges-1.4.sql (the
-// injection table's) and, from contract 1.6, sql/application-role-privileges-1.6.sql (the embeddings table's), both
+// injection table's), from contract 1.6, sql/application-role-privileges-1.6.sql (the embeddings table's) and, from
+// contract 1.8, sql/application-role-privileges-1.8.sql (the holdout assignments table's), all of them in both
 // modes (row-level security on, what a contract 1.x port runs against). From contract 1.6 the schema is also given
 // the vectors package's migrations (src/AgentExperience.Storage.Postgres.Vectors/Migrations), after a superuser ran
 // CREATE EXTENSION vector (pgvector is not a trusted extension), so the server must have pgvector: the container is
@@ -229,21 +230,24 @@ func prepareRoles(ctx context.Context, admin Server) error {
 
 var roleName = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
-// The contract's privileges files: 1.0's, 1.4's for the injection table and 1.6's for the embeddings table.
+// The contract's privileges files: 1.0's, 1.4's for the injection table, 1.6's for the embeddings table and 1.8's
+// for the holdout assignments table.
 const (
 	PrivilegesFile   = "application-role-privileges.sql"
 	Privileges14File = "application-role-privileges-1.4.sql"
 	Privileges16File = "application-role-privileges-1.6.sql"
+	Privileges18File = "application-role-privileges-1.8.sql"
 )
 
-// ApplicationRolePrivileges are the statements of the contract's three privileges files for role (a plain
-// identifier), the 1.0 file, the 1.4 file then the 1.6 file: what the .NET privileges call grants on a schema with
-// the vectors migrations applied.
+// ApplicationRolePrivileges are the statements of the contract's four privileges files for role (a plain
+// identifier), the 1.0, 1.4, 1.6 then 1.8 file: what the .NET privileges call grants on a schema with the vectors
+// migrations applied (but for the .NET-only provider holdout table).
 func ApplicationRolePrivileges(t *testing.T, role string) []string {
 	t.Helper()
 	privileges := PrivilegesOf(t, role, PrivilegesFile)
 	privileges = append(privileges, PrivilegesOf(t, role, Privileges14File)...)
-	return append(privileges, PrivilegesOf(t, role, Privileges16File)...)
+	privileges = append(privileges, PrivilegesOf(t, role, Privileges16File)...)
+	return append(privileges, PrivilegesOf(t, role, Privileges18File)...)
 }
 
 // PrivilegesOf are the statements of one contract privileges file (under contract/sql/) for role (a plain

@@ -179,6 +179,9 @@ type Store struct {
 	events     map[ae.UUID]Event
 	injections map[ae.UUID]Injection
 	embeddings map[ae.UUID]Embedding
+	// Contract 1.8's holdout assignments, by run and record, and the records erased (Erase).
+	holdout    map[holdoutKey]HoldoutRow
+	tombstones map[ae.UUID]tombstone
 }
 
 // Embedding is a record's stored embedding (contract 1.6): the model, the dimension, the content hash of the summary
@@ -200,7 +203,7 @@ type Injection struct {
 // New is a store holding records (each experience ID once).
 func New(records ...ae.ExperienceRecord) (*Store, error) {
 	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}, injections: map[ae.UUID]Injection{},
-		embeddings: map[ae.UUID]Embedding{}}
+		embeddings: map[ae.UUID]Embedding{}, holdout: map[holdoutKey]HoldoutRow{}, tombstones: map[ae.UUID]tombstone{}}
 	for _, record := range records {
 		if _, held := s.records[record.ExperienceID]; held {
 			return nil, errors.New("two records share one experience ID")
@@ -282,7 +285,7 @@ func (s *Store) InsertFinalized(ctx context.Context, bounds ae.AuthorizationBoun
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, held := s.records[record.ExperienceID]; held {
+	if _, held := s.records[record.ExperienceID]; held || s.erased(record.ExperienceID) {
 		return errors.New("a record with this experience ID is already stored")
 	}
 	s.add(record)
@@ -307,7 +310,7 @@ func (s *Store) InsertRecord(ctx context.Context, bounds ae.AuthorizationBounds,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, held := s.records[record.ExperienceID]; held {
+	if _, held := s.records[record.ExperienceID]; held || s.erased(record.ExperienceID) {
 		return errors.New("a record with this experience ID is already stored")
 	}
 	s.add(copied)

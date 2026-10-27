@@ -378,7 +378,10 @@ func counted(points []point, operation string) []point {
 func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNames(t *testing.T) {
 	file := names(t)
 	s := enable(t)
-	seen := drive(t, newStore(t), maf.Options{Embedder: embedder{}}, ticket, nextTicket)
+	// With the holdout on, every ID is one the assignment puts in the treatment arm: the block is injected, and both
+	// record_injection and record_holdout are reported.
+	seen := drive(t, newStore(t), maf.Options{Embedder: embedder{}, Holdout: maf.HoldoutOptions{Rate: 0.5},
+		NewID: treatedIDs}, ticket, nextTicket)
 	if len(seen.recorded) != 1 || seen.recorded[0] != maf.InjectionRecorded {
 		t.Fatalf("recorded %v", seen.recorded)
 	}
@@ -476,6 +479,44 @@ func TestInjectIsNothingToInjectThenInjected(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "NothingToInject" || got[1] != "Injected" {
 		t.Fatalf("inject outcomes %v", got)
+	}
+}
+
+// treatedIDs are random IDs the holdout assigns to the treatment arm at rate 0.5 with the default salt.
+func treatedIDs() ae.UUID {
+	for {
+		if id := ae.NewRandomUUID(); ae.AssignHoldout(id, ae.DefaultHoldoutSalt, 0.5) == ae.HoldoutTreatment {
+			return id
+		}
+	}
+}
+
+func TestAHeldOutRunIsWithheldAndItsAssignmentIsRecordHoldoutWithNoSpan(t *testing.T) {
+	s := enable(t)
+	file := names(t)
+	drive(t, newStore(t), maf.Options{Holdout: maf.HoldoutOptions{Rate: 1}}, ticket, nextTicket)
+	var got []any
+	for _, span := range s.spans.GetSpans() {
+		if span.Name == "agentexperience.inject" {
+			got = append(got, attributes(span)[telemetry.AttributeOutcome])
+		}
+		if span.Name == "agentexperience.record_holdout" {
+			t.Error("record_holdout is measurements only, no span")
+		}
+	}
+	if len(got) != 2 || got[0] != "NothingToInject" || got[1] != "Withheld" {
+		t.Fatalf("inject outcomes %v", got)
+	}
+	recorded := counted(s.points(t), "record_holdout")
+	if len(recorded) != 1 || recorded[0].attributes["outcome"] != "Recorded" || recorded[0].value != 1 {
+		t.Fatalf("record_holdout %v", recorded)
+	}
+	pinned, ok := file.operation("record_holdout")
+	if !ok || !slices.Contains(pinned.Outcomes, "Recorded") || pinned.Span {
+		t.Fatalf("record_holdout in the file: %+v", pinned)
+	}
+	if len(counted(s.points(t), "record_injection")) != 0 {
+		t.Error("a withheld block was recorded as injected")
 	}
 }
 

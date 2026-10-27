@@ -1,0 +1,26 @@
+{
+  "description": "An instant ahead of the database clock is stored as the database clock (clock_timestamp()) at the statement.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "00000073-0000-4000-8000-000000000901",
+        "arm": "Holdout",
+        "records": [
+          {
+            "experienceId": "00000073-0000-4000-8000-000000000001",
+            "revision": 1
+          }
+        ],
+        "assignedAt": "9999-12-31T23:59:59.999999+00:00"
+      }
+    }
+  ]
+}

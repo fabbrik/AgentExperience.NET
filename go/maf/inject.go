@@ -148,6 +148,32 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		op.Done("NothingToInject")
 		return messages
 	}
+
+	// The records this block delivers, at the revision each was rendered from.
+	ids := make([]ae.UUID, len(block.Included))
+	exposures := make([]ae.RunExposure, len(block.Included))
+	for i, record := range block.Included {
+		ids[i] = record.ExperienceID
+		exposures[i] = ae.RunExposure{ExperienceID: record.ExperienceID, Revision: record.Revision}
+	}
+
+	// Contract 1.8: the injection holdout. Decided once the block is built, so what a held-out run is denied is exactly
+	// what it would have been given, and before anything is handed over. Only a run this agent's own capture captures
+	// takes part, and only with records to deliver; everything else is injected as it always was, and records nothing.
+	var assignment *ae.HoldoutAssignment
+	if s.Holdout.Rate > 0 && len(exposures) > 0 && captured {
+		if runID, ok := scope.run(); ok {
+			assignment = &ae.HoldoutAssignment{RunID: runID, Arm: ae.AssignHoldout(runID, s.Holdout.Salt, s.Holdout.Rate),
+				Records: exposures, AssignedAt: now}
+		}
+	}
+	if assignment != nil && assignment.Arm == ae.HoldoutWithheld {
+		s.reportWithheld(InjectionResult{Truncated: ranked.Truncated, VectorFallback: vector.fallback,
+			WithheldExperienceIDs: append([]ae.UUID(nil), ids...)})
+		p.startHoldout(ctx, identity, *assignment)
+		op.Done("Withheld")
+		return messages
+	}
 	injected := &message.Message{
 		Role:                 s.MessageRole,
 		Contents:             message.Contents{&message.TextContent{Text: block.Text}},
@@ -160,14 +186,8 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	out = append(out, injected)
 	out = append(out, messages[at:]...)
 
-	// The records this block delivers, at the revision each was rendered from, on the run the invocation is captured
-	// as. Recorded last, once nothing that could fail remains.
-	ids := make([]ae.UUID, len(block.Included))
-	exposures := make([]ae.RunExposure, len(block.Included))
-	for i, record := range block.Included {
-		ids[i] = record.ExperienceID
-		exposures[i] = ae.RunExposure{ExperienceID: record.ExperienceID, Revision: record.Revision}
-	}
+	// The records this block delivers, on the run the invocation is captured as. Recorded last, once nothing that could
+	// fail remains.
 	if captured {
 		scope.recordExposures(exposures)
 	}
@@ -183,6 +203,10 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	// block is handed over and the model called without waiting for the store.
 	if len(ids) > 0 {
 		p.startRecording(ctx, identity, append([]ae.UUID(nil), ids...), now)
+	}
+	// Contract 1.8: the treatment arm's assignment, recorded the same way.
+	if assignment != nil {
+		p.startHoldout(ctx, identity, *assignment)
 	}
 	op.Done("Injected")
 	return out

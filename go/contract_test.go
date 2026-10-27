@@ -47,15 +47,15 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if version != ae.ContractVersion {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
-	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7" {
+	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8" {
 		t.Fatalf("supported versions: %v", ae.SupportedContractVersions)
 	}
 }
 
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
-	for _, version := range []any{"2.0", "1.8", nil} {
+	for _, version := range []any{"2.0", "1.9", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
-		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7") {
+		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8") {
 			t.Fatalf("version %v: %v", version, err)
 		}
 	}
@@ -114,11 +114,12 @@ func TestEveryFixtureFamilyHasCases(t *testing.T) {
 			families = append(families, entry.Name())
 		}
 	}
-	if strings.Join(families, ",") != "embedding-summary,embedding-write,encoding,erased,error-class,finalize,hybrid-merge,inject,"+
-		"lessons-view,record-injection,search,task-text,vector-search" {
+	if strings.Join(families, ",") != "embedding-summary,embedding-write,encoding,erased,error-class,finalize,holdout-assign,holdout-record,"+
+		"hybrid-merge,inject,lessons-view,record-injection,search,task-text,vector-search" {
 		t.Fatalf("families: %v", families)
 	}
-	for _, family := range []string{"erased", "finalize", "inject", "lessons-view", "record-injection", "search", "task-text"} {
+	for _, family := range []string{"erased", "finalize", "holdout-record", "inject", "lessons-view", "record-injection",
+		"search", "task-text"} {
 		if len(ct.Cases(family)) == 0 {
 			t.Fatalf("%s has no cases", family)
 		}
