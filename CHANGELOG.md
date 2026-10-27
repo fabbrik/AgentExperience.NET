@@ -6,6 +6,19 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.17
+
+This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of
+runs and records both arms; `AgentExperienceBenefit.EstimateAsync` compares the arms' verified outcomes, overall, per
+lesson and optionally per model; the injection provider can act on the measured benefit; the same holdout measures any
+other MAF memory provider; and lessons measured as helping can be exported to other memory stores. PostgreSQL gains
+migrations `0027` to `0029` (re-run `ApplyApplicationRolePrivilegesAsync` after migrating). The Python and Go ports
+take part in the holdout through contract 1.8 (add-only). Every new option is off by default, and the public API
+changes are additions. The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and
+the six Go modules at one version.
+
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 
 - **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral

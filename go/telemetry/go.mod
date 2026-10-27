@@ -3,9 +3,9 @@ module github.com/fabbrik/AgentExperience.NET/go/telemetry
 go 1.26.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/maf v0.1.0-preview.16
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/maf v0.1.0-preview.17
 	github.com/microsoft/agent-framework-go v0.1.1
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
