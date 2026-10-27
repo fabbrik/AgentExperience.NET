@@ -3,10 +3,10 @@ module github.com/fabbrik/AgentExperience.NET/go/maf
 go 1.26.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest v0.1.0-preview.16
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest v0.1.0-preview.17
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microsoft/agent-framework-go v0.1.1
 	github.com/openai/openai-go/v3 v3.74.0
