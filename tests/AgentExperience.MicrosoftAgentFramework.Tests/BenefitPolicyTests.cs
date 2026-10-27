@@ -115,6 +115,7 @@ public sealed class BenefitPolicyTests
 
         // Both invocations ran on the empty cache while the one refresh was still reading.
         Assert.All(harness.Results, result => Assert.Equal([A, B, InjectionRecords.Id(3)], result.InjectedExperienceIds));
+        await harness.QueryStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(1, harness.Queries);
 
         release.SetResult();
@@ -475,6 +476,7 @@ public sealed class BenefitPolicyTests
             World.OnQueryHoldout = async (authorization, query, _) =>
             {
                 Interlocked.Increment(ref _queries);
+                QueryStarted.TrySetResult();
                 lock (ReadAs)
                 {
                     ReadAs.Add(authorization.PrincipalId);
@@ -552,6 +554,9 @@ public sealed class BenefitPolicyTests
         public bool Untracked { get; set; }
 
         public int Queries => Volatile.Read(ref _queries);
+
+        /// <summary>Completes when the first holdout read reaches the store: the refresh runs on the thread pool.</summary>
+        public TaskCompletionSource QueryStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<AgentResponse> InvokeAsync(AgentSession? session = null) =>
             Agent.RunAsync("another refund ticket stuck on a lock", session);
