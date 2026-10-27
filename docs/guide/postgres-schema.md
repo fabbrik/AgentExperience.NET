@@ -783,8 +783,9 @@ as the store's own statement now does (see [How the text channel matches](retrie
   bounds, and, for an insert, a live record with that ID in exactly those scope columns. A grant never admits one.
 - The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
   `ApplyApplicationRolePrivilegesAsync` after migrating**; until then assignments are reported as not recorded and
-  injection carries on. The table is .NET-only: no contract privileges file grants it, and the contract's `REVOKE ALL`
-  removes the .NET grants, so in a mixed fleet run the .NET privileges call after the contract's files.
+  injection carries on. From contract 1.8 the Python and Go ports write it too, and the contract's
+  `sql/application-role-privileges-1.8.sql` grants it: in a mixed fleet apply the 1.0, 1.4, 1.6 and 1.8 files in that
+  order, or run the .NET privileges call after them.
 - No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
 
 ### 0028: each record's source run, indexed
@@ -843,6 +844,7 @@ what each one now means. None of them changes what a script does; they are comme
 | `0006`, `0010`, `0012` | The guards do not bind the tables' owner, "which the application role is because it created them"; the purge path is "an auditability mechanism, not a privilege boundary"; an application role that is not the migrating role must be granted `EXECUTE` by hand | The two-role deployment is now the supported one: the application role owns nothing and holds no `DELETE` on any ledger, so neither the owner's escape hatch nor a hand-set marker is available to it, and `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` when the host opts in. The owner and superusers remain unbound. See [Deploying with two roles](deployment.md#deploying-with-two-roles) |
 | `0010` | "Backups, replicas, WAL and logical-replication streams … are host-owned and out of reach of this schema", and the dead tuple "STILL CARRIES THE ERASED TEXT" | Still exactly true in plaintext mode. In encrypted mode every one of those copies holds only ciphertext whose key the erasure destroyed; what stays readable is the derived search data. See [Crypto-shredding](crypto-shredding.md) |
 | `0026` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges file, so in a mixed fleet the .NET privileges call must run after that file | Contract 1.4 brought it into the contract: the ports record their injections with `sql/record-injection.sql`, and `sql/application-role-privileges-1.4.sql` grants the table after the 1.0 file. Apply the 1.0 then the 1.4 file, or the .NET call |
+| `0027` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges files, so in a mixed fleet the .NET privileges call must run after those files | Contract 1.8 brought it into the contract: the ports record their holdout assignments with `sql/record-holdout-assignment.sql`, and `sql/application-role-privileges-1.8.sql` grants the table after the earlier files. Apply them in order, or the .NET call |
 | `0009` | Retention of the grant access log is deferred to a roadmap item, to be done with `0006`'s runbook | Erasing a record deliberately **keeps** access rows — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](deletion-and-retention.md#retention-for-the-grant-access-log) |
 
 ## Data semantics

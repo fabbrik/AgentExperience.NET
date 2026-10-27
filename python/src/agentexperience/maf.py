@@ -33,6 +33,9 @@ What it adds to the agent:
   fails the invocation; the outcome is reported through ``on_injection_recorded``.
 - **The lessons view** (contract 1.7), ``agent_experience_lessons(agent)``: a read-only list of what was learned in a
   scope, with each lesson's block, eligibility and last injection.
+- **The injection holdout** (contract 1.8), with ``holdout=HoldoutOptions(rate=...)``: a deterministic, run-ID-derived
+  share of captured runs that have a block has it withheld (``Withheld``), and both arms are recorded in the background,
+  so the .NET benefit estimate counts this agent's runs. Off by default.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -92,6 +95,13 @@ from .embedding import (
 from .encoding import Duration, Instant
 from .error_class import is_single_token
 from .finalize import FinalizedExperience, finalize
+from .holdout import (
+    MAX_HOLDOUT_RECORDS,
+    HoldoutArm,
+    HoldoutAssignment,
+    HoldoutOptions,
+    assign_holdout,
+)
 from .identity import (
     DevelopmentOnlyError,
     ExperienceIdentity,
@@ -105,6 +115,7 @@ from .inmemory import (
     AuthorizationDenied,
     EmbeddingIndex,
     ExperienceStore,
+    HoldoutRecorder,
     InjectionRecorder,
     InMemoryExperienceStore,
     LessonsReader,
@@ -212,13 +223,19 @@ class InjectionFailure:
 
 @dataclass(frozen=True)
 class InjectionResult:
-    """What one injection delivered: the records in the block, best first, and the block's size in UTF-8 bytes."""
+    """What one injection delivered: the records in the block, best first, and the block's size in UTF-8 bytes. With
+    the holdout (contract 1.8) a held-out invocation is reported too: ``outcome`` ``Withheld``, nothing delivered
+    (``experience_ids`` empty, ``byte_count`` 0), and the records it was denied in ``withheld_experience_ids``."""
 
     experience_ids: tuple[uuid.UUID, ...]
     byte_count: int
     truncated: bool
     vector_fallback: VectorFallback | None = None
     """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
+    outcome: Literal["Injected", "Withheld"] = "Injected"
+    """``Injected``, or ``Withheld`` when the holdout withheld the block (contract 1.8)."""
+    withheld_experience_ids: tuple[uuid.UUID, ...] = ()
+    """The records a held-out invocation's block named and did not deliver; empty otherwise."""
 
 
 InjectionRecordOutcome = Literal["Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"]
@@ -234,6 +251,16 @@ class InjectionRecordResult:
 
     outcome: InjectionRecordOutcome
     experience_ids: tuple[uuid.UUID, ...]
+    exception: BaseException | None = None
+
+
+@dataclass(frozen=True)
+class HoldoutRecordResult:
+    """How recording one run's holdout assignment ended (contract 1.8, the ``record_holdout`` operation): the outcome
+    (as for an injection record), the assignment, and the exception, when there was one (never record content)."""
+
+    outcome: InjectionRecordOutcome
+    assignment: HoldoutAssignment
     exception: BaseException | None = None
 
 
@@ -289,6 +316,9 @@ class ExperienceSettings:
     min_vector_relevance: float | None = None
     """When set (0 to 1), vector candidates whose relevance is below it are dropped; text candidates never are."""
     on_vector_fallback: Callable[[VectorFallback], None] | None = None
+    holdout: HoldoutOptions = field(default_factory=HoldoutOptions)
+    """The injection holdout (contract 1.8): off by default (rate 0)."""
+    on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None
     clock: Callable[[], Instant] = Instant.now
     new_id: Callable[[], uuid.UUID] = uuid.uuid4
     finalization_timeout: float = DEFAULT_FINALIZATION_TIMEOUT
@@ -324,6 +354,7 @@ class ExperienceSettings:
             "on_finalized",
             "on_injection_recorded",
             "on_vector_fallback",
+            "on_holdout_recorded",
             "clock",
             "new_id",
         ):
@@ -344,6 +375,8 @@ class ExperienceSettings:
             and callable(getattr(self.embedder, "embed", None))
         ):
             raise TypeError("embedder must have model_id, dimension and an embed(text) method.")
+        if not isinstance(self.holdout, HoldoutOptions):
+            raise TypeError("holdout must be a HoldoutOptions.")
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
         if self.task_id is not None and not self.task_id.strip():
@@ -392,6 +425,14 @@ class ExperienceSettings:
             return
         try:
             self.on_injection_recorded(result)
+        except Exception:
+            pass
+
+    def report_holdout_recorded(self, result: HoldoutRecordResult) -> None:
+        if self.on_holdout_recorded is None:
+            return
+        try:
+            self.on_holdout_recorded(result)
         except Exception:
             pass
 
@@ -780,47 +821,95 @@ class ExperienceContextProvider(ContextProvider):
     def _start_recording(self, identity: ExperienceIdentity, ids: tuple[uuid.UUID, ...], injected_at: Instant) -> None:
         """Starts recording ``ids`` as injected at ``injected_at``, in the background; never raises, never waits."""
         settings = self.settings
+        recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [
+                functools.partial(
+                    recorder.record_injection,
+                    identity.authorization,
+                    identity.scope,
+                    list(ids[start : start + MAX_RECORD_INJECTION_IDS]),
+                    injected_at,
+                )
+                for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS)
+            ]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
+
+        self._start_background("record_injection", None if recorder is None else writes, report)
+
+    def _start_recording_holdout(self, identity: ExperienceIdentity, assignment: HoldoutAssignment) -> None:
+        """Starts recording the run's holdout ``assignment`` (contract 1.8), in the background, exactly as an injection
+        record is (the ``record_holdout`` operation); never raises, never waits."""
+        settings = self.settings
+        recorder = settings.store if isinstance(settings.store, HoldoutRecorder) else None
+        records = assignment.records
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [
+                functools.partial(
+                    recorder.record_holdout_assignment,
+                    identity.authorization,
+                    identity.scope,
+                    dataclasses.replace(assignment, records=records[start : start + MAX_HOLDOUT_RECORDS]),
+                )
+                for start in range(0, len(records), MAX_HOLDOUT_RECORDS)
+            ]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            settings.report_holdout_recorded(HoldoutRecordResult(outcome, assignment, error))
+
+        self._start_background("record_holdout", None if recorder is None else writes, report)
+
+    def _start_background(
+        self,
+        operation: str,
+        writes: Callable[[], list[Callable[[], None]]] | None,
+        report: Callable[[InjectionRecordOutcome, BaseException | None], None],
+    ) -> None:
+        """Starts one background record (``writes`` is ``None`` for a store that does not track it: ``NotTracked``);
+        never raises, never waits."""
         try:
-            recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
-            if recorder is None:
-                with observe("record_injection") as op:
+            if writes is None:
+                with observe(operation) as op:
                     if op is not None:
                         op.outcome("NotTracked")
-                settings.report_injection_recorded(InjectionRecordResult("NotTracked", ids))
+                report("NotTracked", None)
                 return
-            task = asyncio.get_running_loop().create_task(self._record(recorder, identity, ids, injected_at))
+            task = asyncio.get_running_loop().create_task(self._record(operation, writes(), report))
         except Exception as ex:
-            with observe("record_injection") as op:
+            with observe(operation) as op:
                 if op is not None:
                     op.outcome("NotRecorded", "Unexpected")
-            settings.report_injection_recorded(InjectionRecordResult("NotRecorded", ids, ex))
+            report("NotRecorded", ex)
             return
         self._recordings.add(task)
         task.add_done_callback(self._recordings.discard)
 
     async def _record(
         self,
-        recorder: InjectionRecorder,
-        identity: ExperienceIdentity,
-        ids: tuple[uuid.UUID, ...],
-        injected_at: Instant,
+        operation: str,
+        writes: list[Callable[[], None]],
+        report: Callable[[InjectionRecordOutcome, BaseException | None], None],
     ) -> None:
         """
-        The background record: the IDs in chunks of at most 200, each a call on a worker thread of the provider's own,
-        all within ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot be stopped): it
-        is counted until it ends. At most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes run at once, so writes that
-        hang can never take more threads than that, and never the event loop's default executor, which the search and
-        capture use. Never raises, except the task's own cancellation, which is reported first.
+        The background record: one write per chunk of at most 200 records, each a call on a worker thread of the
+        provider's own, all within ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot
+        be stopped): it is counted until it ends. At most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes run at once,
+        so writes that hang can never take more threads than that, and never the event loop's default executor, which
+        the search and capture use. Never raises, except the task's own cancellation, which is reported first.
         """
-        with observe("record_injection") as op:
-            await self._record_observed(recorder, identity, ids, injected_at, op)
+        with observe(operation) as op:
+            await self._record_observed(writes, report, op)
 
     async def _record_observed(
         self,
-        recorder: InjectionRecorder,
-        identity: ExperienceIdentity,
-        ids: tuple[uuid.UUID, ...],
-        injected_at: Instant,
+        writes: list[Callable[[], None]],
+        report: Callable[[InjectionRecordOutcome, BaseException | None], None],
         op: Any,
     ) -> None:
         settings = self.settings
@@ -830,17 +919,11 @@ class ExperienceContextProvider(ContextProvider):
         loop = asyncio.get_running_loop()
         deadline = loop.time() + settings.injection_record_timeout
         try:
-            for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS):
+            for chunk_write in writes:
                 left = deadline - loop.time()
                 if left <= 0:
                     raise TimeoutError("The injection record ran out of time.")
-                chunk = list(ids[start : start + MAX_RECORD_INJECTION_IDS])
-                write = self._start_write(
-                    loop,
-                    functools.partial(
-                        recorder.record_injection, identity.authorization, identity.scope, chunk, injected_at
-                    ),
-                )
+                write = self._start_write(loop, chunk_write)
                 if write is None:
                     outcome = "NotRecorded"
                     error_class = "Timeout"
@@ -858,7 +941,7 @@ class ExperienceContextProvider(ContextProvider):
             if op is not None:
                 op.outcome("OutcomeUnknown", "Cancelled")
                 op.close()
-            settings.report_injection_recorded(InjectionRecordResult("OutcomeUnknown", ids, ex))
+            report("OutcomeUnknown", ex)
             raise
         except Exception as ex:
             # A refusal (the grant is missing) is an answer, not a failure: only a store or unexpected failure counts.
@@ -866,7 +949,7 @@ class ExperienceContextProvider(ContextProvider):
             error_class = None if isinstance(ex, AuthorizationDenied) else _classify_error(ex)
         if op is not None:
             op.outcome(outcome, error_class)
-        settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
+        report(outcome, error)
 
     def _start_write(
         self, loop: asyncio.AbstractEventLoop, write: Callable[[], None]
@@ -1009,6 +1092,7 @@ class ExperienceContextProvider(ContextProvider):
             return "Skipped"
 
         retrieval_failed = False
+        assignment: HoldoutAssignment | None = None
         try:
             history = {
                 provider.source_id
@@ -1078,15 +1162,42 @@ class ExperienceContextProvider(ContextProvider):
                 op.set("agentexperience.omitted_count", len(block.omitted))
             if block.is_empty:
                 return "NothingToInject"
-            message = Message(
-                role=settings.message_role,
-                contents=[block.text],
-                additional_properties={HISTORICAL_REFERENCE_KEY: True},
-            )
-            context.extend_messages(self, [message])
+            # The injection holdout (contract 1.8). Decided once the block is built, so what a held-out run is denied is
+            # exactly what it would have been given, and before anything is handed over. Only a run this agent's own
+            # capture captures takes part, and only with records to deliver; everything else is injected as it always
+            # was, and records nothing.
+            run_id = scope.run_id if captured and scope is not None else None
+            holdout = settings.holdout
+            if holdout.active and block.included and run_id is not None:
+                arm: HoldoutArm = assign_holdout(run_id, holdout.salt, holdout.rate)
+                assignment = HoldoutAssignment(
+                    run_id,
+                    arm,
+                    tuple(RunExposure(record.experience_id, record.revision) for record in block.included),
+                    now,
+                )
+            if assignment is None or assignment.arm == "Treatment":
+                message = Message(
+                    role=settings.message_role,
+                    contents=[block.text],
+                    additional_properties={HISTORICAL_REFERENCE_KEY: True},
+                )
+                context.extend_messages(self, [message])
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
             return "RetrievalFailed" if retrieval_failed else "Failed"
+
+        if assignment is not None and assignment.arm == "Holdout":
+            # The holdout arm: nothing handed over, no exposure, no injection record; the assignment is recorded in the
+            # background. This port delivers no withdrawal notices, so a held-out invocation is never a retraction.
+            withheld = tuple(record.experience_id for record in block.included)
+            if settings.on_injected is not None:
+                try:
+                    settings.on_injected(InjectionResult((), 0, ranked.truncated, fallback, "Withheld", withheld))
+                except Exception:
+                    pass
+            self._start_recording_holdout(identity, assignment)
+            return "Withheld"
 
         # The records this block delivers, at the revision each was rendered from, on the run the invocation is
         # captured as. Recorded last, once nothing that could fail remains.
@@ -1103,6 +1214,10 @@ class ExperienceContextProvider(ContextProvider):
         # block is handed over and the model called without waiting for the store.
         if delivered:
             self._start_recording(identity, delivered, now)
+
+        # The treatment arm's assignment, recorded the same way.
+        if assignment is not None:
+            self._start_recording_holdout(identity, assignment)
         return "Injected"
 
 
@@ -1326,6 +1441,8 @@ def use_agent_experience(
     min_vector_relevance: float | None = None,
     vector_timeout: float = DEFAULT_VECTOR_TIMEOUT,
     on_vector_fallback: Callable[[VectorFallback], None] | None = None,
+    holdout: HoldoutOptions | None = None,
+    on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -1351,6 +1468,11 @@ def use_agent_experience(
     embedded in the background. Without one, or when the vector channel fails, the injection answers from text and
     reports why (``on_vector_fallback``, ``InjectionResult.vector_fallback``). ``vector_timeout`` bounds the embedding
     and the search of one injection; ``min_vector_relevance`` drops weaker vector candidates.
+
+    ``holdout`` (contract 1.8), ``HoldoutOptions(rate=0.1)`` say, withholds the block from a deterministic share of
+    captured runs that have one, and records both arms (in the background, reported through ``on_holdout_recorded``)
+    for the .NET benefit estimate. Off by default. On PostgreSQL the application role needs the grants of the
+    contract's ``sql/application-role-privileges-1.8.sql``; without them every assignment is reported ``NotRecorded``.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -1386,6 +1508,8 @@ def use_agent_experience(
         min_vector_relevance=min_vector_relevance,
         vector_timeout=vector_timeout,
         on_vector_fallback=on_vector_fallback,
+        holdout=HoldoutOptions() if holdout is None else holdout,
+        on_holdout_recorded=on_holdout_recorded,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.
@@ -1416,6 +1540,8 @@ __all__ = [
     "ExperienceSettings",
     "ExperienceStore",
     "ExperienceToolMiddleware",
+    "HoldoutOptions",
+    "HoldoutRecordResult",
     "IdentityContext",
     "InMemoryExperienceStore",
     "InjectionFailure",

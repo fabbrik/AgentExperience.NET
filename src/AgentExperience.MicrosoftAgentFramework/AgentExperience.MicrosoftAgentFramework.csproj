@@ -28,6 +28,8 @@
     <InternalsVisibleTo Include="AgentExperience.MicrosoftAgentFramework.Tests" />
     <!-- Story 21.8: the PostgreSQL end-to-end gate test waits for the background injection record. -->
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Tests" />
+    <!-- Story 25.6: contract 1.8's holdout-assign fixtures are generated from the assignment function. -->
+    <InternalsVisibleTo Include="AgentExperience.Contract.Tests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -27,6 +27,7 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience, InitialLifecycleEvent
+from .holdout import HoldoutArm, HoldoutAssignment, holdout_records
 from .records import EXPERIENCE_STATUSES, ExperienceRecord, Scope
 from .reflector import is_model_authored
 from .search import AuthorizationBounds, SearchParameters, SearchRow
@@ -73,6 +74,32 @@ class InjectionRecorder(Protocol):
         experience_ids: Sequence[uuid.UUID],
         injected_at: Instant,
     ) -> None: ...
+
+
+@runtime_checkable
+class HoldoutRecorder(Protocol):
+    """
+    A store that records the injection holdout's assignments (contract 1.8), which the .NET benefit estimate reads.
+    Optional: the agent integration records an assignment only through a store that has this method, and reports
+    ``NotTracked`` for one that does not.
+    """
+
+    def record_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: HoldoutAssignment
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class HoldoutRow:
+    """One holdout assignment row: a run, one record its block named at the revision named, the arm, the record's own
+    scope, and the instant (truncated to whole microseconds, clamped to the store's clock)."""
+
+    run_id: uuid.UUID
+    experience_id: uuid.UUID
+    revision: int
+    arm: HoldoutArm
+    scope: Scope
+    assigned_at: Instant
 
 
 @runtime_checkable
@@ -270,6 +297,9 @@ class InMemoryExperienceStore:
         self._events: dict[uuid.UUID, tuple[InitialLifecycleEvent, str]] = {}
         self._injections: dict[uuid.UUID, InjectionSummary] = {}
         self._embeddings: dict[uuid.UUID, _Embedding] = {}
+        self._holdout: dict[tuple[uuid.UUID, uuid.UUID], HoldoutRow] = {}
+        # Erased records: each one's scope and the run it was captured from (an in-memory tombstone keeps its run).
+        self._tombstones: dict[uuid.UUID, tuple[Scope, uuid.UUID]] = {}
         for record in records:
             if record.experience_id in self._records:
                 raise ValueError("Two records share one experience ID.")
@@ -284,7 +314,7 @@ class InMemoryExperienceStore:
         if not permits(bounds, record.scope):
             raise AuthorizationDenied("The record's scope lies outside the authorization bounds.")
         with self._lock:
-            if record.experience_id in self._records:
+            if record.experience_id in self._records or record.experience_id in self._tombstones:
                 raise ValueError("A record with this experience ID is already stored.")
             self._records[record.experience_id] = _index(record)
             self._events[record.experience_id] = (finalized.event, actor)
@@ -335,6 +365,78 @@ class InMemoryExperienceStore:
                         max(current.last_injected_at, at), min(current.injection_count + 1, MAX_INJECTION_COUNT)
                     )
                 )
+
+    def record_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: HoldoutAssignment
+    ) -> None:
+        """
+        Records a run's holdout assignment as ``sql/record-holdout-assignment.sql`` does (contract 1.8): one row per
+        named record held (not erased) in exactly ``scope``, at the revision named (a record named twice counts once,
+        at the revision first named); a row that already exists for the run and record is kept as it is; the instant,
+        truncated to whole microseconds, is clamped to the store's clock. Nothing is written for a run whose own
+        records in the tenant (``source_run_id`` is the run) are all erased. Raises :class:`AuthorizationDenied`
+        outside the bounds, and ``ValueError`` for an invalid assignment.
+        """
+        records = holdout_records(assignment)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        at = min(assignment.assigned_at.truncate_to_microseconds(), self._clock().truncate_to_microseconds())
+        run_id = assignment.run_id
+        with self._lock:
+            live_runs = any(
+                indexed.record.source_run_id == run_id and indexed.record.scope.tenant_id == scope.tenant_id
+                for indexed in self._records.values()
+            )
+            erased_runs = any(
+                erased_run == run_id and erased_scope.tenant_id == scope.tenant_id
+                for erased_scope, erased_run in self._tombstones.values()
+            )
+            if erased_runs and not live_runs:
+                return
+            for exposure in records:
+                indexed = self._records.get(exposure.experience_id)
+                if indexed is None or indexed.record.scope != scope:
+                    continue
+                self._holdout.setdefault(
+                    (run_id, exposure.experience_id),
+                    HoldoutRow(run_id, exposure.experience_id, exposure.revision, assignment.arm, scope, at),
+                )
+
+    def holdout_assignments(self) -> list[HoldoutRow]:
+        """Every holdout assignment row, ordered by run then record, for inspection in tests."""
+        with self._lock:
+            rows = list(self._holdout.values())
+        return sorted(rows, key=lambda row: (row.run_id, row.experience_id))
+
+    def erase(self, experience_id: uuid.UUID) -> bool:
+        """
+        Erases a record, as the .NET erasure does to what this store holds: the record is no longer read, searched,
+        listed or recorded; its injection summary and embedding go; every holdout row naming it goes, and so does
+        every row of the run it was captured from when no other record of that run is live in its tenant. The
+        tombstone keeps the record's scope and run, so a later holdout write for that run records nothing. Answers
+        whether a record was erased. For tests and development: the contract leaves erasure to .NET.
+        """
+        with self._lock:
+            indexed = self._records.pop(experience_id, None)
+            if indexed is None:
+                return False
+            record = indexed.record
+            self._tombstones[experience_id] = (record.scope, record.source_run_id)
+            self._injections.pop(experience_id, None)
+            self._embeddings.pop(experience_id, None)
+            run_live = any(
+                other.record.source_run_id == record.source_run_id
+                and other.record.scope.tenant_id == record.scope.tenant_id
+                for other in self._records.values()
+            )
+            for key, row in list(self._holdout.items()):
+                if row.experience_id == experience_id or (
+                    not run_live
+                    and row.run_id == record.source_run_id
+                    and row.scope.tenant_id == record.scope.tenant_id
+                ):
+                    del self._holdout[key]
+        return True
 
     def injections(self) -> dict[uuid.UUID, InjectionSummary]:
         """When each record was last injected and how often, for inspection in tests."""

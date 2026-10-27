@@ -34,6 +34,8 @@ from agentexperience.finalize import finalize
 from agentexperience.inmemory import InMemoryExperienceStore
 from agentexperience.maf import (
     ExperienceContextProvider,
+    HoldoutOptions,
+    HoldoutRecordResult,
     InjectionRecordResult,
     development_identity,
     exit_code,
@@ -195,6 +197,7 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "index",
         "inject",
         "record_injection",
+        "record_holdout",
     }
 
 
@@ -220,8 +223,20 @@ def test_neither_the_core_nor_the_agent_integration_imports_opentelemetry() -> N
 def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_the_pinned_names() -> None:
     sink = Telemetry()
     recorded: list[InjectionRecordResult] = []
-    drive(learning_agent(InMemoryExperienceStore(), recorded, embedder=Embedder()), TICKET, NEXT_TICKET)
+    held: list[HoldoutRecordResult] = []
+    counter = iter(range(1, 1000))
+    agent = learning_agent(
+        InMemoryExperienceStore(),
+        recorded,
+        embedder=Embedder(),
+        # Sequential IDs: the second run is 00000000-0000-4000-8000-000000000007, in the treatment arm at 0.25.
+        new_id=lambda: uuid.UUID(f"00000000-0000-4000-8000-{next(counter):012d}"),
+        holdout=HoldoutOptions(rate=0.25),
+        on_holdout_recorded=held.append,
+    )
+    drive(agent, TICKET, NEXT_TICKET)
     assert [item.outcome for item in recorded] == ["Recorded"]
+    assert [(item.outcome, item.assignment.arm) for item in held] == [("Recorded", "Treatment")]
 
     spans = sink.finished()
     names = {span.name for span in spans}
@@ -270,6 +285,7 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
     # The retrieval inside an injection is the Core source's, not nested; verify and reflect inside finalize are.
     nested = {(attributes["operation"], attributes["nested"]) for _, _, _, attributes, _ in points}
     assert ("retrieve", False) in nested and ("inject", False) in nested and ("record_injection", False) in nested
+    assert ("record_holdout", False) in nested
     assert ("verify", True) in nested and ("reflect", True) in nested and ("finalize", False) in nested
     assert ("capture.append_attempt", False) in nested
 

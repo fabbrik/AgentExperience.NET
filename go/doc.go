@@ -1,5 +1,5 @@
 // Package agentexperience is a Go core of AgentExperience that implements the AgentExperience.NET language-neutral
-// contract 1.7 (the repository's contract directory).
+// contract 1.8 (the repository's contract directory).
 //
 // Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical
 // Reference block, derives the task text, classifies errors, and computes the text-search parameters and the
@@ -15,6 +15,9 @@
 // .NET Expired and ContentUnconfirmed do not exist here, which has no maximum-age policy and no provenance signing),
 // and when it was last injected. It renders no HTML.
 //
+// The injection holdout (contract 1.8, AssignHoldout) assigns a captured run to the arm .NET would, so a Go agent
+// withholds the block on the same share of runs and records the rows the .NET benefit estimate reads.
+//
 // The contract is generated from .NET, where a string is UTF-16: every length, cut and limit here is counted in
 // UTF-16 code units, never in bytes or runes. Whitespace, word characters and ignoring case are .NET's, not Go's
 // (Go's regexp \s is ASCII only and its \b is ASCII words, and strings.EqualFold and regexp's (?i) fold the long s
@@ -24,7 +27,7 @@
 package agentexperience
 
 // ContractVersion is the contract version this package implements.
-const ContractVersion = "1.7"
+const ContractVersion = "1.8"
 
 // SupportedContractVersions are the contract versions this package passes: every fixture of each.
-var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"}
+var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8"}

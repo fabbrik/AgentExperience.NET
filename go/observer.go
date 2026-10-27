@@ -23,7 +23,7 @@ import (
 const (
 	// SourceCore is the source of the core operations.
 	SourceCore = "AgentExperience.Core"
-	// SourceMAF is the source of inject and record_injection.
+	// SourceMAF is the source of inject, record_injection and record_holdout.
 	SourceMAF = "AgentExperience.MicrosoftAgentFramework"
 )
 
@@ -63,8 +63,9 @@ var observedOperations = map[string]OperationSpec{
 	"index": {SourceCore, true,
 		[]string{"Indexed", "Stale", "Missing", "ProviderFailed", "IndexFailed"}},
 	"inject": {SourceMAF, true,
-		[]string{"Injected", "NothingToInject", "Skipped", "RetrievalFailed", "Failed"}},
+		[]string{"Injected", "NothingToInject", "Skipped", "RetrievalFailed", "Failed", "Withheld"}},
 	"record_injection": {SourceMAF, false, []string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
+	"record_holdout":   {SourceMAF, false, []string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
 }
 
 // ObservedOperations is every operation this port reports, by its operation value. The port reports no other: not

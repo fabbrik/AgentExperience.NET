@@ -1130,7 +1130,14 @@ the arms.
   a revision, the arm, the scope and an instant, never content; erasing a lesson removes its rows, and erasing a run's
   own record removes that run's rows. In PostgreSQL the rows are migration `0027`'s
   `agent_experience.experience_holdout_assignments` (see [the schema](postgres-schema.md)); the in-memory store keeps
-  them in memory. The Python and Go ports do not take part yet.
+  them in memory.
+- **Python and Go agents take part too** (contract 1.8, [what it adds](../../contract/README-1.8.md)). The ports assign
+  a run with the same function, withhold the same way and record the same rows, behind the same opt-in option (Python
+  `use_agent_experience(..., holdout=HoldoutOptions(rate=0.1))`, Go `HoldoutOptions{Rate: 0.1}` on the Agent Framework
+  options; rate 0 by default). In a mixed fleet sharing one PostgreSQL store, the .NET estimate below counts the
+  Python and Go agents' runs with the .NET ones. Apply the contract's `sql/application-role-privileges-1.8.sql` after
+  its other privileges files, or run the .NET privileges call last. The estimate, the benefit policy and measuring
+  another memory provider stay .NET-only.
 
 ### Reading the estimate
 

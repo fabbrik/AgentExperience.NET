@@ -17,7 +17,7 @@ import (
 
 func TestTheEmbeddedSQLIsTheContractSQL(t *testing.T) {
 	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL, WriteEmbeddingSQL, SearchVectorSQL,
-		ListLessonsSQL} {
+		ListLessonsSQL, RecordHoldoutSQL} {
 		embedded, err := ContractSQL(name)
 		if err != nil {
 			t.Fatal(err)
@@ -61,6 +61,14 @@ func TestThePlaceholdersOfTheContractSQLAreItsParameters(t *testing.T) {
 		"agent_id", "user_id"}
 	if !reflect.DeepEqual(statement.Names, want) {
 		t.Fatalf("record-injection.sql parameters: %v", statement.Names)
+	}
+
+	holdout, _ := ContractSQL(RecordHoldoutSQL)
+	statement = ToDriverPlaceholders(holdout)
+	want = []string{"tenant_id", "run_id", "arm", "assigned_at", "experience_ids", "revisions", "application_id",
+		"project_id", "team_id", "agent_id", "user_id"}
+	if !reflect.DeepEqual(statement.Names, want) {
+		t.Fatalf("record-holdout-assignment.sql parameters: %v", statement.Names)
 	}
 }
 

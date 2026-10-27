@@ -32,6 +32,7 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience
+from .holdout import HoldoutAssignment, holdout_records
 from .inmemory import (
     AuthorizationDenied,
     InjectionSummary,
@@ -156,6 +157,7 @@ RECORD_INJECTION_SQL = "record-injection.sql"
 WRITE_EMBEDDING_SQL = "write-experience-embedding.sql"
 SEARCH_VECTOR_SQL = "search-experience-vector.sql"
 LIST_LESSONS_SQL = "list-experience-lessons.sql"
+RECORD_HOLDOUT_SQL = "record-holdout-assignment.sql"
 
 _INJECTIONS_UNREADABLE = frozenset({"42P01", "42501"})  # undefined_table, insufficient_privilege
 
@@ -214,6 +216,7 @@ class PostgresExperienceStore:
         self._declare = to_driver_placeholders(contract_sql(DECLARE_BOUNDS_SQL))
         self._search = to_driver_placeholders(contract_sql(SEARCH_SQL))
         self._record_injection = to_driver_placeholders(contract_sql(RECORD_INJECTION_SQL))
+        self._record_holdout = to_driver_placeholders(contract_sql(RECORD_HOLDOUT_SQL))
         self._write_statements = {
             key: to_driver_placeholders(text) for key, text in contract_statements(WRITE_EMBEDDING_SQL).items()
         }
@@ -515,6 +518,44 @@ class PostgresExperienceStore:
                 {
                     "experience_ids": ids,
                     "injected_at": injected_at.to_datetime(),
+                    "tenant_id": scope.tenant_id,
+                    "application_id": scope.application_id,
+                    "project_id": scope.project_id,
+                    "team_id": scope.team_id,
+                    "agent_id": scope.agent_id,
+                    "user_id": scope.user_id,
+                },
+            )
+
+    def record_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: HoldoutAssignment
+    ) -> None:
+        """
+        Records a run's holdout assignment: runs ``sql/record-holdout-assignment.sql`` (contract 1.8) once, in one
+        transaction that declared ``bounds``, with each named record once (at the revision first named). Only a record
+        live in exactly ``scope`` gets a row, at the revision named; a row that already exists for the run and record
+        is kept; the instant is truncated to whole microseconds and clamped to the database clock; nothing is written
+        for a run whose own records are all being erased. Raises :class:`~agentexperience.inmemory.AuthorizationDenied`
+        when ``bounds`` do not permit ``scope``, ``ValueError`` for an invalid assignment, and the driver's error
+        otherwise (``insufficient_privilege`` until the role holds the grants of
+        ``sql/application-role-privileges-1.8.sql``). The agent integration calls it in the background, fail-open.
+        """
+        from psycopg.types.numeric import Int8
+
+        records = holdout_records(assignment)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        if not records:
+            return
+        with self._transaction(bounds) as cursor:
+            cursor.execute(
+                self._record_holdout,
+                {
+                    "run_id": assignment.run_id,
+                    "arm": assignment.arm,
+                    "experience_ids": [exposure.experience_id for exposure in records],
+                    "revisions": [Int8(exposure.revision) for exposure in records],
+                    "assigned_at": assignment.assigned_at.to_datetime(),
                     "tenant_id": scope.tenant_id,
                     "application_id": scope.application_id,
                     "project_id": scope.project_id,
