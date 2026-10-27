@@ -111,6 +111,22 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   policies. Re-run `ApplyApplicationRolePrivilegesAsync` after migrating:
   the role gets `SELECT` and `INSERT`. .NET-only; the contract is unchanged.
 
+### Export measured lessons to other memory stores (story 25.9)
+
+- **`AgentExperienceLessons.ExportMeasuredAsync(identity, sink, options?, ct)`** hands an `IExperienceLessonSink` the
+  complete current set of lessons in exactly the identity's scope that are eligible, verified and measured `Helps` (over
+  the benefit policy's window, and `MinimumRunsPerArm` unless `ExperienceBenefitOptions` is passed), each an
+  `ExportedLesson`: ID, revision, task ID, the lesson text without the block's wrapper, the measured comparison and the
+  export instant. The sink upserts what is new or changed and removes what is absent, so a lesson revoked, erased or no
+  longer measured as helping leaves the copy too. A store that does not track the holdout gives an empty set (the sink is
+  still called); a denied read returns the store's outcome without calling the sink; sink exceptions propagate. It
+  returns `ExperienceLessonExportResult` with the sink's `ExperienceLessonSyncResult(Added, Updated, Removed)`. Explicit
+  only: nothing exports automatically. No vendor SDK dependency.
+- **`MarkdownLessonFileSink(path, timeProvider?)`** keeps one deterministic Markdown file (sorted by experience ID; the
+  scope, the export instant, and each lesson's revision, measured benefit and text, the untrusted parts as indented code
+  blocks), written atomically (temporary file, then move), for `AGENTS.md`, `CLAUDE.md` or a skill folder. See
+  [Sharing measured lessons with other tools](docs/guide/injection.md#sharing-measured-lessons-with-other-tools).
+
 ## 0.1.0-preview.16
 
 The Python and Go ports can now list what an agent learned and report the same OpenTelemetry spans and metrics as .NET.

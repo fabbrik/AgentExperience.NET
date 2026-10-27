@@ -789,7 +789,6 @@ public static class HistoricalReferenceWriter
         out bool borrowedArguments)
     {
         var record = ranked.Record;
-        var reflection = record.Reflection;
 
         // Story 17.2: content nothing confirms (with provenance signing configured) is fenced as model-authored, and
         // so are the task ID and the Tried: and Worked: lines it renders, which a writer of the store could have changed too.
@@ -838,7 +837,44 @@ public static class HistoricalReferenceWriter
             text.Append(drawn);
         }
 
+        LessonLines(text, record, approachLine, unconfirmed, drawn.ToString());
+        text.Append("--- END RECORD ").Append(ordinal).Append(" ---\n");
+        return text.ToString();
+    }
 
+    /// <summary>
+    /// One record's lesson as plain text, without the block's delimiters, its record delimiters, its source, confidence
+    /// and ranking lines, or when and where it was recorded: the <c>Tried:</c> and <c>Worked:</c> lines and the
+    /// reflection, inside the model-authored fence when a model wrote it or nothing confirms its content, exactly as the
+    /// verbose block renders them for the reader's own record. For exporting measured lessons.
+    /// </summary>
+    /// <param name="record">The record, the reader's own (never one borrowed through a grant).</param>
+    /// <param name="approachArguments">The reader's validated allowlist.</param>
+    /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
+    /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt.</param>
+    internal static string RenderLesson(
+        ExperienceRecord record,
+        ApproachArgumentAllowlist approachArguments,
+        Func<ExperienceRecord, bool>? isContentConfirmed,
+        AttemptFailureDetail failureDetail)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(approachArguments);
+        var unconfirmed = isContentConfirmed is not null && !isContentConfirmed(record);
+        var approachLine = AttemptLines(record, approachArguments, failureDetail, borrowed: false, out _);
+        var text = new StringBuilder();
+        LessonLines(text, record, approachLine, unconfirmed, drawn: null);
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// The verbose layout's lesson lines: the lesson, the <c>Tried:</c> and <c>Worked:</c> lines, reuse guidance,
+    /// preconditions and warnings, fenced as model-authored when <paramref name="unconfirmed"/> or a model wrote the
+    /// reflection. <paramref name="drawn"/>, the lines drawn from an unconfirmed record, sits inside that fence.
+    /// </summary>
+    private static void LessonLines(StringBuilder text, ExperienceRecord record, string? approachLine, bool unconfirmed, string? drawn)
+    {
+        var reflection = record.Reflection;
         if (unconfirmed)
         {
             // Story 17.2: nothing confirms this record's content, so every line drawn from it -- the task ID, when
@@ -875,9 +911,6 @@ public static class HistoricalReferenceWriter
             Bullets(text, "Preconditions", reflection?.Preconditions);
             Bullets(text, "Warnings", reflection?.Warnings);
         }
-
-        text.Append("--- END RECORD ").Append(ordinal).Append(" ---\n");
-        return text.ToString();
     }
 
     /// <summary>

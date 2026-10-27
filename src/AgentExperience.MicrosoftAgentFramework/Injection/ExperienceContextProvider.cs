@@ -240,6 +240,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
             _options.FailureDetail,
             _options.Rendering);
 
+    /// <summary>
+    /// <paramref name="record"/>'s lesson alone, as this provider's writer and options render it, without the block's or
+    /// the record's delimiters (<see cref="HistoricalReferenceWriter.RenderLesson"/>). For exporting measured lessons.
+    /// </summary>
+    internal string RenderLessonText(ExperienceRecord record) =>
+        HistoricalReferenceWriter.RenderLesson(record, _approachArguments, _retrieval.IsContentConfirmed, _options.FailureDetail);
+
     /// <summary>The most UTF-8 bytes one block this provider injects may occupy.</summary>
     internal int MaxBlockBytes => _options.Limits.MaxBytes;
 

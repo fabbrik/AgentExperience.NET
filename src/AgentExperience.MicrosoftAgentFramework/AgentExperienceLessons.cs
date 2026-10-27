@@ -1,6 +1,7 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Holdout;
 using AgentExperience.Core.Retrieval;
+using AgentExperience.MicrosoftAgentFramework.Export;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 
 namespace AgentExperience.MicrosoftAgentFramework;
@@ -90,6 +91,18 @@ public sealed class AgentExperienceLessons
                 nameof(query));
         }
 
+        return (await ReadAsync(identity, query, cancellationToken).ConfigureAwait(false)).Page;
+    }
+
+    /// <summary>
+    /// What <see cref="ListAsync"/> lists, for a query already validated, with the record each listed lesson was described
+    /// from, at the same index.
+    /// </summary>
+    private async Task<(ExperienceLessonsPage Page, List<ExperienceRecord> Records)> ReadAsync(
+        ExperienceIdentity identity,
+        ExperienceLessonsQuery query,
+        CancellationToken cancellationToken)
+    {
         // One record past the limit tells "exactly the limit" from "more exist". Leaving ineligible lessons out may skip
         // any number of records, so then as many as the store answers are read.
         var probe = query.IncludeIneligible ? Math.Min(query.Limit + 1, ExperienceRecordQuery.MaxLimit) : ExperienceRecordQuery.MaxLimit;
@@ -102,7 +115,7 @@ public sealed class AgentExperienceLessons
         var generatedAt = _clock.GetUtcNow();
         if (result is null || result.Outcome != ExperienceStoreOutcome.Found)
         {
-            return new ExperienceLessonsPage(identity.Scope, result?.Outcome ?? ExperienceStoreOutcome.Invalid, [], generatedAt);
+            return (new ExperienceLessonsPage(identity.Scope, result?.Outcome ?? ExperienceStoreOutcome.Invalid, [], generatedAt), []);
         }
 
         var records = result.Records ?? [];
@@ -110,6 +123,7 @@ public sealed class AgentExperienceLessons
         // (or the reverse) reads as not tracked rather than as "never".
         var injections = _store.TracksInjections ? result.Injections : null;
         var lessons = new List<ExperienceLesson>(Math.Min(records.Count, query.Limit));
+        var described = new List<ExperienceRecord>(lessons.Capacity);
         var outOfScope = 0;
         var hasMore = false;
         foreach (var record in records)
@@ -145,6 +159,7 @@ public sealed class AgentExperienceLessons
             }
 
             lessons.Add(lesson);
+            described.Add(record);
         }
 
         // A store that answered as many records as were asked for may hold more than were read.
@@ -156,12 +171,13 @@ public sealed class AgentExperienceLessons
             await AddMeasuredBenefitAsync(identity, lessons, generatedAt, cancellationToken).ConfigureAwait(false);
         }
 
-        return new ExperienceLessonsPage(identity.Scope, ExperienceStoreOutcome.Found, lessons, generatedAt)
+        var page = new ExperienceLessonsPage(identity.Scope, ExperienceStoreOutcome.Found, lessons, generatedAt)
         {
             HasMore = hasMore,
             OutOfScopeDropped = outOfScope,
             InjectionsTracked = injections is not null,
         };
+        return (page, described);
     }
 
     /// <summary>
@@ -186,6 +202,146 @@ public sealed class AgentExperienceLessons
     }
 
     /// <summary>
+    /// Hands <paramref name="sink"/> every lesson in <paramref name="identity"/>'s scope that the holdout measured as
+    /// helping, so a copy kept in another memory store (a Markdown file an agent loads, Mem0, Zep, Letta, an
+    /// <c>AGENTS.md</c> or skill folder) stays in step with what the library has learned. A sync, not a one-way dump: the
+    /// sink is given the complete current set every time and removes what is no longer in it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What is exported.</b> A lesson is in the set when the lessons view lists it in exactly the identity's scope
+    /// (never one another scope lends through a grant), it is <see cref="ExperienceLesson.IsEligible"/> (retrieval would
+    /// consider it), its record's outcome is <see cref="TaskVerificationStatus.Verified"/>, and its per-lesson verdict is
+    /// <see cref="ExperienceBenefitVerdict.Helps"/>: one estimate for the scope, read as
+    /// <see cref="ExperienceLessonsQuery.IncludeMeasuredBenefit"/> reads it, over the context provider's
+    /// <see cref="ExperienceBenefitPolicy.Window"/> (30 days by default) and decided with <paramref name="options"/>
+    /// (the provider's <see cref="ExperienceBenefitPolicy.MinimumRunsPerArm"/>, 20 by default, when
+    /// <see langword="null"/>). <see cref="ExperienceBenefitVerdict.NoEvidence"/> and
+    /// <see cref="ExperienceBenefitVerdict.Hurts"/> are never exported.
+    /// </para>
+    /// <para>
+    /// <b>What the sink must do.</b> A lesson withdrawn, erased, no longer eligible or no longer measured as helping is
+    /// simply absent from the set, and the sink removes its copy. A store that does not track the holdout gives an empty
+    /// set, and the sink is still called, so stale copies are removed.
+    /// </para>
+    /// <para>
+    /// <b>Explicit and read-only.</b> Nothing exports automatically; the host calls this. It reads under the identity's
+    /// own authorization, like <see cref="ListAsync"/>, and writes nothing to the store. The lesson text is untrusted
+    /// reference material, as the Historical Reference block is: whatever loads the exported copy must treat it so.
+    /// Whatever the sink throws propagates to the caller unchanged.
+    /// </para>
+    /// </remarks>
+    /// <param name="identity">The caller, from the host's own authentication: the authorization the store checks, and the scope exported.</param>
+    /// <param name="sink">Where the current set goes.</param>
+    /// <param name="options">The verdict's threshold; <see langword="null"/> for the context provider's benefit policy's.</param>
+    /// <param name="cancellationToken">Cancels the read and the sync.</param>
+    /// <returns>
+    /// What was exported and what the sink reported. A store outcome other than <see cref="ExperienceStoreOutcome.Found"/>
+    /// (the scope lies outside the authorization, say) is a result carrying that outcome, and the sink is not called.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="identity"/> or <paramref name="sink"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceBenefitOptions.MinimumRunsPerArm"/> is less than 1.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The scope holds more reusable lessons than one store read answers (<see cref="ExperienceRecordQuery.MaxLimit"/>), so
+    /// the set could not be read whole and the sink would remove copies of lessons it was not shown; the store paged a
+    /// run's holdout rows apart; or the sink returned <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ExperienceStoreException">The holdout read failed.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public async Task<ExperienceLessonExportResult> ExportMeasuredAsync(
+        ExperienceIdentity identity,
+        IExperienceLessonSink sink,
+        ExperienceBenefitOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(sink);
+
+        // Validates the options before anything is read.
+        _ = ExperienceBenefitEstimator.Empty(options);
+        options ??= _provider.BenefitPolicy.EstimatorOptions;
+
+        // Only statuses retrieval can return: the rest are never eligible, and leaving them out keeps the one bounded
+        // read for the lessons that can be exported.
+        var (page, records) = await ReadAsync(
+            identity,
+            new ExperienceLessonsQuery
+            {
+                Statuses = ExperienceStatuses.EligibleForReuse,
+                Limit = ExperienceRecordQuery.MaxLimit,
+                IncludeIneligible = false,
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (page.Outcome != ExperienceStoreOutcome.Found)
+        {
+            return new ExperienceLessonExportResult(identity.Scope, page.Outcome, [], null, page.GeneratedAt);
+        }
+
+        if (page.HasMore)
+        {
+            throw new InvalidOperationException(
+                $"The scope holds more reusable lessons than one store read answers ({ExperienceRecordQuery.MaxLimit}), so the "
+                + "measured set cannot be read whole, and a sink given part of it would remove copies of lessons that still help. "
+                + "Nothing was handed to the sink.");
+        }
+
+        var exportedAt = page.GeneratedAt;
+        var estimate = await EstimateAsync(identity, options, exportedAt, cancellationToken).ConfigureAwait(false);
+        if (estimate.Outcome != ExperienceStoreOutcome.Found)
+        {
+            return new ExperienceLessonExportResult(identity.Scope, estimate.Outcome, [], null, exportedAt);
+        }
+
+        var current = new List<ExportedLesson>();
+        if (estimate.Tracked)
+        {
+            var helps = new Dictionary<Guid, ExperienceBenefitComparison>();
+            foreach (var lesson in estimate.Lessons)
+            {
+                if (lesson?.Comparison is { Verdict: ExperienceBenefitVerdict.Helps } comparison)
+                {
+                    helps.TryAdd(lesson.ExperienceId, comparison);
+                }
+            }
+
+            var seen = new HashSet<Guid>();
+            for (var i = 0; i < page.Lessons.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var lesson = page.Lessons[i];
+                var record = records[i];
+                if (!lesson.IsEligible
+                    || record.Outcome?.Status != TaskVerificationStatus.Verified
+                    || !helps.TryGetValue(lesson.ExperienceId, out var comparison)
+                    || !seen.Add(lesson.ExperienceId))
+                {
+                    continue;
+                }
+
+                current.Add(new ExportedLesson(
+                    record.ExperienceId,
+                    record.Revision,
+                    lesson.TaskId,
+                    _provider.RenderLessonText(record),
+                    comparison,
+                    exportedAt));
+            }
+
+            current.Sort((left, right) => string.CompareOrdinal(
+                left.ExperienceId.ToString("D", System.Globalization.CultureInfo.InvariantCulture),
+                right.ExperienceId.ToString("D", System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        var sync = await sink.SyncAsync(identity.Scope, current, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"The sink's {nameof(IExperienceLessonSink.SyncAsync)} returned null.");
+        return new ExperienceLessonExportResult(identity.Scope, ExperienceStoreOutcome.Found, current, sync, exportedAt)
+        {
+            HoldoutTracked = estimate.Tracked,
+        };
+    }
+
+    /// <summary>
     /// Sets each listed lesson's <see cref="ExperienceLesson.MeasuredBenefit"/> from one estimate for the page's scope, over
     /// the context provider's benefit window and threshold (<see cref="ExperienceBenefitPolicy.Window"/> and
     /// <see cref="ExperienceBenefitPolicy.MinimumRunsPerArm"/>, whose defaults apply even with the policy off): the estimate
@@ -198,10 +354,7 @@ public sealed class AgentExperienceLessons
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var policy = _provider.BenefitPolicy;
-        var from = now - DateTimeOffset.MinValue > policy.Window ? now - policy.Window : DateTimeOffset.MinValue;
-        var estimate = await AgentExperienceBenefit.EstimateFromStoreAsync(
-            _store, identity.Authorization, identity.Scope, policy.EstimatorOptions, from, cancellationToken).ConfigureAwait(false);
+        var estimate = await EstimateAsync(identity, _provider.BenefitPolicy.EstimatorOptions, now, cancellationToken).ConfigureAwait(false);
         if (estimate is not { Tracked: true, Outcome: ExperienceStoreOutcome.Found })
         {
             return;
@@ -220,6 +373,22 @@ public sealed class AgentExperienceLessons
                 lessons[i] = lessons[i] with { MeasuredBenefit = benefit };
             }
         }
+    }
+
+    /// <summary>
+    /// One benefit estimate for <paramref name="identity"/>'s scope, over the assignments made within the context provider's
+    /// <see cref="ExperienceBenefitPolicy.Window"/> of <paramref name="now"/>, decided with <paramref name="options"/>.
+    /// </summary>
+    private Task<ExperienceBenefitEstimate> EstimateAsync(
+        ExperienceIdentity identity,
+        ExperienceBenefitOptions options,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var window = _provider.BenefitPolicy.Window;
+        var from = now - DateTimeOffset.MinValue > window ? now - window : DateTimeOffset.MinValue;
+        return AgentExperienceBenefit.EstimateFromStoreAsync(
+            _store, identity.Authorization, identity.Scope, options, from, cancellationToken);
     }
 
     /// <summary>One record as a lesson. A record that cannot be rendered is a lesson marked so, never an exception.</summary>
