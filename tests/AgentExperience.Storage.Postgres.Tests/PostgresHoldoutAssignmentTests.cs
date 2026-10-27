@@ -124,6 +124,54 @@ public sealed class PostgresHoldoutAssignmentTests(PostgresFixture fixture)
         Assert.Equal(1L, await CountAsync("run_id = @id", otherRun));
     }
 
+    /// <summary>
+    /// Story 25.10: the late-write guard refuses only a run whose own record is being erased. A run whose record is live,
+    /// or not written yet, is recorded as before; so is one whose only record naming it is another tenant's tombstone.
+    /// </summary>
+    [Fact]
+    public async Task A_run_whose_record_is_live_or_not_yet_written_is_recorded_as_before()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await CreateAsync(auth, scope);
+        var live = Guid.NewGuid();
+        var unwritten = Guid.NewGuid();
+        await CreateRunRecordAsync(auth, scope, live, TaskVerificationStatus.Verified);
+
+        await RecordAsync(auth, scope, new HoldoutAssignment(live, HoldoutArm.Treatment, [new(lesson, 0)], DateTimeOffset.UtcNow));
+        await RecordAsync(auth, scope, new HoldoutAssignment(unwritten, HoldoutArm.Holdout, [new(lesson, 0)], DateTimeOffset.UtcNow));
+
+        Assert.Equal(1L, await CountAsync("run_id = @id", live));
+        Assert.Equal(1L, await CountAsync("run_id = @id", unwritten));
+
+        // Another tenant's record naming the same run, erased, is not this tenant's run's record.
+        var otherTenant = NewTenant();
+        var otherAuth = Authorize(otherTenant);
+        var otherScope = Scope(otherTenant);
+        var shared = Guid.NewGuid();
+        var impostor = Minimal(otherScope) with { SourceRunId = shared };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(otherAuth, impostor, CancellationToken.None)).Outcome);
+        await RecordAsync(auth, scope, new HoldoutAssignment(shared, HoldoutArm.Holdout, [new(lesson, 0)], DateTimeOffset.UtcNow));
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.DeleteAsync(otherAuth, otherScope, impostor.ExperienceId, CancellationToken.None)).Outcome);
+        await RecordAsync(auth, scope, new HoldoutAssignment(shared, HoldoutArm.Holdout, [new(await CreateAsync(auth, scope), 0)], DateTimeOffset.UtcNow));
+        Assert.Equal(2L, await CountAsync("run_id = @id", shared));
+    }
+
+    /// <summary>
+    /// Story 25.10: 0028's index exists on the run lookup's columns, and the outcome read and the write's run lookup can
+    /// use it.
+    /// </summary>
+    [Fact]
+    public async Task The_source_run_index_exists_on_tenant_and_source_run()
+    {
+        await using var command = fixture.RawDataSource.CreateCommand(
+            "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i " +
+            "WHERE i.indexrelid = 'agent_experience.ix_experience_records_source_run'::regclass");
+        var definition = (string)(await command.ExecuteScalarAsync())!;
+        Assert.EndsWith("ON agent_experience.experience_records USING btree (tenant_id, source_run_id)", definition, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Erasing_another_tenant_s_record_that_names_the_same_run_leaves_this_tenant_s_rows()
     {

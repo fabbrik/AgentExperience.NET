@@ -2320,3 +2320,10 @@ with its provenance and measured benefit, so agents that do not use this
 library's injection still get vetted lessons. Erasure and withdrawal of the
 source lesson are reported to the sink.
 
+
+### Story 25.10: Holdout Hardening
+From the 25.1-25.3 reviews: a holdout write that overlaps the erasure of the
+run's own record is refused; the benefit estimate aggregates run by run so
+memory grows with runs, not rows; migration 0028 indexes
+`experience_records (tenant_id, source_run_id)`; the lessons view can show
+each lesson's measured benefit (opt-in).

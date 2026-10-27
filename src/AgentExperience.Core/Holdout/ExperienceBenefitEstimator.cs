@@ -288,5 +288,171 @@ public static class ExperienceBenefitEstimator
     }
 
     /// <summary>A run's arm (<see langword="null"/> when it was recorded in both) and outcome.</summary>
-    private readonly record struct RunClass(HoldoutArm? Arm, TaskVerificationStatus? Outcome);
+    internal readonly record struct RunClass(HoldoutArm? Arm, TaskVerificationStatus? Outcome);
+}
+
+/// <summary>
+/// The incremental form of <see cref="ExperienceBenefitEstimator.Estimate"/>: rows are added a run at a time, as
+/// <see cref="IExperienceRecordStore.QueryHoldoutOutcomesAsync"/> pages them, and each run is folded into running counts
+/// once the next run starts. It holds a set of the run IDs it has seen and one counter set per lesson, never the rows:
+/// memory grows with runs and lessons, not with rows. For the same rows it gives exactly the estimate
+/// <see cref="ExperienceBenefitEstimator.Estimate"/> gives.
+/// </summary>
+/// <remarks>
+/// Every row of one run must be added before any row of the next (the order the port pages them in, by run then record);
+/// within a run the rows may come in any order. A row for a run already folded is refused with an
+/// <see cref="InvalidOperationException"/>, since folding it again would count the run twice. Not thread-safe.
+/// </remarks>
+public sealed class ExperienceBenefitAccumulator
+{
+    private readonly int _minimum;
+    private readonly HashSet<Guid> _folded = [];
+    private readonly SortedDictionary<Guid, Counts> _lessons = [];
+    private readonly HashSet<Guid> _openLessons = [];
+    private Counts _overall;
+    private Guid? _openRun;
+    private HoldoutArm? _openArm;
+    private bool _openMixed;
+    private Guid _openOutcomeFrom;
+    private TaskVerificationStatus? _openOutcome;
+
+    /// <summary>Starts an empty accumulation.</summary>
+    /// <param name="options">The verdict's threshold; <see langword="null"/> for the defaults.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceBenefitOptions.MinimumRunsPerArm"/> is less than 1.</exception>
+    public ExperienceBenefitAccumulator(ExperienceBenefitOptions? options = null)
+    {
+        _minimum = ExperienceBenefitEstimator.Empty(options).MinimumRunsPerArm;
+    }
+
+    /// <summary>Adds one row. A null row is ignored, as <see cref="ExperienceBenefitEstimator.Estimate"/> ignores one.</summary>
+    /// <param name="row">An assignment row with its run's outcome.</param>
+    /// <exception cref="InvalidOperationException"><paramref name="row"/>'s run was already folded: its rows were not contiguous.</exception>
+    public void Add(HoldoutOutcomeRow? row)
+    {
+        if (row is null)
+        {
+            return;
+        }
+
+        if (_openRun != row.RunId)
+        {
+            if (_folded.Contains(row.RunId))
+            {
+                throw new InvalidOperationException(
+                    $"Run {row.RunId} was added again after another run's rows: add every row of a run before the next run's.");
+            }
+
+            Fold();
+            _openRun = row.RunId;
+            _openArm = row.Arm;
+        }
+        else if (_openArm != row.Arm)
+        {
+            _openMixed = true;
+        }
+
+        // The outcome the pure form reads a run with: the first carried one in record order.
+        if (row.RunOutcome is { } outcome && (_openOutcome is null || row.ExperienceId.CompareTo(_openOutcomeFrom) < 0))
+        {
+            _openOutcome = outcome;
+            _openOutcomeFrom = row.ExperienceId;
+        }
+
+        _openLessons.Add(row.ExperienceId);
+    }
+
+    /// <summary>Adds every row of <paramref name="rows"/>, in order.</summary>
+    /// <param name="rows">Assignment rows with their runs' outcomes.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="rows"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">A run's rows were not contiguous.</exception>
+    public void AddRange(IEnumerable<HoldoutOutcomeRow?> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        foreach (var row in rows)
+        {
+            Add(row);
+        }
+    }
+
+    /// <summary>
+    /// The estimate over every row added so far. The run being added is folded first, so no further row of that run may
+    /// be added afterwards; rows of later runs may.
+    /// </summary>
+    /// <returns>The estimate, equal to <see cref="ExperienceBenefitEstimator.Estimate"/> over the same rows.</returns>
+    public ExperienceBenefitEstimate ToEstimate()
+    {
+        Fold();
+        var perLesson = _lessons
+            .Select(lesson => new ExperienceLessonBenefit(lesson.Key, lesson.Value.Compare(_minimum)))
+            .ToList();
+        return new ExperienceBenefitEstimate(_overall.Compare(_minimum), perLesson) { MinimumRunsPerArm = _minimum };
+    }
+
+    private void Fold()
+    {
+        if (_openRun is not { } run)
+        {
+            return;
+        }
+
+        var runClass = new ExperienceBenefitEstimator.RunClass(_openMixed ? null : _openArm, _openOutcome);
+        _overall.Count(runClass);
+        foreach (var lesson in _openLessons)
+        {
+            _lessons.TryGetValue(lesson, out var counts);
+            counts.Count(runClass);
+            _lessons[lesson] = counts;
+        }
+
+        _folded.Add(run);
+        _openRun = null;
+        _openArm = null;
+        _openMixed = false;
+        _openOutcome = null;
+        _openOutcomeFrom = Guid.Empty;
+        _openLessons.Clear();
+    }
+
+    /// <summary>One comparison's running counts, tallied as the pure form tallies a run.</summary>
+    private struct Counts
+    {
+        private int _treatmentRuns, _treatmentSuccesses, _holdoutRuns, _holdoutSuccesses, _unverified, _pending, _mixed;
+
+        public void Count(ExperienceBenefitEstimator.RunClass run)
+        {
+            if (run.Arm is not { } arm)
+            {
+                _mixed++;
+                return;
+            }
+
+            switch (run.Outcome)
+            {
+                case null:
+                    _pending++;
+                    return;
+                case TaskVerificationStatus.Verified or TaskVerificationStatus.Failed:
+                    break;
+                default:
+                    _unverified++;
+                    return;
+            }
+
+            var success = run.Outcome == TaskVerificationStatus.Verified ? 1 : 0;
+            if (arm == HoldoutArm.Treatment)
+            {
+                _treatmentRuns++;
+                _treatmentSuccesses += success;
+            }
+            else
+            {
+                _holdoutRuns++;
+                _holdoutSuccesses += success;
+            }
+        }
+
+        public readonly ExperienceBenefitComparison Compare(int minimum) =>
+            ExperienceBenefitEstimator.Compare(
+                _treatmentRuns, _treatmentSuccesses, _holdoutRuns, _holdoutSuccesses, minimum, _unverified, _pending, _mixed);
+    }
 }

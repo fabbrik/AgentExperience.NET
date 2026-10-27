@@ -37,7 +37,11 @@
 -- one record FOR UPDATE before anything else, which conflicts with FOR KEY SHARE, so an insert that started first holds
 -- the purge until it commits (and the trigger then deletes its rows), and one that starts second waits and re-reads
 -- the record as a tombstone, writing nothing. The insert takes no row lock here (DO NOTHING updates nothing), so no
--- deadlock is possible.
+-- deadlock is possible. Since story 25.10 the insert first locks the run's own records (source_run_id is the run, in
+-- the caller's tenant) FOR KEY SHARE the same way, and writes nothing when all of them are by then tombstones, so an
+-- erasure of the run's record that overlaps the write serialises with it in either order. Known limit: an erasure
+-- committed before the write began cannot be seen (the tombstone keeps no source_run_id), so such a write still
+-- records its rows (IDs only, never joined to an outcome, counted as pending).
 --
 -- PRIVILEGES. ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync grants the application role SELECT and
 -- INSERT on the table, and no UPDATE or DELETE; it grants them only when the table exists, so running it before this

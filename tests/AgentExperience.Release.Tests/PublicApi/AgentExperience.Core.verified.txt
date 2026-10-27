@@ -388,6 +388,13 @@ namespace AgentExperience.Core.Finalization
 }
 namespace AgentExperience.Core.Holdout
 {
+    public sealed class ExperienceBenefitAccumulator
+    {
+        public ExperienceBenefitAccumulator(AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null) { }
+        public void Add(AgentExperience.Abstractions.HoldoutOutcomeRow? row) { }
+        public void AddRange(System.Collections.Generic.IEnumerable<AgentExperience.Abstractions.HoldoutOutcomeRow?> rows) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitEstimate ToEstimate() { }
+    }
     public sealed class ExperienceBenefitArm : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitArm>
     {
         public ExperienceBenefitArm(int Runs, int Successes) { }

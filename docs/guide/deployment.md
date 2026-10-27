@@ -287,6 +287,13 @@ authorization and scope, the boundary retrieval reads within, so lessons another
 are not listed; a record the store answers from another scope is left out and counted in `OutOfScopeDropped`. It never
 writes. A store answer other than `Found` (`Denied`, say) is an empty page carrying that outcome, not an exception.
 
+With `IncludeMeasuredBenefit = true` (default `false`), each lesson also gets `MeasuredBenefit`: what the
+[injection holdout](injection.md#measuring-benefit-the-holdout) measured for it, from one benefit estimate for the
+page's scope over the context provider's benefit window and threshold (30 days and 20 runs per arm by default, whether
+or not the [benefit policy](injection.md#acting-on-the-estimate) is on). A `Hurts` verdict there is why the policy omits
+the lesson. It is `null` for a lesson no assigned run named, and for every lesson when the store does not record the
+holdout or refused the read. Left off, nothing more is read and the page is unchanged.
+
 **Where "last injected" comes from.** The context provider records it after it hands a block over, in the
 background, so the model is called without waiting: it calls `IExperienceRecordStore.RecordInjectionAsync` with the
 records the block delivered (one upsert in PostgreSQL, into `0026`'s `experience_injections`), bounded by a timeout of a
@@ -551,6 +558,22 @@ combination of custody, so run it from a short-lived operator process, not from 
 `0022`'s single `UPDATE` reads every live plaintext payload inside the migrator's transaction and under its command
 timeout (30 seconds by default). On a large plaintext table, run the migrator in a maintenance window, or over a data
 source whose command timeout is raised for the migration; a script that times out rolls back and changes nothing.
+
+`0028` builds one index on `experience_records` (`ix_experience_records_source_run`, on `tenant_id, source_run_id`) with
+a plain `CREATE INDEX`: the migrator runs each script in a transaction, and `CREATE INDEX CONCURRENTLY` cannot run in
+one. The build takes a `SHARE` lock on `experience_records`, which blocks every write to it (reads go on) until the
+index is built: imperceptible on a small table, a write outage on a large one, and it can also run past the command
+timeout. On a large table, build the index out of band first, as the owner, and the script's own `IF NOT EXISTS` is then
+a no-op:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run
+    ON agent_experience.experience_records (tenant_id, source_run_id);
+```
+
+A concurrent build that fails leaves an invalid index under that name, which the script would accept: drop it
+(`DROP INDEX CONCURRENTLY agent_experience.ix_experience_records_source_run`) and build it again. `0028` changes no
+privilege.
 
 ## Using the store directly
 

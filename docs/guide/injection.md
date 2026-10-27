@@ -1177,7 +1177,16 @@ foreach (var lesson in estimate.Lessons)
   authorization (row-level security bounds it in PostgreSQL), decoding sealed records through the store. A store that
   does not record the holdout gives an empty estimate with `Tracked = false`; a scope outside the authorization gives an
   empty one whose `Outcome` is `Denied`. The estimate changes nothing about ranking, confidence or injection, and the
-  arithmetic is `ExperienceBenefitEstimator.Estimate`, pure and usable on rows read any other way.
+  arithmetic is `ExperienceBenefitEstimator.Estimate`, pure and usable on rows read any other way. Each page is folded
+  into an `ExperienceBenefitAccumulator` and let go, so the read holds one page at a time and memory grows with runs and
+  lessons, not rows; the accumulator gives exactly what `Estimate` gives over the same rows, and is usable on its own
+  when the rows of each run arrive together. A store that pages one run's rows apart is refused with
+  `InvalidOperationException` rather than counting that run twice.
+- **A write that overlaps an erasure.** In PostgreSQL a holdout write for a run whose own record is being erased waits
+  for the erasure and then records nothing, and an erasure that starts while the write is in flight waits for it and
+  then removes the run's rows. Only a write that overlaps the erasure is handled. **Known limit:** a write that starts
+  after the erasure has committed cannot tell (an erased record keeps no run ID), so it records its rows; they hold IDs
+  only, no run outcome ever joins them, and they count as `Pending`.
 
 ### Acting on the estimate
 
@@ -1217,3 +1226,7 @@ options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PreferMeasuredHe
   `MinimumRunsPerArm` to be more conservative.
 - **Validated at construction.** An interval, timeout or window that is not strictly positive, a timeout over one day,
   or a minimum below 1 throws `ArgumentOutOfRangeException` when the provider is built, even with the policy off.
+- **Seeing why.** The lessons view shows what the holdout measured for each lesson when asked:
+  `ListAsync(identity, new ExperienceLessonsQuery { IncludeMeasuredBenefit = true })` fills each lesson's
+  `MeasuredBenefit` from one estimate over this policy's `Window` and `MinimumRunsPerArm`, so a lesson omitted as
+  `MeasuredHarmful` shows the `Hurts` comparison behind it. See [Seeing what it learned](deployment.md#seeing-what-it-learned).

@@ -222,6 +222,83 @@ public sealed class HoldoutBenefitTests
         Assert.Equal(new ExperienceBenefitArm(1, 1), second.Treatment);
     }
 
+    /// <summary>
+    /// Story 25.10: 50,000 rows over 10,000 runs, read a page at a time, give the pure estimate over every row; and no
+    /// page outlives the read of the page after it (each earlier page is collectable once the next is asked for).
+    /// </summary>
+    [Fact]
+    public async Task A_large_scope_is_estimated_a_page_at_a_time_as_the_pure_form_estimates_it()
+    {
+        var random = new Random(2510);
+        var lessons = Enumerable.Range(1, 40).Select(InjectionRecords.Id).ToArray();
+        var rows = new List<HoldoutOutcomeRow>(50_000);
+        for (var run = 0; run < 10_000; run++)
+        {
+            var runId = new Guid($"{run:D8}-0000-0000-0000-000000000000");
+            var arm = run % 3 == 0 ? HoldoutArm.Holdout : HoldoutArm.Treatment;
+            TaskVerificationStatus? outcome = random.Next(10) switch
+            {
+                < 6 => TaskVerificationStatus.Verified,
+                < 9 => TaskVerificationStatus.Failed,
+                _ => null,
+            };
+            foreach (var lesson in lessons.OrderBy(_ => random.Next()).Take(5).Order())
+            {
+                rows.Add(new HoldoutOutcomeRow(runId, arm, lesson, InjectionRecords.Now, outcome));
+            }
+        }
+
+        var served = new List<WeakReference>();
+        var collectedBeforeNext = true;
+        var world = new FakeExperienceWorld
+        {
+            TracksHoldout = true,
+            OnQueryHoldout = (_, query, _) =>
+            {
+                // Every page but the one just served must be collectable by now.
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                collectedBeforeNext &= served.Take(Math.Max(0, served.Count - 1)).All(page => !page.IsAlive);
+
+                var start = query.After is { } after
+                    ? rows.FindIndex(row => row.RunId == after.RunId && row.ExperienceId == after.ExperienceId) + 1
+                    : 0;
+                var page = Page(rows, start, query.Limit);
+                served.Add(new WeakReference(page));
+                return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, page, []));
+            },
+        };
+
+        var estimate = await AgentExperienceBenefit.EstimateAsync(Services(world), Authorization, TestScope);
+        var expected = ExperienceBenefitEstimator.Estimate(rows);
+
+        Assert.Equal(51, served.Count);
+        Assert.True(collectedBeforeNext, "A page was still held when the next one was read.");
+        Assert.Equal(expected.Overall, estimate.Overall);
+        Assert.Equal(expected.Lessons, estimate.Lessons);
+        Assert.Equal(40, estimate.Lessons.Count);
+    }
+
+    [Fact]
+    public async Task A_store_that_pages_a_run_s_rows_apart_is_refused_rather_than_counted_twice()
+    {
+        var run = new Guid("00000001-0000-0000-0000-000000000000");
+        var rows = new List<HoldoutOutcomeRow>
+        {
+            new(run, HoldoutArm.Treatment, InjectionRecords.Id(1), InjectionRecords.Now, TaskVerificationStatus.Verified),
+            new(new Guid("00000002-0000-0000-0000-000000000000"), HoldoutArm.Holdout, InjectionRecords.Id(1), InjectionRecords.Now, TaskVerificationStatus.Failed),
+            new(run, HoldoutArm.Treatment, InjectionRecords.Id(2), InjectionRecords.Now, TaskVerificationStatus.Verified),
+        };
+        var world = new FakeExperienceWorld
+        {
+            TracksHoldout = true,
+            OnQueryHoldout = (_, _, _) => Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, rows, [])),
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => AgentExperienceBenefit.EstimateAsync(Services(world), Authorization, TestScope));
+    }
+
     [Fact]
     public async Task A_minimum_below_one_is_refused_before_anything_is_read()
     {
@@ -230,6 +307,10 @@ public sealed class HoldoutBenefitTests
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             AgentExperienceBenefit.EstimateAsync(Services(world), Authorization, TestScope, new ExperienceBenefitOptions { MinimumRunsPerArm = 0 }));
     }
+
+    /// <summary>A fresh page, built outside the caller's frame so the test itself holds no strong reference to it.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static List<HoldoutOutcomeRow> Page(List<HoldoutOutcomeRow> rows, int start, int limit) => rows.Skip(start).Take(limit).ToList();
 
     private static ServiceProvider Services(IExperienceRecordStore store) =>
         new ServiceCollection().AddSingleton(store).BuildServiceProvider();

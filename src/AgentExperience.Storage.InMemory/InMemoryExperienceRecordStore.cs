@@ -343,7 +343,10 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     /// <inheritdoc />
     /// <remarks>
     /// The instant is clamped to this store's clock, as the PostgreSQL store clamps it to the database's. A row that
-    /// already exists for a run and record is kept as it is. This store has no erasure, so no row is ever removed.
+    /// already exists for a run and record is kept as it is. This store has no erasure, so no row is ever removed, and no
+    /// run's own record is ever a tombstone: the PostgreSQL store's refusal of a write for a run whose record is being
+    /// erased has nothing to refuse here, and a run whose record is live or not yet written is recorded as
+    /// in PostgreSQL.
     /// </remarks>
     public Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(
         AuthorizationContext authorization,

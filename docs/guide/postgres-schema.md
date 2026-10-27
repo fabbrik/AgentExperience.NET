@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0027` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0028` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -762,11 +762,17 @@ as the store's own statement now does (see [How the text channel matches](retrie
   the caller's scope), clamps the instant to `clock_timestamp()`, and keeps a run's first row for each record. In
   encrypted mode the store skips a record whose key is destroyed. It holds no content. `QueryHoldoutOutcomesAsync` reads
   it back a page at a time, joined to each run's outcome through `experience_records.source_run_id = run_id` in the
-  same scope (one semi-join per page over the scope's records, served by `ix_experience_records_scope`; there is no
-  index on `source_run_id`), and decodes the run records' payloads through the store, opening sealed ones in one batch
+  same scope (one semi-join per page, served by `0028`'s `ix_experience_records_source_run`), and decodes the run records' payloads through the store, opening sealed ones in one batch
   after the connection is released.
 - **Concurrency.** The insert locks its records `FOR KEY SHARE` in ID order, as `0026`'s upsert does, so an erasure
   racing it either waits and then removes its rows, or runs first and leaves a tombstone the insert does not select.
+  It first locks the run's own records the same way (`source_run_id` is the run, in the caller's tenant), and writes
+  nothing when all of them are by then tombstones (one still live means the run still has a record): an erasure of
+  the run's record that is under way when the write starts holds it and then makes it write nothing, and one that
+  starts while the write is in flight waits and then removes the run's rows. Only a write that overlaps the erasure is
+  handled. **Known limit:** an erasure that committed before the write started cannot be seen, since a tombstone keeps
+  no `source_run_id`; such a write records its rows, which hold IDs only, never join a run's outcome and are counted as
+  `Pending`. With row-level security on, only run records inside the operation's bounds are locked.
 - A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is
   tombstoned, every row naming it and every row of the run it was captured from (its `source_run_id` before the purge
   zeroes it), so erasing a lesson or a run's own record takes its rows with it on every erasure path.
@@ -777,6 +783,18 @@ as the store's own statement now does (see [How the text channel matches](retrie
   injection carries on. The table is .NET-only: no contract privileges file grants it, and the contract's `REVOKE ALL`
   removes the .NET grants, so in a mixed fleet run the .NET privileges call after the contract's files.
 - No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
+
+### 0028: each record's source run, indexed
+
+`0028_experience_records_source_run_id.sql` adds `ix_experience_records_source_run` on
+`agent_experience.experience_records (tenant_id, source_run_id)`, for the two lookups of a run's own record: each page
+of `QueryHoldoutOutcomesAsync`, and the holdout insert's lock on the run's records (above). Before it, each scanned the
+tenant's records. Nothing else changes: no column, constraint, trigger, policy or grant.
+
+- **It is not built `CONCURRENTLY`**: the migrator runs each script in a transaction, where `CREATE INDEX CONCURRENTLY`
+  cannot run. The build takes a `SHARE` lock on `experience_records`, blocking every write to it (not reads) until it
+  finishes. On a large table, build it out of band first, as the script's header and
+  [Applying the schema](deployment.md#applying-the-schema) show; the script's `IF NOT EXISTS` then makes it a no-op.
 
 ## Script comments that were written before the work they point at shipped
 
