@@ -716,6 +716,20 @@ public sealed class ExperienceInjectionOptions
     /// </remarks>
     public ExperienceHoldoutOptions Holdout { get; set; } = ExperienceHoldoutOptions.Off;
 
+    /// <summary>
+    /// Acting on measured benefit: with <see cref="ExperienceBenefitPolicy.Enabled"/>, a lesson the holdout measured as
+    /// hurting is omitted (<see cref="InjectionOmissionReason.MeasuredHarmful"/>), a scope whose lessons together hurt gets
+    /// none, and optionally lessons measured as helping are preferred. Off by default
+    /// (<see cref="ExperienceBenefitPolicy.Off"/>): nothing is read, cached, reordered or omitted. See
+    /// <see cref="ExperienceBenefitPolicy"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see langword="null"/>, an interval, timeout or window that is not strictly positive, a timeout over
+    /// <see cref="ExperienceBenefitPolicy.MaxRefreshTimeout"/>, or a minimum below 1 is refused when the provider is
+    /// constructed.
+    /// </remarks>
+    public ExperienceBenefitPolicy Benefit { get; set; } = ExperienceBenefitPolicy.Off;
+
     /// <summary>A shallow copy, taken before validation, so a later change to these options changes nothing.</summary>
     internal ExperienceInjectionOptions Snapshot()
     {
@@ -738,7 +752,8 @@ public sealed class ExperienceInjectionOptions
     /// </summary>
     /// <param name="paramName">The parameter name to report on a validation failure.</param>
     /// <returns>The validated snapshot of <see cref="ApproachArguments"/>.</returns>
-    /// <exception cref="ArgumentNullException"><see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, <see cref="SessionStateKey"/>, or <see cref="Holdout"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><see cref="Limits"/>, <see cref="TimeProvider"/>, <see cref="ApproachArguments"/>, <see cref="SessionStateKey"/>, <see cref="Holdout"/> or <see cref="Benefit"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="Holdout"/>'s rate or a <see cref="Benefit"/> bound is out of range.</exception>
     /// <exception cref="ArgumentException">Not exactly one of <see cref="ResolveRequest"/> and <see cref="ResolveRequestAsync"/> is set, or <see cref="ApproachArguments"/>, <see cref="SessionStateKey"/> or <see cref="Holdout"/> is malformed, or <see cref="SessionLimits"/> is set and <see cref="Limits"/> cannot fit one withdrawal notice.</exception>
     internal ApproachArgumentAllowlist Validate(string paramName)
     {
@@ -783,6 +798,8 @@ public sealed class ExperienceInjectionOptions
 
         ArgumentNullException.ThrowIfNull(Holdout, $"{paramName}.{nameof(Holdout)}");
         Holdout.Validate($"{paramName}.{nameof(Holdout)}");
+        ArgumentNullException.ThrowIfNull(Benefit, $"{paramName}.{nameof(Benefit)}");
+        Benefit.Validate($"{paramName}.{nameof(Benefit)}");
 
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)
         {

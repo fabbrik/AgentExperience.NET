@@ -51,8 +51,25 @@ public static class AgentExperienceBenefit
         ArgumentNullException.ThrowIfNull(scope);
 
         // Validates the options before anything is read.
-        var empty = ExperienceBenefitEstimator.Empty(options);
+        _ = ExperienceBenefitEstimator.Empty(options);
         var store = services.GetRequiredService<IExperienceRecordStore>();
+        return await EstimateFromStoreAsync(store, authorization, scope, options, assignedFrom: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads every holdout row in <paramref name="scope"/> through <paramref name="store"/>, a page at a time, and estimates
+    /// from those assigned at or after <paramref name="assignedFrom"/> (every row when <see langword="null"/>). The filter is
+    /// applied in memory, before the estimator. Behaves exactly as the public overload otherwise.
+    /// </summary>
+    internal static async Task<ExperienceBenefitEstimate> EstimateFromStoreAsync(
+        IExperienceRecordStore store,
+        AuthorizationContext authorization,
+        Scope scope,
+        ExperienceBenefitOptions? options,
+        DateTimeOffset? assignedFrom,
+        CancellationToken cancellationToken)
+    {
+        var empty = ExperienceBenefitEstimator.Empty(options);
         if (!store.TracksHoldout)
         {
             return empty with { Tracked = false };
@@ -80,7 +97,7 @@ public static class AgentExperienceBenefit
             }
 
             var pageRows = page.Rows ?? [];
-            rows.AddRange(pageRows.Where(row => row is not null));
+            rows.AddRange(pageRows.Where(row => row is not null && (assignedFrom is not { } from || row.AssignedAt >= from)));
             if (pageRows.Count < HoldoutOutcomeQuery.MaxLimit || pageRows[^1] is not { } last)
             {
                 break;

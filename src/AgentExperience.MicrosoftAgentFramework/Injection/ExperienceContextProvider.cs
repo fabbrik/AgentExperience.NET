@@ -172,6 +172,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
     private readonly string _stateKey;
     private readonly IReadOnlyList<string> _stateKeys;
 
+    /// <summary>The cached benefit estimates the injection acts on, or <see langword="null"/> with the policy off.</summary>
+    private readonly ExperienceBenefitCache? _benefit;
+
     /// <summary>
     /// How many eligibility re-reads this provider has abandoned that are still running against the
     /// store: incremented when a read is abandoned, decremented exactly once when it finally ends. At
@@ -217,6 +220,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // Snapshotted with the rest: the key this provider reads and writes never changes under it.
         _stateKey = options.SessionStateKey;
         _stateKeys = Array.AsReadOnly(new[] { _stateKey });
+        _benefit = options.Benefit.Enabled ? new ExperienceBenefitCache(store, options.Benefit, options.TimeProvider) : null;
     }
 
     /// <summary>
@@ -593,7 +597,19 @@ public sealed class ExperienceContextProvider : AIContextProvider
         List<RankedExperience> selected;
         try
         {
-            selected = stopped is null && retrieved is not null ? Select(retrieved.Records, omitted, session, capabilityGate, request.Limit) : [];
+            if (stopped is null && retrieved is not null)
+            {
+                // Acting on measured benefit (off by default): the cached view, which never waits on the store.
+                var benefit = _benefit?.Current(request.Authorization, request.Scope);
+                var ranked = benefit is not null && _options.Benefit.PreferMeasuredHelpful
+                    ? PreferHelpful(retrieved.Records, benefit, request.Limit)
+                    : retrieved.Records;
+                selected = Select(ranked, omitted, session, capabilityGate, request.Limit, benefit);
+            }
+            else
+            {
+                selected = [];
+            }
         }
         catch (Exception ex)
         {
@@ -1130,6 +1146,12 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// <summary>Completes once every background injection record started so far has ended. For tests.</summary>
     internal Task InjectionRecordsSettledAsync() => Task.WhenAll(_recordings.Keys);
 
+    /// <summary>Completes once every benefit refresh started so far has ended. For tests.</summary>
+    internal Task BenefitRefreshesSettledAsync() => _benefit?.SettledAsync() ?? Task.CompletedTask;
+
+    /// <summary>The benefit cache, or <see langword="null"/> with the policy off. For tests.</summary>
+    internal ExperienceBenefitCache? BenefitCache => _benefit;
+
     /// <summary>How many abandoned injection writes are still running against the store. For tests.</summary>
     internal int AbandonedInjectionRecords => Volatile.Read(ref _abandonedRecords);
 
@@ -1410,6 +1432,50 @@ public sealed class ExperienceContextProvider : AIContextProvider
         return window == limit ? request : request with { Limit = window };
     }
 
+    /// <summary>The omission detail of a lesson measured as hurting.</summary>
+    internal const string MeasuredHarmfulDetail = "The injection holdout measured this lesson as hurting: runs given it verified less often than runs it was withheld from.";
+
+    /// <summary>The omission detail of every record in a scope whose lessons together were measured as hurting.</summary>
+    internal const string ScopeMeasuredHarmfulDetail = "The injection holdout measured this scope's lessons together as hurting, so none is injected.";
+
+    /// <summary>
+    /// <paramref name="ranked"/> with the lessons measured as helping moved ahead of the rest, each group in its retrieval
+    /// order. The host's own <paramref name="requestLimit"/> window and the backfill past it are partitioned separately, so a
+    /// backfill record never moves into the window the host asked for (<see cref="Select"/>).
+    /// </summary>
+    private static IReadOnlyList<RankedExperience> PreferHelpful(IReadOnlyList<RankedExperience> ranked, BenefitView benefit, int? requestLimit)
+    {
+        if (benefit.Helps.Count == 0)
+        {
+            return ranked;
+        }
+
+        var window = requestLimit is > 0 ? Math.Min(requestLimit.Value, ranked.Count) : ranked.Count;
+        var reordered = new List<RankedExperience>(ranked.Count);
+        Partition(0, window);
+        Partition(window, ranked.Count);
+        return reordered;
+
+        void Partition(int from, int to)
+        {
+            for (var i = from; i < to; i++)
+            {
+                if (ranked[i]?.Record is { } record && benefit.Helps.Contains(record.ExperienceId))
+                {
+                    reordered.Add(ranked[i]);
+                }
+            }
+
+            for (var i = from; i < to; i++)
+            {
+                if (!(ranked[i]?.Record is { } record && benefit.Helps.Contains(record.ExperienceId)))
+                {
+                    reordered.Add(ranked[i]);
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the
     /// rest, so the final eligibility check only ever re-reads records that could actually be injected.
@@ -1420,7 +1486,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// window to backfill from (<see cref="GatedWindow"/>); a record ranked past that limit that is not selected was
     /// fetched only as backfill and is not reported.
     /// </summary>
-    private List<RankedExperience> Select(IReadOnlyList<RankedExperience> ranked, List<OmittedExperience> omitted, SessionTracker? session, CapabilityGate? gate, int? requestLimit)
+    private List<RankedExperience> Select(IReadOnlyList<RankedExperience> ranked, List<OmittedExperience> omitted, SessionTracker? session, CapabilityGate? gate, int? requestLimit, BenefitView? benefit = null)
     {
         var sessionRemaining = session?.RemainingRecords ?? int.MaxValue;
         var limit = Math.Min(Math.Min(_options.Limits.MaxRecords, sessionRemaining), requestLimit is > 0 ? requestLimit.Value : int.MaxValue);
@@ -1444,6 +1510,17 @@ public sealed class ExperienceContextProvider : AIContextProvider
                     Guid.Empty,
                     InjectionOmissionReason.Unreadable,
                     $"The candidate ranked {index + 1} of {ranked.Count} carried no record and could not be identified."));
+                continue;
+            }
+
+            // A lesson the holdout measured as hurting (story 25.3), or every lesson when the scope's together hurt, takes
+            // no slot.
+            if (benefit is not null && benefit.Harmful(candidate.Record.ExperienceId))
+            {
+                omittedHere.Add(new OmittedExperience(
+                    candidate.Record.ExperienceId,
+                    InjectionOmissionReason.MeasuredHarmful,
+                    benefit.ScopeHurts ? ScopeMeasuredHarmfulDetail : MeasuredHarmfulDetail));
                 continue;
             }
 

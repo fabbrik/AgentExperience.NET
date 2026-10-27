@@ -10,8 +10,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Diagnostics;
 /// The MAF adapter's one emission seam: the <see cref="ActivitySource"/> and <see cref="Meter"/>
 /// named <c>AgentExperience.MicrosoftAgentFramework</c>, the same three instruments Core emits, and
 /// the operations this assembly owns: <c>inject</c>; <c>record_injection</c>, which records an injection after the
-/// block was handed over; and <c>record_holdout</c>, which records a run's holdout assignment. The last two emit
-/// measurements only, never a span.
+/// block was handed over; <c>record_holdout</c>, which records a run's holdout assignment; and <c>benefit_refresh</c>,
+/// which refreshes the cached benefit estimate. The last three emit measurements only, never a span.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -149,6 +149,19 @@ internal static class InjectionDiagnostics
     /// </summary>
     internal const string RecordHoldout = "record_holdout";
 
+    /// <summary>
+    /// The fourth operation this assembly owns: refreshing, in the background, the cached benefit estimate the injection
+    /// acts on (<c>ExperienceInjectionOptions.Benefit</c>). No span, like <see cref="RecordInjection"/>; its outcomes are
+    /// <see cref="RefreshedOutcome"/>, <see cref="NotRefreshedOutcome"/> and <see cref="OutcomeUnknownOutcome"/>.
+    /// </summary>
+    internal const string BenefitRefresh = "benefit_refresh";
+
+    /// <summary>The store answered and the cached estimate was replaced (one the store could not give has no effect).</summary>
+    internal const string RefreshedOutcome = "Refreshed";
+
+    /// <summary>The refresh failed: the previous estimate is kept.</summary>
+    internal const string NotRefreshedOutcome = "NotRefreshed";
+
     /// <summary>The store recorded the injection.</summary>
     internal const string RecordedOutcome = "Recorded";
 
@@ -158,7 +171,7 @@ internal static class InjectionDiagnostics
     /// <summary>The store refused or failed the write: nothing was recorded.</summary>
     internal const string NotRecordedOutcome = "NotRecorded";
 
-    /// <summary>The write timed out or was cancelled: it may or may not have been recorded.</summary>
+    /// <summary>The write timed out or was cancelled: it may or may not have been recorded. For <see cref="BenefitRefresh"/>, the refresh was abandoned and the previous estimate kept.</summary>
     internal const string OutcomeUnknownOutcome = "OutcomeUnknown";
 
     /// <summary>
@@ -396,10 +409,10 @@ internal static class InjectionDiagnostics
         BackgroundRecorded(RecordInjection, outcome, startTimestamp, errorClass);
 
     /// <summary>
-    /// Counts and times one background write, <see cref="RecordInjection"/> or <see cref="RecordHoldout"/>, and counts a
-    /// failure when <paramref name="errorClass"/> is set. Never throws.
+    /// Counts and times one background operation, <see cref="RecordInjection"/>, <see cref="RecordHoldout"/> or
+    /// <see cref="BenefitRefresh"/>, and counts a failure when <paramref name="errorClass"/> is set. Never throws.
     /// </summary>
-    /// <param name="operation"><see cref="RecordInjection"/> or <see cref="RecordHoldout"/>.</param>
+    /// <param name="operation"><see cref="RecordInjection"/>, <see cref="RecordHoldout"/> or <see cref="BenefitRefresh"/>.</param>
     /// <param name="outcome">One of the record outcomes above.</param>
     /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
     /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>

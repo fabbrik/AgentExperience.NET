@@ -1178,3 +1178,42 @@ foreach (var lesson in estimate.Lessons)
   does not record the holdout gives an empty estimate with `Tracked = false`; a scope outside the authorization gives an
   empty one whose `Outcome` is `Denied`. The estimate changes nothing about ranking, confidence or injection, and the
   arithmetic is `ExperienceBenefitEstimator.Estimate`, pure and usable on rows read any other way.
+
+### Acting on the estimate
+
+Reading the estimate changes nothing by itself. To let it decide what is injected, turn on the benefit policy:
+
+```csharp
+options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PreferMeasuredHelpful = true };
+```
+
+- **Off by default.** With `Enabled = false` nothing is read, cached, reordered or omitted, and injection and telemetry
+  are exactly what they are without it.
+- **A lesson measured `Hurts` is omitted** before selection, as `InjectionOmissionReason.MeasuredHarmful`, so it takes
+  no slot and a lower-ranked record fills it. **A scope whose overall verdict is `Hurts` gets no lessons at all**: every
+  record is omitted with that reason, and the outcome is what it is when everything is omitted (`NothingToInject`, or
+  `Retracted` when withdrawal notices are owed; those still go out).
+- **A lesson measured `Helps`** moves ahead of the others when `PreferMeasuredHelpful` is on, before the record limit;
+  each group keeps its retrieval order. With it off (the default) the order is retrieval's. `NoEvidence` changes
+  nothing.
+- **It never waits on the store.** The provider caches one estimate per request scope and authorization tenant and
+  principal (two principals never share one). An invocation uses what is cached as it is (nothing yet means no effect)
+  and, when it is missing or older than `RefreshInterval` (10 minutes by default), starts one background refresh for
+  that key; concurrent invocations never start a second. A refresh runs within `RefreshTimeout` (30 seconds by default)
+  on the provider's `TimeProvider`. One that throws or overruns keeps the previous estimate and shows only in
+  [telemetry](../telemetry.md), as the `benefit_refresh` operation (`Refreshed`, `NotRefreshed`, `OutcomeUnknown`); a
+  failed refresh is retried after the interval too. The refresh reads under the request's own authorization and scope,
+  like `EstimateAsync`.
+- **Only recent evidence counts.** A refresh counts only assignments made within `Window` (30 days by default) of it,
+  so old evidence ages out and a verdict can reverse. `MinimumRunsPerArm` (20 by default) is the estimator's threshold.
+- **The holdout keeps running.** Assignment and withholding are unchanged, so new evidence keeps arriving for lessons
+  that are still injected. A lesson, or a whole scope, omitted as harmful is assigned no further runs, so its verdict
+  returns to `NoEvidence` once its evidence leaves the window, and it is injected, and measured, again.
+- **An estimate the store could not give is never acted on**: one from a store that does not record the holdout
+  (`Tracked = false`) or one the store refused (an `Outcome` other than `Found`).
+- **What it does not change.** Stored records, their confidence and retrieval's scoring are untouched; it decides only
+  what this provider puts in the block. The per-lesson caution above applies: with many lessons some per-lesson
+  verdicts are chance, so a lesson can be omitted on a chance `Hurts` until the window moves past it. Raise
+  `MinimumRunsPerArm` to be more conservative.
+- **Validated at construction.** An interval, timeout or window that is not strictly positive, a timeout over one day,
+  or a minimum below 1 throws `ArgumentOutOfRangeException` when the provider is built, even with the policy off.
