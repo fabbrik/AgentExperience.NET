@@ -9,7 +9,7 @@ not match), and the executable test that proves this repository works against it
 It is the successor to the Story 1.7 research digest, which lived in a directory excluded from git. Anything a
 reader needs to check a pin is here.
 
-**Last verified: 2026-10-16** (the `0.1.0-preview.14` release checks; every probe resolved as for `0.1.0-preview.13`, except that the newest MAF in range is now 1.25.0), against nuget.org's registration API and a full local run of the suite on `net10.0`
+**Last verified: 2026-10-27** (the `0.1.0-preview.17` release checks; no pin or floor moved since `0.1.0-preview.14`, and the floats now resolve MAF 1.26.0 and the 10.11.0 / 10.0.14 `Microsoft.Extensions.*` releases), against nuget.org's registration API and a full local run of the suite on `net10.0`
 and all four PostgreSQL majors, plus the floating-dependency leg and both MAF probe legs. Re-verify — and update the date — whenever
 a pin or a floor moves.
 
@@ -325,6 +325,11 @@ purpose. It gates pushes and the weekly schedule, and reports without blocking o
 [the version policy](#the-version-policy-floors-and-one-bounded-range)). Run it locally
 the same way; it never edits your tree.
 
+**Result on 2026-10-27** (the `0.1.0-preview.17` release checks, `net10.0` only): PASSED. `Microsoft.Agents.AI` floated
+to **1.26.0**, `Microsoft.Extensions.AI.Abstractions` and `Microsoft.Extensions.Compliance.Redaction` to **10.11.0**, and
+`Microsoft.Extensions.DependencyInjection.Abstractions` and `Microsoft.Extensions.Hosting.Abstractions` to **10.0.14**;
+`dbup-core`, `dbup-postgresql`, `Npgsql` and `Pgvector` resolved to their floors.
+
 **Result on 2026-10-16** (the `0.1.0-preview.14` release checks, `net10.0` only): PASSED. `Microsoft.Agents.AI` floated
 to **1.25.0**; every other float resolved as on 2026-10-09.
 
@@ -388,6 +393,10 @@ become floors in the copy, so a newer MAF that raises a shared floor fails the l
 a test-only pin no host has; and the probe fails unless the adapter's tests actually resolved the version it names.
 `MAF_PROBE_INDEX_URL` replaces nuget.org's version list (a `file://` URL works); on 2026-09-25 a list holding
 `2.0.0`, `2.0.0-preview.1` and `10.1.0` beside 1.22.0 made the probe note the out-of-range versions and probe 1.22.0.
+
+**Result on 2026-10-27** (the `0.1.0-preview.17` release checks, `net10.0` only): the newest stable version inside the
+range is now **1.26.0**. Both legs **PASSED**, the floor (1.22.0) and 1.26.0, adapter tests and the 6 MAF proofs. The
+adapter needed no change.
 
 **Result on 2026-10-16** (the `0.1.0-preview.14` release checks, `net10.0` only): the newest stable version inside the
 range is now **1.25.0**. Both legs **PASSED**, the floor (1.22.0) and 1.25.0, adapter tests and the 6 MAF proofs. The
