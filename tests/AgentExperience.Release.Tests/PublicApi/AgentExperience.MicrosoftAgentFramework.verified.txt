@@ -257,6 +257,21 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         Excerpt = 1,
         None = 2,
     }
+    public sealed class ExperienceBenefitPolicy : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceBenefitPolicy>
+    {
+        public static readonly System.TimeSpan DefaultRefreshInterval;
+        public static readonly System.TimeSpan DefaultRefreshTimeout;
+        public static readonly System.TimeSpan DefaultWindow;
+        public static readonly System.TimeSpan MaxRefreshTimeout;
+        public ExperienceBenefitPolicy() { }
+        public bool Enabled { get; init; }
+        public int MinimumRunsPerArm { get; init; }
+        public bool PreferMeasuredHelpful { get; init; }
+        public System.TimeSpan RefreshInterval { get; init; }
+        public System.TimeSpan RefreshTimeout { get; init; }
+        public System.TimeSpan Window { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceBenefitPolicy Off { get; }
+    }
     public sealed class ExperienceContextProvider : Microsoft.Agents.AI.AIContextProvider
     {
         public const string HistoricalReferenceKey = "AgentExperience.HistoricalReference";
@@ -315,6 +330,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const int MaxSessionStateKeyLength = 128;
         public ExperienceInjectionOptions() { }
         public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceBenefitPolicy Benefit { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions Holdout { get; set; }
@@ -470,6 +486,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         RiskClassExceeded = 8,
         ModelAuthored = 9,
         UnconfirmedContent = 10,
+        MeasuredHarmful = 11,
     }
     public enum InjectionOutcome
     {

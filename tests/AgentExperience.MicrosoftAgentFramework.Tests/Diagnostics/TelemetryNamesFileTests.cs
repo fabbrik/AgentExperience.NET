@@ -142,6 +142,17 @@ public class TelemetryNamesFileTests
                         InjectionDiagnostics.OutcomeUnknownOutcome,
                     ]);
             }
+
+            Operation(
+                json,
+                InjectionDiagnostics.BenefitRefresh,
+                adapterSource,
+                false,
+                [
+                    InjectionDiagnostics.RefreshedOutcome,
+                    InjectionDiagnostics.NotRefreshedOutcome,
+                    InjectionDiagnostics.OutcomeUnknownOutcome,
+                ]);
             json.WriteEndArray();
 
             json.WriteEndObject();

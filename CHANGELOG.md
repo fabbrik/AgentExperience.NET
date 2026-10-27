@@ -45,6 +45,21 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   the conformance suite's `AssertHoldoutTrackingIsConsistent` now checks. The in-memory and PostgreSQL stores implement
   it (PostgreSQL in one statement per page, opening sealed records; no migration).
 
+### Act on measured benefit (story 25.3)
+
+- **`ExperienceInjectionOptions.Benefit`** (`ExperienceBenefitPolicy { Enabled, RefreshInterval, RefreshTimeout, Window,
+  MinimumRunsPerArm, PreferMeasuredHelpful }`, off by default). With it on, a lesson the holdout measured as hurting is
+  omitted before selection with the new `InjectionOmissionReason.MeasuredHarmful`; a scope whose overall verdict is
+  `Hurts` gets no lessons (withdrawal notices still go out); and with `PreferMeasuredHelpful` lessons measured as
+  helping move ahead of the rest before the record limit. The estimate is cached per scope, tenant and principal and
+  refreshed in the background (every 10 minutes by default, each refresh bounded by 30 seconds), counting only
+  assignments from the last 30 days, so verdicts can reverse; it never delays or fails an invocation, and an estimate
+  the store could not give is never acted on. The holdout keeps running unchanged. Invalid bounds throw
+  `ArgumentOutOfRangeException` when the provider is constructed. See
+  [Acting on the estimate](docs/guide/injection.md#acting-on-the-estimate).
+- **New telemetry operation `benefit_refresh`** (measurements only: `Refreshed`, `NotRefreshed`, `OutcomeUnknown`), in
+  `docs/telemetry-names.json` too.
+
 ## 0.1.0-preview.16
 
 The Python and Go ports can now list what an agent learned and report the same OpenTelemetry spans and metrics as .NET.

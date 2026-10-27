@@ -124,6 +124,15 @@ public enum InjectionOmissionReason
     /// Decided where <see cref="ModelAuthored"/> is. The omission carries no detail.
     /// </summary>
     UnconfirmedContent,
+
+    /// <summary>
+    /// Acting on measured benefit (<see cref="ExperienceInjectionOptions.Benefit"/>): the injection holdout measured this
+    /// lesson as hurting (<see cref="AgentExperience.Core.Holdout.ExperienceBenefitVerdict.Hurts"/>: runs given it verified
+    /// less often than runs it was withheld from), or measured the scope's lessons together as hurting, in which case every
+    /// record is omitted with this reason. Decided on the ranked candidate before every other check, so it takes no slot. The
+    /// record itself is unchanged; the verdict can reverse as new evidence arrives and old evidence leaves the window.
+    /// </summary>
+    MeasuredHarmful,
 }
 
 /// <summary>
