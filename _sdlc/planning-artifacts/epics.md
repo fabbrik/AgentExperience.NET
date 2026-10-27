@@ -2306,6 +2306,10 @@ Retire a lesson when the environment it was learned under changes; inject
 nothing below a retrieval threshold; report the mismatched-lesson cost in every
 live experiment. Each is judged by the benefit 25.2 measures.
 
+**Done 2026-10-27:** already provided by `RequiredEnvironmentAttributes`, `MaxAge` and confidence decay, the
+match floors, the benefit policy and withdrawal notices, and every live experiment's mismatched-lesson control; the
+injection guide's "Keeping lessons from misleading" maps them.
+
 ### Story 25.8: Measure Any Memory Provider
 The holdout and benefit estimate wrap any MAF context provider, not only the
 library's own: on a held-out run the wrapped provider's context (Mem0, Zep,

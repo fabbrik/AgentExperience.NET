@@ -1276,6 +1276,22 @@ foreach (var pair in estimate.Lessons.SelectMany(lesson => lesson.ByModelPair!))
   options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PerModel = true };
   ```
 
+### Keeping lessons from misleading
+
+The holdout tells you whether lessons help; these settings keep a lesson from being shown where it is likely to
+mislead in the first place. Each is judged by the same estimate: turn one on, keep the holdout running, and compare.
+
+| Risk | Setting | Where |
+| --- | --- | --- |
+| A lesson learned under an environment that no longer applies (a dependency, region or platform changed) | `RequiredEnvironmentAttributes` on the retrieval request: records captured under another value are excluded, and re-checked just before injection | [Retrieval](retrieval.md) |
+| A lesson that has gone stale | `RetrievalPolicy.MaxAge` (hard expiry), or a per-domain confidence decay (fades instead of cutting off) | [Retrieval](retrieval.md#decaying-confidence-by-domain) |
+| A weak match injected because nothing better exists | `RetrievalPolicy.MinimumMatchedTerms` (text) and `MinimumSemanticSimilarity` (vectors): below the floor nothing is injected | [Retrieval](retrieval.md), [Indexing](indexing.md) |
+| A lesson that keeps leading to failures | `ExperienceBenefitPolicy` (above): measured `Hurts` is no longer injected | this page |
+| A lesson that was right and is now wrong | revoke, supersede or quarantine it: a session that was shown it gets a withdrawal notice, even on a held-out run | [Lifecycle](lifecycle.md) |
+
+What a wrong lesson costs is measured, not assumed: every live experiment in `experiments/` runs a mismatched-lesson
+control next to the real one, and its report states that control's result.
+
 ## Measuring another memory provider
 
 The same holdout can measure a memory provider that is not this library: Mem0, Zep, Letta, or your own. Vendors report
