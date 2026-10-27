@@ -124,6 +124,24 @@ public sealed class RealTaskRefusalTests : IDisposable
     }
 
     [Fact]
+    public async Task A_run_after_only_stopped_and_voided_runs_is_still_the_confirmatory_one()
+    {
+        var environment = new Dictionary<string, string?>
+        {
+            ["AGENTEXPERIENCE_LIVE_PROVIDER"] = "anthropic",
+            ["ANTHROPIC_API_KEY"] = "sk-test-0123456789-not-a-real-key",
+            ["AGENTEXPERIENCE_LIVE_RESULTS_DIR"] = _directory,
+        };
+
+        // A stopped run, then a second run refused the same way: neither is complete, so neither uses the slot.
+        await LiveReuseHost.RunAsync(["--experiment", "realtask"], environment.GetValueOrDefault, new StringWriter(), new StringWriter(), new SteppingClock(), _ => new RefusingClient(401));
+        await LiveReuseHost.RunAsync(["--experiment", "realtask"], environment.GetValueOrDefault, new StringWriter(), new StringWriter(), new SteppingClock(), _ => new RefusingClient(401));
+
+        var report = Directory.GetFiles(_directory, "realtask-anthropic-*.md").OrderBy(File.GetLastWriteTimeUtc).Last();
+        Assert.Contains("0 earlier complete run(s)", File.ReadAllText(report), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_local_model_run_has_its_own_registered_repeats_and_timeout()
     {
         var design = RealTaskDesign.ReadEmbedded();

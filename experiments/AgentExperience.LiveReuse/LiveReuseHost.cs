@@ -427,7 +427,8 @@ public static class LiveReuseHost
         // the confirmatory result. A cross-model run's model column is the learning→evaluation pair, so it has its own slot.
         Directory.CreateDirectory(resultsDirectory);
         var ledger = new RunLedger(Path.Combine(resultsDirectory, RunLedger.RealTaskFileName));
-        var earlier = ledger.CountFor(descriptor.Provider, descriptor.LedgerModel);
+        // Only complete runs that were not voided count (amendment 1): a stopped, refused or voided run leaves the slot free.
+        var earlier = ledger.CountCompleteFor(descriptor.Provider, descriptor.LedgerModel);
         var runId = clock.GetUtcNow().UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
         ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, "started", "-");
         var partial = Path.Combine(resultsDirectory, RealTaskReport.Prefix + runId + ".partial.jsonl");
