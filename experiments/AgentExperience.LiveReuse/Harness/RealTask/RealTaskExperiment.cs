@@ -100,7 +100,10 @@ public static partial class RealTaskExperiment
 
         var budget = options.Budget ?? new LiveBudget(design.DefaultMaxModelCalls, design.DefaultMaxTotalTokens);
         var startedAt = options.Clock.GetUtcNow();
-        var retrying = new RetryingChatClient(options.Model, design.RetryMaxTries, design.RetryDelaysMilliseconds, options.NoRetryDelay);
+        // A cross-model run (amendment 7) puts a phase switch under the retry and the meter, so both models get the same
+        // retry rule and share one budget; a same-model run talks to its one model directly, as before.
+        var router = options.LearningModel is { } learningModel ? new PhaseRoutingChatClient(options.Model, learningModel) : null;
+        var retrying = new RetryingChatClient((IChatClient?)router ?? options.Model, design.RetryMaxTries, design.RetryDelaysMilliseconds, options.NoRetryDelay);
         var metered = new MeteredChatClient(retrying, budget, options.Clock, options.MinimumCallInterval);
         var context = new TrialContext(options, design, taskSet, metered);
 
@@ -113,6 +116,7 @@ public static partial class RealTaskExperiment
         var refused = 0;
 
         // ---- Learning: one memory-disabled run per service, finalized into the master store if it verifies. -----------
+        router?.UseLearning(true);
         foreach (var service in taskSet.Services)
         {
             if (stopReason is not null)
@@ -156,6 +160,7 @@ public static partial class RealTaskExperiment
         }
 
         // ---- Evaluation: four conditions per service and repeat, in the rotated order. --------------------------------
+        router?.UseLearning(false);
         if (stopReason is null)
         {
             for (var repeat = 0; repeat < design.Repeats && stopReason is null; repeat++)

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace AgentExperience.LiveReuse.Harness;
 
@@ -12,13 +13,38 @@ public static class RealTaskReport
 {
     public const string Prefix = "realtask-";
 
-    /// <summary><c>realtask-&lt;provider&gt;-&lt;model&gt;-&lt;yyyy-MM-dd&gt;</c>, lower-case, safe as a file name.</summary>
+    /// <summary>
+    /// <c>realtask-&lt;provider&gt;-&lt;model&gt;-&lt;yyyy-MM-dd&gt;</c>, lower-case, safe as a file name. A cross-model run
+    /// (amendment 7) is <c>realtask-&lt;provider&gt;-&lt;learning model&gt;-to-&lt;evaluation model&gt;-&lt;yyyy-MM-dd&gt;</c>.
+    /// </summary>
     public static string BaseName(RealTaskResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        var model = new string([.. result.Descriptor.RequestedModel.ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' ? c : '-')]);
-        return $"{Prefix}{result.Descriptor.Provider}-{model}-{result.StartedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+        static string Safe(string model) => new([.. model.ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' ? c : '-')]);
+        var d = result.Descriptor;
+        var model = d.LearningModel is { } learning ? Safe(learning) + "-to-" + Safe(d.RequestedModel) : Safe(d.RequestedModel);
+        return $"{Prefix}{d.Provider}-{model}-{result.StartedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
     }
+
+    /// <summary>The estimated cost of the learning runs, at the learning model's prices in a cross-model run.</summary>
+    internal static double? LearningCost(RealTaskResult result) =>
+        LiveReuseReport.Cost(result.Descriptor.LearningPhaseDescriptor(), result.Learning.Aggregate(UsageTotals.Zero, (sum, run) => sum.Plus(run.Usage)));
+
+    /// <summary>The estimated cost of the whole run: each phase at its own model's prices, or none if either is unknown.</summary>
+    internal static double? TotalCost(RealTaskResult result)
+    {
+        if (result.Descriptor.LearningModel is null)
+        {
+            return LiveReuseReport.Cost(result.Descriptor, result.Total);
+        }
+
+        var evaluation = LiveReuseReport.Cost(result.Descriptor, result.Trials.Aggregate(UsageTotals.Zero, (sum, run) => sum.Plus(run.Usage)));
+        return LearningCost(result) is { } learning && evaluation is { } trials ? learning + trials : null;
+    }
+
+    private static string Prices(RunDescriptor d) => d.InputUsdPerMillionTokens is { } input && d.OutputUsdPerMillionTokens is { } output
+        ? $"USD {LiveReuseReport.Number(input)} / {LiveReuseReport.Number(output)} per million input / output tokens ({d.PriceSource})"
+        : $"not estimated ({d.PriceSource})";
 
     /// <summary>One line per learning run and trial, appended as it is recorded.</summary>
     public static string JsonLine(RealTaskRun run) =>
@@ -54,7 +80,27 @@ public static class RealTaskReport
             learning = result.Learning,
             trials = result.Trials,
         };
-        return JsonSerializer.Serialize(document, LiveReuseReport.JsonOptions);
+
+        if (result.Descriptor.LearningModel is not { } learningModel)
+        {
+            return JsonSerializer.Serialize(document, LiveReuseReport.JsonOptions);
+        }
+
+        // A cross-model run (amendment 7) names the learning model and its prices beside the evaluation model, and its
+        // cost estimate prices each phase at its own model's rates. A same-model run's file is unchanged.
+        var node = JsonSerializer.SerializeToNode(document, LiveReuseReport.JsonOptions)!.AsObject();
+        var at = node.Select(pair => pair.Key).ToList().IndexOf("requestedModel") + 1;
+        node.Insert(at, "learningModel", learningModel);
+        node.Insert(at + 1, "ledgerModel", result.Descriptor.LedgerModel);
+        node.Insert(at + 2, "learningPrices", JsonSerializer.SerializeToNode(new
+        {
+            inputUsdPerMillionTokens = result.Descriptor.LearningInputUsdPerMillionTokens,
+            outputUsdPerMillionTokens = result.Descriptor.LearningOutputUsdPerMillionTokens,
+            source = result.Descriptor.LearningPriceSource,
+        }, LiveReuseReport.JsonOptions));
+        node["estimatedCostUsd"] = TotalCost(result);
+        node.Insert(node.Select(pair => pair.Key).ToList().IndexOf("estimatedCostUsd") + 1, "estimatedLearningCostUsd", LearningCost(result));
+        return node.ToJsonString(LiveReuseReport.JsonOptions);
     }
 
     public static string Markdown(RealTaskResult result)
@@ -65,7 +111,10 @@ public static class RealTaskReport
         var text = new StringBuilder();
         void Line(string line = "") => text.Append(line).Append('\n');
 
-        Line($"# Real-task experiment: {d.Provider} / {d.RequestedModel} / {result.StartedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}");
+        var crossModel = d.LearningModel is not null;
+        Line(crossModel
+            ? $"# Real-task experiment: {d.Provider} / learning {d.LearningModel} → evaluation {d.RequestedModel} / {result.StartedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}"
+            : $"# Real-task experiment: {d.Provider} / {d.RequestedModel} / {result.StartedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}");
         Line();
         Line($"**Overall conclusion under the pre-registered rule: {result.Conclusion}.** {ConclusionSentence(result.Conclusion)}");
         Line();
@@ -82,7 +131,17 @@ public static class RealTaskReport
         Line("| | |");
         Line("| --- | --- |");
         Line($"| Provider | {d.Provider}, host `{d.EndpointHost}` (the endpoint's host only) |");
-        Line($"| Model requested | `{d.RequestedModel}` |");
+        if (crossModel)
+        {
+            Line($"| Cross-model run | amendment 7: the learning runs used one model and the evaluation trials another; the ledger records the pair `{d.LedgerModel}` |");
+            Line($"| Learning model (learning runs only) | `{d.LearningModel}`; prices {Prices(d.LearningPhaseDescriptor())} |");
+            Line($"| Evaluation model (every trial) | `{d.RequestedModel}`; prices {Prices(d)} |");
+        }
+        else
+        {
+            Line($"| Model requested | `{d.RequestedModel}` |");
+        }
+
         Line($"| Model identities the provider reported | {(result.ModelIds.Count == 0 ? "none" : string.Join(", ", result.ModelIds.Select(id => "`" + id + "`")))} |");
         Line($"| Settings | temperature {design.Temperature.ToString("0.###", CultureInfo.InvariantCulture)}; seed {(d.SeedSent ? design.Seed.ToString(CultureInfo.InvariantCulture) + " + repeat" : "not sent: this provider does not accept a seed")}; {design.Repeats} repeats |");
         Line($"| Pre-registration | `preregistration.realtask.json` at git blob `{design.GitBlobId}`; {design.AmendmentCount} amendment(s) |");
@@ -90,7 +149,7 @@ public static class RealTaskReport
         Line($"| Limits | {design.LearningToolCalls} tool calls per learning run, {design.EvaluationToolCalls} per trial, {design.MaxAttempts} test-running attempts |");
         Line($"| Retries | up to {design.RetryMaxTries} tries on HTTP 429 and 5xx before a call is counted |");
         Line($"| Budget cap | {result.Budget.MaxModelCalls} model calls, {result.Budget.MaxTotalTokens} tokens; used {result.Total.ModelCalls} calls, {result.Total.TotalTokens} tokens |");
-        Line($"| Earlier runs | {(result.EarlierLedgerEntries is { } earlier ? earlier.ToString(CultureInfo.InvariantCulture) + " earlier complete run(s) for this provider and model in `results/realtask-ledger.tsv`; " + (earlier == 0 ? "the confirmatory run is the first complete one" : "this run is exploratory") : "no ledger")} |");
+        Line($"| Earlier runs | {(result.EarlierLedgerEntries is { } earlier ? earlier.ToString(CultureInfo.InvariantCulture) + (crossModel ? " earlier complete run(s) for this provider and learning→evaluation pair in `results/realtask-ledger.tsv`; " : " earlier complete run(s) for this provider and model in `results/realtask-ledger.tsv`; ") + (earlier == 0 ? "the confirmatory run is the first complete one" : "this run is exploratory") : "no ledger")} |");
         Line($"| Run status | {(result.Complete ? "complete: every learning run and every trial ran" : "stopped: " + result.StopReason)} |");
         Line();
 
@@ -165,13 +224,27 @@ public static class RealTaskReport
         var evaluationUsage = result.Trials.Aggregate(UsageTotals.Zero, (sum, run) => sum.Plus(run.Usage));
         Line("| Phase | Model calls | Input tokens | Output tokens | Est. cost (USD) |");
         Line("| --- | ---: | ---: | ---: | ---: |");
-        Line($"| Learning | {learningUsage.ModelCalls} | {learningUsage.InputTokens} | {learningUsage.OutputTokens} | {LiveReuseReport.Money(LiveReuseReport.Cost(d, learningUsage))} |");
-        Line($"| Evaluation | {evaluationUsage.ModelCalls} | {evaluationUsage.InputTokens} | {evaluationUsage.OutputTokens} | {LiveReuseReport.Money(LiveReuseReport.Cost(d, evaluationUsage))} |");
-        Line($"| **Total** | **{result.Total.ModelCalls}** | **{result.Total.InputTokens}** | **{result.Total.OutputTokens}** | **{LiveReuseReport.Money(LiveReuseReport.Cost(d, result.Total))}** |");
+        Line($"| Learning{(crossModel ? $" (`{d.LearningModel}`)" : string.Empty)} | {learningUsage.ModelCalls} | {learningUsage.InputTokens} | {learningUsage.OutputTokens} | {LiveReuseReport.Money(LiveReuseReport.Cost(d.LearningPhaseDescriptor(), learningUsage))} |");
+        Line($"| Evaluation{(crossModel ? $" (`{d.RequestedModel}`)" : string.Empty)} | {evaluationUsage.ModelCalls} | {evaluationUsage.InputTokens} | {evaluationUsage.OutputTokens} | {LiveReuseReport.Money(LiveReuseReport.Cost(d, evaluationUsage))} |");
+        Line($"| **Total** | **{result.Total.ModelCalls}** | **{result.Total.InputTokens}** | **{result.Total.OutputTokens}** | **{LiveReuseReport.Money(TotalCost(result))}** |");
         Line();
-        Line(d.InputUsdPerMillionTokens is { } input && d.OutputUsdPerMillionTokens is { } output
-            ? $"Prices: USD {LiveReuseReport.Number(input)} per million input tokens and USD {LiveReuseReport.Number(output)} per million output tokens ({d.PriceSource})."
-            : $"Cost not estimated: {d.PriceSource}.");
+        if (crossModel)
+        {
+            var learningPhase = d.LearningPhaseDescriptor();
+            Line(learningPhase.InputUsdPerMillionTokens is { } learningInput && learningPhase.OutputUsdPerMillionTokens is { } learningOutput
+                ? $"Learning prices (`{d.LearningModel}`): USD {LiveReuseReport.Number(learningInput)} per million input tokens and USD {LiveReuseReport.Number(learningOutput)} per million output tokens ({learningPhase.PriceSource})."
+                : $"The learning phase's cost was not estimated: {learningPhase.PriceSource}. The total is therefore not estimated either.");
+            Line();
+            Line(d.InputUsdPerMillionTokens is { } evaluationInput && d.OutputUsdPerMillionTokens is { } evaluationOutput
+                ? $"Evaluation prices (`{d.RequestedModel}`): USD {LiveReuseReport.Number(evaluationInput)} per million input tokens and USD {LiveReuseReport.Number(evaluationOutput)} per million output tokens ({d.PriceSource})."
+                : $"The evaluation phase's cost was not estimated: {d.PriceSource}.");
+        }
+        else
+        {
+            Line(d.InputUsdPerMillionTokens is { } input && d.OutputUsdPerMillionTokens is { } output
+                ? $"Prices: USD {LiveReuseReport.Number(input)} per million input tokens and USD {LiveReuseReport.Number(output)} per million output tokens ({d.PriceSource})."
+                : $"Cost not estimated: {d.PriceSource}.");
+        }
         Line();
         Line("## Limitations");
         Line();

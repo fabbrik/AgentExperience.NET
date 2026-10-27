@@ -91,6 +91,8 @@ which is part of the ordinary `dotnet test` run.
 | `AGENTEXPERIENCE_LIVE_MIN_CALL_INTERVAL_MS` | Optional pacing between calls, for a free tier's requests-per-minute limit. |
 | `AGENTEXPERIENCE_LIVE_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_PER_MTOK` | USD per million tokens for the cost estimate. Built in only for `gemini-3.1-flash-lite` ($0.25 / $1.50, standard paid tier) and `claude-haiku-4-5` ($1.00 / $5.00, Anthropic API standard rates). |
 | `AGENTEXPERIENCE_LIVE_RESULTS_DIR` | Optional. Default `experiments/AgentExperience.LiveReuse/results`. |
+| `AGENTEXPERIENCE_LIVE_LEARNING_MODEL` | Optional, real-task experiment only (amendment 7): the model its learning runs use, on the same provider and held to the same name rule as the provider's model variable. Unset, or equal to the provider's model, is a same-model run. The other experiments ignore it. |
+| `AGENTEXPERIENCE_LIVE_LEARNING_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_PER_MTOK` | Optional, with a learning model: its USD per million tokens. Without them (and no built-in price for that model) the report says the learning phase's cost was not estimated. |
 
 **Keys.** The key is read from the environment, handed to the provider SDK in one place (the OpenAI SDK's
 `ApiKeyCredential`, or the Anthropic client's `ApiKey`, set explicitly together with its base URL so that no ambient
@@ -471,6 +473,34 @@ A live run appends to `results/realtask-ledger.tsv` before its first model call 
 `results/realtask-<provider>-<model>-<date>.md` and `.json`. The first complete run per provider and model is the confirmatory
 result. The pre-registered caps are 2,600 model calls and 11,000,000 tokens (a scripted run uses about 1,200 calls).
 `AGENTEXPERIENCE_LIVE_PYTHON` names a different interpreter.
+
+**A cross-model run (amendment 7, 2026-10-27).** Does a lesson one model learned help another model that never learned it?
+Set `AGENTEXPERIENCE_LIVE_LEARNING_MODEL` and the twelve learning runs call that model while every evaluation trial calls
+the provider's model; both go through the same provider plumbing (for OpenRouter, the routing preference and the
+empty-completion guard), share one budget and follow the same retry and refusal rules. Nothing else changes: task set,
+tools, conditions, metric, gate and limits are those above.
+
+```bash
+# Offline: a second scripted stand-in plays the learning model; the report shows the pair.
+AGENTEXPERIENCE_LIVE_LEARNING_MODEL=anthropic/claude-haiku-4.5 \
+  dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment realtask --scripted
+
+# Live (spends money; never run in CI): learn with Claude Haiku 4.5, evaluate with gpt-oss-120b, both through OpenRouter.
+export AGENTEXPERIENCE_LIVE_PROVIDER=openrouter
+export OPENROUTER_API_KEY=...
+export OPENROUTER_MODEL=openai/gpt-oss-120b
+export AGENTEXPERIENCE_LIVE_PRICE_INPUT_PER_MTOK=... AGENTEXPERIENCE_LIVE_PRICE_OUTPUT_PER_MTOK=...
+export AGENTEXPERIENCE_LIVE_LEARNING_MODEL=anthropic/claude-haiku-4.5
+export AGENTEXPERIENCE_LIVE_LEARNING_PRICE_INPUT_PER_MTOK=... AGENTEXPERIENCE_LIVE_LEARNING_PRICE_OUTPUT_PER_MTOK=...
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment realtask
+```
+
+The ledger's model column holds the pair, `learning→evaluation` (for example
+`anthropic/claude-haiku-4.5→openai/gpt-oss-120b`), so the confirmatory slot is per (provider, learning model, evaluation
+model): the first complete run of that triple, never a same-model run of either model. The report is
+`results/realtask-<provider>-<learning model>-to-<evaluation model>-<date>.md`; its title and *Run* table name both models
+and the prices used for each phase, and *Tokens and cost* prices each phase at its own model's rates. The by-condition and
+learning-run tables are unchanged. The *Model identities the provider reported* row lists both phases' identities together.
 
 **What the offline run shows.** The scripted engineer goes to the first file path a block names. It needs 3 tool calls with
 the lesson and 9 without, the sibling's lesson ranks first in every memory-enabled block, and the mismatched control gets no

@@ -356,11 +356,25 @@ public static class LiveReuseHost
 
         if (args.Contains("--scripted"))
         {
+            // Amendment 7 offline: with a learning model named, a second scripted stand-in plays it, and the report shows the pair.
+            var (scriptedLearningModel, learningError) = LiveConfiguration.ReadScriptedLearningModel(environment, ScriptedRealTaskModel.ModelId);
+            if (learningError is not null)
+            {
+                await error.WriteLineAsync("Configuration error: " + learningError).ConfigureAwait(false);
+                return ExitConfigurationError;
+            }
+
+            const string ScriptedPrice = "none: scripted run, nothing is billed";
             var scripted = await RunRealTaskGuardedAsync(
                 new RealTaskOptions
                 {
                     Model = new ScriptedRealTaskModel(),
-                    Descriptor = new RunDescriptor("scripted", ScriptedRealTaskModel.ModelId, "none (offline)", null, null, "none: scripted run, nothing is billed"),
+                    LearningModel = scriptedLearningModel is null ? null : new ScriptedRealTaskModel(),
+                    Descriptor = new RunDescriptor("scripted", ScriptedRealTaskModel.ModelId, "none (offline)", null, null, ScriptedPrice)
+                    {
+                        LearningModel = scriptedLearningModel,
+                        LearningPriceSource = scriptedLearningModel is null ? null : ScriptedPrice,
+                    },
                     Design = design,
                     Clock = clock,
                     NoRetryDelay = true,
@@ -388,7 +402,7 @@ public static class LiveReuseHost
                 return ExitConfigurationError;
         }
 
-        var descriptor = configuration!.Describe();
+        var descriptor = configuration!.DescribeRealTask();
         var localModel = string.Equals(descriptor.Provider, "ollama", StringComparison.Ordinal);
         if (localModel)
         {
@@ -404,20 +418,28 @@ public static class LiveReuseHost
 
         var budget = configuration.Budget ?? new LiveBudget(design.DefaultMaxModelCalls, design.DefaultMaxTotalTokens);
         await output.WriteLineAsync($"Real-task experiment: {configuration}; budget {budget.MaxModelCalls} calls / {budget.MaxTotalTokens} tokens.").ConfigureAwait(false);
+        if (descriptor.LearningModel is { } learningModelName)
+        {
+            await output.WriteLineAsync($"Cross-model run (amendment 7): the learning phase uses {learningModelName}, the evaluation trials {descriptor.RequestedModel}; the ledger records {descriptor.LedgerModel}.").ConfigureAwait(false);
+        }
 
-        // The ledger line is written BEFORE the first model call, and only the first complete run per provider and model is the confirmatory result.
+        // The ledger line is written BEFORE the first model call, and only the first complete run per provider and model is
+        // the confirmatory result. A cross-model run's model column is the learning→evaluation pair, so it has its own slot.
         Directory.CreateDirectory(resultsDirectory);
         var ledger = new RunLedger(Path.Combine(resultsDirectory, RunLedger.RealTaskFileName));
-        var earlier = ledger.CountFor(descriptor.Provider, descriptor.RequestedModel);
+        var earlier = ledger.CountFor(descriptor.Provider, descriptor.LedgerModel);
         var runId = clock.GetUtcNow().UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
         ledger.Append(runId, clock.GetUtcNow(), descriptor, design.GitBlobId, "started", "-");
         var partial = Path.Combine(resultsDirectory, RealTaskReport.Prefix + runId + ".partial.jsonl");
 
-        using var model = (createClient ?? (config => config.CreateChatClient()))(configuration);
+        var factory = createClient ?? (config => config.CreateChatClient());
+        using var model = factory(configuration);
+        using var learningClient = configuration.Learning is null ? null : factory(configuration.ForLearning());
         var result = await RunRealTaskGuardedAsync(
             new RealTaskOptions
             {
                 Model = model,
+                LearningModel = learningClient,
                 Descriptor = descriptor,
                 Design = design,
                 Budget = budget,
@@ -559,7 +581,7 @@ internal sealed class RunLedger(string path)
             runId,
             at.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture),
             descriptor.Provider,
-            descriptor.RequestedModel,
+            descriptor.LedgerModel,
             descriptor.EndpointHost,
             preregistration,
             outcome,
