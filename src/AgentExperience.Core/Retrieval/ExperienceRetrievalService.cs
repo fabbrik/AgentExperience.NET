@@ -457,6 +457,14 @@ public sealed class ExperienceRetrievalService
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        // The recorded model is bookkeeping for the holdout's per-model estimate: it never filters or grades retrieval.
+        var required = Holdout.ModelMetadata.WithoutModel(request.RequiredEnvironmentAttributes);
+        var preferred = Holdout.ModelMetadata.WithoutModel(request.PreferredEnvironmentAttributes);
+        if (!ReferenceEquals(required, request.RequiredEnvironmentAttributes) || !ReferenceEquals(preferred, request.PreferredEnvironmentAttributes))
+        {
+            request = request with { RequiredEnvironmentAttributes = required, PreferredEnvironmentAttributes = preferred };
+        }
+
         var startedAt = _timeProvider.GetTimestamp();
         var unrestricted = request.RequiredEnvironmentAttributes is null or { Count: 0 };
 
@@ -860,7 +868,7 @@ public sealed class ExperienceRetrievalService
             double environment;
             try
             {
-                environment = _environmentScorer.Score(record.Environment, preferred);
+                environment = _environmentScorer.Score(Holdout.ModelMetadata.WithoutModel(record.Environment), preferred);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

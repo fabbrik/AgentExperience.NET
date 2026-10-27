@@ -440,22 +440,36 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
                 .Take(query.Limit)
                 .ToList();
 
-            var outcomes = new Dictionary<Guid, TaskVerificationStatus?>();
+            var runs = new Dictionary<Guid, (TaskVerificationStatus? Outcome, string? Model)>();
+            var lessonModels = new Dictionary<Guid, string?>();
             var rows = new List<HoldoutOutcomeRow>(page.Count);
             foreach (var row in page)
             {
-                if (!outcomes.TryGetValue(row.RunId, out var outcome))
+                if (!runs.TryGetValue(row.RunId, out var run))
                 {
                     var runRecord = _records.Values
                         .Where(record => record.SourceRunId == row.RunId && record.Scope == row.Scope)
                         .OrderBy(record => record.CreatedAt)
                         .ThenBy(record => record.ExperienceId)
                         .FirstOrDefault();
-                    outcome = runRecord?.Outcome?.Status;
-                    outcomes[row.RunId] = outcome;
+                    run = (runRecord?.Outcome?.Status, ModelOf(runRecord));
+                    runs[row.RunId] = run;
                 }
 
-                rows.Add(new HoldoutOutcomeRow(row.RunId, row.Arm, row.ExperienceId, row.AssignedAt, outcome));
+                if (!lessonModels.TryGetValue(row.ExperienceId, out var lessonModel))
+                {
+                    // Only a lesson in exactly the row's scope is consulted, as PostgreSQL reads it; the authorization check is defence in depth.
+                    lessonModel = _records.TryGetValue(row.ExperienceId, out var lesson) && lesson.Scope == row.Scope && authorization.Permits(lesson.Scope)
+                        ? ModelOf(lesson)
+                        : null;
+                    lessonModels[row.ExperienceId] = lessonModel;
+                }
+
+                rows.Add(new HoldoutOutcomeRow(row.RunId, row.Arm, row.ExperienceId, row.AssignedAt, run.Outcome)
+                {
+                    RunModel = run.Model,
+                    LessonModel = lessonModel,
+                });
             }
 
             return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, rows, NoErrors));
@@ -464,6 +478,14 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
 
     /// <summary>The holdout assignment rows, keyed on run and record. Internal, for tests.</summary>
     internal Dictionary<(Guid RunId, Guid ExperienceId), StoredHoldoutAssignment> HoldoutAssignments { get; } = [];
+
+    /// <summary>The model a record's environment names (<see cref="HoldoutOutcomeRow.ModelMetadataKey"/>), or <see langword="null"/> when none or blank.</summary>
+    private static string? ModelOf(ExperienceRecord? record) =>
+        record?.Environment?.Metadata is { } metadata
+        && metadata.TryGetValue(HoldoutOutcomeRow.ModelMetadataKey, out var model)
+        && !string.IsNullOrWhiteSpace(model)
+            ? model
+            : null;
 
     /// <summary>A copy of every holdout assignment row, taken under the store's lock. For tests.</summary>
     internal IReadOnlyList<StoredHoldoutAssignment> ReadHoldoutAssignments()

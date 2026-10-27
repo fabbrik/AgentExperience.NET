@@ -85,8 +85,19 @@ public sealed record ExperienceBenefitPolicy
     /// </summary>
     public bool PreferMeasuredHelpful { get; init; }
 
+    /// <summary>
+    /// Whether the policy acts on the verdicts for the invoking agent's own model rather than the pooled ones. When
+    /// <see langword="true"/> the estimate is split by model (<see cref="ExperienceBenefitOptions.SplitByModel"/>), and an
+    /// invocation reads its model as capture records it (<see cref="HoldoutOutcomeRow.ModelMetadataKey"/>: the host's value
+    /// when its environment sets one, otherwise the agent's chat client's <c>ChatClientMetadata.DefaultModelId</c>). The
+    /// scope's verdict is then the one for that consuming model, and a lesson's is pooled over every producing model for
+    /// that consuming model. Where that group has <see cref="ExperienceBenefitVerdict.NoEvidence"/> (or the model is not
+    /// known), the pooled verdict is used. <see langword="false"/> by default: every agent acts on the pooled verdicts.
+    /// </summary>
+    public bool PerModel { get; init; }
+
     /// <summary>The estimator's options this policy decides verdicts with.</summary>
-    internal ExperienceBenefitOptions EstimatorOptions => new() { MinimumRunsPerArm = MinimumRunsPerArm };
+    internal ExperienceBenefitOptions EstimatorOptions => new() { MinimumRunsPerArm = MinimumRunsPerArm, SplitByModel = PerModel };
 
     /// <summary>Refuses an interval, timeout or window that is not strictly positive, a timeout over the maximum, and a minimum below 1.</summary>
     internal void Validate(string paramName)

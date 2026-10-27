@@ -612,7 +612,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             if (stopped is null && retrieved is not null)
             {
                 // Acting on measured benefit (off by default): the cached view, which never waits on the store.
-                var benefit = _benefit?.Current(request.Authorization, request.Scope);
+                var benefit = _benefit?.Current(request.Authorization, request.Scope, _options.Benefit.PerModel ? InvokingModel(context.Agent) : null);
                 var ranked = benefit is not null && _options.Benefit.PreferMeasuredHelpful
                     ? PreferHelpful(retrieved.Records, benefit, request.Limit)
                     : retrieved.Records;
@@ -887,6 +887,13 @@ public sealed class ExperienceContextProvider : AIContextProvider
     /// </summary>
     private static Guid? CapturedRun(AIAgent? agent) =>
         CaptureScope.Current is { } capture && capture.Captures(agent) ? capture.RunId : null;
+
+    /// <summary>
+    /// The invoking agent's model, from the source capture records it from: the captured run's own model when
+    /// this agent is being captured (the host's environment value when it sets one), otherwise the agent's chat client's.
+    /// </summary>
+    private static string? InvokingModel(AIAgent? agent) =>
+        CaptureScope.Current is { } capture && capture.Captures(agent) ? capture.Model : AgentModel.Of(agent);
 
     /// <summary>
     /// The holdout arm: the built block is withheld. Nothing is staged (the session's account is saved as it stands, as on
@@ -1465,7 +1472,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var withdrawn = new HashSet<Guid>();
         var policy = _retrieval.Policy;
         var now = _options.TimeProvider.GetUtcNow();
-        var required = request.RequiredEnvironmentAttributes;
+        // As retrieval does: the recorded model never filters.
+        var required = AgentExperience.Core.Holdout.ModelMetadata.WithoutModel(request.RequiredEnvironmentAttributes);
         var unrestricted = required is null or { Count: 0 };
 
         var timeout = _options.Limits.EligibilityCheckTimeout;

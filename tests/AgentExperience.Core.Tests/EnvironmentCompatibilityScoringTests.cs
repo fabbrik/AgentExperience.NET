@@ -251,6 +251,48 @@ public class EnvironmentCompatibilityScoringTests
 
     // ---------------------------------------------------------------- helpers
 
+    // ---------------------------------------------------------------- the recorded model is bookkeeping
+
+    [Fact]
+    public async Task A_lesson_learned_on_another_model_ranks_exactly_as_one_with_no_model()
+    {
+        var onA = Metadata(("a", "1"), (HoldoutOutcomeRow.ModelMetadataKey, "model-a"));
+        var unlabelled = Metadata(("a", "1"));
+
+        // An agent on model B that even asks for its model, as a preference or a requirement.
+        var request = Request() with
+        {
+            PreferredEnvironmentAttributes = Metadata(("a", "1"), (HoldoutOutcomeRow.ModelMetadataKey, "model-b")),
+            RequiredEnvironmentAttributes = Metadata((HoldoutOutcomeRow.ModelMetadataKey, "model-b")),
+        };
+
+        IReadOnlyDictionary<string, string>? seen = null;
+        var scorer = new ModelBlindScorer(environment => seen = environment.Metadata);
+        var labelled = await Service([new ExperienceCandidate(Record(Id(1), metadata: onA), 0.5)], scorer).RetrieveAsync(request);
+        Assert.NotNull(seen);
+        Assert.False(seen!.ContainsKey(HoldoutOutcomeRow.ModelMetadataKey));
+        var plain = await Service(new ExperienceCandidate(Record(Id(1), metadata: unlabelled), 0.5)).RetrieveAsync(request);
+        var labelledDefault = await Service(new ExperienceCandidate(Record(Id(1), metadata: onA), 0.5)).RetrieveAsync(request);
+
+        Assert.Empty(labelledDefault.Excluded);
+        Assert.Equal(
+            plain.Records.Select(ranked => (ranked.Record.ExperienceId, ranked.Score, Components: string.Join('|', ranked.Components))),
+            labelledDefault.Records.Select(ranked => (ranked.Record.ExperienceId, ranked.Score, Components: string.Join('|', ranked.Components))));
+        Assert.Equal(1d, EnvironmentComponent(labelledDefault.Records[0]).Value);
+        Assert.True(labelledDefault.EnvironmentUnrestricted);
+        Assert.Single(labelled.Records);
+    }
+
+    private sealed class ModelBlindScorer(Action<EnvironmentFingerprint> seen) : IEnvironmentCompatibilityScorer
+    {
+        public double Score(EnvironmentFingerprint recordEnvironment, IReadOnlyDictionary<string, string> preferredAttributes)
+        {
+            seen(recordEnvironment);
+            Assert.False(preferredAttributes.ContainsKey(HoldoutOutcomeRow.ModelMetadataKey));
+            return 1d;
+        }
+    }
+
     private static RankingComponent EnvironmentComponent(RankedExperience ranked) =>
         Assert.Single(ranked.Components, component => component.Kind == RankingComponentKind.EnvironmentCompatibility);
 

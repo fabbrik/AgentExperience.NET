@@ -1231,6 +1231,51 @@ options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PreferMeasuredHe
   `MeasuredBenefit` from one estimate over this policy's `Window` and `MinimumRunsPerArm`, so a lesson omitted as
   `MeasuredHarmful` shows the `Hurts` comparison behind it. See [Seeing what it learned](deployment.md#seeing-what-it-learned).
 
+### Per model
+
+Agents on different models can share one store, and a lesson that helps one model may do nothing for another, or hurt
+it. Pooled, the two cancel out. Capture records the model of every run, so the estimate can tell them apart:
+
+```csharp
+var estimate = await AgentExperienceBenefit.EstimateAsync(app.Services, authorization, scope,
+    new ExperienceBenefitOptions { SplitByModel = true });
+foreach (var group in estimate.ByConsumingModel!)
+{
+    Console.WriteLine($"{group.Model}: {group.Comparison.Verdict}");
+}
+
+foreach (var pair in estimate.Lessons.SelectMany(lesson => lesson.ByModelPair!))
+{
+    Console.WriteLine($"learned by {pair.LessonModel}, used by {pair.RunModel}: {pair.Comparison.Verdict}");
+}
+```
+
+- **Where the model comes from.** At run start capture adds `agentexperience.model`
+  (`HoldoutOutcomeRow.ModelMetadataKey`) to the run's `Environment.Metadata`: the agent's chat client's
+  `ChatClientMetadata.DefaultModelId`, trimmed and capped at 256 characters. If your `ExperienceCaptureOptions.Environment`
+  already sets that key, your value is kept: set it when the client does not report a model, or to name a deployment
+  rather than a model. With no model id the key is absent. Nothing is ever inferred from text or responses. A record
+  keeps its source run's environment, so a lesson names the model that learned it, and a run's record names the model
+  that used its lessons. Unlike other metadata, the key is bookkeeping for this estimate only: the default reflection
+  does not list it as a precondition, the block's environment line does not show it, and retrieval ignores it (in
+  `RequiredEnvironmentAttributes` and `PreferredEnvironmentAttributes`, and in what the environment scorer sees), so a
+  lesson learned on one model reads and ranks exactly the same for an agent on any other.
+- **The split.** `ByConsumingModel` compares the runs of each model on their own; runs with no recorded model are grouped
+  as `unknown` (`ExperienceBenefitEstimate.UnknownModel`). Each lesson's `ByModelPair` compares its runs per (the model
+  that learned it, the model that used it). Every group needs `MinimumRunsPerArm` per arm and the interval to exclude zero,
+  exactly as the pooled comparison does, and every run is in exactly one group, so the groups' counts add up to the
+  pooled ones. With `SplitByModel` off (the default) both are `null` and the estimate is exactly what it was. Splitting
+  makes more comparisons over fewer runs each, so the caution about many comparisons applies all the more.
+- **Acting per model.** With `ExperienceBenefitPolicy.PerModel = true` the policy reads the split estimate and each
+  invocation acts on the verdicts for its own agent's model: the captured run's recorded model, or, for an uncaptured
+  invocation, the agent's chat client's. A scope verdict of `Hurts` for that model withholds every lesson from it; a
+  lesson's verdict is that model's runs of it. Wherever that model's group has `NoEvidence`, or the model is unknown or
+  was never measured, the pooled verdict is used instead. Off by default: every agent acts on the pooled verdicts.
+
+  ```csharp
+  options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PerModel = true };
+  ```
+
 ## Measuring another memory provider
 
 The same holdout can measure a memory provider that is not this library: Mem0, Zep, Letta, or your own. Vendors report

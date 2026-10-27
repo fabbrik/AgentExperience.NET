@@ -143,9 +143,11 @@ public sealed partial class PostgresExperienceRecordStore
     /// The read's first part: a page of the caller's exact-scope assignment rows in (run, record) order, then, for each
     /// run on the page, the run's own live record in exactly the same scope (the earliest created, then the lowest ID),
     /// found with one semi-join rather than one probe per row. A record in another scope that names the same run is never
-    /// the run's record. The record columns keep ordinals 0-17, null when the run has no record; the row is 18-21.
-    /// Row-level security bounds both tables to the caller's bounds. The keyset predicate, when there is one, goes
-    /// between the two parts.
+    /// the run's record. The record columns keep ordinals 0-17, null when the run has no record; the row is 18-21, and
+    /// ordinal 22 is 0. After the page's rows, in the same statement, come the live records the page's rows name (the
+    /// lessons, in exactly the page's scope, so nothing outside it is decrypted), one each, at ordinals 0-17, with 18-21 null and ordinal 22 1: read for
+    /// the model that learned each lesson. Row-level security bounds both tables to the caller's bounds. The keyset
+    /// predicate, when there is one, goes between the two parts.
     /// </summary>
     internal const string QueryHoldoutOutcomesPrefix =
         "WITH page AS (SELECT run_id, arm, experience_id, assigned_at\n" +
@@ -160,10 +162,16 @@ public sealed partial class PostgresExperienceRecordStore
         $"run_record AS (SELECT DISTINCT ON (source_run_id) {SelectColumns}\n" +
         $"FROM {Table}\n" +
         $"WHERE {ScopePredicate} AND {LivePredicate} AND source_run_id IN (SELECT run_id FROM page)\n" +
-        "ORDER BY source_run_id, created_at, experience_id)\n" +
-        "SELECT run_record.*, page.run_id, page.arm, page.experience_id, page.assigned_at\n" +
+        "ORDER BY source_run_id, created_at, experience_id),\n" +
+        $"lesson_record AS (SELECT {SelectColumns}\n" +
+        $"FROM {Table}\n" +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND experience_id IN (SELECT experience_id FROM page))\n" +
+        "SELECT run_record.*, page.run_id, page.arm, page.experience_id, page.assigned_at, 0 AS part\n" +
         "FROM page LEFT JOIN run_record ON run_record.source_run_id = page.run_id\n" +
-        "ORDER BY page.run_id, page.experience_id";
+        "UNION ALL\n" +
+        "SELECT lesson_record.*, NULL, NULL, NULL, NULL, 1 AS part\n" +
+        "FROM lesson_record\n" +
+        "ORDER BY 23, 19, 21, 1";
 
     /// <inheritdoc />
     /// <remarks>
@@ -218,21 +226,42 @@ public sealed partial class PostgresExperienceRecordStore
                 await session.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            // One record per run (every row of a run carries the same one), decoded together: sealed ones in one batch.
-            var runRows = snapshot.Where(row => !row.IsDBNull(0)).DistinctBy(row => row.GetGuid(18)).ToArray();
-            var records = await ReadRecordsAsync(runRows, _encryption, cancellationToken).ConfigureAwait(false);
-            var outcomes = new Dictionary<Guid, TaskVerificationStatus?>(runRows.Length);
+            // The page's rows first, then the lessons they name.
+            var pageRows = snapshot.Where(row => row.GetInt32(22) == 0).ToList();
+            var lessonRows = snapshot.Where(row => row.GetInt32(22) == 1).ToArray();
+
+            // One record per run (every row of a run carries the same one) and one per lesson, decoded together: sealed
+            // ones in one batch.
+            var runRows = pageRows.Where(row => !row.IsDBNull(0)).DistinctBy(row => row.GetGuid(18)).ToArray();
+            var records = await ReadRecordsAsync([.. runRows, .. lessonRows], _encryption, cancellationToken).ConfigureAwait(false);
+            var runs = new Dictionary<Guid, (TaskVerificationStatus? Outcome, string? Model)>(runRows.Length);
             for (var i = 0; i < runRows.Length; i++)
             {
-                outcomes[runRows[i].GetGuid(18)] = records[i]?.Outcome?.Status;
+                runs[runRows[i].GetGuid(18)] = (records[i]?.Outcome?.Status, ModelOf(records[i]));
             }
 
-            var rows = snapshot.Select(row => new HoldoutOutcomeRow(
-                    row.GetGuid(18),
-                    Enum.Parse<HoldoutArm>(row.GetString(19)),
-                    row.GetGuid(20),
-                    row.GetFieldValue<DateTimeOffset>(21),
-                    outcomes.GetValueOrDefault(row.GetGuid(18))))
+            // The statement reads lessons in exactly the page's scope; the authorization check is defence in depth.
+            var lessonModels = new Dictionary<Guid, string?>(lessonRows.Length);
+            for (var i = 0; i < lessonRows.Length; i++)
+            {
+                var lesson = records[runRows.Length + i];
+                lessonModels[lessonRows[i].GetGuid(0)] = lesson is not null && authorization.Permits(lesson.Scope) ? ModelOf(lesson) : null;
+            }
+
+            var rows = pageRows.Select(row =>
+                {
+                    var run = runs.GetValueOrDefault(row.GetGuid(18));
+                    return new HoldoutOutcomeRow(
+                        row.GetGuid(18),
+                        Enum.Parse<HoldoutArm>(row.GetString(19)),
+                        row.GetGuid(20),
+                        row.GetFieldValue<DateTimeOffset>(21),
+                        run.Outcome)
+                    {
+                        RunModel = run.Model,
+                        LessonModel = lessonModels.GetValueOrDefault(row.GetGuid(20)),
+                    };
+                })
                 .ToList();
             return new(ExperienceStoreOutcome.Found, rows, NoErrors);
         }
@@ -241,4 +270,12 @@ public sealed partial class PostgresExperienceRecordStore
             throw Translate(ex, "query holdout outcomes", cancellationToken);
         }
     }
+
+    /// <summary>The model a record's environment names (<see cref="HoldoutOutcomeRow.ModelMetadataKey"/>), or <see langword="null"/> when none or blank.</summary>
+    private static string? ModelOf(ExperienceRecord? record) =>
+        record?.Environment?.Metadata is { } metadata
+        && metadata.TryGetValue(HoldoutOutcomeRow.ModelMetadataKey, out var model)
+        && !string.IsNullOrWhiteSpace(model)
+            ? model
+            : null;
 }

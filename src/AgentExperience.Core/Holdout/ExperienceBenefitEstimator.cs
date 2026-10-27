@@ -30,6 +30,15 @@ public sealed record ExperienceBenefitOptions
     /// <see cref="ExperienceBenefitVerdict.NoEvidence"/>. At least 1; <see cref="DefaultMinimumRunsPerArm"/> by default.
     /// </summary>
     public int MinimumRunsPerArm { get; init; } = DefaultMinimumRunsPerArm;
+
+    /// <summary>
+    /// Whether the estimate is also split by model: <see cref="ExperienceBenefitEstimate.ByConsumingModel"/> compares the
+    /// runs of each consuming model (<see cref="HoldoutOutcomeRow.RunModel"/>) on their own, and each lesson's
+    /// <see cref="ExperienceLessonBenefit.ByModelPair"/> compares its runs per (producing model, consuming model). Every group
+    /// is decided by the same rules and <see cref="MinimumRunsPerArm"/> as the pooled comparison. <see langword="false"/> by
+    /// default, when both stay <see langword="null"/> and the estimate is exactly the pooled one.
+    /// </summary>
+    public bool SplitByModel { get; init; }
 }
 
 /// <summary>One arm's verified runs.</summary>
@@ -68,13 +77,45 @@ public sealed record ExperienceBenefitComparison(
 /// <summary>The comparison over the runs whose blocks named one lesson: holdout runs were denied it, treatment runs given it.</summary>
 /// <param name="ExperienceId">The lesson.</param>
 /// <param name="Comparison">The arms compared over those runs alone.</param>
-public sealed record ExperienceLessonBenefit(Guid ExperienceId, ExperienceBenefitComparison Comparison);
+public sealed record ExperienceLessonBenefit(Guid ExperienceId, ExperienceBenefitComparison Comparison)
+{
+    /// <summary>
+    /// With <see cref="ExperienceBenefitOptions.SplitByModel"/>, this lesson's runs compared per (the model that learned the
+    /// lesson, the model of the run), ordered by <see cref="ExperienceModelPairBenefit.LessonModel"/> and then
+    /// <see cref="ExperienceModelPairBenefit.RunModel"/> (ordinal); a model not recorded is
+    /// <see cref="ExperienceBenefitEstimate.UnknownModel"/>. The groups' counts sum to <see cref="Comparison"/>'s.
+    /// <see langword="null"/> when the estimate is not split.
+    /// </summary>
+    public IReadOnlyList<ExperienceModelPairBenefit>? ByModelPair { get; init; }
+}
+
+/// <summary>The comparison over the runs of one consuming model.</summary>
+/// <param name="Model">The runs' model (<see cref="HoldoutOutcomeRow.RunModel"/>), or <see cref="ExperienceBenefitEstimate.UnknownModel"/> when not recorded.</param>
+/// <param name="Comparison">The arms compared over those runs alone.</param>
+public sealed record ExperienceModelBenefit(string Model, ExperienceBenefitComparison Comparison);
+
+/// <summary>For one lesson, the comparison over the runs of one consuming model, the lesson having been learned by one producing model.</summary>
+/// <param name="LessonModel">The model that learned the lesson (<see cref="HoldoutOutcomeRow.LessonModel"/>), or <see cref="ExperienceBenefitEstimate.UnknownModel"/>.</param>
+/// <param name="RunModel">The model of the runs (<see cref="HoldoutOutcomeRow.RunModel"/>), or <see cref="ExperienceBenefitEstimate.UnknownModel"/>.</param>
+/// <param name="Comparison">The arms compared over those runs alone.</param>
+public sealed record ExperienceModelPairBenefit(string LessonModel, string RunModel, ExperienceBenefitComparison Comparison);
 
 /// <summary>What <see cref="ExperienceBenefitEstimator.Estimate"/> found: overall, and per lesson.</summary>
 /// <param name="Overall">Every assigned run compared.</param>
 /// <param name="Lessons">One comparison per lesson any assigned run's block named, ordered by <see cref="ExperienceLessonBenefit.ExperienceId"/>.</param>
 public sealed record ExperienceBenefitEstimate(ExperienceBenefitComparison Overall, IReadOnlyList<ExperienceLessonBenefit> Lessons)
 {
+    /// <summary>The model a split estimate groups runs and lessons under when none was recorded: <c>unknown</c>.</summary>
+    public const string UnknownModel = "unknown";
+
+    /// <summary>
+    /// With <see cref="ExperienceBenefitOptions.SplitByModel"/>, every assigned run compared per consuming model, ordered by
+    /// <see cref="ExperienceModelBenefit.Model"/> (ordinal); runs whose model was not recorded are grouped as
+    /// <see cref="UnknownModel"/>. Each run is in exactly one group, so the groups' counts sum to <see cref="Overall"/>'s.
+    /// <see langword="null"/> when the estimate is not split.
+    /// </summary>
+    public IReadOnlyList<ExperienceModelBenefit>? ByConsumingModel { get; init; }
+
     /// <summary>
     /// Whether the store records holdout assignments at all. When <see langword="false"/> nothing was read, every count is
     /// 0, and the verdict is <see cref="ExperienceBenefitVerdict.NoEvidence"/>: absence of rows says nothing about benefit.
@@ -136,7 +177,7 @@ public static class ExperienceBenefitEstimator
 
     /// <summary>Estimates benefit overall and per lesson from <paramref name="rows"/>.</summary>
     /// <param name="rows">Assignment rows with their runs' outcomes, as <see cref="IExperienceRecordStore.QueryHoldoutOutcomesAsync"/> reads them. A null row is ignored.</param>
-    /// <param name="options">The verdict's threshold; <see langword="null"/> for the defaults.</param>
+    /// <param name="options">The verdict's threshold and whether to split by model; <see langword="null"/> for the defaults.</param>
     /// <returns>The estimate.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="rows"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceBenefitOptions.MinimumRunsPerArm"/> is less than 1.</exception>
@@ -152,29 +193,67 @@ public static class ExperienceBenefitEstimator
             .ToList();
 
         var runs = new Dictionary<Guid, RunClass>();
-        var lessons = new SortedDictionary<Guid, HashSet<Guid>>();
+        var runModels = new Dictionary<Guid, string>();
+
+        // Per lesson, the runs that named it, each with the lesson's model as that run's rows read it.
+        var lessons = new SortedDictionary<Guid, Dictionary<Guid, string?>>();
         foreach (var group in sorted.GroupBy(row => row.RunId))
         {
             runs[group.Key] = Classify(group);
+            string? runModel = null;
             foreach (var row in group)
             {
+                runModel = LeastModel(runModel, row.RunModel);
                 if (!lessons.TryGetValue(row.ExperienceId, out var named))
                 {
                     named = [];
                     lessons[row.ExperienceId] = named;
                 }
 
-                named.Add(group.Key);
+                named[group.Key] = LeastModel(named.GetValueOrDefault(group.Key), row.LessonModel);
             }
+
+            runModels[group.Key] = runModel ?? ExperienceBenefitEstimate.UnknownModel;
         }
 
         var overall = Tally(runs.Values, minimum);
+        var split = options?.SplitByModel ?? false;
         var perLesson = lessons
-            .Select(lesson => new ExperienceLessonBenefit(lesson.Key, Tally(lesson.Value.Select(run => runs[run]), minimum)))
+            .Select(lesson => new ExperienceLessonBenefit(lesson.Key, Tally(lesson.Value.Keys.Select(run => runs[run]), minimum))
+            {
+                ByModelPair = split
+                    ? [.. lesson.Value
+                        .GroupBy(run => (LessonModel: run.Value ?? ExperienceBenefitEstimate.UnknownModel, RunModel: runModels[run.Key]))
+                        .OrderBy(pair => pair.Key.LessonModel, StringComparer.Ordinal)
+                        .ThenBy(pair => pair.Key.RunModel, StringComparer.Ordinal)
+                        .Select(pair => new ExperienceModelPairBenefit(
+                            pair.Key.LessonModel,
+                            pair.Key.RunModel,
+                            Tally(pair.Select(run => runs[run.Key]), minimum)))]
+                    : null,
+            })
             .ToList();
 
-        return new ExperienceBenefitEstimate(overall, perLesson) { MinimumRunsPerArm = minimum };
+        return new ExperienceBenefitEstimate(overall, perLesson)
+        {
+            MinimumRunsPerArm = minimum,
+            ByConsumingModel = split
+                ? [.. runModels
+                    .GroupBy(run => run.Value)
+                    .OrderBy(model => model.Key, StringComparer.Ordinal)
+                    .Select(model => new ExperienceModelBenefit(model.Key, Tally(model.Select(run => runs[run.Key]), minimum)))]
+                : null,
+        };
     }
+
+    /// <summary>
+    /// Of the models a run's (or a lesson's) rows carry, the one the estimate reads: the ordinal least, blanks ignored, so
+    /// the answer never depends on the order the rows came in. In practice every row carries the same one.
+    /// </summary>
+    internal static string? LeastModel(string? current, string? candidate) =>
+        string.IsNullOrWhiteSpace(candidate) ? current
+        : current is null || string.CompareOrdinal(candidate, current) < 0 ? candidate
+        : current;
 
     /// <summary>An estimate with nothing in it: every count 0 and no verdict.</summary>
     /// <param name="options">The verdict's threshold; <see langword="null"/> for the defaults.</param>
@@ -328,22 +407,27 @@ public static class ExperienceBenefitEstimator
 public sealed class ExperienceBenefitAccumulator
 {
     private readonly int _minimum;
+    private readonly bool _split;
     private readonly HashSet<Guid> _folded = [];
     private readonly SortedDictionary<Guid, Counts> _lessons = [];
-    private readonly HashSet<Guid> _openLessons = [];
+    private readonly SortedDictionary<string, Counts> _models = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, Dictionary<(string LessonModel, string RunModel), Counts>> _pairs = [];
+    private readonly Dictionary<Guid, string?> _openLessons = [];
     private Counts _overall;
     private Guid? _openRun;
     private HoldoutArm? _openArm;
     private bool _openMixed;
     private Guid _openOutcomeFrom;
     private TaskVerificationStatus? _openOutcome;
+    private string? _openModel;
 
     /// <summary>Starts an empty accumulation.</summary>
-    /// <param name="options">The verdict's threshold; <see langword="null"/> for the defaults.</param>
+    /// <param name="options">The verdict's threshold and whether to split by model; <see langword="null"/> for the defaults.</param>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceBenefitOptions.MinimumRunsPerArm"/> is less than 1.</exception>
     public ExperienceBenefitAccumulator(ExperienceBenefitOptions? options = null)
     {
         _minimum = ExperienceBenefitEstimator.Empty(options).MinimumRunsPerArm;
+        _split = options?.SplitByModel ?? false;
     }
 
     /// <summary>Adds one row. A null row is ignored, as <see cref="ExperienceBenefitEstimator.Estimate"/> ignores one.</summary>
@@ -380,7 +464,8 @@ public sealed class ExperienceBenefitAccumulator
             _openOutcomeFrom = row.ExperienceId;
         }
 
-        _openLessons.Add(row.ExperienceId);
+        _openModel = ExperienceBenefitEstimator.LeastModel(_openModel, row.RunModel);
+        _openLessons[row.ExperienceId] = ExperienceBenefitEstimator.LeastModel(_openLessons.GetValueOrDefault(row.ExperienceId), row.LessonModel);
     }
 
     /// <summary>Adds every row of <paramref name="rows"/>, in order.</summary>
@@ -405,9 +490,23 @@ public sealed class ExperienceBenefitAccumulator
     {
         Fold();
         var perLesson = _lessons
-            .Select(lesson => new ExperienceLessonBenefit(lesson.Key, lesson.Value.Compare(_minimum)))
+            .Select(lesson => new ExperienceLessonBenefit(lesson.Key, lesson.Value.Compare(_minimum))
+            {
+                ByModelPair = _split
+                    ? [.. _pairs[lesson.Key]
+                        .OrderBy(pair => pair.Key.LessonModel, StringComparer.Ordinal)
+                        .ThenBy(pair => pair.Key.RunModel, StringComparer.Ordinal)
+                        .Select(pair => new ExperienceModelPairBenefit(pair.Key.LessonModel, pair.Key.RunModel, pair.Value.Compare(_minimum)))]
+                    : null,
+            })
             .ToList();
-        return new ExperienceBenefitEstimate(_overall.Compare(_minimum), perLesson) { MinimumRunsPerArm = _minimum };
+        return new ExperienceBenefitEstimate(_overall.Compare(_minimum), perLesson)
+        {
+            MinimumRunsPerArm = _minimum,
+            ByConsumingModel = _split
+                ? [.. _models.Select(model => new ExperienceModelBenefit(model.Key, model.Value.Compare(_minimum)))]
+                : null,
+        };
     }
 
     private void Fold()
@@ -419,11 +518,33 @@ public sealed class ExperienceBenefitAccumulator
 
         var runClass = new ExperienceBenefitEstimator.RunClass(_openMixed ? null : _openArm, _openOutcome);
         _overall.Count(runClass);
-        foreach (var lesson in _openLessons)
+        var runModel = _openModel ?? ExperienceBenefitEstimate.UnknownModel;
+        if (_split)
+        {
+            _models.TryGetValue(runModel, out var modelCounts);
+            modelCounts.Count(runClass);
+            _models[runModel] = modelCounts;
+        }
+
+        foreach (var (lesson, lessonModel) in _openLessons)
         {
             _lessons.TryGetValue(lesson, out var counts);
             counts.Count(runClass);
             _lessons[lesson] = counts;
+
+            if (_split)
+            {
+                if (!_pairs.TryGetValue(lesson, out var pairs))
+                {
+                    pairs = [];
+                    _pairs[lesson] = pairs;
+                }
+
+                var pair = (lessonModel ?? ExperienceBenefitEstimate.UnknownModel, runModel);
+                pairs.TryGetValue(pair, out var pairCounts);
+                pairCounts.Count(runClass);
+                pairs[pair] = pairCounts;
+            }
         }
 
         _folded.Add(run);
@@ -432,6 +553,7 @@ public sealed class ExperienceBenefitAccumulator
         _openMixed = false;
         _openOutcome = null;
         _openOutcomeFrom = Guid.Empty;
+        _openModel = null;
         _openLessons.Clear();
     }
 

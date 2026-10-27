@@ -59,7 +59,30 @@ public sealed record HoldoutOutcomeRow(
     HoldoutArm Arm,
     Guid ExperienceId,
     DateTimeOffset AssignedAt,
-    TaskVerificationStatus? RunOutcome);
+    TaskVerificationStatus? RunOutcome)
+{
+    /// <summary>
+    /// The <see cref="EnvironmentFingerprint.Metadata"/> key capture records the run's model under: the model that
+    /// consumed a run's lessons, and, on the record a run produced, the model that learned it.
+    /// </summary>
+    public const string ModelMetadataKey = "agentexperience.model";
+
+    /// <summary>
+    /// The model of the run's own finalized record (its <see cref="EnvironmentFingerprint.Metadata"/> entry
+    /// <see cref="ModelMetadataKey"/>): the model the lessons were given to, or withheld from. <see langword="null"/> when
+    /// the record carries none, when there is no such record (see <see cref="RunOutcome"/>), or from a store that does not
+    /// read it.
+    /// </summary>
+    public string? RunModel { get; init; }
+
+    /// <summary>
+    /// The model of the lesson <see cref="ExperienceId"/> names (its live record's <see cref="EnvironmentFingerprint.Metadata"/>
+    /// entry <see cref="ModelMetadataKey"/>, in exactly the row's scope): the model that learned it. <see langword="null"/>
+    /// when the record carries none, is gone, lies outside that scope or the caller's authorization, or is sealed under a
+    /// destroyed key, or from a store that does not read it.
+    /// </summary>
+    public string? LessonModel { get; init; }
+}
 
 /// <summary>Where a page of <see cref="IExperienceRecordStore.QueryHoldoutOutcomesAsync"/> resumes: after this run and record.</summary>
 /// <param name="RunId">The last row's <see cref="HoldoutOutcomeRow.RunId"/>.</param>
