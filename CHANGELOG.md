@@ -83,6 +83,34 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   blocks writes to `experience_records` while it builds; on a large table build it `CONCURRENTLY` first, as
   [Applying the schema](docs/guide/deployment.md#applying-the-schema) shows. No privilege changes.
 
+### Measure any memory provider (story 25.8)
+
+- **`ExperienceHoldoutContextProvider`** wraps any MAF `AIContextProvider` (Mem0, Zep, Letta, your own) under the
+  holdout, recorded against a key you choose (1-100 characters of `[A-Za-z0-9._-]`; anything else throws
+  `ArgumentException`). The wrapped provider is always invoked, and its `InvokedAsync` and state keys forwarded, so it
+  keeps learning in both arms; its exceptions propagate unchanged. On a deterministic share of captured runs whose
+  wrapped context is not empty (salt `"{providerKey.Length}:{providerKey}/{Salt}"`, independent of the lessons' holdout and of other
+  providers) the context it added is withheld. Off by default (rate 0). With the one-call setup,
+  `services.UseMeasuredMemory(memory, "mem0", holdout?)` builds it over the container's store, for
+  `ChatClientAgentOptions.AIContextProviders`. No vendor SDK dependency. See
+  [Measuring another memory provider](docs/guide/injection.md#measuring-another-memory-provider).
+- **`AgentExperienceBenefit.EstimateProviderAsync(services, authorization, scope, providerKey, options?, ct)`** returns
+  an `ExperienceProviderBenefitEstimate`: the overall comparison of the provider's arms, by the same rules and verdict as
+  the lessons' estimate (no per-item comparison; the provider's items are opaque).
+- **New optional store capability** `IExperienceRecordStore.TracksProviderHoldout`,
+  `RecordProviderHoldoutAssignmentAsync(authorization, scope, ProviderHoldoutAssignment, ct)` and
+  `QueryProviderHoldoutOutcomesAsync(authorization, ProviderHoldoutOutcomeQuery, ct)` (`ProviderHoldoutOutcomeRow`,
+  `ProviderHoldoutOutcomeQueryResult`); the defaults record and read nothing, so existing stores keep compiling.
+  `RecordStoreConformanceTests.AssertProviderHoldoutTrackingIsConsistent` checks all-or-none. The in-memory and
+  PostgreSQL stores implement it. New telemetry operation `record_provider_holdout` (`Recorded`, `NotTracked`,
+  `NotRecorded`, `OutcomeUnknown`).
+- **PostgreSQL: migration `0029_experience_provider_holdout_assignments.sql`** adds
+  `agent_experience.experience_provider_holdout_assignments` (keyed on tenant, run and provider key, `ON CONFLICT DO
+  NOTHING`, behind 25.10's late-write guard), an erasure trigger that removes a run's rows when the run's last live
+  record in the tenant is erased (`0027`'s trigger now does the same for its run rows), and its row-level security
+  policies. Re-run `ApplyApplicationRolePrivilegesAsync` after migrating:
+  the role gets `SELECT` and `INSERT`. .NET-only; the contract is unchanged.
+
 ## 0.1.0-preview.16
 
 The Python and Go ports can now list what an agent learned and report the same OpenTelemetry spans and metrics as .NET.

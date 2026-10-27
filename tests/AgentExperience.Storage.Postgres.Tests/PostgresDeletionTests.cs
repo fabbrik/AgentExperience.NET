@@ -962,6 +962,141 @@ public sealed class PostgresDeletionTests
         Assert.Equal(1, await RunRowsAsync(runId));
     }
 
+    /// <summary>
+    /// Story 25.8, the late-write guard for a measured provider's row: an erasure of the run's own record that has started
+    /// holds the write on the record's lock; once it commits, the write finds the tombstone and records nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_provider_holdout_assignment_recorded_while_the_run_s_record_is_being_erased_waits_and_records_nothing()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var runId = Guid.NewGuid();
+        var runRecord = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, runRecord, CancellationToken.None)).Outcome);
+
+        await using var purging = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await purging.BeginTransactionAsync();
+        await PurgeInAsync(purging, transaction, runRecord.ExperienceId, tenant, scope.TeamId);
+
+        var recording = _store.RecordProviderHoldoutAssignmentAsync(
+            auth, scope, new ProviderHoldoutAssignment(runId, "mem0", HoldoutArm.Treatment, DateTimeOffset.UtcNow), CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, purging, HoldoutStatementStart, recording);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await recording).Outcome);
+        Assert.Equal(0, await ProviderRunRowsAsync(runId));
+
+        // Another run is still recorded.
+        var other = Guid.NewGuid();
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await _store.RecordProviderHoldoutAssignmentAsync(
+            auth, scope, new ProviderHoldoutAssignment(other, "mem0", HoldoutArm.Treatment, DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+        Assert.Equal(1, await ProviderRunRowsAsync(other));
+    }
+
+    /// <summary>
+    /// Story 25.8, the other order: a provider holdout write for a run, in flight, holds an erasure of the run's own record
+    /// on the record's lock; once the write commits, the erasure's trigger removes the run's row.
+    /// </summary>
+    [Fact]
+    public async Task An_erasure_of_the_run_s_record_started_while_its_provider_holdout_assignment_is_being_recorded_waits_and_then_removes_it()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var runId = Guid.NewGuid();
+        var runRecord = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, runRecord, CancellationToken.None)).Outcome);
+
+        await using var recording = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var transaction = await recording.BeginTransactionAsync();
+        await ExperienceSessionContext.DeclareAsync(recording, transaction, auth, CancellationToken.None);
+        await using (var insert = new NpgsqlCommand(PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql, recording, transaction))
+        {
+            insert.Parameters.Add(new NpgsqlParameter<Guid>("run_id", runId));
+            insert.Parameters.Add(new NpgsqlParameter<string>("provider_key", "mem0"));
+            insert.Parameters.Add(new NpgsqlParameter<string>("arm", nameof(HoldoutArm.Holdout)));
+            insert.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("assigned_at", DateTimeOffset.UtcNow));
+            ExperienceRecordParameters.AddScopeParameters(insert.Parameters, scope);
+            Assert.Equal(1, await insert.ExecuteNonQueryAsync());
+        }
+
+        var erasing = _store.DeleteAsync(auth, scope, runRecord.ExperienceId, CancellationToken.None);
+        await PostgresLockWait.UntilBlockedAsync(_fixture.RawDataSource, recording, "purge_experience_record", erasing);
+        await transaction.CommitAsync();
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await erasing).Outcome);
+        Assert.Equal(0, await ProviderRunRowsAsync(runId));
+    }
+
+    /// <summary>
+    /// Story 25.8: erasing a run's own record removes that run's provider rows, under every key, and no other run's; another
+    /// tenant's record naming the same run, erased, leaves this tenant's rows.
+    /// </summary>
+    [Fact]
+    public async Task Erasing_a_run_s_own_record_removes_its_provider_holdout_rows_in_its_tenant_only()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var runId = Guid.NewGuid();
+        var otherRun = Guid.NewGuid();
+        var runRecord = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, runRecord, CancellationToken.None)).Outcome);
+        foreach (var (run, key) in new[] { (runId, "mem0"), (runId, "zep"), (otherRun, "mem0") })
+        {
+            Assert.Equal(ExperienceStoreOutcome.Committed, (await _store.RecordProviderHoldoutAssignmentAsync(
+                auth, scope, new ProviderHoldoutAssignment(run, key, HoldoutArm.Holdout, DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+        }
+
+        // Another tenant's record naming the same run, erased, is not this tenant's run's record.
+        var otherTenant = NewTenant();
+        var impostor = Minimal(Scope(otherTenant)) with { SourceRunId = otherRun };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(Authorize(otherTenant), impostor, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.DeleteAsync(Authorize(otherTenant), Scope(otherTenant), impostor.ExperienceId, CancellationToken.None)).Outcome);
+        Assert.Equal(1, await ProviderRunRowsAsync(otherRun));
+
+        Assert.Equal(2, await ProviderRunRowsAsync(runId));
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.DeleteAsync(auth, scope, runRecord.ExperienceId, CancellationToken.None)).Outcome);
+
+        Assert.Equal(0, await ProviderRunRowsAsync(runId));
+        Assert.Equal(1, await ProviderRunRowsAsync(otherRun));
+    }
+
+    /// <summary>
+    /// Both holdout tables: a run with two records keeps its rows while one of them is still live, and loses them when the
+    /// last is erased.
+    /// </summary>
+    [Fact]
+    public async Task A_run_s_holdout_rows_go_only_with_its_last_live_record()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var lesson = await ValidatedAsync(auth, scope);
+        var runId = Guid.NewGuid();
+        var first = Minimal(scope) with { SourceRunId = runId };
+        var second = Minimal(scope) with { SourceRunId = runId };
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, first, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Created, (await _store.CreateAsync(auth, second, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await _store.RecordHoldoutAssignmentAsync(
+            auth, scope, new HoldoutAssignment(runId, HoldoutArm.Treatment, [new(lesson.ExperienceId, lesson.Revision)], DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceStoreOutcome.Committed, (await _store.RecordProviderHoldoutAssignmentAsync(
+            auth, scope, new ProviderHoldoutAssignment(runId, "mem0", HoldoutArm.Treatment, DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.DeleteAsync(auth, scope, first.ExperienceId, CancellationToken.None)).Outcome);
+        Assert.Equal(1, await RunRowsAsync(runId));
+        Assert.Equal(1, await ProviderRunRowsAsync(runId));
+
+        Assert.Equal(ExperienceStoreOutcome.Deleted, (await _store.DeleteAsync(auth, scope, second.ExperienceId, CancellationToken.None)).Outcome);
+        Assert.Equal(0, await RunRowsAsync(runId));
+        Assert.Equal(0, await ProviderRunRowsAsync(runId));
+    }
+
+    private Task<long> ProviderRunRowsAsync(Guid runId) =>
+        ScalarAsync("SELECT count(*) FROM agent_experience.experience_provider_holdout_assignments WHERE run_id = @id", runId);
+
     /// <summary>The holdout write's opening words, which <c>pg_stat_activity</c> keeps however long the statement is.</summary>
     private const string HoldoutStatementStart = "WITH run_record AS MATERIALIZED";
 

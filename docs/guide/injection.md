@@ -1230,3 +1230,53 @@ options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PreferMeasuredHe
   `ListAsync(identity, new ExperienceLessonsQuery { IncludeMeasuredBenefit = true })` fills each lesson's
   `MeasuredBenefit` from one estimate over this policy's `Window` and `MinimumRunsPerArm`, so a lesson omitted as
   `MeasuredHarmful` shows the `Hurts` comparison behind it. See [Seeing what it learned](deployment.md#seeing-what-it-learned).
+
+## Measuring another memory provider
+
+The same holdout can measure a memory provider that is not this library: Mem0, Zep, Letta, or your own. Vendors report
+recall benchmarks; this measures whether your agent succeeds more often with the memory than without it, on your own
+verified outcomes. Wrap the provider in an `ExperienceHoldoutContextProvider` under a key you choose, and on a share of
+captured runs its context is withheld:
+
+```csharp
+// mem0Memory is whatever AIContextProvider your Mem0 integration gives you; no Mem0 package is needed by this library.
+AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+{
+    AIContextProviders = [services.UseMeasuredMemory(mem0Memory, "mem0", new ExperienceHoldoutOptions { Rate = 0.1 })],
+}).AsBuilder().UseAgentExperience(services).Build();
+
+// Later, behind your own authorization:
+var mem0 = await AgentExperienceBenefit.EstimateProviderAsync(app.Services, authorization, scope, "mem0");
+Console.WriteLine($"Mem0: {mem0.Overall.Verdict}, {mem0.Overall.Treatment.Rate:P0} with it, {mem0.Overall.Holdout.Rate:P0} without");
+```
+
+Say a support agent uses Mem0 to remember customers. At a rate of 0.1, one captured run in ten gets no Mem0 context;
+Mem0 is still called on that run and still stores what the run said, so it keeps learning. Once each arm has enough
+verified runs, `EstimateProviderAsync` says whether Mem0 helps (`Helps`), hurts (`Hurts`), or cannot be told yet
+(`NoEvidence`).
+
+- **The wrapped provider runs exactly as without the wrapper.** It is invoked on every run, in both arms, and so is its
+  completion step, so it keeps learning from every run; its state keys are the wrapper's. Its exceptions propagate
+  unchanged. Only the context it returns is withheld: a held-out invocation returns the very context the provider was
+  handed, unchanged, so the run sees exactly what it would see without the provider. The wrapper never changes the
+  context passed in, and a failure while it inspects the provider's answer passes that answer on unchanged and records
+  nothing.
+- **Who takes part.** Only an invocation captured by this agent's own capture (`UseAgentExperience` or
+  `UseExperienceCapture`) whose wrapped provider added at least one message, tool or instruction. Anything else passes
+  through and records nothing. With the explicit wiring, pass the constructor's `authorize` callback (the authorization
+  to record a run captured in a scope under); without it such runs do not take part. The one-call setup records under
+  the identity it resolved.
+- **Independent arms.** The arm uses the holdout's function with the salt `"{providerKey.Length}:{providerKey}/{Salt}"` (length-prefixed, so no two keys and salts share one), so each provider is
+  randomised independently of the lessons' holdout and of every other provider, and both can run on the same agent.
+  `UseMeasuredMemory` without a holdout of its own takes the injection holdout's rate and salt (off by default).
+- **The key.** 1 to 100 characters of ASCII letters, digits, `.`, `_` and `-`; anything else throws
+  `ArgumentException`. It is how the estimate finds the provider's rows, so keep it stable.
+- **The provider is measured as a whole.** Its memory items are opaque, so there is no per-item comparison:
+  `ExperienceProviderBenefitEstimate` has `Overall` only, read by the rules of [Reading the
+  estimate](#reading-the-estimate) (pending, unverified and mixed-arm runs, the verdict's threshold, the cautions).
+- **Recording** is in the background and never delays or fails the invocation, as the `record_provider_holdout`
+  operation in [telemetry](../telemetry.md). A row holds the run, the key, the arm, the run's scope and an instant.
+  Erasing a run's own record removes its rows. In PostgreSQL the rows are migration `0029`'s
+  `agent_experience.experience_provider_holdout_assignments` (see [the schema](postgres-schema.md)); re-run the
+  privileges call after migrating. A store without the capability (`TracksProviderHoldout`) gives an estimate with
+  `Tracked = false`.

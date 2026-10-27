@@ -2,7 +2,7 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// The canonical row-level security policies: every <c>rls_*</c> policy <c>0019</c> creates on this
-/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, and the vectors package's <c>0020</c> creates on
+/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, <c>0029</c> on <c>experience_provider_holdout_assignments</c>, and the vectors package's <c>0020</c> creates on
 /// <c>experience_embeddings</c>, as the exact DDL those scripts contain. The privileges call re-runs this DDL, under
 /// the migrator's lock, every time it enables row-level security, so a policy altered or dropped by hand since the
 /// migration is put back before anything is enabled; and
@@ -364,6 +364,11 @@ $body$;
             "              AND r.deleted_at IS NULL)";
         policies.Add(new(ApplicationRolePrivileges.HoldoutAssignmentsTable, "rls_holdout_assignments_select", "SELECT", scope, null));
         policies.Add(new(ApplicationRolePrivileges.HoldoutAssignmentsTable, "rls_holdout_assignments_insert", "INSERT", null, $"{scope}\n        AND {assignedRecord}"));
+
+        // Story 25.8 (0029): another memory provider's holdout row, in the caller's own scope only. It names no record, so
+        // there is no record to check: the scope lying inside the bounds is the whole condition.
+        policies.Add(new(ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable, "rls_provider_holdout_assignments_select", "SELECT", scope, null));
+        policies.Add(new(ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable, "rls_provider_holdout_assignments_insert", "INSERT", null, scope));
 
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_select", "SELECT", Readable(), null));
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_insert", "INSERT", null, scope));

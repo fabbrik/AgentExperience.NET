@@ -56,6 +56,7 @@
     <EmbeddedResource Include="Migrations\0026_experience_injections.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0026_experience_injections.sql" />
     <EmbeddedResource Include="Migrations\0027_experience_holdout_assignments.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0027_experience_holdout_assignments.sql" />
     <EmbeddedResource Include="Migrations\0028_experience_records_source_run_id.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0028_experience_records_source_run_id.sql" />
+    <EmbeddedResource Include="Migrations\0029_experience_provider_holdout_assignments.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0029_experience_provider_holdout_assignments.sql" />
   </ItemGroup>
 
   <ItemGroup>

@@ -817,6 +817,30 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         OnQueryHoldout?.Invoke(authorization, query, cancellationToken)
             ?? Task.FromResult(HoldoutOutcomeQueryResult.NotTracked);
 
+    /// <summary>What <see cref="IExperienceRecordStore.TracksProviderHoldout"/> answers. <see langword="false"/> by default, like the port.</summary>
+    public bool TracksProviderHoldout { get; set; }
+
+    /// <summary>What <see cref="RecordProviderHoldoutAssignmentAsync"/> does, when set; otherwise the port's default (not tracked).</summary>
+    public Func<AuthorizationContext, Scope, ProviderHoldoutAssignment, CancellationToken, Task<ExperienceHoldoutRecordResult>>? OnRecordProviderHoldout { get; set; }
+
+    public Task<ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ProviderHoldoutAssignment assignment,
+        CancellationToken cancellationToken) =>
+        OnRecordProviderHoldout?.Invoke(authorization, scope, assignment, cancellationToken)
+            ?? Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
+
+    /// <summary>What <see cref="QueryProviderHoldoutOutcomesAsync"/> answers, when set; otherwise the port's default (nothing, not tracked).</summary>
+    public Func<AuthorizationContext, ProviderHoldoutOutcomeQuery, CancellationToken, Task<ProviderHoldoutOutcomeQueryResult>>? OnQueryProviderHoldout { get; set; }
+
+    public Task<ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        ProviderHoldoutOutcomeQuery query,
+        CancellationToken cancellationToken) =>
+        OnQueryProviderHoldout?.Invoke(authorization, query, cancellationToken)
+            ?? Task.FromResult(ProviderHoldoutOutcomeQueryResult.NotTracked);
+
     public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Injection must not read history.");
 

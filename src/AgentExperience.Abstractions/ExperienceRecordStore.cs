@@ -342,6 +342,79 @@ public interface IExperienceRecordStore
         Task.FromResult(HoldoutOutcomeQueryResult.NotTracked);
 
     /// <summary>
+    /// Whether this store records another memory provider's holdout assignments
+    /// (<see cref="RecordProviderHoldoutAssignmentAsync"/>) and reads them back
+    /// (<see cref="QueryProviderHoldoutOutcomesAsync"/>). <see langword="false"/> by default; a store that overrides those
+    /// two overrides this to <see langword="true"/>, and a decorator forwards all three. The measuring wrapper skips the
+    /// write and reports "not tracked" when it is <see langword="false"/>.
+    /// </summary>
+    bool TracksProviderHoldout => false;
+
+    /// <summary>
+    /// Records which arm of a memory provider's holdout a captured run was assigned to: the provider's context passed
+    /// through (<see cref="HoldoutArm.Treatment"/>) or withheld (<see cref="HoldoutArm.Holdout"/>). One row per run and
+    /// provider key, in exactly <paramref name="scope"/>. A row that already exists for the run and key is left as it is,
+    /// so recording the same run again writes nothing new.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is the comparison a provider's benefit estimate reads: the run's own record, once finalized, carries the
+    /// outcome, and the row says whether that run had the provider's context or not. The measuring wrapper calls it once
+    /// per invocation that took part, in the background, and never lets it fail or delay the invocation.
+    /// </para>
+    /// <para>
+    /// <b>Override all three of <see cref="TracksProviderHoldout"/>, this method and
+    /// <see cref="QueryProviderHoldoutOutcomesAsync"/>, or none of them.</b> The default records nothing and reports
+    /// <see cref="ExperienceHoldoutRecordResult.Tracked"/> as <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// A row holds a run ID, a key, the arm, the scope and an instant: never content. A store clamps
+    /// <see cref="ProviderHoldoutAssignment.AssignedAt"/> to its own clock. Erasing the run's own record removes the run's
+    /// rows, and a store that can tell refuses a write for a run whose own records are all erased.
+    /// </para>
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="scope">The exact scope the run was captured in.</param>
+    /// <param name="assignment">The run, the provider's key, the arm and the instant.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Committed"/> when the write ran (whether or not it wrote a row),
+    /// <see cref="ExperienceStoreOutcome.Denied"/> when <paramref name="scope"/> lies outside
+    /// <paramref name="authorization"/>, or <see cref="ExperienceStoreOutcome.Invalid"/> for a malformed request.
+    /// Neither refusal accesses storage.
+    /// </returns>
+    Task<ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ProviderHoldoutAssignment assignment,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
+
+    /// <summary>
+    /// Reads back one provider's holdout rows recorded in exactly <see cref="ProviderHoldoutOutcomeQuery.Scope"/>, a page
+    /// at a time in run order, each with the verified outcome of the run's own finalized record, exactly as
+    /// <see cref="QueryHoldoutOutcomesAsync"/> joins it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Override <see cref="TracksProviderHoldout"/>, <see cref="RecordProviderHoldoutAssignmentAsync"/> and this method
+    /// together, or none of them.</b> The default reads nothing and reports
+    /// <see cref="ProviderHoldoutOutcomeQueryResult.Tracked"/> as <see langword="false"/>.
+    /// </remarks>
+    /// <param name="authorization">What the host has established the caller may do.</param>
+    /// <param name="query">The exact scope, the provider's key, the page size and where to resume.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>
+    /// <see cref="ExperienceStoreOutcome.Found"/> with the page (fewer rows than the limit means the last page),
+    /// <see cref="ExperienceStoreOutcome.Denied"/> when the scope lies outside <paramref name="authorization"/>, or
+    /// <see cref="ExperienceStoreOutcome.Invalid"/> for a malformed query. Neither refusal accesses storage.
+    /// </returns>
+    Task<ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        ProviderHoldoutOutcomeQuery query,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ProviderHoldoutOutcomeQueryResult.NotTracked);
+
+    /// <summary>
     /// Appends <paramref name="lifecycleEvent"/> and updates the record's projection
     /// (<see cref="ExperienceRecord.Status"/>, <see cref="ExperienceRecord.Revision"/>,
     /// <see cref="ExperienceRecord.UpdatedAt"/>) in one transaction: both writes commit together or

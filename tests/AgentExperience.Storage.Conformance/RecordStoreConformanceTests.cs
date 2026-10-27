@@ -743,6 +743,203 @@ public abstract class RecordStoreConformanceTests
             Outcome = new Outcome(status, [], null, Time),
         };
 
+    // ---------------------------------------------------------------- provider holdout (story 25.8)
+
+    [Fact]
+    public void The_store_records_provider_holdout_assignments_and_overrides_every_provider_holdout_member()
+    {
+        AssertProviderHoldoutTrackingIsConsistent(Store);
+        Assert.True(Store.TracksProviderHoldout);
+    }
+
+    [Fact]
+    public async Task Provider_holdout_rows_read_back_per_key_and_exact_scope_with_each_run_s_verified_outcome()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        var other = Scope(tenant, team: "team-1");
+
+        var verified = Guid.NewGuid();
+        var failed = Guid.NewGuid();
+        var unknown = Guid.NewGuid();
+        var pending = Guid.NewGuid();
+        var foreignRun = Guid.NewGuid();
+        await AssignProvider(auth, scope, verified, "mem0", HoldoutArm.Treatment);
+        await AssignProvider(auth, scope, failed, "mem0", HoldoutArm.Holdout);
+        await AssignProvider(auth, scope, unknown, "mem0", HoldoutArm.Treatment);
+        await AssignProvider(auth, scope, pending, "mem0", HoldoutArm.Holdout);
+
+        // The same run under another key is a separate row with its own arm; another scope's row is never this scope's.
+        await AssignProvider(auth, scope, verified, "zep", HoldoutArm.Holdout);
+        await AssignProvider(auth, other, foreignRun, "mem0", HoldoutArm.Treatment);
+
+        // A run recorded again keeps its first row.
+        await AssignProvider(auth, scope, verified, "mem0", HoldoutArm.Holdout);
+
+        await CreateAsync(tenant, RunRecord(scope, verified, TaskVerificationStatus.Verified));
+        await CreateAsync(tenant, RunRecord(scope, failed, TaskVerificationStatus.Failed));
+        await CreateAsync(tenant, RunRecord(scope, unknown, TaskVerificationStatus.Unknown));
+
+        // Another tenant's record naming the pending run is never its outcome.
+        var otherTenant = NewTenant();
+        await CreateAsync(otherTenant, RunRecord(Scope(otherTenant), pending, TaskVerificationStatus.Verified));
+
+        var result = await Store.QueryProviderHoldoutOutcomesAsync(auth, new ProviderHoldoutOutcomeQuery(scope, "mem0"), CancellationToken.None);
+
+        Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
+        Assert.True(result.Tracked);
+        Assert.Empty(result.Errors);
+        var expected = new[]
+        {
+            (verified, HoldoutArm.Treatment, (TaskVerificationStatus?)TaskVerificationStatus.Verified),
+            (failed, HoldoutArm.Holdout, TaskVerificationStatus.Failed),
+            (unknown, HoldoutArm.Treatment, TaskVerificationStatus.Unknown),
+            (pending, HoldoutArm.Holdout, null),
+        }.OrderBy(row => row.Item1).ToList();
+        Assert.Equal(expected, result.Rows.Select(row => (row.RunId, row.Arm, row.RunOutcome)));
+        Assert.All(result.Rows, row => Assert.Equal("mem0", row.ProviderKey));
+        Assert.All(result.Rows, row => Assert.NotEqual(default, row.AssignedAt));
+
+        var zep = await Store.QueryProviderHoldoutOutcomesAsync(auth, new ProviderHoldoutOutcomeQuery(scope, "zep"), CancellationToken.None);
+        Assert.Equal([(verified, HoldoutArm.Holdout)], zep.Rows.Select(row => (row.RunId, row.Arm)));
+        var foreign = await Store.QueryProviderHoldoutOutcomesAsync(auth, new ProviderHoldoutOutcomeQuery(other, "mem0"), CancellationToken.None);
+        Assert.Equal([(foreignRun, HoldoutArm.Treatment, (TaskVerificationStatus?)null)], foreign.Rows.Select(row => (row.RunId, row.Arm, row.RunOutcome)));
+
+        // The lessons' holdout reads none of it.
+        Assert.Empty((await Store.QueryHoldoutOutcomesAsync(auth, new HoldoutOutcomeQuery(scope), CancellationToken.None)).Rows);
+    }
+
+    /// <summary>
+    /// A run ID is caller-supplied, so two tenants can use the same one: each tenant's row is written, and each reads only
+    /// its own, joined to its own run record.
+    /// </summary>
+    [Fact]
+    public async Task Two_tenants_recording_the_same_run_and_key_each_keep_their_own_row()
+    {
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var runId = Guid.NewGuid();
+        await AssignProvider(Authorize(tenantA), Scope(tenantA), runId, "mem0", HoldoutArm.Treatment);
+        await AssignProvider(Authorize(tenantB), Scope(tenantB), runId, "mem0", HoldoutArm.Holdout);
+        await CreateAsync(tenantA, RunRecord(Scope(tenantA), runId, TaskVerificationStatus.Verified));
+        await CreateAsync(tenantB, RunRecord(Scope(tenantB), runId, TaskVerificationStatus.Failed));
+
+        var a = await Store.QueryProviderHoldoutOutcomesAsync(Authorize(tenantA), new ProviderHoldoutOutcomeQuery(Scope(tenantA), "mem0"), CancellationToken.None);
+        var b = await Store.QueryProviderHoldoutOutcomesAsync(Authorize(tenantB), new ProviderHoldoutOutcomeQuery(Scope(tenantB), "mem0"), CancellationToken.None);
+
+        Assert.Equal([(runId, HoldoutArm.Treatment, (TaskVerificationStatus?)TaskVerificationStatus.Verified)], a.Rows.Select(row => (row.RunId, row.Arm, row.RunOutcome)));
+        Assert.Equal([(runId, HoldoutArm.Holdout, (TaskVerificationStatus?)TaskVerificationStatus.Failed)], b.Rows.Select(row => (row.RunId, row.Arm, row.RunOutcome)));
+    }
+
+    [Fact]
+    public async Task Provider_holdout_rows_page_by_run_without_gaps_or_repeats()
+    {
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = Scope(tenant);
+        for (var i = 0; i < 7; i++)
+        {
+            await AssignProvider(auth, scope, Guid.NewGuid(), "mem0", i % 2 == 0 ? HoldoutArm.Treatment : HoldoutArm.Holdout);
+        }
+
+        var all = (await Store.QueryProviderHoldoutOutcomesAsync(auth, new ProviderHoldoutOutcomeQuery(scope, "mem0"), CancellationToken.None)).Rows;
+        Assert.Equal(7, all.Count);
+
+        var paged = new List<ProviderHoldoutOutcomeRow>();
+        Guid? after = null;
+        while (true)
+        {
+            var page = await Store.QueryProviderHoldoutOutcomesAsync(auth, new ProviderHoldoutOutcomeQuery(scope, "mem0", 3, after), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Found, page.Outcome);
+            paged.AddRange(page.Rows);
+            if (page.Rows.Count < 3)
+            {
+                break;
+            }
+
+            after = page.Rows[^1].RunId;
+        }
+
+        Assert.Equal(all.Select(row => row.RunId), paged.Select(row => row.RunId));
+        Assert.Equal(7, paged.Select(row => row.RunId).Distinct().Count());
+    }
+
+    [Theory]
+    [InlineData("denied")]
+    [InlineData("empty-run")]
+    [InlineData("undefined-arm")]
+    [InlineData("empty-key")]
+    [InlineData("spaced-key")]
+    [InlineData("long-key")]
+    [InlineData("null-key")]
+    [InlineData("unset-instant")]
+    [InlineData("no-assignment")]
+    [InlineData("blank-tenant")]
+    public async Task A_refused_provider_holdout_assignment_is_denied_or_invalid(string refusal)
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var valid = new ProviderHoldoutAssignment(Guid.NewGuid(), "mem0", HoldoutArm.Holdout, Time);
+        var (authorization, requestScope, assignment) = refusal switch
+        {
+            "denied" => (Authorize(NewTenant()), scope, valid),
+            "empty-run" => (Authorize(tenant), scope, valid with { RunId = Guid.Empty }),
+            "undefined-arm" => (Authorize(tenant), scope, valid with { Arm = (HoldoutArm)7 }),
+            "empty-key" => (Authorize(tenant), scope, valid with { ProviderKey = string.Empty }),
+            "spaced-key" => (Authorize(tenant), scope, valid with { ProviderKey = "a b" }),
+            "long-key" => (Authorize(tenant), scope, valid with { ProviderKey = new string('k', ProviderHoldoutAssignment.MaxProviderKeyLength + 1) }),
+            "null-key" => (Authorize(tenant), scope, valid with { ProviderKey = null! }),
+            "unset-instant" => (Authorize(tenant), scope, valid with { AssignedAt = default }),
+            "no-assignment" => (Authorize(tenant), scope, (ProviderHoldoutAssignment)null!),
+            _ => (Authorize(tenant), scope with { TenantId = " " }, valid),
+        };
+
+        var result = await Store.RecordProviderHoldoutAssignmentAsync(authorization, requestScope, assignment, CancellationToken.None);
+
+        Assert.Equal(refusal == "denied" ? ExperienceStoreOutcome.Denied : ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(refusal != "denied", result.Errors.Count > 0);
+        Assert.Empty((await Store.QueryProviderHoldoutOutcomesAsync(Authorize(tenant), new ProviderHoldoutOutcomeQuery(scope, "mem0"), CancellationToken.None)).Rows);
+    }
+
+    [Theory]
+    [InlineData("denied")]
+    [InlineData("limit-zero")]
+    [InlineData("limit-too-big")]
+    [InlineData("empty-after")]
+    [InlineData("bad-key")]
+    [InlineData("no-query")]
+    [InlineData("blank-tenant")]
+    public async Task A_refused_provider_holdout_read_is_denied_or_invalid(string refusal)
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var valid = new ProviderHoldoutOutcomeQuery(scope, "mem0");
+        var (authorization, query) = refusal switch
+        {
+            "denied" => (Authorize(NewTenant()), valid),
+            "limit-zero" => (Authorize(tenant), valid with { Limit = 0 }),
+            "limit-too-big" => (Authorize(tenant), valid with { Limit = ProviderHoldoutOutcomeQuery.MaxLimit + 1 }),
+            "empty-after" => (Authorize(tenant), valid with { AfterRunId = Guid.Empty }),
+            "bad-key" => (Authorize(tenant), valid with { ProviderKey = "mem0;--" }),
+            "no-query" => (Authorize(tenant), (ProviderHoldoutOutcomeQuery)null!),
+            _ => (Authorize(tenant), valid with { Scope = scope with { TenantId = " " } }),
+        };
+
+        var result = await Store.QueryProviderHoldoutOutcomesAsync(authorization, query, CancellationToken.None);
+
+        Assert.Equal(refusal == "denied" ? ExperienceStoreOutcome.Denied : ExperienceStoreOutcome.Invalid, result.Outcome);
+        Assert.Equal(refusal != "denied", result.Errors.Count > 0);
+        Assert.Empty(result.Rows);
+    }
+
+    private async Task AssignProvider(AuthorizationContext auth, Scope scope, Guid runId, string key, HoldoutArm arm)
+    {
+        var result = await Store.RecordProviderHoldoutAssignmentAsync(auth, scope, new ProviderHoldoutAssignment(runId, key, arm, Time), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Committed, result.Outcome);
+        Assert.True(result.Tracked);
+    }
+
     // ---------------------------------------------------------------- lifecycle commit
 
     [Fact]
@@ -1792,5 +1989,33 @@ public abstract class RecordStoreConformanceTests
             $"{store.GetType().Name} overrides TracksHoldout: {capability}, RecordHoldoutAssignmentAsync: {record}, "
             + $"QueryHoldoutOutcomesAsync: {query}. Override all three or none of them.");
         Assert.Equal(capability, store.TracksHoldout);
+    }
+
+    /// <summary>
+    /// Story 25.8: fails unless <paramref name="store"/> overrides all three of
+    /// <see cref="IExperienceRecordStore.TracksProviderHoldout"/>,
+    /// <see cref="IExperienceRecordStore.RecordProviderHoldoutAssignmentAsync"/> and
+    /// <see cref="IExperienceRecordStore.QueryProviderHoldoutOutcomesAsync"/>, or none, and its capability says which.
+    /// </summary>
+    /// <param name="store">The store, or decorator, to check.</param>
+    public static void AssertProviderHoldoutTrackingIsConsistent(IExperienceRecordStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var map = store.GetType().GetInterfaceMap(typeof(IExperienceRecordStore));
+        bool Overrides(string name)
+        {
+            var index = Array.FindIndex(map.InterfaceMethods, method => method.Name == name);
+            Assert.True(index >= 0, $"IExperienceRecordStore has no member {name}.");
+            return map.TargetMethods[index].DeclaringType != typeof(IExperienceRecordStore);
+        }
+
+        var capability = Overrides("get_" + nameof(IExperienceRecordStore.TracksProviderHoldout));
+        var record = Overrides(nameof(IExperienceRecordStore.RecordProviderHoldoutAssignmentAsync));
+        var query = Overrides(nameof(IExperienceRecordStore.QueryProviderHoldoutOutcomesAsync));
+        Assert.True(
+            capability == record && record == query,
+            $"{store.GetType().Name} overrides TracksProviderHoldout: {capability}, RecordProviderHoldoutAssignmentAsync: {record}, "
+            + $"QueryProviderHoldoutOutcomesAsync: {query}. Override all three or none of them.");
+        Assert.Equal(capability, store.TracksProviderHoldout);
     }
 }

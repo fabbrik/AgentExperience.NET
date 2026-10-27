@@ -84,6 +84,9 @@ internal sealed class CaptureScope
     /// <summary>The identity the run was opened under, in the one-call setup; <see langword="null"/> under the explicit wiring.</summary>
     internal ExperienceIdentity? Identity { get; private init; }
 
+    /// <summary>The scope the run is captured, and its record finalized, in: the descriptor's.</summary>
+    internal Scope Scope => _descriptor.Scope;
+
     /// <summary>
     /// Whether <paramref name="agent"/> -- the agent a context provider was invoked for -- is the agent this scope
     /// captures, compared through the <see cref="ChatClientAgent"/> each resolves to, so a delegating wrapper and the

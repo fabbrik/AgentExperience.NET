@@ -10,8 +10,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Diagnostics;
 /// The MAF adapter's one emission seam: the <see cref="ActivitySource"/> and <see cref="Meter"/>
 /// named <c>AgentExperience.MicrosoftAgentFramework</c>, the same three instruments Core emits, and
 /// the operations this assembly owns: <c>inject</c>; <c>record_injection</c>, which records an injection after the
-/// block was handed over; <c>record_holdout</c>, which records a run's holdout assignment; and <c>benefit_refresh</c>,
-/// which refreshes the cached benefit estimate. The last three emit measurements only, never a span.
+/// block was handed over; <c>record_holdout</c>, which records a run's holdout assignment; <c>record_provider_holdout</c>,
+/// which records a run's assignment in a measured memory provider's holdout; and <c>benefit_refresh</c>, which refreshes
+/// the cached benefit estimate. The last four emit measurements only, never a span.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -148,6 +149,12 @@ internal static class InjectionDiagnostics
     /// outcomes.
     /// </summary>
     internal const string RecordHoldout = "record_holdout";
+
+    /// <summary>
+    /// Recording, in the background, which arm of a measured memory provider's holdout a captured run was assigned to
+    /// (<c>ExperienceHoldoutContextProvider</c>). No span, like <see cref="RecordInjection"/>, and the same outcomes.
+    /// </summary>
+    internal const string RecordProviderHoldout = "record_provider_holdout";
 
     /// <summary>
     /// The fourth operation this assembly owns: refreshing, in the background, the cached benefit estimate the injection
@@ -409,10 +416,10 @@ internal static class InjectionDiagnostics
         BackgroundRecorded(RecordInjection, outcome, startTimestamp, errorClass);
 
     /// <summary>
-    /// Counts and times one background operation, <see cref="RecordInjection"/>, <see cref="RecordHoldout"/> or
-    /// <see cref="BenefitRefresh"/>, and counts a failure when <paramref name="errorClass"/> is set. Never throws.
+    /// Counts and times one background operation, <see cref="RecordInjection"/>, <see cref="RecordHoldout"/>,
+    /// <see cref="RecordProviderHoldout"/> or <see cref="BenefitRefresh"/>, and counts a failure when <paramref name="errorClass"/> is set. Never throws.
     /// </summary>
-    /// <param name="operation"><see cref="RecordInjection"/>, <see cref="RecordHoldout"/> or <see cref="BenefitRefresh"/>.</param>
+    /// <param name="operation"><see cref="RecordInjection"/>, <see cref="RecordHoldout"/>, <see cref="RecordProviderHoldout"/> or <see cref="BenefitRefresh"/>.</param>
     /// <param name="outcome">One of the record outcomes above.</param>
     /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
     /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>

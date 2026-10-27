@@ -92,6 +92,13 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
   scope (none when the run has no record there, even if an earlier record in another scope or tenant names the run,
   whatever the caller's bounds). A limit outside 1..1000, a cursor with an empty ID, no query or a
   malformed scope is `Invalid`; a scope outside the authorization is `Denied`.
+- `RecordProviderHoldoutAssignmentAsync` (story 25.8) writes one row per run and provider key in exactly the caller's
+  scope and keeps the first; `QueryProviderHoldoutOutcomesAsync` reads back exactly one key's rows in that scope, in run
+  order, paging after a run without gaps or repeats, each with its run's own outcome as `QueryHoldoutOutcomesAsync`
+  joins it. An empty run ID, a malformed key (outside 1-100 characters of `[A-Za-z0-9._-]`), an undefined arm, an unset
+  instant, a limit outside 1..1000, an empty resume run, no request or a malformed scope is `Invalid`; a scope outside
+  the authorization is `Denied`. `TracksProviderHoldout` is `true`, and a store overrides it and both methods together;
+  `RecordStoreConformanceTests.AssertProviderHoldoutTrackingIsConsistent(store)` checks that for any store or decorator.
 
 **Candidate source**
 

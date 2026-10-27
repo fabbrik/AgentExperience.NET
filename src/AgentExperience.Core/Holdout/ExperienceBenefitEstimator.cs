@@ -92,6 +92,28 @@ public sealed record ExperienceBenefitEstimate(ExperienceBenefitComparison Overa
 }
 
 /// <summary>
+/// Whether another memory provider helps: its holdout's arms compared, over every run assigned under its key, by the same
+/// rules as <see cref="ExperienceBenefitEstimate.Overall"/> (the verdict's threshold, unverified, pending and mixed-arm
+/// runs alike). Its items are opaque, so there is no per-item comparison.
+/// </summary>
+/// <param name="ProviderKey">The measured provider's key.</param>
+/// <param name="Overall">Every assigned run compared: treatment runs had the provider's context, holdout runs did not.</param>
+public sealed record ExperienceProviderBenefitEstimate(string ProviderKey, ExperienceBenefitComparison Overall)
+{
+    /// <summary>
+    /// Whether the store records provider holdout assignments at all. When <see langword="false"/> nothing was read, every
+    /// count is 0, and the verdict is <see cref="ExperienceBenefitVerdict.NoEvidence"/>.
+    /// </summary>
+    public bool Tracked { get; init; } = true;
+
+    /// <summary>The store's outcome: <see cref="ExperienceStoreOutcome.Found"/>, or why nothing was read, in which case the estimate is empty.</summary>
+    public ExperienceStoreOutcome Outcome { get; init; } = ExperienceStoreOutcome.Found;
+
+    /// <summary>The <see cref="ExperienceBenefitOptions.MinimumRunsPerArm"/> the verdict was decided with.</summary>
+    public int MinimumRunsPerArm { get; init; } = ExperienceBenefitOptions.DefaultMinimumRunsPerArm;
+}
+
+/// <summary>
 /// Turns holdout assignment rows, each carrying its run's verified outcome, into an answer to "do the lessons
 /// help?". Pure and deterministic: no I/O, no clock, and the same rows in any order give the same estimate.
 /// </summary>

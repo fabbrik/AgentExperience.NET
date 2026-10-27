@@ -448,6 +448,15 @@ namespace AgentExperience.Core.Holdout
         public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
         public System.Guid ExperienceId { get; init; }
     }
+    public sealed class ExperienceProviderBenefitEstimate : System.IEquatable<AgentExperience.Core.Holdout.ExperienceProviderBenefitEstimate>
+    {
+        public ExperienceProviderBenefitEstimate(string ProviderKey, AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall) { }
+        public int MinimumRunsPerArm { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall { get; init; }
+        public string ProviderKey { get; init; }
+        public bool Tracked { get; init; }
+    }
 }
 namespace AgentExperience.Core.Indexing
 {

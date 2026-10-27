@@ -763,6 +763,7 @@ then grants exactly this:
 | `lifecycle_events`, `experience_grant_events`, `confidence_evidence`, `reuse_feedback`, `reuse_feedback_exposures`, `experience_grant_access` | `SELECT`, `INSERT` |
 | `experience_injections` (`0026`, when it exists) | `SELECT`, `INSERT`, and `UPDATE` on `last_injected_at`, `injection_count` only — the injection upsert; never its record ID or scope columns, and no `DELETE` (erasure removes a row through `0026`'s trigger, as the owner) |
 | `experience_holdout_assignments` (`0027`, when it exists) | `SELECT`, `INSERT` — the injection holdout's assignment rows; no `UPDATE` (the insert is `ON CONFLICT DO NOTHING`) and no `DELETE` (erasure removes rows through `0027`'s trigger, as the owner). .NET-only: the contract's privileges files do not grant it, so in a mixed fleet run the .NET call after them |
+| `experience_provider_holdout_assignments` (`0029`, when it exists) | `SELECT`, `INSERT` — a measured memory provider's holdout rows; no `UPDATE` and no `DELETE` (erasure removes rows through `0029`'s trigger, as the owner). .NET-only, like `0027`'s table |
 | `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
@@ -873,7 +874,8 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
 3. runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` on every table the application role reads or writes by scope:
    `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
    `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`,
-   `experience_injections`, `experience_holdout_assignments`, and `experience_embeddings` when the vectors package
+   `experience_injections`, `experience_holdout_assignments`, `experience_provider_holdout_assignments`, and
+   `experience_embeddings` when the vectors package
    created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
    permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
