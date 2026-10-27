@@ -217,6 +217,8 @@ public class EnvironmentCompatibilityScoringTests
     {
         var scorer = new RecordingScorer(0.42);
         var services = new ServiceCollection();
+        // A frozen clock, so the 500 ms retrieval timeout cannot trip while a slow runner JITs the first call.
+        services.AddSingleton<TimeProvider>(new FixedTimeProvider(Now));
         services.AddAgentExperienceRetrieval();
         services.AddSingleton<IExperienceCandidateSource>(new FakeCandidateSource(new ExperienceCandidate(Record(Id(1)), 0.5)));
         services.AddSingleton<IEnvironmentCompatibilityScorer>(scorer); // after the call: resolved lazily
