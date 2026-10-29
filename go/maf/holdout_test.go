@@ -7,6 +7,7 @@ import (
 	"context"
 	"math"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -228,5 +229,41 @@ func TestAnInvalidHoldoutIsRefusedAndAnEmptySaltIsTheDefault(t *testing.T) {
 	provider, err = NewContextProvider(h.options(Options{Holdout: HoldoutOptions{Rate: 1, Salt: "experiment-2"}}))
 	if err != nil || provider.settings.Holdout.Salt != "experiment-2" {
 		t.Fatalf("%v %+v", err, provider)
+	}
+}
+
+func TestACapturedRunRecordsTheModelAndTheHostsOwnValueWins(t *testing.T) {
+	for _, c := range []struct {
+		name, model string
+		environment *ae.EnvironmentFingerprint
+		want        *string
+	}{
+		{"no model", "", nil, nil},
+		{"blank model", " \t ", nil, nil},
+		{"the model, normalized", "  go-agent-model ", nil, ae.Ptr("go-agent-model")},
+		{"the host's value", "go-agent-model", &ae.EnvironmentFingerprint{HostName: "h", RuntimeVersion: "r",
+			OperatingSystem: "o", Metadata: map[string]string{ae.ModelMetadataKey: "host-deployment"}}, ae.Ptr("host-deployment")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, model := newHost(t), newScripted(1)
+			a := build(t, model, []tool.Tool{exits("exit=0")}, h.options(Options{
+				Verify: ae.ToolSucceeded("run_tests"), ClassifyToolResult: ae.ExitCode("run_tests"),
+				Model: c.model, Environment: c.environment}))
+			runText(t, a, ticket)
+			if len(h.finalized) != 1 {
+				t.Fatalf("finalized %d, failures %+v", len(h.finalized), h.captureFailures)
+			}
+			record := h.finalized[0].Record
+			got, ok := record.Environment.Metadata[ae.ModelMetadataKey]
+			if (c.want == nil) != !ok || (ok && got != *c.want) {
+				t.Fatalf("recorded %q (%v), want %v", got, ok, c.want)
+			}
+			// Bookkeeping only: never a precondition.
+			for _, precondition := range record.Reflection.Preconditions {
+				if strings.Contains(precondition, ae.ModelMetadataKey) {
+					t.Fatalf("the model is a precondition: %q", precondition)
+				}
+			}
+		})
 	}
 }

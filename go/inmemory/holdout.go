@@ -156,3 +156,82 @@ func compareUUID(a, b ae.UUID) int {
 }
 
 var _ ae.HoldoutRecorder = (*Store)(nil)
+
+// QueryHoldoutOutcomes reads one page of the holdout's outcome rows (contract 1.9), as sql/query-holdout-outcomes.sql
+// does: the assignment rows in exactly scope, ordered by run then record (by their bytes), after the cursor (from the
+// start when nil), at most limit; each with the outcome and model of its run's own record (the record held in exactly
+// the row's scope whose source run is the run; the earliest created, then the lowest ID) and the model of the named
+// lesson's record in exactly the row's scope. It never writes. It refuses a done context, a limit outside 1 to 1000,
+// and a scope outside the bounds (ErrAuthorizationDenied).
+func (s *Store) QueryHoldoutOutcomes(ctx context.Context, bounds ae.AuthorizationBounds, scope ae.Scope, limit int,
+	after *ae.HoldoutOutcomeCursor) ([]ae.HoldoutOutcomeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ae.ValidateHoldoutOutcomesLimit(limit); err != nil {
+		return nil, err
+	}
+	if !Permits(bounds, scope) {
+		return nil, ErrAuthorizationDenied
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	page := make([]HoldoutRow, 0)
+	for _, row := range s.holdout {
+		if !row.Scope.Equal(scope) {
+			continue
+		}
+		if after != nil {
+			if c := compareUUID(row.RunID, after.RunID); c < 0 || (c == 0 && compareUUID(row.ExperienceID, after.ExperienceID) <= 0) {
+				continue
+			}
+		}
+		page = append(page, row)
+	}
+	slices.SortFunc(page, func(a, b HoldoutRow) int {
+		if c := compareUUID(a.RunID, b.RunID); c != 0 {
+			return c
+		}
+		return compareUUID(a.ExperienceID, b.ExperienceID)
+	})
+	if len(page) > limit {
+		page = page[:limit]
+	}
+	rows := make([]ae.HoldoutOutcomeRow, 0, len(page))
+	for _, row := range page {
+		outcome := ae.HoldoutOutcomeRow{RunID: row.RunID, Arm: row.Arm, ExperienceID: row.ExperienceID,
+			AssignedAt: row.AssignedAt}
+		if run := s.runRecord(row.RunID, row.Scope); run != nil {
+			status := run.Outcome.Status
+			outcome.RunOutcome, outcome.RunModel = &status, ae.RecordedModel(run)
+		}
+		if lesson, ok := s.records[row.ExperienceID]; ok && lesson.record.Scope.Equal(row.Scope) {
+			outcome.LessonModel = ae.RecordedModel(&lesson.record)
+		}
+		rows = append(rows, outcome)
+	}
+	return rows, nil
+}
+
+// runRecord is the run's own record in exactly scope: the earliest created (to the microsecond, as stored), then the
+// lowest ID; nil when there is none.
+func (s *Store) runRecord(run ae.UUID, scope ae.Scope) *ae.ExperienceRecord {
+	var found *ae.ExperienceRecord
+	for _, held := range s.records {
+		record := &held.record
+		if record.SourceRunID != run || !record.Scope.Equal(scope) {
+			continue
+		}
+		if found == nil {
+			found = record
+			continue
+		}
+		a, b := record.CreatedAt.TruncateToMicroseconds().Ticks(), found.CreatedAt.TruncateToMicroseconds().Ticks()
+		if a < b || (a == b && compareUUID(record.ExperienceID, found.ExperienceID) < 0) {
+			found = record
+		}
+	}
+	return found
+}
+
+var _ ae.HoldoutOutcomeReader = (*Store)(nil)

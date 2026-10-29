@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.8, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.8 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6 and 1.7 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.9, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.9 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7 and 1.8 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -195,6 +195,8 @@ for _, lesson := range page.Lessons {
   vector channel together, merges them and ranks as before; each stored record's summary is embedded in the
   background.
 - **The injection holdout** (contract 1.8), off by default; see [Measuring benefit](#measuring-benefit-the-holdout).
+  The run's model (`Model`, contract 1.9) is recorded for the estimate's split by model; see
+  [Reading the estimate](#reading-the-estimate).
 - **The task text, and where history sits.** Capture records the task text of the invocation's own input. In the Go
   SDK a session's history provider always runs before the context providers, so injection sees the replayed history,
   then the new input, and derives the task text from both, as .NET's `ChatClientAgent`-level provider does: a request
@@ -258,8 +260,61 @@ options := maf.Options{Store: store, Identity: identity, Verify: verify,
   On PostgreSQL the application role needs the grants of `sql/application-role-privileges-1.8.sql`.
 
 Rows a Go agent writes are read by the .NET estimate unchanged (`AgentExperienceBenefit.EstimateAsync`), together with
-the .NET and Python agents' in the same scope. The estimate itself, acting on it, measuring another memory provider,
-exporting lessons and recording the run's model are .NET-only.
+the .NET and Python agents' in the same scope, and the Go port reads them too (next section).
+
+### Reading the estimate
+
+`ae.EstimateBenefit` (contract 1.9) is the .NET `AgentExperienceBenefit.EstimateAsync`: it reads the holdout's rows in
+exactly one scope (the scope the blocks were built in), each with its run's verified outcome, and compares the arms,
+with the same numbers for the same rows ([what it reports](../docs/guide/injection.md#reading-the-estimate)):
+
+```go
+estimate, err := ae.EstimateBenefit(ctx, store, identity.Authorization(), identity.Scope,
+	ae.BenefitOptions{SplitByModel: true})
+// estimate.Overall.Verdict is ae.Helps, ae.Hurts or ae.NoEvidence
+```
+
+- **The store** is any `ae.Store`. One that is an `ae.HoldoutOutcomeReader` (the PostgreSQL store, which runs the
+  contract's `sql/query-holdout-outcomes.sql`, and the in-memory store) is read 1,000 rows a page, each page folded
+  into running counts before the next (`ae.BenefitAccumulator`), so one page is held at a time; any other gives an
+  empty estimate with `Tracked` false. A store that pages a run's rows apart is an error (`ae.ErrRunPagedApart`), not a
+  run counted twice. The bounds and scope must come from your own authentication; the estimate never writes.
+- **A scope outside the bounds** reads nothing and gives an empty estimate whose `Outcome` is `ae.BenefitDenied`,
+  never an error.
+- **The options.** `MinimumRunsPerArm` is the fewest verified runs each arm needs before a verdict; 0 is the default,
+  `ae.DefaultMinimumRunsPerArm` (20), Go's zero-value idiom, and a negative value is an error before anything is read.
+  `SplitByModel` adds the per-model comparisons.
+- **A sealed record** (`payload_version` 2), which a contract 1.x port cannot read, gives its run no outcome: the run
+  counts as `Pending`, exactly as .NET counts a run whose record is sealed under a destroyed key.
+- **Rows read any other way** are estimated with `ae.EstimateBenefitFromRows`, pure and order-independent.
+
+The fields map one to one to .NET's `ExperienceBenefitEstimate`:
+
+| .NET | Go |
+| --- | --- |
+| `ExperienceBenefitEstimate.Overall`, `Lessons`, `ByConsumingModel` | `BenefitEstimate.Overall`, `Lessons`, `ByConsumingModel` (nil unless split) |
+| `Tracked`, `Outcome` (`Found`, `Denied`), `MinimumRunsPerArm` | `Tracked`, `Outcome` (`BenefitFound`, `BenefitDenied`), `MinimumRunsPerArm` |
+| `ExperienceBenefitComparison.Treatment`, `Holdout` | `BenefitComparison.Treatment`, `Holdout` |
+| `Difference`, `Lower`, `Upper` (`double?`) | `Difference`, `Lower`, `Upper` (`*float64`, nil when either arm has no runs) |
+| `Verdict` (`NoEvidence`, `Helps`, `Hurts`) | `Verdict` (`ae.NoEvidence`, `ae.Helps`, `ae.Hurts`) |
+| `Unverified`, `Pending`, `MixedArm` | `Unverified`, `Pending`, `MixedArm` |
+| `ExperienceBenefitArm.Runs`, `Successes`, `Rate` (`double?`) | `BenefitArm.Runs`, `Successes`, `Rate` (`*float64`) |
+| `ExperienceLessonBenefit.ExperienceId`, `Comparison`, `ByModelPair` | `LessonBenefit.ExperienceID`, `Comparison`, `ByModelPair` |
+| `ExperienceModelBenefit.Model`, `Comparison` | `ModelBenefit.Model`, `Comparison` |
+| `ExperienceModelPairBenefit.LessonModel`, `RunModel`, `Comparison` | `ModelPairBenefit.LessonModel`, `RunModel`, `Comparison` |
+| `ExperienceBenefitEstimate.UnknownModel` | `ae.UnknownModel` |
+| `ExperienceBenefitOptions.MinimumRunsPerArm`, `SplitByModel` | `BenefitOptions.MinimumRunsPerArm`, `SplitByModel` |
+| `HoldoutOutcomeRow` (`RunId`, `Arm`, `ExperienceId`, `AssignedAt`, `RunOutcome`, `RunModel`, `LessonModel`) | `HoldoutOutcomeRow` (`RunID`, `Arm`, `ExperienceID`, `AssignedAt`, `RunOutcome`, `RunModel`, `LessonModel`) |
+| `ExperienceBenefitAccumulator` | `BenefitAccumulator` |
+
+**The run's model.** Microsoft Agent Framework for Go does not expose the chat client's model on the built agent, so
+the host names it: `maf.Options{Model: "gpt-4o"}` (for example the `Model` of `openaiprovider.AgentConfig`). Every
+captured run records it, trimmed and capped at 256 UTF-16 code units (`ae.NormalizeModel`), under
+`agentexperience.model` (`ae.ModelMetadataKey`) in its environment metadata; nothing when it is empty or blank, and
+an `Environment` that already sets the key keeps its own value. It is bookkeeping for the split by model only: the
+reflector never lists it as a precondition, the block never shows it, and ranking ignores it.
+
+Acting on the estimate (the benefit policy) and measuring another memory provider stay .NET-only.
 
 ### Telemetry: the same spans and metrics as .NET
 
@@ -324,7 +379,7 @@ Python agents on the same database.
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
   1.4) and holdout assignments (`RecordHoldoutAssignment`, contract 1.8), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
-  page (`ListLessonRecords`, contract 1.7), every transaction first declaring its bounds. The contract's statement files are embedded and run as
+  page (`ListLessonRecords`, contract 1.7) and the holdout's outcome rows (`QueryHoldoutOutcomes`, contract 1.9), every transaction first declaring its bounds. The contract's statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
@@ -407,8 +462,8 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.8: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view, the injection holdout and telemetry. These .NET features have no counterpart here, so a mixed
+The port covers contract 1.0 to 1.9: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout, the benefit estimate and telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
@@ -416,8 +471,8 @@ injection recording, the lessons view, the injection holdout and telemetry. Thes
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
-- **Benefit estimation and acting on it**, measuring another memory provider, exporting lessons and recording the
-  run's model: the port withholds and records the holdout, and the .NET estimate reads its rows.
+- **Acting on the benefit estimate** (the benefit policy), measuring another memory provider, and exporting lessons:
+  the port reads the estimate, but nothing it injects depends on it.
 
 What the port does write or read follows the same contract the .NET library is tested against.
 
@@ -433,7 +488,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.8 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.9 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -469,6 +524,10 @@ cancellation, parallel calls), runs the quick start and compares its output
   [`go-agent-holdout-rows.json`](maf/testdata/cross-language/go-agent-holdout-rows.json), each measured run's rows in
   the arm `ae.AssignHoldout` gives it. The .NET contract tests insert them, with the Python agent's, into one database
   and run the .NET benefit estimate over the scope.
+- *The fleet's estimate, three languages* (contract 1.9, PostgreSQL leg). The Go and Python agents' holdout rows go
+  into one database, and `ae.EstimateBenefit` over the scope, split by model, must be exactly
+  [`go-fleet-holdout-estimate.json`](maf/testdata/cross-language/go-fleet-holdout-estimate.json); the .NET contract
+  tests compare the .NET estimate over the same rows with it, and with the Python port's.
 
 **PostgreSQL** (the `postgres` build tag, in `postgres/pgtest/` and `maf/`, Go 1.26): in `postgres/pgtest/`, each
 finalize fixture is written through the Go store and read back row for row, every search fixture is run and ranked,

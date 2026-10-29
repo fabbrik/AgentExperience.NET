@@ -1,0 +1,108 @@
+{
+  "description": "A captured run records the model its agent's chat client reports under the environment metadata key 'key': the model id trimmed of white space at both ends, cut to at most 'maxLength' UTF-16 code units (never splitting a surrogate pair) and trimmed at the end again; nothing when the id is absent or blank. 'normalize' maps a reported id to the value recorded (null: nothing). 'environment' gives the host's metadata and the reported id, and the metadata the run records: the host's own value under the key, even a blank one, is kept.",
+  "key": "agentexperience.model",
+  "maxLength": 256,
+  "normalize": [
+    {
+      "modelId": "gpt-4o",
+      "recorded": "gpt-4o"
+    },
+    {
+      "modelId": "  claude-haiku  \n",
+      "recorded": "claude-haiku"
+    },
+    {
+      "modelId": "\u00A0model-with-unicode-spaces\u2003",
+      "recorded": "model-with-unicode-spaces"
+    },
+    {
+      "modelId": "\u001Fnot-trimmed\u001C",
+      "recorded": "\u001Fnot-trimmed\u001C"
+    },
+    {
+      "modelId": "",
+      "recorded": null
+    },
+    {
+      "modelId": " \t\r\n ",
+      "recorded": null
+    },
+    {
+      "modelId": null,
+      "recorded": null
+    },
+    {
+      "modelId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "recorded": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "modelId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\uD83E\uDDEAtail",
+      "recorded": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "modelId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa          tail",
+      "recorded": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "modelId": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+      "recorded": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+    }
+  ],
+  "environment": [
+    {
+      "metadata": {
+        "region": "eu-west"
+      },
+      "modelId": "gpt-4o",
+      "expected": {
+        "agentexperience.model": "gpt-4o",
+        "region": "eu-west"
+      }
+    },
+    {
+      "metadata": {},
+      "modelId": " gpt-4o ",
+      "expected": {
+        "agentexperience.model": "gpt-4o"
+      }
+    },
+    {
+      "metadata": {
+        "agentexperience.model": "host-deployment",
+        "region": "eu-west"
+      },
+      "modelId": "gpt-4o",
+      "expected": {
+        "agentexperience.model": "host-deployment",
+        "region": "eu-west"
+      }
+    },
+    {
+      "metadata": {
+        "agentexperience.model": "  "
+      },
+      "modelId": "gpt-4o",
+      "expected": {
+        "agentexperience.model": "  "
+      }
+    },
+    {
+      "metadata": {
+        "region": "eu-west"
+      },
+      "modelId": null,
+      "expected": {
+        "region": "eu-west"
+      }
+    },
+    {
+      "metadata": {
+        "region": "eu-west"
+      },
+      "modelId": "   ",
+      "expected": {
+        "region": "eu-west"
+      }
+    }
+  ]
+}

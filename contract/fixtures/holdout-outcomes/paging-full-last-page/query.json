@@ -1,0 +1,12 @@
+{
+  "description": "Eight rows read four at a time: the second page is full, so a third read is made, and it is empty. A run's rows may be split across pages; every row carries its run's outcome and model.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "limit": 4
+}

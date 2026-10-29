@@ -21,6 +21,7 @@ from ._text import (
 from .capture import CapturedRun
 from .encoding import Instant
 from .error_class import error_class
+from .model import without_model
 from .observer import observe
 from .records import Attempt, Reflection
 from .verification import VerificationResult
@@ -227,7 +228,8 @@ def _reflect(
     add_precondition("Runtime version", environment.runtime_version)
     add_precondition("Operating system", environment.operating_system)
     add_precondition("Application version", environment.application_version)
-    for key in sorted(environment.metadata, key=utf16_sort_key):
+    # The run's model is bookkeeping for the benefit estimate (contract 1.9), never a precondition.
+    for key in sorted(without_model(environment.metadata), key=utf16_sort_key):
         add_precondition(f"Environment metadata [{key}]", environment.metadata[key])
 
     if status == "Verified":

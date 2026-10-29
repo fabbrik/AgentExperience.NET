@@ -1,0 +1,113 @@
+{
+  "description": "No holdout run has a verified outcome (one is pending, one unverified): the holdout arm has 0 runs, so its rate, the difference and its interval are null, and the verdict is NoEvidence.",
+  "rows": [
+    {
+      "runId": "00000095-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000102",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000103",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000104",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000105",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000106",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000107",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000108",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-000000000109",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-00000000010a",
+      "arm": "Treatment",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-00000000010b",
+      "arm": "Holdout",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000095-0000-4000-8000-00000000010c",
+      "arm": "Holdout",
+      "experienceId": "00000095-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Unknown",
+      "runModel": null,
+      "lessonModel": null
+    }
+  ]
+}

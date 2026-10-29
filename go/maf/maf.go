@@ -250,6 +250,12 @@ type Options struct {
 	BlockOptions ae.BlockOptions
 	// Environment is the environment runs are recorded under; DefaultEnvironment() when nil.
 	Environment *ae.EnvironmentFingerprint
+	// Model is the model id the agent's chat client runs on (for example openaiprovider.AgentConfig.Model): Microsoft
+	// Agent Framework for Go does not expose it on the built agent, so the host passes it. Every captured run records
+	// it, normalized as ae.NormalizeModel does, under ae.ModelMetadataKey in its environment metadata, for the benefit
+	// estimate's split by model; nothing when empty or blank, or when Environment already sets that key (the host's
+	// value wins). It is bookkeeping only: never a precondition, never in the block, never ranked on.
+	Model string
 	// PreferredEnvironment is the metadata ranking prefers.
 	PreferredEnvironment map[string]string
 	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking.
@@ -409,6 +415,7 @@ func newSettings(options Options) (*settings, error) {
 	} else {
 		s.environment = DefaultEnvironment()
 	}
+	s.environment = ae.EnvironmentWithModel(s.environment, ae.NormalizeModel(options.Model))
 	return s, nil
 }
 

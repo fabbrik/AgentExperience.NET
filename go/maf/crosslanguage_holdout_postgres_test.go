@@ -9,6 +9,11 @@ package maf
 // testdata/cross-language/go-agent-holdout-rows.json. The .NET contract tests insert that file, with the Python
 // agent's, into one database and run the .NET benefit estimate over the scope: every finalized run counts in its arm.
 // Set AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1 to rewrite the file on purpose, then read the diff.
+//
+// Contract 1.9: every run records its model ("go-agent-model"). The fleet test inserts this file and the Python
+// agent's into one database and runs this port's EstimateBenefit over the scope, split by model; the estimate must be
+// testdata/cross-language/go-fleet-holdout-estimate.json, which the .NET contract tests compare with the .NET
+// estimate over the same rows (and the Python port's file with its own).
 
 import (
 	"bytes"
@@ -136,6 +141,8 @@ func TestTheGoAgentRecordsTheHoldoutTheDotNetEstimateReads(t *testing.T) {
 		Clock:              fixedClock(),
 		NewID:              ids.newID,
 		Holdout:            HoldoutOptions{Rate: 0.5},
+		// Contract 1.9: every run records the model, so the fleet's estimate splits by it.
+		Model: "go-agent-model",
 	})
 	options.OnHoldoutRecorded = held.add
 	options.OnWithheld = held.addWithheld

@@ -1,0 +1,48 @@
+{
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 12,
+      "successes": 8,
+      "rate": 0.6666666666666666
+    },
+    "holdout": {
+      "runs": 11,
+      "successes": 7,
+      "rate": 0.6363636363636364
+    },
+    "difference": 0.030303030303030276,
+    "lower": -0.3177380455349007,
+    "upper": 0.37374116854146766,
+    "verdict": "NoEvidence",
+    "unverified": 7,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "00000098-0000-4000-8000-000000000001",
+      "comparison": {
+        "treatment": {
+          "runs": 12,
+          "successes": 8,
+          "rate": 0.6666666666666666
+        },
+        "holdout": {
+          "runs": 11,
+          "successes": 7,
+          "rate": 0.6363636363636364
+        },
+        "difference": 0.030303030303030276,
+        "lower": -0.3177380455349007,
+        "upper": 0.37374116854146766,
+        "verdict": "NoEvidence",
+        "unverified": 7,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    }
+  ],
+  "byConsumingModel": null
+}

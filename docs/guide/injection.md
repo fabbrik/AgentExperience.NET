@@ -1136,8 +1136,8 @@ the arms.
   `use_agent_experience(..., holdout=HoldoutOptions(rate=0.1))`, Go `HoldoutOptions{Rate: 0.1}` on the Agent Framework
   options; rate 0 by default). In a mixed fleet sharing one PostgreSQL store, the .NET estimate below counts the
   Python and Go agents' runs with the .NET ones. Apply the contract's `sql/application-role-privileges-1.8.sql` after
-  its other privileges files, or run the .NET privileges call last. The estimate, the benefit policy and measuring
-  another memory provider stay .NET-only.
+  its other privileges files, or run the .NET privileges call last. Since contract 1.9 the ports read the estimate too
+  (next section); the benefit policy and measuring another memory provider stay .NET-only.
 
 ### Reading the estimate
 
@@ -1189,6 +1189,14 @@ foreach (var lesson in estimate.Lessons)
   lessons, not rows; the accumulator gives exactly what `Estimate` gives over the same rows, and is usable on its own
   when the rows of each run arrive together. A store that pages one run's rows apart is refused with
   `InvalidOperationException` rather than counting that run twice.
+- **In Python and Go too** (contract 1.9, [what it adds](../../contract/README-1.9.md)). A Python- or Go-only team reads
+  the same estimate without .NET: Python `estimate_benefit(store, authorization, scope, options)`, Go
+  `EstimateBenefit(ctx, store, authorization, scope, opts)`, over the port's in-memory or PostgreSQL store. Both return
+  every field above (per arm, the difference and its interval, the verdict, `Pending`, `Unverified`, `MixedArm`,
+  `Tracked`, per lesson and per model), page and fold the rows the same way, and give the same numbers as .NET over the
+  same rows: a .NET test estimates over rows a Python and a Go agent wrote and compares with what each port computes.
+  Each port's README maps the names. A port cannot open a sealed record (`payload_version` 2), so a run whose record is
+  sealed counts as `Pending` there, as it does in .NET once its key is destroyed.
 - **A write that overlaps an erasure.** In PostgreSQL a holdout write for a run whose own record is being erased waits
   for the erasure and then records nothing, and an erasure that starts while the write is in flight waits for it and
   then removes the run's rows. Only a write that overlaps the erasure is handled. **Known limit:** a write that starts
@@ -1266,7 +1274,9 @@ foreach (var pair in estimate.Lessons.SelectMany(lesson => lesson.ByModelPair!))
   that used its lessons. Unlike other metadata, the key is bookkeeping for this estimate only: the default reflection
   does not list it as a precondition, the block's environment line does not show it, and retrieval ignores it (in
   `RequiredEnvironmentAttributes` and `PreferredEnvironmentAttributes`, and in what the environment scorer sees), so a
-  lesson learned on one model reads and ranks exactly the same for an agent on any other.
+  lesson learned on one model reads and ranks exactly the same for an agent on any other. Since contract 1.9 the Python
+  and Go agents record their chat client's model under the same key, by the same rule, so their runs split by model
+  too.
 - **The split.** `ByConsumingModel` compares the runs of each model on their own; runs with no recorded model are grouped
   as `unknown` (`ExperienceBenefitEstimate.UnknownModel`). Each lesson's `ByModelPair` compares its runs per (the model
   that learned it, the model that used it). Every group needs `MinimumRunsPerArm` per arm and the interval to exclude zero,

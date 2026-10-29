@@ -117,14 +117,56 @@ def holdout_records(assignment: HoldoutAssignment) -> list[RunExposure]:
     return list(distinct.values())
 
 
+MIN_HOLDOUT_OUTCOME_LIMIT = 1
+MAX_HOLDOUT_OUTCOME_LIMIT = 1000
+"""The largest page of outcome rows a store reads, and the page size :func:`estimate_benefit` reads with."""
+
+
+@dataclass(frozen=True)
+class HoldoutOutcomeRow:
+    """
+    One holdout assignment row as a store reads it back (contract 1.9): the run, its arm, one record its block named,
+    when the arm was decided, and the run's own outcome (``None`` when the run has no record the port can read: not
+    finalized, finalized in another scope, or sealed). ``run_model`` is the run's record's model and ``lesson_model``
+    the named lesson's, each ``None`` when not recorded.
+    """
+
+    run_id: uuid.UUID
+    arm: HoldoutArm
+    experience_id: uuid.UUID
+    assigned_at: Instant
+    run_outcome: str | None
+    run_model: str | None = None
+    lesson_model: str | None = None
+
+
+HoldoutOutcomeCursor = tuple[uuid.UUID, uuid.UUID]
+"""Where a page resumes: after this (run ID, experience ID)."""
+
+
+def check_outcome_limit(limit: int) -> None:
+    """``ValueError`` for a page size outside 1 to 1000."""
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not MIN_HOLDOUT_OUTCOME_LIMIT <= limit <= MAX_HOLDOUT_OUTCOME_LIMIT
+    ):
+        raise ValueError(f"The limit must be from {MIN_HOLDOUT_OUTCOME_LIMIT} to {MAX_HOLDOUT_OUTCOME_LIMIT}.")
+
+
 __all__ = [
     "DEFAULT_HOLDOUT_SALT",
     "HOLDOUT_ARMS",
+    "MAX_HOLDOUT_OUTCOME_LIMIT",
     "MAX_HOLDOUT_RECORDS",
+    "MIN_HOLDOUT_OUTCOME_LIMIT",
     "HoldoutArm",
     "HoldoutAssignment",
     "HoldoutOptions",
+    "HoldoutOutcomeCursor",
+    "HoldoutOutcomeRow",
     "assign_holdout",
+    "check_outcome_limit",
     "holdout_fraction",
     "holdout_records",
 ]

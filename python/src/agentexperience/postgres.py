@@ -13,6 +13,7 @@ them.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 import uuid
 from collections.abc import Callable, Iterator, Sequence
@@ -32,7 +33,13 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience
-from .holdout import HoldoutAssignment, holdout_records
+from .holdout import (
+    HoldoutAssignment,
+    HoldoutOutcomeCursor,
+    HoldoutOutcomeRow,
+    check_outcome_limit,
+    holdout_records,
+)
 from .inmemory import (
     AuthorizationDenied,
     InjectionSummary,
@@ -42,6 +49,7 @@ from .inmemory import (
     injection_ids,
     permits,
 )
+from .model import model_of_metadata
 from .records import COLUMN_NAMES, PAYLOAD_VERSION, ExperienceRecord, Scope, from_columns, to_payload
 from .search import AuthorizationBounds, SearchParameters, SearchRow, widen_real
 
@@ -158,6 +166,7 @@ WRITE_EMBEDDING_SQL = "write-experience-embedding.sql"
 SEARCH_VECTOR_SQL = "search-experience-vector.sql"
 LIST_LESSONS_SQL = "list-experience-lessons.sql"
 RECORD_HOLDOUT_SQL = "record-holdout-assignment.sql"
+QUERY_HOLDOUT_OUTCOMES_SQL = "query-holdout-outcomes.sql"
 
 _INJECTIONS_UNREADABLE = frozenset({"42P01", "42501"})  # undefined_table, insufficient_privilege
 
@@ -222,6 +231,9 @@ class PostgresExperienceStore:
         }
         # The vector search statements keep their ``{dim}`` until the query vector's length is known.
         self._vector_statements = contract_statements(SEARCH_VECTOR_SQL)
+        self._outcome_statements = {
+            key: to_driver_placeholders(text) for key, text in contract_statements(QUERY_HOLDOUT_OUTCOMES_SQL).items()
+        }
         self._lessons_statements = {
             key: to_driver_placeholders(text) for key, text in contract_statements(LIST_LESSONS_SQL).items()
         }
@@ -564,6 +576,86 @@ class PostgresExperienceStore:
                     "user_id": scope.user_id,
                 },
             )
+
+    def read_holdout_outcomes(
+        self, bounds: AuthorizationBounds, scope: Scope, limit: int, after: HoldoutOutcomeCursor | None = None
+    ) -> list[HoldoutOutcomeRow]:
+        """
+        A page of the holdout's outcome rows (contract 1.9): in one transaction that declared ``bounds``,
+        ``first-page`` (or ``next-page`` after ``after``) from ``sql/query-holdout-outcomes.sql``. Each assignment row
+        in exactly ``scope`` comes back with its run's outcome and model (from its run's own record's payload) and
+        the named lesson's model. A sealed record (``payload_version`` 2) cannot be read by a port: its run has no
+        outcome (it counts as pending) and it names no model. Raises
+        :class:`~agentexperience.inmemory.AuthorizationDenied` outside the bounds (no statement runs), ``ValueError``
+        for a limit outside 1 to 1000, and the driver's error otherwise (``insufficient_privilege`` without the 1.8
+        grants). Reads only.
+        """
+        from psycopg.types.numeric import Int4
+
+        check_outcome_limit(limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        parameters: dict[str, Any] = {
+            "tenant_id": scope.tenant_id,
+            "application_id": scope.application_id,
+            "project_id": scope.project_id,
+            "team_id": scope.team_id,
+            "agent_id": scope.agent_id,
+            "user_id": scope.user_id,
+            "limit": Int4(limit),
+        }
+        if after is not None:
+            parameters["after_run_id"], parameters["after_experience_id"] = after
+        with self._transaction(bounds) as cursor:
+            cursor.execute(self._outcome_statements["first-page" if after is None else "next-page"], parameters)
+            names = [column.name for column in cursor.description or ()]
+            rows = cursor.fetchall()
+        if len(names) != 23 or names[: len(COLUMN_NAMES)] != list(COLUMN_NAMES) or names[22] != "part":
+            raise RuntimeError("The holdout outcome read returned columns in an unexpected order.")
+        page: list[tuple[Any, ...]] = []
+        lessons: dict[uuid.UUID, str | None] = {}
+        for row in rows:
+            if row[22] == 0:
+                page.append(row)
+            else:
+                lessons[_uuid(row[0])] = _model(row)
+        return [
+            HoldoutOutcomeRow(
+                _uuid(row[18]),
+                row[19],
+                _uuid(row[20]),
+                Instant.from_datetime(row[21]),
+                _outcome(row),
+                _model(row),
+                lessons.get(_uuid(row[20])),
+            )
+            for row in page
+        ]
+
+
+def _uuid(value: Any) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+
+
+def _payload(row: tuple[Any, ...]) -> Any:
+    """A readable record's payload (columns 1-18 of an outcome row), or ``None``: no record, or a sealed one."""
+    if row[0] is None or row[16] != PAYLOAD_VERSION:
+        return None
+    payload = row[17]
+    return json.loads(payload) if isinstance(payload, str) else payload
+
+
+def _outcome(row: tuple[Any, ...]) -> str | None:
+    payload = _payload(row)
+    outcome = payload.get("outcome") if isinstance(payload, dict) else None
+    status = outcome.get("status") if isinstance(outcome, dict) else None
+    return status if isinstance(status, str) else None
+
+
+def _model(row: tuple[Any, ...]) -> str | None:
+    payload = _payload(row)
+    environment = payload.get("environment") if isinstance(payload, dict) else None
+    return model_of_metadata(environment.get("metadata")) if isinstance(environment, dict) else None
 
 
 def _record_parameters(record: ExperienceRecord) -> dict[str, Any]:

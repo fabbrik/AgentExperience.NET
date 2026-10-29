@@ -14,7 +14,8 @@ namespace AgentExperience.Contract.Tests;
 /// measured runs through their own PostgreSQL stores, and finalized every one; each port's tests check that the rows it
 /// wrote (records, initial lifecycle events and holdout assignments, every column in PostgreSQL's text form) are exactly
 /// its checked-in rows file. Here both files' rows go into one database, and the .NET estimate over that scope must count
-/// every finalized run in the arm the assignment function gives it.
+/// every finalized run in the arm the assignment function gives it. Contract 1.9: each port also estimated the same rows
+/// itself, split by model, and the .NET estimate must equal both.
 /// </summary>
 [Collection(ContractPostgresCollection.Name)]
 public sealed class CrossLanguageHoldoutPostgresTests(ContractPostgresDatabase database)
@@ -117,6 +118,61 @@ public sealed class CrossLanguageHoldoutPostgresTests(ContractPostgresDatabase d
             expected.Values.Sum(counts => counts.Runs + counts.Unverified),
             overall.Treatment.Runs + overall.Holdout.Runs + overall.Unverified);
         Assert.NotEmpty(estimate.Lessons);
+
+        // Contract 1.9: each port estimated the same rows itself, split by model, and checked in what it computed. The
+        // .NET estimate over the same scope must be that estimate, field for field.
+        var split = await AgentExperienceBenefit.EstimateAsync(
+            provider,
+            SearchContractPostgresTests.Authorization(FleetScope),
+            FleetScope,
+            new ExperienceBenefitOptions { SplitByModel = true });
+        var dotnet = BenefitEstimateContract.EstimateJson(split);
+        dotnet["tracked"] = split.Tracked;
+        dotnet["outcome"] = split.Outcome.ToString();
+        Assert.Contains(split.ByConsumingModel!, model => model.Model is "python-agent-model");
+        Assert.Contains(split.ByConsumingModel!, model => model.Model is "go-agent-model");
+        foreach (var (port, path) in EstimateFiles)
+        {
+            Assert.True(File.Exists(path), $"{path} is missing.");
+            var computed = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+            var difference = Difference(dotnet, computed, "$");
+            Assert.True(difference is null, $"{port}'s estimate of the fleet differs from .NET's at {difference}.");
+        }
+    }
+
+    private static double Number(JsonValue value) =>
+        double.Parse(value.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+
+    private static readonly (string Port, string Path)[] EstimateFiles =
+    [
+        ("python", Path.Combine(Repository, "python", "tests", "cross-language", "python-fleet-holdout-estimate.json")),
+        ("go", Path.Combine(Repository, "go", "maf", "testdata", "cross-language", "go-fleet-holdout-estimate.json")),
+    ];
+
+    /// <summary>
+    /// The first place two estimates differ, or <see langword="null"/>: numbers that are not whole within the contract's
+    /// tolerance (1e-12), everything else exactly.
+    /// </summary>
+    private static string? Difference(JsonNode? expected, JsonNode? actual, string path)
+    {
+        switch (expected, actual)
+        {
+            case (null, null):
+                return null;
+            case (JsonObject e, JsonObject a):
+                if (!e.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(a.Select(p => p.Key).Order(StringComparer.Ordinal)))
+                {
+                    return $"{path} (members)";
+                }
+
+                return e.Select(p => Difference(p.Value, a[p.Key], $"{path}.{p.Key}")).FirstOrDefault(d => d is not null);
+            case (JsonArray e, JsonArray a):
+                return e.Count != a.Count ? $"{path} (length)" : e.Select((item, i) => Difference(item, a[i], $"{path}[{i}]")).FirstOrDefault(d => d is not null);
+            case (JsonValue e, JsonValue a) when e.GetValueKind() == System.Text.Json.JsonValueKind.Number && a.GetValueKind() == System.Text.Json.JsonValueKind.Number:
+                return Math.Abs(Number(e) - Number(a)) <= 1e-12 ? null : path;
+            default:
+                return JsonNode.DeepEquals(expected, actual) ? null : path;
+        }
     }
 
     private static List<JsonObject> Rows(JsonObject rows, string table) =>

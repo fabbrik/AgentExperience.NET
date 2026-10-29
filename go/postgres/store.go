@@ -42,6 +42,9 @@ const (
 	ListLessonsSQL = "list-experience-lessons.sql"
 	// RecordHoldoutSQL is contract 1.8's: the statement that records a run's holdout assignment.
 	RecordHoldoutSQL = "record-holdout-assignment.sql"
+	// QueryHoldoutOutcomesSQL is contract 1.9's: two statements (first-page, next-page), each starting at its
+	// "-- statement: <name>" line (ContractStatements), that read the holdout's outcome rows a page at a time.
+	QueryHoldoutOutcomesSQL = "query-holdout-outcomes.sql"
 )
 
 const (
@@ -51,7 +54,7 @@ const (
 
 //go:embed sql/declare-bounds.sql sql/search-experience-text.sql sql/record-injection.sql
 //go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql sql/list-experience-lessons.sql
-//go:embed sql/record-holdout-assignment.sql
+//go:embed sql/record-holdout-assignment.sql sql/query-holdout-outcomes.sql
 var contractFiles embed.FS
 
 // ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
@@ -275,6 +278,8 @@ type Store struct {
 	lessons map[string]Statement
 	// Contract 1.8's: the holdout assignment record.
 	holdout Statement
+	// Contract 1.9's: the holdout outcome read's first page and every later one.
+	outcomesFirst, outcomesNext Statement
 }
 
 // NewStore is a store that runs its transactions on db, which the host controls (and closes).
@@ -310,6 +315,15 @@ func NewStore(db Beginner) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	outcomes, err := ContractStatements(QueryHoldoutOutcomesSQL)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"first-page", "next-page"} {
+		if outcomes[name] == "" {
+			return nil, fmt.Errorf("%s has no %q statement", QueryHoldoutOutcomesSQL, name)
+		}
+	}
 	lessons := map[string]Statement{}
 	for _, name := range []string{"page", "page-with-statuses", "page-without-injections",
 		"page-without-injections-with-statuses"} {
@@ -321,7 +335,8 @@ func NewStore(db Beginner) (*Store, error) {
 	store := &Store{db: db, lessons: lessons, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
 		record: ToDriverPlaceholders(record), writeEmbedding: ToDriverPlaceholders(writes["write"]),
 		probeRevision: ToDriverPlaceholders(writes["probe-revision"]), vectorSQL: vectors,
-		probes: map[string]Statement{}, holdout: ToDriverPlaceholders(holdout)}
+		probes: map[string]Statement{}, holdout: ToDriverPlaceholders(holdout),
+		outcomesFirst: ToDriverPlaceholders(outcomes["first-page"]), outcomesNext: ToDriverPlaceholders(outcomes["next-page"])}
 	for _, name := range []string{"write", "probe-revision"} {
 		if writes[name] == "" {
 			return nil, fmt.Errorf("%s has no %q statement", WriteEmbeddingSQL, name)
@@ -692,6 +707,133 @@ func execTyped(ctx context.Context, tx pgx.Tx, statement Statement, args []any, 
 }
 
 var _ ae.HoldoutRecorder = (*Store)(nil)
+
+// QueryHoldoutOutcomes reads one page of the holdout's outcome rows (contract 1.9): in one transaction that declared
+// bounds, "first-page" (or, after a cursor, "next-page") from sql/query-holdout-outcomes.sql. Each assignment row in
+// exactly scope comes back with its run's own record, whose outcome status and model it reads from the payload, and
+// each lesson the page names with its record, whose model it reads. A sealed record (payload_version 2), which a
+// contract 1.x port cannot read, gives no outcome and no model: its run counts as pending. A limit outside 1 to 1000 is
+// refused, and a scope outside bounds is agentexperience.ErrAuthorizationDenied; neither runs a statement. Otherwise a
+// failure is the driver's (insufficient_privilege, 42501, until the role holds the grants of
+// sql/application-role-privileges-1.8.sql). It never writes.
+func (s *Store) QueryHoldoutOutcomes(ctx context.Context, bounds ae.AuthorizationBounds, scope ae.Scope, limit int,
+	after *ae.HoldoutOutcomeCursor) ([]ae.HoldoutOutcomeRow, error) {
+	if err := ae.ValidateHoldoutOutcomesLimit(limit); err != nil {
+		return nil, err
+	}
+	if !bounds.Permits(scope) {
+		return nil, ae.ErrAuthorizationDenied
+	}
+	values := map[string]any{
+		"tenant_id":      scope.TenantID,
+		"application_id": scope.ApplicationID,
+		"project_id":     scope.ProjectID,
+		"team_id":        scope.TeamID,
+		"agent_id":       scope.AgentID,
+		"user_id":        scope.UserID,
+		"limit":          int32(limit),
+	}
+	statement := s.outcomesFirst
+	if after != nil {
+		statement = s.outcomesNext
+		values["after_run_id"] = pgtype.UUID{Bytes: after.RunID, Valid: true}
+		values["after_experience_id"] = pgtype.UUID{Bytes: after.ExperienceID, Valid: true}
+	}
+	args, err := statement.Args(values)
+	if err != nil {
+		return nil, err
+	}
+	type runRead struct {
+		outcome *ae.VerificationStatus
+		model   *string
+	}
+	var page []ae.HoldoutOutcomeRow
+	var runs []runRead
+	lessons := map[ae.UUID]*string{}
+	err = s.transaction(ctx, bounds, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, statement.SQL, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var recordID, runID, experienceID pgtype.UUID
+			var payloadVersion *int64
+			var payload []byte
+			var arm *string
+			var assignedAt *time.Time
+			var part int32
+			targets := make([]any, 23)
+			targets[0], targets[16], targets[17] = &recordID, &payloadVersion, &payload
+			targets[18], targets[19], targets[20], targets[21], targets[22] = &runID, &arm, &experienceID, &assignedAt, &part
+			if err := rows.Scan(targets...); err != nil {
+				return err
+			}
+			outcome, model, err := readOutcomeRecord(recordID.Valid, payloadVersion, payload)
+			if err != nil {
+				return err
+			}
+			if part == 1 {
+				lessons[recordID.Bytes] = model
+				continue
+			}
+			if !runID.Valid || !experienceID.Valid || arm == nil || assignedAt == nil {
+				return errors.New("the holdout outcome read returned an assignment row with a null column")
+			}
+			at, err := ae.InstantFromTime(*assignedAt)
+			if err != nil {
+				return err
+			}
+			page = append(page, ae.HoldoutOutcomeRow{RunID: runID.Bytes, Arm: ae.HoldoutArm(*arm),
+				ExperienceID: experienceID.Bytes, AssignedAt: at})
+			runs = append(runs, runRead{outcome: outcome, model: model})
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i := range page {
+		page[i].RunOutcome, page[i].RunModel = runs[i].outcome, runs[i].model
+		page[i].LessonModel = lessons[page[i].ExperienceID]
+	}
+	if page == nil {
+		page = []ae.HoldoutOutcomeRow{}
+	}
+	return page, nil
+}
+
+// readOutcomeRecord is a record's outcome status and model, read from its payload: none for no record or a sealed one.
+func readOutcomeRecord(present bool, payloadVersion *int64, payload []byte) (*ae.VerificationStatus, *string, error) {
+	if !present || payloadVersion == nil || *payloadVersion != ae.PayloadVersion {
+		return nil, nil, nil
+	}
+	value, err := ae.DecodeJSON(payload)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the payload is not JSON: %w", err)
+	}
+	member := func(value any, key string) any {
+		o, _ := value.(*ae.Object)
+		if o == nil {
+			return nil
+		}
+		found, _ := o.Get(key)
+		return found
+	}
+	var outcome *ae.VerificationStatus
+	if status, ok := member(member(value, "outcome"), "status").(string); ok {
+		s := ae.VerificationStatus(status)
+		outcome = &s
+	}
+	var model *string
+	if text, ok := member(member(member(value, "environment"), "metadata"), ae.ModelMetadataKey).(string); ok &&
+		!ae.IsNullOrWhiteSpace(text) {
+		model = &text
+	}
+	return outcome, model, nil
+}
+
+var _ ae.HoldoutOutcomeReader = (*Store)(nil)
 
 // WriteEmbedding stores a record's embedding (contract 1.6): in one transaction that declared bounds, "write" from
 // sql/write-experience-embedding.sql and, when it wrote no row, "probe-revision". Written; Stale with the record's

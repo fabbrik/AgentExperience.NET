@@ -6,7 +6,20 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### The benefit estimate in Python and Go: contract 1.9 (story 27.1)
+
+- **Contract 1.9** ([what it adds](contract/README-1.9.md)) brings the benefit estimate into the language-neutral
+  contract, add-only: the run's model as bookkeeping metadata (`model-metadata` fixtures), the read of the holdout's
+  outcome rows a page at a time (`sql/query-holdout-outcomes.sql`, the .NET store's statements line for line, with
+  `holdout-outcomes` fixtures on PostgreSQL) and the estimate's arithmetic (`benefit-estimate` fixtures: Wilson per
+  arm, Newcombe's hybrid interval for the difference, the verdict; overall, per lesson and per model pair). Every
+  1.0-1.8 file is unchanged.
+- **The Python and Go ports read the estimate**: Python `estimate_benefit(store, authorization, scope, options)`, Go
+  `EstimateBenefit(ctx, store, authorization, scope, opts)`, over their in-memory and PostgreSQL stores, with the same
+  fields as `ExperienceBenefitEstimate`. Their agents record the chat client's model under `agentexperience.model`, so a
+  split by model counts their runs. A run whose record is sealed counts as `Pending` in a port. A .NET test estimates
+  over rows a Python and a Go agent wrote and gets the numbers each port computes over the same rows. The benefit
+  policy and measuring another memory provider stay .NET-only.
 
 ## 0.1.0-preview.17
 

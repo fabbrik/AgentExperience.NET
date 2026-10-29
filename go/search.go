@@ -217,8 +217,10 @@ type RankedResult struct {
 var ErrSearchSafety = errors.New("the search result failed a safety check")
 
 // EnvironmentCompatibility is the share of preferred attributes the record's metadata matches exactly; 1 with none
-// preferred.
+// preferred. The run's model (ModelMetadataKey) is bookkeeping: it is dropped from both sides, so a lesson ranks the
+// same for an agent on any model.
 func EnvironmentCompatibility(metadata, preferred map[string]string) float64 {
+	metadata, preferred = withoutModel(metadata), withoutModel(preferred)
 	if len(preferred) == 0 {
 		return 1.0
 	}

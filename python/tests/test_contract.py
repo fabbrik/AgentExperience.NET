@@ -113,10 +113,10 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert version == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.9", None])
+@pytest.mark.parametrize("version", ["2.0", "1.10", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
     with pytest.raises(
-        UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6, 1\.7, 1\.8"
+        UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6, 1\.7, 1\.8, 1\.9"
     ):
         check_contract_version({"contractVersion": version})
 
@@ -146,6 +146,7 @@ def test_every_contract_file_matches_the_lock() -> None:
         "search-experience-vector.sql",
         "list-experience-lessons.sql",
         "record-holdout-assignment.sql",
+        "query-holdout-outcomes.sql",
     ],
 )
 def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
@@ -154,6 +155,9 @@ def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
 
 def test_every_fixture_family_has_cases() -> None:
     assert {entry.name for entry in FIXTURES.iterdir() if entry.is_dir()} == {
+        "benefit-estimate",
+        "holdout-outcomes",
+        "model-metadata",
         "embedding-summary",
         "embedding-write",
         "encoding",
@@ -170,7 +174,17 @@ def test_every_fixture_family_has_cases() -> None:
         "task-text",
         "vector-search",
     }
-    for family in ("erased", "finalize", "holdout-record", "inject", "record-injection", "search", "task-text"):
+    for family in (
+        "benefit-estimate",
+        "erased",
+        "finalize",
+        "holdout-outcomes",
+        "holdout-record",
+        "inject",
+        "record-injection",
+        "search",
+        "task-text",
+    ):
         assert cases(family), family
 
 

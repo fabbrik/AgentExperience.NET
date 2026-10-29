@@ -15,6 +15,7 @@ from typing import Any
 from ._text import is_null_or_whitespace, utf16_len
 from .block import RankedRecord, RankingComponent
 from .encoding import Instant
+from .model import without_model
 from .records import ExperienceRecord, ExperienceStatus, Scope
 from .reflector import is_model_authored
 from .task_text import MAX_TASK_TEXT_LENGTH
@@ -147,7 +148,10 @@ class SearchSafetyError(Exception):
 
 
 def environment_compatibility(metadata: Mapping[str, str], preferred: Mapping[str, str]) -> float:
-    """The share of preferred attributes the record's metadata matches exactly; 1 with none preferred."""
+    """The share of preferred attributes the record's metadata matches exactly; 1 with none preferred. The run's model
+    (contract 1.9) is ignored on both sides: it is bookkeeping, never graded."""
+    preferred = without_model(preferred)
+    metadata = without_model(metadata)
     if not preferred:
         return 1.0
     matched = sum(1 for key, value in preferred.items() if metadata.get(key) == value)
