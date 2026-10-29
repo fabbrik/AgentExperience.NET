@@ -1,0 +1,21 @@
+{
+  "selected": [],
+  "injected": [],
+  "omitted": [
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000005",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000002",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    }
+  ]
+}

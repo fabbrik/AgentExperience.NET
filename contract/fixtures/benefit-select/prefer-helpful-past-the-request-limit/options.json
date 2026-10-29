@@ -1,0 +1,11 @@
+{
+  "description": "A request limit of 2: the window and the backfill past it are reordered separately, so the helpful lesson past the limit never moves into the window. The harmful lesson in the window frees a slot, which the backfill's first record (now the helpful one) takes; the rest of the backfill is not reported.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": false,
+  "model": null,
+  "requestLimit": 2,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

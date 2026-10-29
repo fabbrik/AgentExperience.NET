@@ -1,0 +1,17 @@
+{
+  "description": "IncludeMeasuredBenefit, at a minimum of 2 runs per arm: one estimate for the scope over the window (30 days before the page's clock). The lesson treatment runs failed on and holdout runs verified on is measured Hurts, the other Helps; a lesson no assigned run named, and one named only by an assignment older than the window, carry null, as does every run's own record.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00",
+  "includeMeasuredBenefit": true,
+  "minimumRunsPerArm": 2
+}

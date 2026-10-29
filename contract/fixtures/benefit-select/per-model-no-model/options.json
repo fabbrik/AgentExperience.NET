@@ -1,0 +1,11 @@
+{
+  "description": "PerModel for an agent that reports no model: the pooled verdicts.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": true,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

@@ -369,25 +369,28 @@ internal static class BenefitEstimateContract
     {
         ["minimumRunsPerArm"] = estimate.MinimumRunsPerArm,
         ["overall"] = ComparisonJson(estimate.Overall),
-        ["lessons"] = new JsonArray([.. estimate.Lessons.Select(lesson => (JsonNode)new JsonObject
-        {
-            ["experienceId"] = HoldoutOutcomeRowJson.Id(lesson.ExperienceId),
-            ["comparison"] = ComparisonJson(lesson.Comparison),
-            ["byModelPair"] = lesson.ByModelPair is null
-                ? null
-                : new JsonArray([.. lesson.ByModelPair.Select(pair => (JsonNode)new JsonObject
-                {
-                    ["lessonModel"] = pair.LessonModel,
-                    ["runModel"] = pair.RunModel,
-                    ["comparison"] = ComparisonJson(pair.Comparison),
-                })]),
-        })]),
+        ["lessons"] = new JsonArray([.. estimate.Lessons.Select(lesson => (JsonNode)LessonJson(lesson))]),
         ["byConsumingModel"] = estimate.ByConsumingModel is null
             ? null
             : new JsonArray([.. estimate.ByConsumingModel.Select(model => (JsonNode)new JsonObject
             {
                 ["model"] = model.Model,
                 ["comparison"] = ComparisonJson(model.Comparison),
+            })]),
+    };
+
+    /// <summary>One lesson of the estimate: <c>experienceId</c>, <c>comparison</c> and <c>byModelPair</c>.</summary>
+    public static JsonObject LessonJson(ExperienceLessonBenefit lesson) => new()
+    {
+        ["experienceId"] = HoldoutOutcomeRowJson.Id(lesson.ExperienceId),
+        ["comparison"] = ComparisonJson(lesson.Comparison),
+        ["byModelPair"] = lesson.ByModelPair is null
+            ? null
+            : new JsonArray([.. lesson.ByModelPair.Select(pair => (JsonNode)new JsonObject
+            {
+                ["lessonModel"] = pair.LessonModel,
+                ["runModel"] = pair.RunModel,
+                ["comparison"] = ComparisonJson(pair.Comparison),
             })]),
     };
 

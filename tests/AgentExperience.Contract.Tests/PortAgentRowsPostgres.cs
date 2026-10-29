@@ -302,7 +302,7 @@ internal static class PortAgentRowsPostgres
     /// revision 0, then committed to its status by its initial lifecycle event, on a clock that reads the record's
     /// creation instant (the instant a port records its initial event at), as <paramref name="actor"/>.
     /// </summary>
-    private static async Task WriteAsDotNetAsync(NpgsqlDataSource twin, ExperienceRecord record, string? actor, List<string> problems)
+    internal static async Task WriteAsDotNetAsync(NpgsqlDataSource twin, ExperienceRecord record, string? actor, List<string> problems)
     {
         var store = new PostgresExperienceRecordStore(twin, timeProvider: new FixedTimeProvider(record.CreatedAt));
         var scope = record.Scope;
@@ -386,7 +386,7 @@ internal static class PortAgentRowsPostgres
     }
 
     /// <summary>The table's columns, in their order, without dropped or system columns.</summary>
-    private static async Task<IReadOnlyList<string>> ColumnsAsync(NpgsqlDataSource source, string table)
+    internal static async Task<IReadOnlyList<string>> ColumnsAsync(NpgsqlDataSource source, string table)
     {
         await using var command = source.CreateCommand(
             "SELECT attname FROM pg_attribute WHERE attrelid = ('agent_experience.' || @table)::regclass " +

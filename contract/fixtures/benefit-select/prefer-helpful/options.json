@@ -1,0 +1,11 @@
+{
+  "description": "PreferMeasuredHelpful with no request limit: the lesson measured Helps moves ahead of the rest, each group keeping its order, before the record limit; the limit's details name the reordered ranks.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": false,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 3,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

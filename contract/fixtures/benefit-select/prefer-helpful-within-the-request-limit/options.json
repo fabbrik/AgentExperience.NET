@@ -1,0 +1,11 @@
+{
+  "description": "A request limit of 4 over five ranked records: the helpful lesson moves to the front of the host's window; the fifth record was fetched only as backfill, is not selected, and is not reported.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": false,
+  "model": null,
+  "requestLimit": 4,
+  "maxRecords": 3,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

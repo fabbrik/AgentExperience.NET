@@ -613,10 +613,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
             {
                 // Acting on measured benefit (off by default): the cached view, which never waits on the store.
                 var benefit = _benefit?.Current(request.Authorization, request.Scope, _options.Benefit.PerModel ? InvokingModel(context.Agent) : null);
-                var ranked = benefit is not null && _options.Benefit.PreferMeasuredHelpful
-                    ? PreferHelpful(retrieved.Records, benefit, request.Limit)
-                    : retrieved.Records;
-                selected = Select(ranked, omitted, session, capabilityGate, request.Limit, benefit);
+                selected = SelectCandidates(retrieved.Records, omitted, session, capabilityGate, request.Limit, benefit);
             }
             else
             {
@@ -1344,6 +1341,37 @@ public sealed class ExperienceContextProvider : AIContextProvider
             }
         }
     }
+
+    /// <summary>
+    /// The candidates the final eligibility check re-reads: <paramref name="ranked"/>, with the lessons measured as helping
+    /// moved ahead when <paramref name="benefit"/> is set and <see cref="ExperienceBenefitPolicy.PreferMeasuredHelpful"/> is
+    /// on (<see cref="PreferHelpful"/>), then <see cref="Select"/>.
+    /// </summary>
+    private List<RankedExperience> SelectCandidates(
+        IReadOnlyList<RankedExperience> ranked,
+        List<OmittedExperience> omitted,
+        SessionTracker? session,
+        CapabilityGate? gate,
+        int? requestLimit,
+        BenefitView? benefit)
+    {
+        var ordered = benefit is not null && _options.Benefit.PreferMeasuredHelpful
+            ? PreferHelpful(ranked, benefit, requestLimit)
+            : ranked;
+        return Select(ordered, omitted, session, gate, requestLimit, benefit);
+    }
+
+    /// <summary>
+    /// What an invocation with no session and no capability gate selects from <paramref name="ranked"/> under
+    /// <paramref name="benefit"/> (the cached view, <see langword="null"/> for none): the same code path. Contract 1.10's
+    /// <c>benefit-select</c> fixtures are generated through it.
+    /// </summary>
+    internal List<RankedExperience> SelectCandidates(
+        IReadOnlyList<RankedExperience> ranked,
+        List<OmittedExperience> omitted,
+        int? requestLimit,
+        BenefitView? benefit) =>
+        SelectCandidates(ranked, omitted, session: null, gate: null, requestLimit, benefit);
 
     /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the

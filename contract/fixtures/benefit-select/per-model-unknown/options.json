@@ -1,0 +1,11 @@
+{
+  "description": "PerModel for an agent whose model is the literal 'unknown': the estimate's 'unknown' group (runs with no recorded model, which together hurt) is never an agent's own, so the pooled verdicts apply.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": true,
+  "model": "unknown",
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

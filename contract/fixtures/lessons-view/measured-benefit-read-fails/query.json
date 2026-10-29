@@ -1,0 +1,18 @@
+{
+  "description": "IncludeMeasuredBenefit, and the application role may not read the holdout's assignments: the holdout read fails, and the list fails with it, as a store failure (error class Infrastructure). No page is returned.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00",
+  "includeMeasuredBenefit": true,
+  "minimumRunsPerArm": 2,
+  "holdoutReadRevoked": true
+}
