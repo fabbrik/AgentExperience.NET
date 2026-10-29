@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 26.1: the library on real work. A console tool that triages this repository's failed CI runs, learning
+       through AgentExperience's public API with a 0.5 holdout. Not a test project: `dotnet test` never runs it and it
+       never spends money unless someone types the dotnet run command in README.md. The scripted flag runs it offline over
+       built-in fake data. Directory.Build.props gives it net10.0. Its parts are proven offline by
+       experiments/AgentExperience.CiTriage.Tests, which IS part of the normal suite. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AgentExperience.CiTriage</RootNamespace>
+    <!-- A tool, never a package. -->
+    <IsPackable>false</IsPackable>
+    <!-- Directory.Build.props turns on GenerateDocumentationFile with TreatWarningsAsErrors; the tool documents the
+         types a reader has to follow to check a number, not every member. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- OpenRouter through its OpenAI-compatible endpoint, the same exact pin as the live experiment and the samples
+         (it depends on Microsoft.Extensions.AI.Abstractions 10.10.0, the shipping floor), and only here: never in src/. -->
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="[10.10.0]" />
+    <!-- The container, so the tool is composed the way a host composes it. Same pin as the samples. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.12]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentExperience.CiTriage.Tests" />
+  </ItemGroup>
+
+</Project>
