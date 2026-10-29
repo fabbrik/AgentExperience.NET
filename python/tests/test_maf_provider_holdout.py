@@ -579,3 +579,103 @@ def test_no_background_record_is_left_running() -> None:
         return len([task for task in asyncio.all_tasks() if not task.done()])
 
     assert run(none_left()) == 1  # only this one
+
+
+# ---- Review follow-ups ---------------------------------------------------------------------------------------------
+
+
+class AddsThenRaises(StubMemory):
+    """A provider that adds to the context it was handed, then raises."""
+
+    async def before_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+        self.before += 1
+        context.extend_messages(self, [Message(role="user", contents=[MEMORY])])
+        raise Boom("the memory service failed half way")
+
+
+def test_a_provider_that_raises_after_adding_leaves_the_callers_context_as_it_was_handed() -> None:
+    # As .NET: a provider that throws returns nothing, so nothing it added reaches the invocation; the exception
+    # propagates unchanged and nothing is recorded.
+    store = InMemoryExperienceStore()
+    wrapper = ExperienceHoldoutContextProvider(AddsThenRaises(), KEY, HoldoutOptions(rate=1.0), store)
+    context = _context()
+    before = _snapshot(context)
+    with _Captured(FIRST_RUN) as agent, pytest.raises(Boom):
+        run(wrapper.before_run(agent=agent, session=None, context=context, state={}))
+    assert _snapshot(context) == before
+    assert store.provider_holdout_assignments() == []
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_callback_that_blocks_never_delays_the_invocation(tracked: bool) -> None:
+    class Untracked:
+        """A store with no provider holdout capability: NotTracked."""
+
+        def __init__(self) -> None:
+            self.inner = InMemoryExperienceStore()
+
+        def __getattr__(self, name: str) -> Any:
+            if name == "record_provider_holdout_assignment":
+                raise AttributeError(name)
+            return getattr(self.inner, name)
+
+    gate, called = threading.Event(), threading.Event()
+
+    def blocking(_: ProviderHoldoutRecordResult) -> None:
+        called.set()
+        gate.wait(10)
+
+    store: Any = InMemoryExperienceStore() if tracked else Untracked()
+    wrapper = ExperienceHoldoutContextProvider(StubMemory(), KEY, HoldoutOptions(rate=1.0), store, on_recorded=blocking)
+
+    async def go() -> None:
+        with _Captured(FIRST_RUN) as agent:
+            await asyncio.wait_for(wrapper.before_run(agent=agent, session=None, context=_context(), state={}), 2)
+            # The invocation's next step runs while the callback still blocks.
+            await asyncio.wait_for(asyncio.to_thread(called.wait, 5), 6)
+        assert not gate.is_set()
+        gate.set()
+        await wrapper.wait_for_records()
+
+    try:
+        run(go())
+    finally:
+        gate.set()
+    assert called.is_set()
+
+
+def test_two_invocations_of_one_run_record_one_row_in_one_arm() -> None:
+    store = InMemoryExperienceStore()
+    seen: list[ProviderHoldoutRecordResult] = []
+    wrapper = ExperienceHoldoutContextProvider(
+        StubMemory(), KEY, HoldoutOptions(rate=rate_for("Holdout")), store, on_recorded=seen.append
+    )
+    contexts = [_context(), _context()]
+    with _Captured(FIRST_RUN) as agent:
+        for context in contexts:
+            run(wrapper.before_run(agent=agent, session=None, context=context, state={}))
+    run(wrapper.wait_for_records())
+    assert [item.assignment.arm for item in seen if item.assignment] == ["Holdout", "Holdout"]
+    assert [(row.run_id, row.arm) for row in store.provider_holdout_assignments()] == [(FIRST_RUN, "Holdout")]
+    assert all("stub-memory-provider" not in context.context_messages for context in contexts)
+
+
+def test_the_injection_providers_wait_awaits_the_measured_providers_records() -> None:
+    release = threading.Event()
+
+    class SlowStore(InMemoryExperienceStore):
+        def record_provider_holdout_assignment(self, *args: Any, **kwargs: Any) -> None:
+            release.wait(5)
+            super().record_provider_holdout_assignment(*args, **kwargs)
+
+    setup = Setup(StubMemory(), 1.0, store=SlowStore())
+    (provider,) = [item for item in setup.agent.context_providers if isinstance(item, maf.ExperienceContextProvider)]
+
+    async def go() -> None:
+        await setup.agent.run(TASK)
+        threading.Timer(0.05, release.set).start()
+        await provider.wait_for_injection_records()
+
+    run(go())
+    assert [item.outcome for item in setup.recorded] == ["Recorded"]
+    assert setup.rows() == [(setup.rows()[0][0], KEY, "Holdout")]

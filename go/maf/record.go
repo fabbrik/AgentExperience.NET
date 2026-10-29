@@ -59,8 +59,8 @@ func ContextProviderOf(config *agent.Config) *ContextProvider {
 	return nil
 }
 
-// Close waits for every injection record the provider started, and every background embedding write and benefit
-// refresh its configuration started, to end, or for ctx to be done, whichever is first,
+// Close waits for every injection record the provider started, and every background embedding write, benefit
+// refresh and measured memory provider's record (UseMeasuredMemory, contract 1.11) its configuration started, to end, or for ctx to be done, whichever is first,
 // and returns ctx's error in the second case. Each record is bounded by InjectionRecordTimeout, so a host shutting
 // down can call it with a context of a few seconds. A store write that overran that bound was abandoned when its
 // record ended and is not awaited: it may still be running (AbandonedInjectionRecords counts them). Close may run
@@ -84,8 +84,12 @@ func (p *ContextProvider) Close(ctx context.Context) error {
 	if err := p.settings.index.wait(ctx); err != nil {
 		return err
 	}
-	// And the benefit refreshes (contract 1.10).
-	return p.WaitBenefitRefreshes(ctx)
+	// The benefit refreshes (contract 1.10).
+	if err := p.WaitBenefitRefreshes(ctx); err != nil {
+		return err
+	}
+	// And the records of every memory provider UseMeasuredMemory wrapped on the same configuration (contract 1.11).
+	return p.settings.waitMeasured(ctx)
 }
 
 // beginRecording counts a record started.

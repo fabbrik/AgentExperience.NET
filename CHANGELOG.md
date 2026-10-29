@@ -60,7 +60,9 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   changed, and each run's arm is recorded in the background as the new telemetry operation `record_provider_holdout`
   in both ports. Python `estimate_provider_benefit` and Go `ae.EstimateProviderBenefit` read the estimate with the
   fields of `ExperienceProviderBenefitEstimate`. Off by default (rate 0). Go has no `authorize` callback, and an empty
-  salt means the default there. A contract test runs a .NET, a Python and a Go agent under one key in one PostgreSQL
+  salt means the default there. The shutdown path a host already uses awaits the wrapper's records too (Go
+  `ContextProviderOf(config).Close`, Python `wait_for_injection_records`), and the wrapper's own callback never runs on
+  the invocation's path. A contract test runs a .NET, a Python and a Go agent under one key in one PostgreSQL
   database and checks that the three estimates agree. On PostgreSQL, apply the 1.11 privileges file after the others, or
   run the .NET privileges call last.
 

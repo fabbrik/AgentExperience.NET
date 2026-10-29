@@ -475,9 +475,9 @@ class InMemoryExperienceStore:
             rows = list(self._provider_holdout.values())
         return sorted(rows, key=lambda row: (row.scope.tenant_id, row.run_id, row.provider_key))
 
-    def seed_provider_holdout_row(self, row: ProviderHoldoutRow) -> None:
-        """Holds one provider holdout row exactly as given (no checks, no clamp): for seeding and tests. A row that
-        already exists for the tenant, run and key is replaced."""
+    def _seed_provider_holdout_row(self, row: ProviderHoldoutRow) -> None:
+        """Holds one provider holdout row exactly as given (no checks, no clamp): test-only seeding, not part of the
+        store's API. A row that already exists for the tenant, run and key is replaced."""
         if not isinstance(row, ProviderHoldoutRow):
             raise TypeError("row must be a ProviderHoldoutRow.")
         with self._lock:

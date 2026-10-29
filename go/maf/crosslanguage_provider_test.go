@@ -20,8 +20,8 @@ import (
 	"github.com/microsoft/agent-framework-go/tool"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
-	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
 	"github.com/fabbrik/AgentExperience.NET/go/inmemory"
+	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
 )
 
 var (

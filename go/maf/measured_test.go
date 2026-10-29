@@ -3,6 +3,7 @@ package maf
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -526,3 +527,152 @@ func TestAtRateOneHalfEachFinalizedRunIsCountedOnceInItsArm(t *testing.T) {
 }
 
 func twoDigits(n int) string { return string(rune('0'+n/10)) + string(rune('0'+n%10)) }
+
+// funcTool is a tool value that is not comparable (it holds a func), as a hand-written tool may be.
+type funcTool struct {
+	name string
+	call func() string
+}
+
+func (f funcTool) Name() string        { return f.name }
+func (f funcTool) Description() string { return "Recalls what the memory holds." }
+
+func TestAToolIsComparedByIdentityAndAFuncBearingToolNeverPanics(t *testing.T) {
+	handed := tool.Tool(funcTool{name: "recall", call: func() string { return "x" }})
+	equal := tool.Tool(funcTool{name: "recall"})
+	invoking := agent.InvokingContext{Options: []agent.Option{agent.WithTool(handed)}}
+	// The very tool it was handed, copied into a fresh slice as a provider would: not an addition.
+	if added(invoking, nil, slices.Clone(invoking.Options)) {
+		t.Fatal("the handed tool counted as added")
+	}
+	// A different tool, however equal its fields: an addition.
+	if !added(invoking, nil, append(slices.Clone(invoking.Options), agent.WithTool(equal))) {
+		t.Fatal("a new tool did not count as added")
+	}
+	pointer, other := &stubMemory{}, &stubMemory{}
+	if !same(pointer, pointer) || same(pointer, other) || same(handed, equal) || !same(handed, handed) {
+		t.Fatal("same is not identity")
+	}
+}
+
+func TestACallbackThatBlocksNeverDelaysTheInvocation(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		store func(h *host) ae.Store
+	}{
+		{"not tracked", func(h *host) ae.Store { return searchOnly{h.store} }},
+		{"recorded", func(h *host) ae.Store { return h.store }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHost(t)
+			s := measuredAgent(t, &stubMemory{adds: "message"}, c.store(h), 1)
+			gate, called := make(chan struct{}), make(chan struct{}, 1)
+			s.wrapper.onRecorded = func(ProviderHoldoutRecordResult) {
+				called <- struct{}{}
+				<-gate
+			}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				s.ids.next(providerHeldOut)
+				_, _ = s.agent.RunText(context.Background(), ticket).Collect()
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				close(gate)
+				t.Fatal("the invocation waited for the callback")
+			}
+			<-called
+			close(gate)
+			s.settle(t)
+		})
+	}
+}
+
+func TestACapturedRunAlwaysCarriesAnIdentityAndOneWithoutIsReportedNotRecorded(t *testing.T) {
+	s := measuredAgent(t, &stubMemory{adds: "message"}, nil, 1)
+	// Capture starts a run only for an invocation with an identity.
+	without := &captureScope{settings: s.wrapper.settings, reported: map[CaptureStage]bool{}}
+	without.start(context.Background(), nil)
+	if _, ok := without.run(); ok {
+		t.Fatal("a run started with no identity")
+	}
+	with := &captureScope{settings: s.wrapper.settings, identity: &ae.Identity{Principal: "svc", Scope: testScope},
+		reported: map[CaptureStage]bool{}}
+	with.start(context.Background(), nil)
+	if _, ok := with.run(); !ok {
+		t.Fatal("a run with an identity did not start")
+	}
+	// Were a run captured with none, it is reported rather than passed over in silence, and passed through.
+	o := observe(t)
+	run := providerHeldOut
+	without.capture, without.runID = &ae.RunCapture{}, &run
+	ctx := context.WithValue(context.Background(), scopeKey{}, without)
+	messages, _, err := s.wrapper.Invoking(ctx, agent.InvokingContext{Messages: []*message.Message{message.NewText(ticket)}})
+	s.settle(t)
+	if err != nil || len(messages) != 2 {
+		t.Fatalf("%v, %d messages", err, len(messages))
+	}
+	results := s.recorded.all()
+	if len(results) != 1 || results[0].Outcome != InjectionNotRecorded || !errors.Is(results[0].Err, errNoIdentity) {
+		t.Fatalf("results %+v", results)
+	}
+	if got := providerOutcomes(o); len(got) != 1 || got[0] != "NotRecorded/Unexpected" {
+		t.Fatalf("telemetry %v", got)
+	}
+	if len(s.host.store.ProviderHoldoutRows()) != 0 {
+		t.Fatalf("rows %+v", s.host.store.ProviderHoldoutRows())
+	}
+}
+
+func TestTwoInvocationsOfOneRunRecordOneRowInOneArm(t *testing.T) {
+	s := measuredAgent(t, &stubMemory{adds: "message"}, nil, 0.5)
+	scope := &captureScope{settings: s.wrapper.settings, identity: &ae.Identity{Principal: "svc", Scope: testScope},
+		reported: map[CaptureStage]bool{}}
+	run := providerHeldOut
+	scope.capture, scope.runID = &ae.RunCapture{}, &run
+	ctx := context.WithValue(context.Background(), scopeKey{}, scope)
+	for range 2 {
+		messages, _, err := s.wrapper.Invoking(ctx, agent.InvokingContext{Messages: []*message.Message{message.NewText(ticket)}})
+		if err != nil || len(messages) != 1 {
+			t.Fatalf("%v, %d messages: not withheld", err, len(messages))
+		}
+	}
+	s.settle(t)
+	results := s.recorded.all()
+	if len(results) != 2 || results[0].Assignment.Arm != ae.HoldoutWithheld || results[1].Assignment.Arm != ae.HoldoutWithheld {
+		t.Fatalf("results %+v", results)
+	}
+	if rows := s.host.store.ProviderHoldoutRows(); len(rows) != 1 || rows[0].Arm != ae.HoldoutWithheld {
+		t.Fatalf("rows %+v", rows)
+	}
+}
+
+func TestTheContextProvidersCloseWaitsForTheWrappersRecords(t *testing.T) {
+	store, err := inmemory.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := slowRecorder{store, make(chan struct{})}
+	h, ids, recorded, memory := newHost(t), &runIDs{}, &providerRecordings{}, &stubMemory{adds: "message"}
+	config := &agent.Config{Name: "triage-ticket", Tools: []tool.Tool{exits("exit=0")},
+		ContextProviders: []agent.ContextProvider{memory}}
+	if err := UseAgentExperience(config, h.options(Options{Store: slow, NewID: ids.newID})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UseMeasuredMemory(config, memory, memoryKey,
+		MeasuredMemoryOptions{Holdout: &HoldoutOptions{Rate: 1}, OnRecorded: recorded.add}); err != nil {
+		t.Fatal(err)
+	}
+	ids.next(providerHeldOut)
+	runText(t, newAgent(newScripted(1), *config), ticket)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		close(slow.release)
+	}()
+	closeRecordings(t, config)
+	if results := recorded.all(); len(results) != 1 || results[0].Outcome != InjectionRecorded {
+		t.Fatalf("Close returned before the wrapper's record ended: %+v", results)
+	}
+}

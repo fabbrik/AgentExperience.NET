@@ -391,3 +391,46 @@ func TestCloseRunsConcurrentlyWithInvocations(t *testing.T) {
 		}
 	}
 }
+
+// hungHoldoutRecorder blocks every holdout write until gate closes, ignoring its context.
+type hungHoldoutRecorder struct {
+	*inmemory.Store
+	gate  chan struct{}
+	calls *atomic.Int64
+}
+
+func (h hungHoldoutRecorder) RecordHoldoutAssignment(context.Context, ae.AuthorizationBounds, ae.Scope,
+	ae.HoldoutAssignment) error {
+	h.calls.Add(1)
+	<-h.gate
+	return nil
+}
+
+func TestTheHoldoutRecordHonoursTheAbandonedCapToo(t *testing.T) {
+	h, held := newHost(t), &holdoutRecordings{}
+	gate := make(chan struct{})
+	defer close(gate)
+	var calls atomic.Int64
+	options := h.options(Options{Store: hungHoldoutRecorder{Store: h.store, gate: gate, calls: &calls},
+		InjectionRecordTimeout: 10 * time.Millisecond})
+	options.OnHoldoutRecorded = held.add
+	provider, err := NewContextProvider(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := ae.Identity{Principal: "svc", Scope: testScope}
+	assignment := ae.HoldoutAssignment{RunID: ae.NewRandomUUID(), Arm: ae.HoldoutWithheld,
+		Records: []ae.RunExposure{{ExperienceID: ae.NewRandomUUID(), Revision: 1}}, AssignedAt: ae.Now()}
+	for range MaxAbandonedInjectionRecords + 1 {
+		provider.startHoldout(context.Background(), &identity, assignment)
+		if err := provider.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results, _ := held.all()
+	last := results[len(results)-1]
+	if calls.Load() != MaxAbandonedInjectionRecords || last.Outcome != InjectionNotRecorded ||
+		!errors.Is(last.Err, errTooManyAbandoned) {
+		t.Fatalf("%d calls, last %+v", calls.Load(), last)
+	}
+}

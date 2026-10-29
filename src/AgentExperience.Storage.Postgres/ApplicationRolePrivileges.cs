@@ -25,13 +25,14 @@ internal static class ApplicationRolePrivileges
 
     /// <summary>
     /// <c>0027</c>'s table: the injection holdout's assignments. Optional, so the privileges call still succeeds on a schema
-    /// not yet migrated to <c>0027</c>. .NET-only: no contract privileges file grants it.
+    /// not yet migrated to <c>0027</c>. Contract 1.8's <c>sql/application-role-privileges-1.8.sql</c> grants the same.
     /// </summary>
     internal const string HoldoutAssignmentsTable = "experience_holdout_assignments";
 
     /// <summary>
     /// <c>0029</c>'s table: another memory provider's holdout assignments. Optional, so the privileges call still succeeds
-    /// on a schema not yet migrated to <c>0029</c>. .NET-only: no contract privileges file grants it.
+    /// on a schema not yet migrated to <c>0029</c>. Contract 1.11's <c>sql/application-role-privileges-1.11.sql</c> grants the
+    /// same.
     /// </summary>
     internal const string ProviderHoldoutAssignmentsTable = "experience_provider_holdout_assignments";
 

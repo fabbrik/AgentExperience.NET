@@ -396,8 +396,9 @@ fmt.Println(estimate.Overall.Verdict, estimate.Overall.Treatment.Rate, estimate.
   (`"{len}:{key}/{salt}"`). The key is 1 to 100 characters of ASCII letters, digits, `.`, `_` and `-`
   (`ae.ValidProviderKey`); anything else is an error. An empty salt means the default.
 - **Recording** is in a goroutine, within `InjectionRecordTimeout`, never delaying or failing the invocation, reported
-  as `record_provider_holdout` and through `OnRecorded` (`maf.ProviderHoldoutRecordResult`); `Close` waits for the
-  records, `AbandonedRecords` counts writes that overran. A panic while inspecting the provider's answer delivers that
+  as `record_provider_holdout` and through `OnRecorded` (`maf.ProviderHoldoutRecordResult`, always on a goroutine of its own); the
+  wrapper's `Close` waits for the records, and so does `maf.ContextProviderOf(config).Close` (with `DisableInjection`
+  there is no such provider: close the wrapper itself), `AbandonedRecords` counts writes that overran. A panic while inspecting the provider's answer delivers that
   answer and reports `NotRecorded` (`Unexpected`).
 - **Stores:** the in-memory and PostgreSQL stores are `ae.ProviderHoldoutRecorder` and
   `ae.ProviderHoldoutOutcomeReader`; another store reports `NotTracked` and estimates with `Tracked` false. On

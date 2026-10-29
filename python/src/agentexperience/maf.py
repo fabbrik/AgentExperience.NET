@@ -364,6 +364,9 @@ class ExperienceSettings:
     """Seconds the vector channel may take in all (embedding the task text and searching); past it the injection
     answers from text alone and reports ``ProviderUnavailable`` or ``VectorSearchFailed``."""
     _index_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False, compare=False)
+    # Contract 1.11: the measured memory providers use_measured_memory wrapped on the agent, whose records
+    # ExperienceContextProvider.wait_for_injection_records awaits too.
+    _measured: list[Any] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.store is None:
@@ -840,7 +843,7 @@ class _BackgroundRecords:
 
     def __init__(self, timeout: Callable[[], float]) -> None:
         self._timeout = timeout
-        self._recordings: set[asyncio.Task[None]] = set()
+        self._recordings: set[asyncio.Task[Any]] = set()
         self._abandoned_records = 0
         self._running_writes = 0
         self._abandoned_lock = threading.Lock()
@@ -855,6 +858,11 @@ class _BackgroundRecords:
     def abandoned(self) -> int:
         with self._abandoned_lock:
             return self._abandoned_records
+
+    def track(self, task: asyncio.Task[Any]) -> None:
+        """Counts ``task`` among the records :meth:`settled` awaits."""
+        self._recordings.add(task)
+        task.add_done_callback(self._recordings.discard)
 
     def start(
         self,
@@ -1020,9 +1028,12 @@ class ExperienceContextProvider(ContextProvider):
             await self._benefit.settled()
 
     async def wait_for_injection_records(self) -> None:
-        """Completes once every injection record this provider started on the running event loop has ended. Each is
-        bounded by ``injection_record_timeout``, so this is too; it never raises."""
+        """Completes once every injection record this provider started on the running event loop has ended, and
+        every record of a memory provider :func:`use_measured_memory` wrapped on the same agent (contract 1.11). Each
+        is bounded by ``injection_record_timeout``, so this is too; it never raises."""
         await self._background.settled()
+        for measured in list(self.settings._measured):
+            await measured.wait_for_records()
 
     @property
     def abandoned_injection_records(self) -> int:
@@ -1732,7 +1743,7 @@ class ExperienceHoldoutContextProvider(ContextProvider):
             with observe("record_provider_holdout") as op:
                 if op is not None:
                     op.outcome("NotRecorded", "Unexpected")
-            self._report(ProviderHoldoutRecordResult("NotRecorded", None, ex))
+            self._report_later(ProviderHoldoutRecordResult("NotRecorded", None, ex))
             _deliver(context, private)
             return
 
@@ -1775,6 +1786,17 @@ class ExperienceHoldoutContextProvider(ContextProvider):
         except Exception:
             pass
 
+    def _report_later(self, result: ProviderHoldoutRecordResult) -> None:
+        """Calls ``on_recorded`` on a worker thread, never on the invocation's path (a callback that blocks never
+        delays the model call); :meth:`wait_for_records` awaits it. Never raises."""
+        if self._on_recorded is None:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(asyncio.to_thread(self._report, result))
+        except Exception:
+            return
+        self._background.track(task)
+
     def _start_recording(
         self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
     ) -> None:
@@ -1788,7 +1810,7 @@ class ExperienceHoldoutContextProvider(ContextProvider):
             return [functools.partial(recorder.record_provider_holdout_assignment, bounds, scope, assignment)]
 
         def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
-            self._report(ProviderHoldoutRecordResult(outcome, assignment, error))
+            self._report_later(ProviderHoldoutRecordResult(outcome, assignment, error))
 
         self._background.start("record_provider_holdout", None if recorder is None else writes, report)
 
@@ -1840,6 +1862,7 @@ def use_measured_memory(
             break
     else:
         providers.append(wrapper)
+    settings._measured.append(wrapper)
     return wrapper
 
 

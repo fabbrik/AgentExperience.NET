@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"math"
-	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 	"github.com/microsoft/agent-framework-go/agent"
@@ -107,6 +107,7 @@ func UseMeasuredMemory(config *agent.Config, memory agent.ContextProvider, provi
 	}
 	wrapper := &MeasuredMemory{inner: memory, key: providerKey, holdout: holdout, settings: s,
 		onRecorded: options.OnRecorded}
+	s.addMeasured(wrapper)
 	for i, provider := range config.ContextProviders {
 		if same(provider, memory) {
 			config.ContextProviders[i] = wrapper
@@ -129,8 +130,10 @@ func (w *MeasuredMemory) Holdout() HoldoutOptions { return w.holdout }
 // AbandonedRecords is how many writes that outlived their timeout are still running against the store.
 func (w *MeasuredMemory) AbandonedRecords() int { return int(w.abandoned.Load()) }
 
-// Close waits for every record the wrapper started to end, or for ctx to be done (and returns its error). Each is
-// bounded by InjectionRecordTimeout. The wrapper stays usable.
+// Close waits for every record the wrapper started (and every OnRecorded call) to end, or for ctx to be done (and
+// returns its error). Each record is bounded by InjectionRecordTimeout. The wrapper stays usable. The configuration's
+// ContextProviderOf(config).Close calls it too, so a host that already closes that provider needs nothing more; with
+// DisableInjection there is no such provider, and the host closes the wrapper itself.
 func (w *MeasuredMemory) Close(ctx context.Context) error {
 	w.mu.Lock()
 	idle := w.idle
@@ -165,7 +168,7 @@ func (w *MeasuredMemory) Invoking(ctx context.Context, invoking agent.InvokingCo
 	if failure != nil {
 		_, op := ae.Observe(ctx, "record_provider_holdout", false)
 		op.DoneWithClass(string(InjectionNotRecorded), ae.ErrorClassUnexpected)
-		w.report(ProviderHoldoutRecordResult{Outcome: InjectionNotRecorded, Err: failure})
+		w.reportLater(ProviderHoldoutRecordResult{Outcome: InjectionNotRecorded, Err: failure})
 		return messages, options, nil
 	}
 	if assignment == nil {
@@ -193,12 +196,17 @@ func (w *MeasuredMemory) decide(ctx context.Context, invoking agent.InvokingCont
 		}
 	}()
 	scope := scopeFrom(ctx)
-	if scope == nil || scope.settings != w.settings || scope.identity == nil {
+	if scope == nil || scope.settings != w.settings {
 		return nil, nil, nil
 	}
 	runID, ok := scope.run()
 	if !ok || !added(invoking, messages, options) {
 		return nil, nil, nil
+	}
+	if scope.identity == nil {
+		// Capture starts a run only for an invocation with an identity, so this is not reached; were it, the run could
+		// not be recorded under any authorization, and that is reported rather than passed over in silence.
+		return nil, nil, errNoIdentity
 	}
 	arm := ae.AssignProviderHoldout(runID, w.key, w.holdout.Salt, w.holdout.Rate)
 	scoped := *scope.identity
@@ -206,8 +214,11 @@ func (w *MeasuredMemory) decide(ctx context.Context, invoking agent.InvokingCont
 		&scoped, nil
 }
 
+// errNoIdentity is the failure of a captured run with no identity to record it under.
+var errNoIdentity = errors.New("maf: the captured run has no identity to record its provider holdout arm under")
+
 // added is whether the wrapped provider added an instruction (non-empty, and more often than it was handed), or a
-// message or tool it was not handed (compared by identity).
+// message or tool it was not handed (compared by identity: the very value it was handed, never an equal one).
 func added(invoking agent.InvokingContext, messages []*message.Message, options []agent.Option) bool {
 	handed := map[string]int{}
 	for instruction := range agent.AllOptions(invoking.Options, agent.WithInstructions) {
@@ -231,33 +242,30 @@ func added(invoking agent.InvokingContext, messages []*message.Message, options 
 			return true
 		}
 	}
+	tools := map[identity]bool{}
+	for tool := range agent.AllOptions(invoking.Options, agent.WithTool) {
+		tools[identityOf(tool)] = true
+	}
 	for tool := range agent.AllOptions(options, agent.WithTool) {
-		if tool == nil {
-			continue
-		}
-		known := false
-		for handedTool := range agent.AllOptions(invoking.Options, agent.WithTool) {
-			if same(handedTool, tool) {
-				known = true
-				break
-			}
-		}
-		if !known {
+		if tool != nil && !tools[identityOf(tool)] {
 			return true
 		}
 	}
 	return false
 }
 
-// same is identity for pointers and comparable values, deep equality for anything else; it never panics.
-func same(a, b any) (equal bool) {
-	defer func() {
-		if recover() != nil {
-			equal = reflect.DeepEqual(a, b)
-		}
-	}()
-	return a == b
+// identity is an interface value's two words: its dynamic type and its data. Copying an interface value (cloning a
+// slice, reading a field) copies both words, so the value a provider was handed keeps its identity, and a different
+// value never shares it, however equal: a pointer is its address, and anything else is the address of its boxed copy.
+// The garbage collector does not move heap objects, and every value compared is live while it is compared.
+type identity [2]uintptr
+
+func identityOf(value any) identity {
+	return *(*identity)(unsafe.Pointer(&value))
 }
+
+// same is identity: the very value, never an equal one. It never panics.
+func same(a, b any) bool { return identityOf(a) == identityOf(b) }
 
 // start records the assignment in a goroutine, exactly as startHoldout records a lesson assignment.
 func (w *MeasuredMemory) start(ctx context.Context, identity *ae.Identity, assignment ae.ProviderHoldoutAssignment) {
@@ -267,7 +275,7 @@ func (w *MeasuredMemory) start(ctx context.Context, identity *ae.Identity, assig
 		_, op := ae.Observe(ctx, "record_provider_holdout", false)
 		op.Done(string(InjectionNotTracked))
 		result.Outcome = InjectionNotTracked
-		w.report(result)
+		w.reportLater(result)
 		return
 	}
 	base := context.WithoutCancel(ctx)
@@ -305,6 +313,18 @@ func (w *MeasuredMemory) end() {
 	if w.running == 0 {
 		close(w.idle)
 	}
+}
+
+// reportLater tells OnRecorded on a goroutine of its own, never on the invocation's path; Close waits for it.
+func (w *MeasuredMemory) reportLater(result ProviderHoldoutRecordResult) {
+	if w.onRecorded == nil {
+		return
+	}
+	w.begin()
+	go func() {
+		defer w.end()
+		w.report(result)
+	}()
 }
 
 func (w *MeasuredMemory) report(result ProviderHoldoutRecordResult) {

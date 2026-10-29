@@ -341,8 +341,10 @@ print(estimate.overall.verdict, estimate.overall.treatment.rate, estimate.overal
 - **Recorded in the background** as the holdout is (bounded by `injection_record_timeout`, never delaying or failing
   the invocation): the run, the key, the arm and the instant, through the store's
   `record_provider_holdout_assignment`. The outcome is reported through `on_recorded` (a
-  `ProviderHoldoutRecordResult`) and the `record_provider_holdout` telemetry operation; `await
-  memory.wait_for_records()` waits for the ones started so far. PostgreSQL runs the contract's
+  `ProviderHoldoutRecordResult`, called on a worker thread, never on the invocation's path) and the
+  `record_provider_holdout` telemetry operation; `await memory.wait_for_records()` waits for the ones started so far,
+  and so does the injection provider's `wait_for_injection_records()` for every memory `use_measured_memory` wrapped
+  on the same agent. PostgreSQL runs the contract's
   `sql/record-provider-holdout-assignment.sql` as written and needs the grants of
   `sql/application-role-privileges-1.11.sql` (or the .NET privileges call); without them every invocation still runs
   and withholds, and each assignment is reported `NotRecorded`.

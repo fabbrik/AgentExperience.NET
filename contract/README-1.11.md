@@ -159,7 +159,9 @@ It changes nothing about ranking, confidence or injection, and it never writes.
 [`application-role-privileges-1.11.sql`](sql/application-role-privileges-1.11.sql) is run after the 1.0, 1.4, 1.6 and
 1.8 files, in the same way: as the schema's owner, with the role's name in place of `:"application_role"`, the
 statements under `-- mode: always` and, with row-level security on, those under `-- mode: row-level-security`. It is
-exactly what `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` grants on migration `0029`'s table. A port
+exactly what `ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync` grants on migration `0029`'s table. The
+1.8 file's header comment, which calls `0029`'s table .NET-only and outside the contract, is superseded by this one
+(that file is locked and stays byte-identical). A port
 on a schema given only the earlier files still runs its wrapper and withholds; it reports each assignment
 `NotRecorded`, and its provider estimate fails with its store failure (.NET throws `ExperienceStoreException`).
 
