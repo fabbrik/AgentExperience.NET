@@ -7,6 +7,7 @@ using AgentExperience.Core.Holdout;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.MicrosoftAgentFramework.Injection;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentExperience.CiTriage;
@@ -72,6 +73,9 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
     public const string CheckKind = "HostCheck";
     public const string Producer = "ci-triage/green-run";
     public const int MaxErrorsInARow = 3;
+
+    /// <summary>When set to a directory, each triage's conversation outline and final reply are written there (diagnostics; keep it out of the repository).</summary>
+    public const string RepliesVariable = "AGENTEXPERIENCE_CITRIAGE_REPLIES";
     public const string BeforeResume = "before-resume";
     public const string FetchError = "fetch-error";
     public const string Stopped = "stopped";
@@ -218,10 +222,36 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
         workspace.FailSha = failure.Run.HeadSha;
         string? reply = null;
         string note = string.Empty;
+        var nudged = false;
         try
         {
             var response = await host.Agent.RunAsync(TriageAgent.BuildPrompt(input), session, cancellationToken: cancellationToken).ConfigureAwait(false);
             reply = response.Text;
+
+            // Some models (gpt-oss) end a tool-using turn with an empty message, or keep calling tools until the iteration cap.
+            // Ask once for the answer, straight to the model with tools off. Not through the agent: a second agent invocation
+            // would start a new captured run, leaving this run (the one the holdout assigned) never finalized.
+            if (Scoring.Parse(reply) is null)
+            {
+                nudged = true;
+                List<ChatMessage> conversation =
+                [
+                    new(ChatRole.System, TriageAgent.Instructions),
+                    new(ChatRole.User, TriageAgent.BuildPrompt(input)),
+                    .. response.Messages.Where(message => message.Contents.Count > 0),
+                    new(ChatRole.User, TriageAgent.AnswerNudge),
+                ];
+                var answer = await metered.GetResponseAsync(conversation, new ChatOptions { ToolMode = ChatToolMode.None }, cancellationToken).ConfigureAwait(false);
+                reply = answer.Text;
+                response.Messages.Add(new ChatMessage(ChatRole.Assistant, "(asked again) " + reply));
+            }
+
+            if (Environment.GetEnvironmentVariable(RepliesVariable) is { Length: > 0 } dump)
+            {
+                Directory.CreateDirectory(dump);
+                var lines = response.Messages.Select(m => m.Role + ": " + string.Join(" | ", m.Contents.Select(c => c.GetType().Name + ":" + (c is TextContent t ? t.Text : c is FunctionCallContent f ? f.Name : c is FunctionResultContent r ? (r.Result?.ToString() ?? "").Length + " chars" : ""))));
+                File.WriteAllText(Path.Combine(dump, failure.Run.Id + ".txt"), string.Join("\n", lines) + "\n--- TEXT:\n" + reply);
+            }
         }
         catch (BudgetExhaustedException)
         {
@@ -251,6 +281,11 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
         if (prediction is null && note.Length == 0)
         {
             note = "parse failure";
+        }
+
+        if (nudged)
+        {
+            note = Join(note, "asked again for the answer");
         }
 
         if (runId is null)
