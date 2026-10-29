@@ -42,6 +42,9 @@ What it adds to the agent:
   as hurting is not injected (``InjectionResult.omitted`` says ``MeasuredHarmful``), and with
   ``prefer_measured_helpful`` the helpful ones go first. The estimate is cached and refreshed in the background, never
   on the request path. Off by default.
+- **Measuring another memory provider** (contract 1.11), ``use_measured_memory(agent, mem0, "mem0")``: the provider is
+  wrapped in :class:`ExperienceHoldoutContextProvider`, which withholds what it adds on a deterministic share of
+  captured runs and records each run's arm, so ``agentexperience.estimate_provider_benefit`` (or .NET's) measures it.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -51,11 +54,13 @@ cancellation and the tool's own exceptions propagate, unchanged.
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import functools
 import json
 import threading
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -107,7 +112,10 @@ from .holdout import (
     HoldoutArm,
     HoldoutAssignment,
     HoldoutOptions,
+    ProviderHoldoutAssignment,
     assign_holdout,
+    check_provider_key,
+    provider_salt,
 )
 from .identity import (
     DevelopmentOnlyError,
@@ -126,14 +134,15 @@ from .inmemory import (
     InjectionRecorder,
     InMemoryExperienceStore,
     LessonsReader,
+    ProviderHoldoutRecorder,
 )
 from .lessons import ExperienceLessons
 from .model import MODEL_METADATA_KEY, reported_model, with_model
 from .observer import classify as _classify_error
 from .observer import observe
-from .records import EnvironmentFingerprint, Provenance, RunExposure
+from .records import EnvironmentFingerprint, Provenance, RunExposure, Scope
 from .sanitization import Sanitization
-from .search import SearchParameters, SearchRow, rank
+from .search import AuthorizationBounds, SearchParameters, SearchRow, rank
 from .task_text import CHAT_HISTORY, EXTERNAL, derive_task_text
 from .task_text import Message as TaskMessage
 from .task_text import MessagePart as TaskMessagePart
@@ -821,96 +830,33 @@ def _task_messages(inputs: Sequence[Any], context: Sequence[tuple[str, Sequence[
 # ---- Injection ---------------------------------------------------------------------------------------------------
 
 
-class ExperienceContextProvider(ContextProvider):
+class _BackgroundRecords:
     """
-    Injects the lessons that apply to an invocation, before the model is called: the task text from the invocation's
-    messages, the text search in the identity's scope, the contract's ranking, and the rendered block as one message.
-    Never raises into the agent; a failure means no block and is reported through ``on_injection_failure``.
-
-    Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a background task
-    on the running event loop, bounded by ``injection_record_timeout``; :meth:`wait_for_injection_records` awaits the
-    ones still running, for a host shutting down or a test.
+    The background records of one provider (contract 1.4's injection records, 1.8's holdout assignments, 1.11's
+    provider holdout assignments): each a task on the running event loop whose writes run on daemon threads of its own,
+    bounded by ``timeout()`` seconds, at most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes at once. Never raises into
+    the invocation.
     """
 
-    def __init__(self, settings: ExperienceSettings, source_id: str = SOURCE_ID) -> None:
-        super().__init__(source_id)
-        self.settings = settings
+    def __init__(self, timeout: Callable[[], float]) -> None:
+        self._timeout = timeout
         self._recordings: set[asyncio.Task[None]] = set()
         self._abandoned_records = 0
         self._running_writes = 0
         self._abandoned_lock = threading.Lock()
-        # Contract 1.10: the cached benefit estimates, only with the policy on.
-        self._benefit = (
-            BenefitCache(settings.store, settings.benefit, settings.clock) if settings.benefit.enabled else None
-        )
 
-    async def wait_for_benefit_refreshes(self) -> None:
-        """Completes once every benefit refresh this provider started so far has ended (.NET's
-        ``BenefitRefreshesSettledAsync``). Each is bounded by the policy's ``refresh_timeout``; it never raises."""
-        if self._benefit is not None:
-            await self._benefit.settled()
-
-    async def wait_for_injection_records(self) -> None:
-        """Completes once every injection record this provider started on the running event loop has ended. Each is
-        bounded by ``injection_record_timeout``, so this is too; it never raises."""
+    async def settled(self) -> None:
+        """Completes once every record started on the running event loop has ended; never raises."""
         loop = asyncio.get_running_loop()
         while pending := [task for task in self._recordings if task.get_loop() is loop and not task.done()]:
             await asyncio.gather(*pending, return_exceptions=True)
 
     @property
-    def abandoned_injection_records(self) -> int:
-        """How many injection writes that outlived their timeout are still running against the store."""
+    def abandoned(self) -> int:
         with self._abandoned_lock:
             return self._abandoned_records
 
-    def _start_recording(self, identity: ExperienceIdentity, ids: tuple[uuid.UUID, ...], injected_at: Instant) -> None:
-        """Starts recording ``ids`` as injected at ``injected_at``, in the background; never raises, never waits."""
-        settings = self.settings
-        recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
-
-        def writes() -> list[Callable[[], None]]:
-            assert recorder is not None
-            return [
-                functools.partial(
-                    recorder.record_injection,
-                    identity.authorization,
-                    identity.scope,
-                    list(ids[start : start + MAX_RECORD_INJECTION_IDS]),
-                    injected_at,
-                )
-                for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS)
-            ]
-
-        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
-            settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
-
-        self._start_background("record_injection", None if recorder is None else writes, report)
-
-    def _start_recording_holdout(self, identity: ExperienceIdentity, assignment: HoldoutAssignment) -> None:
-        """Starts recording the run's holdout ``assignment`` (contract 1.8), in the background, exactly as an injection
-        record is (the ``record_holdout`` operation); never raises, never waits."""
-        settings = self.settings
-        recorder = settings.store if isinstance(settings.store, HoldoutRecorder) else None
-        records = assignment.records
-
-        def writes() -> list[Callable[[], None]]:
-            assert recorder is not None
-            return [
-                functools.partial(
-                    recorder.record_holdout_assignment,
-                    identity.authorization,
-                    identity.scope,
-                    dataclasses.replace(assignment, records=records[start : start + MAX_HOLDOUT_RECORDS]),
-                )
-                for start in range(0, len(records), MAX_HOLDOUT_RECORDS)
-            ]
-
-        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
-            settings.report_holdout_recorded(HoldoutRecordResult(outcome, assignment, error))
-
-        self._start_background("record_holdout", None if recorder is None else writes, report)
-
-    def _start_background(
+    def start(
         self,
         operation: str,
         writes: Callable[[], list[Callable[[], None]]] | None,
@@ -957,12 +903,11 @@ class ExperienceContextProvider(ContextProvider):
         report: Callable[[InjectionRecordOutcome, BaseException | None], None],
         op: Any,
     ) -> None:
-        settings = self.settings
         outcome: InjectionRecordOutcome = "Recorded"
         error: BaseException | None = None
         error_class: str | None = None
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + settings.injection_record_timeout
+        deadline = loop.time() + self._timeout()
         try:
             for chunk_write in writes:
                 left = deadline - loop.time()
@@ -1046,6 +991,90 @@ class ExperienceContextProvider(ContextProvider):
             if not state.finished and not state.abandoned:
                 state.abandoned = True
                 self._abandoned_records += 1
+
+
+class ExperienceContextProvider(ContextProvider):
+    """
+    Injects the lessons that apply to an invocation, before the model is called: the task text from the invocation's
+    messages, the text search in the identity's scope, the contract's ranking, and the rendered block as one message.
+    Never raises into the agent; a failure means no block and is reported through ``on_injection_failure``.
+
+    Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a background task
+    on the running event loop, bounded by ``injection_record_timeout``; :meth:`wait_for_injection_records` awaits the
+    ones still running, for a host shutting down or a test.
+    """
+
+    def __init__(self, settings: ExperienceSettings, source_id: str = SOURCE_ID) -> None:
+        super().__init__(source_id)
+        self.settings = settings
+        self._background = _BackgroundRecords(lambda: self.settings.injection_record_timeout)
+        # Contract 1.10: the cached benefit estimates, only with the policy on.
+        self._benefit = (
+            BenefitCache(settings.store, settings.benefit, settings.clock) if settings.benefit.enabled else None
+        )
+
+    async def wait_for_benefit_refreshes(self) -> None:
+        """Completes once every benefit refresh this provider started so far has ended (.NET's
+        ``BenefitRefreshesSettledAsync``). Each is bounded by the policy's ``refresh_timeout``; it never raises."""
+        if self._benefit is not None:
+            await self._benefit.settled()
+
+    async def wait_for_injection_records(self) -> None:
+        """Completes once every injection record this provider started on the running event loop has ended. Each is
+        bounded by ``injection_record_timeout``, so this is too; it never raises."""
+        await self._background.settled()
+
+    @property
+    def abandoned_injection_records(self) -> int:
+        """How many injection writes that outlived their timeout are still running against the store."""
+        return self._background.abandoned
+
+    def _start_recording(self, identity: ExperienceIdentity, ids: tuple[uuid.UUID, ...], injected_at: Instant) -> None:
+        """Starts recording ``ids`` as injected at ``injected_at``, in the background; never raises, never waits."""
+        settings = self.settings
+        recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [
+                functools.partial(
+                    recorder.record_injection,
+                    identity.authorization,
+                    identity.scope,
+                    list(ids[start : start + MAX_RECORD_INJECTION_IDS]),
+                    injected_at,
+                )
+                for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS)
+            ]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
+
+        self._background.start("record_injection", None if recorder is None else writes, report)
+
+    def _start_recording_holdout(self, identity: ExperienceIdentity, assignment: HoldoutAssignment) -> None:
+        """Starts recording the run's holdout ``assignment`` (contract 1.8), in the background, exactly as an injection
+        record is (the ``record_holdout`` operation); never raises, never waits."""
+        settings = self.settings
+        recorder = settings.store if isinstance(settings.store, HoldoutRecorder) else None
+        records = assignment.records
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [
+                functools.partial(
+                    recorder.record_holdout_assignment,
+                    identity.authorization,
+                    identity.scope,
+                    dataclasses.replace(assignment, records=records[start : start + MAX_HOLDOUT_RECORDS]),
+                )
+                for start in range(0, len(records), MAX_HOLDOUT_RECORDS)
+            ]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            settings.report_holdout_recorded(HoldoutRecordResult(outcome, assignment, error))
+
+        self._background.start("record_holdout", None if recorder is None else writes, report)
 
     async def wait_for_index_writes(self) -> None:
         """Completes once the embedding writes started after records were stored have ended; see
@@ -1488,6 +1517,332 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
     )
 
 
+# ---- Measuring another memory provider (contract 1.11) ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProviderHoldoutRecordResult:
+    """How recording one run's arm in a memory provider's holdout ended (contract 1.11, the
+    ``record_provider_holdout`` operation): the outcome (as for an injection record), the assignment (``None`` when
+    inspecting the provider's answer failed and nothing was assigned), and the exception, when there was one."""
+
+    outcome: InjectionRecordOutcome
+    assignment: ProviderHoldoutAssignment | None
+    exception: BaseException | None = None
+
+
+ProviderAuthorize = Callable[[Scope], "AuthorizationBounds | None"]
+"""The host's answer for a captured run with no identity resolved: the bounds to record under, or ``None``."""
+
+
+def _private_context(context: Any) -> Any:
+    """A context of the wrapped provider's own: the invocation's, with every container it adds to copied, so nothing it
+    adds reaches the invocation unless the wrapper delivers it. ``options`` and ``metadata`` are shared, as they are
+    without the wrapper (the model never sees them)."""
+    private = copy.copy(context)
+    private.input_messages = list(context.input_messages)
+    private.context_messages = {source: list(batch) for source, batch in context.context_messages.items()}
+    private.instructions = list(context.instructions)
+    private.tools = list(context.tools)
+    middleware = getattr(context, "middleware", None)
+    if isinstance(middleware, dict):
+        private.middleware = {source: list(batch) for source, batch in middleware.items()}
+    return private
+
+
+def _same(left: Sequence[Any], right: Sequence[Any]) -> bool:
+    return len(left) == len(right) and all(a is b for a, b in zip(left, right, strict=True))
+
+
+def _deliver_batches(target: dict[str, list[Any]], source: dict[str, list[Any]]) -> None:
+    for key in [key for key in target if key not in source]:
+        del target[key]
+    for key, batch in source.items():
+        if key not in target:
+            target[key] = list(batch)
+        elif not _same(target[key], batch):
+            target[key][:] = batch
+
+
+def _deliver(context: Any, private: Any) -> None:
+    """Makes the invocation's context what the wrapped provider left its own: exactly as without the wrapper."""
+    if not _same(context.input_messages, private.input_messages):
+        context.input_messages[:] = private.input_messages
+    _deliver_batches(context.context_messages, private.context_messages)
+    if context.instructions != private.instructions:
+        context.instructions[:] = private.instructions
+    if not _same(context.tools, private.tools):
+        context.tools[:] = private.tools
+    middleware = getattr(context, "middleware", None)
+    if isinstance(middleware, dict) and isinstance(getattr(private, "middleware", None), dict):
+        _deliver_batches(middleware, private.middleware)
+
+
+def _messages(context: Any) -> list[Any]:
+    return [*context.input_messages, *(message for batch in context.context_messages.values() for message in batch)]
+
+
+def _added(context: Any, private: Any) -> bool:
+    """Whether the wrapped provider added anything: an instruction (non-empty, and not one it was handed), or a message
+    or tool it was not handed (compared by identity)."""
+    handed_instructions = Counter(instruction for instruction in context.instructions)
+    answered_instructions = Counter(instruction for instruction in private.instructions)
+    if any(
+        isinstance(instruction, str) and instruction and count > handed_instructions[instruction]
+        for instruction, count in answered_instructions.items()
+    ):
+        return True
+    handed_messages = {id(message) for message in _messages(context)}
+    if any(message is not None and id(message) not in handed_messages for message in _messages(private)):
+        return True
+    handed_tools = {id(item) for item in context.tools}
+    return any(item is not None and id(item) not in handed_tools for item in private.tools)
+
+
+class ExperienceHoldoutContextProvider(ContextProvider):
+    """
+    Puts another memory provider (Mem0, Zep, Letta, the host's own: any MAF ``ContextProvider``) under the same
+    holdout the lessons run under, so its benefit can be measured (contract 1.11): on a deterministic share of captured
+    runs whose wrapped provider added something, what it added is withheld, and each such run's arm is recorded against
+    ``provider_key``. :func:`agentexperience.estimate_provider_benefit` then compares the arms' verified outcomes. Off
+    by default (rate 0). .NET's ``ExperienceHoldoutContextProvider``.
+
+    - **The wrapped provider runs exactly as without the wrapper.** Its ``before_run`` is always called, in both arms,
+      and so is its ``after_run`` (with the invocation's own context); it keeps its ``source_id``, so its session
+      state is its own. Its exceptions propagate unchanged, and nothing is recorded for an invocation whose hook raised.
+    - **At rate 0** the wrapper is a pass-through: nothing is inspected, assigned or recorded, and no telemetry.
+    - **Who takes part.** Only an invocation captured by this agent's own :func:`use_agent_experience` (it has a run
+      ID), with an authorization (the identity capture resolved, else ``authorize(scope)``; a callback that raises
+      counts as no answer), whose wrapped provider added an instruction, a message or a tool. Every other invocation
+      gets exactly what the wrapped provider added, and is assigned nothing.
+    - **The arm** is :func:`~agentexperience.holdout.assign_provider_holdout` of the run ID: a ``Holdout`` invocation
+      sees exactly the context it would without the provider; a ``Treatment`` one gets what the provider added.
+    - **The context passed in is never changed by the wrapper.** The wrapped provider adds to a context of its own
+      (the invocation's, with its messages, instructions, tools and middleware copied; ``options`` and ``metadata``
+      shared), and its additions are copied into the invocation's context in the treatment arm, or when the run does
+      not take part.
+    - **What is recorded**, in the background, bounded by ``record_timeout`` and never delaying or failing the
+      invocation: the run, the key, the arm and the instant, through the store's
+      ``record_provider_holdout_assignment``, in the scope the run is captured in. Its outcome is the
+      ``record_provider_holdout`` operation in telemetry and ``on_recorded``. A failure while inspecting the provider's
+      answer delivers the answer unchanged, records nothing, and is reported ``NotRecorded`` (``Unexpected``).
+
+    ``ValueError`` for a malformed key; ``TypeError`` for a provider without ``before_run``/``after_run``, holdout
+    options that are not :class:`HoldoutOptions`, or a callback that is not callable.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        provider_key: str,
+        holdout: HoldoutOptions,
+        store: object,
+        *,
+        authorize: ProviderAuthorize | None = None,
+        clock: Callable[[], Instant] = Instant.now,
+        record_timeout: float = DEFAULT_INJECTION_RECORD_TIMEOUT,
+        on_recorded: Callable[[ProviderHoldoutRecordResult], None] | None = None,
+    ) -> None:
+        if (
+            inner is None
+            or not callable(getattr(inner, "before_run", None))
+            or not callable(getattr(inner, "after_run", None))
+        ):
+            raise TypeError("inner must be a MAF context provider (with before_run and after_run).")
+        source_id = getattr(inner, "source_id", None)
+        if not isinstance(source_id, str):
+            raise TypeError("inner must have a source_id.")
+        check_provider_key(provider_key)
+        if not isinstance(holdout, HoldoutOptions):
+            raise TypeError("holdout must be a HoldoutOptions.")
+        if store is None:
+            raise ValueError("A store is required.")
+        for name, value in (("authorize", authorize), ("clock", clock), ("on_recorded", on_recorded)):
+            if value is not None and not callable(value):
+                raise TypeError(f"{name} must be callable when given.")
+        if not record_timeout > 0:
+            raise ValueError("record_timeout must be a positive number of seconds.")
+        # The wrapped provider's own source ID: MAF hands the wrapper its session state, and attributes nothing to the
+        # wrapper.
+        super().__init__(source_id)
+        self.after_run_once_per_turn = bool(getattr(inner, "after_run_once_per_turn", False))
+        self._inner = inner
+        self._provider_key = provider_key
+        self._holdout = holdout
+        self._salt = provider_salt(provider_key, holdout.salt)
+        self._store = store
+        self._authorize = authorize
+        self._clock = clock
+        self._on_recorded = on_recorded
+        self._background = _BackgroundRecords(lambda: record_timeout)
+
+    @property
+    def provider_key(self) -> str:
+        """The key the assignments are recorded against."""
+        return self._provider_key
+
+    @property
+    def inner(self) -> Any:
+        """The wrapped provider."""
+        return self._inner
+
+    @property
+    def holdout(self) -> HoldoutOptions:
+        """The rate and salt the arms are drawn with."""
+        return self._holdout
+
+    async def wait_for_records(self) -> None:
+        """Completes once every background record this wrapper started on the running event loop has ended. Each is
+        bounded by ``record_timeout``, so this is too; it never raises."""
+        await self._background.settled()
+
+    @property
+    def abandoned_records(self) -> int:
+        """How many writes that outlived their timeout are still running against the store."""
+        return self._background.abandoned
+
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        if not self._holdout.active:
+            await self._inner.before_run(agent=agent, session=session, context=context, state=state)
+            return
+
+        private = _private_context(context)
+        await self._inner.before_run(agent=agent, session=session, context=private, state=state)
+        try:
+            scope = _current_scope.get()
+            run_id = scope.run_id if scope is not None and scope.agent is agent else None
+            authorized = None
+            if run_id is not None and scope is not None and _added(context, private):
+                authorized = self._authorization(scope)
+            if run_id is None or authorized is None:
+                _deliver(context, private)
+                return
+            bounds, run_scope = authorized
+            arm: HoldoutArm = assign_holdout(run_id, self._salt, self._holdout.rate)
+            assignment = ProviderHoldoutAssignment(run_id, self._provider_key, arm, self._clock())
+        except Exception as ex:
+            # A check that raised after the wrapped provider answered: its answer, unchanged, and no row.
+            with observe("record_provider_holdout") as op:
+                if op is not None:
+                    op.outcome("NotRecorded", "Unexpected")
+            self._report(ProviderHoldoutRecordResult("NotRecorded", None, ex))
+            _deliver(context, private)
+            return
+
+        self._start_recording(bounds, run_scope, assignment)
+        if arm == "Treatment":
+            _deliver(context, private)
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        """Forwards to the wrapped provider, in both arms, so it keeps learning from every run."""
+        await self._inner.after_run(agent=agent, session=session, context=context, state=state)
+
+    def _authorization(self, scope: _CaptureScope) -> tuple[AuthorizationBounds, Scope] | None:
+        """The identity capture resolved for this invocation, else the host's callback's answer (``None``: the run
+        does not take part; a callback that raises is no answer)."""
+        identity = scope.identity
+        if identity is not None:
+            return identity.authorization, identity.scope
+        capture = scope.capture
+        if self._authorize is None or capture is None:
+            return None
+        run_scope = capture.run.scope
+        try:
+            bounds = self._authorize(run_scope)
+        except Exception:
+            return None
+        return (bounds, run_scope) if isinstance(bounds, AuthorizationBounds) else None
+
+    def _report(self, result: ProviderHoldoutRecordResult) -> None:
+        if self._on_recorded is None:
+            return
+        try:
+            self._on_recorded(result)
+        except Exception:
+            pass
+
+    def _start_recording(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None:
+        """Starts recording ``assignment`` in the background (the ``record_provider_holdout`` operation); never
+        raises, never waits."""
+        store = self._store
+        recorder = store if isinstance(store, ProviderHoldoutRecorder) else None
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [functools.partial(recorder.record_provider_holdout_assignment, bounds, scope, assignment)]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            self._report(ProviderHoldoutRecordResult(outcome, assignment, error))
+
+        self._background.start("record_provider_holdout", None if recorder is None else writes, report)
+
+
+def use_measured_memory(
+    agent: Any,
+    memory: Any,
+    provider_key: str,
+    *,
+    holdout: HoldoutOptions | None = None,
+    authorize: ProviderAuthorize | None = None,
+    on_recorded: Callable[[ProviderHoldoutRecordResult], None] | None = None,
+) -> ExperienceHoldoutContextProvider:
+    """
+    Wraps ``memory`` (another memory provider: any MAF ``ContextProvider``) in an
+    :class:`ExperienceHoldoutContextProvider` on an agent :func:`use_agent_experience` was called on, and returns the
+    wrapper: .NET's ``UseMeasuredMemory``. The wrapper takes the agent's store, clock and ``injection_record_timeout``,
+    and, without ``holdout``, the injection holdout's rate and salt (off by default); the key is mixed into the salt,
+    so the provider's arms are drawn independently of the lessons' either way. ``memory`` is replaced in the agent's
+    ``context_providers`` where it is, or the wrapper is appended. A run is recorded under the identity
+    :func:`use_agent_experience` resolved for it, in the scope it is captured in.
+
+    On PostgreSQL the application role needs the grants of the contract's ``sql/application-role-privileges-1.11.sql``;
+    without them every invocation still runs (and withholds) and every assignment is reported ``NotRecorded``.
+    ``ValueError`` when :func:`use_agent_experience` was not called on ``agent``, or for a malformed key.
+    """
+    middleware = getattr(agent, "middleware", None)
+    capture = next(
+        (item for item in middleware or () if isinstance(item, ExperienceCaptureMiddleware)),
+        None,
+    )
+    providers = getattr(agent, "context_providers", None)
+    if capture is None or not isinstance(providers, list):
+        raise ValueError("Call use_agent_experience on the agent before use_measured_memory.")
+    settings = capture.settings
+    wrapper = ExperienceHoldoutContextProvider(
+        memory,
+        provider_key,
+        settings.holdout if holdout is None else holdout,
+        settings.store,
+        authorize=authorize,
+        clock=settings.clock,
+        record_timeout=settings.injection_record_timeout,
+        on_recorded=on_recorded,
+    )
+    for index, provider in enumerate(providers):
+        if provider is memory:
+            providers[index] = wrapper
+            break
+    else:
+        providers.append(wrapper)
+    return wrapper
+
+
 # ---- The one-call setup ------------------------------------------------------------------------------------------
 
 
@@ -1621,6 +1976,7 @@ __all__ = [
     "Embedder",
     "ExperienceCaptureMiddleware",
     "ExperienceContextProvider",
+    "ExperienceHoldoutContextProvider",
     "ExperienceIdentity",
     "ExperienceLessons",
     "ExperienceSettings",
@@ -1635,6 +1991,9 @@ __all__ = [
     "InjectionRecordResult",
     "InjectionResult",
     "OmittedRecord",
+    "ProviderAuthorize",
+    "ProviderHoldoutAssignment",
+    "ProviderHoldoutRecordResult",
     "ToolResultContext",
     "VectorFallback",
     "Verification",
@@ -1651,4 +2010,5 @@ __all__ = [
     "is_development_environment",
     "tool_succeeded",
     "use_agent_experience",
+    "use_measured_memory",
 ]
