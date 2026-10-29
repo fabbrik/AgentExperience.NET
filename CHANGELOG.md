@@ -38,6 +38,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   views show each lesson's measured benefit on request. The holdout is unchanged. A .NET-written fleet in which one
   lesson measures `Hurts` is omitted by Python and Go agents over the same PostgreSQL rows. Measuring another memory
   provider stays .NET-only.
+- **Behaviour change in both ports: the injection callback now also fires when nothing is injected.** Python
+  `on_injected` and Go `OnInjected` are called with outcome `NothingToInject` and the omissions, as .NET's
+  `OnContextInjected` is, so a host can tell "the policy omitted everything" from "nothing matched". A host that
+  treated every callback as a delivery should check the outcome (`Injected`).
 
 ## 0.1.0-preview.17
 
