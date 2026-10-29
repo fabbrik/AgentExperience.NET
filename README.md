@@ -63,8 +63,12 @@ compares memory against no memory, a placebo block with the strategy withheld, a
 
 Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
 the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
-general. A harder experiment, where the lesson has to transfer to a different system through the library's own
-retrieval, is [in progress, no live results yet](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment).
+general. Two harder experiments have run and have **not shown a benefit**: a
+[transfer experiment](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment), where the lesson has to reach a
+different system through the library's own retrieval (Gemini: inconclusive, too many instances excluded after provider
+errors; Claude: no demonstrated benefit, the sign test did not pass and the placebo and mismatched-cluster controls did
+about as well), and a [real-task experiment](experiments/AgentExperience.LiveReuse/README.md#real-task-experiment), where a
+model repairs real repositories judged by their own unit tests (inconclusive so far, too many services excluded).
 The samples and the reuse baseline use scripted models: they show the loop works, not that it helps.
 
 ## Try it in a minute
