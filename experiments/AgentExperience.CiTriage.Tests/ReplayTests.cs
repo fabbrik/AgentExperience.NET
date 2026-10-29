@@ -118,6 +118,41 @@ public sealed class ReplayTests
     }
 
     [Fact]
+    public async Task An_empty_reply_is_asked_again_once_with_tools_off()
+    {
+        var ci = new FakeCi();
+        ci.AddFailure("feat/a", "a1", T0.AddHours(1), ["src/A.cs"], "error CS1002: ; expected", "a2", T0.AddHours(2), ["src/A.cs"]);
+        var model = new EmptyThenAnswerModel();
+
+        var (_, result) = await RunAsync(ci, model);
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("true", row.Correct);
+        Assert.Contains("asked again for the answer", row.Note, StringComparison.Ordinal);
+        Assert.Equal(2, model.Calls);
+        Assert.Equal(ChatToolMode.None, model.LastToolMode);
+        Assert.Equal(FinalizationOutcome.Validated, Assert.Single(result.Triages).Finalized);
+    }
+
+    [Fact]
+    public async Task A_run_asked_again_keeps_its_arm_and_is_finalized()
+    {
+        var (_, result) = await RunAsync(ScriptedScenario.Create(), new SilentFirstAnswerModel());
+
+        Assert.All(result.Rows.Where(row => row.Arm is "treatment" or "holdout" or "none"),
+            row => Assert.Contains("asked again for the answer", row.Note, StringComparison.Ordinal));
+        var treatment = result.Rows.Where(row => row.Arm == "treatment").ToList();
+        var holdout = result.Rows.Where(row => row.Arm == "holdout").ToList();
+        Assert.NotEmpty(treatment);
+        Assert.NotEmpty(holdout);
+        var overall = result.Estimate.Overall;
+        Assert.Equal(0, overall.Pending);
+        Assert.Equal(treatment.Count, overall.Treatment.Runs);
+        Assert.Equal(holdout.Count, overall.Holdout.Runs);
+        Assert.Equal(treatment.Count(row => row.Correct == "true"), overall.Treatment.Successes);
+    }
+
+    [Fact]
     public async Task A_budget_cap_stops_triage_cleanly_and_still_finalizes_what_ran()
     {
         var ci = ScriptedScenario.Create();
@@ -269,6 +304,56 @@ public sealed class ReplayTests
     {
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("HTTP 401");
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>The scripted model, except that its final answer through the agent is an empty message; asked with tools off, it answers.</summary>
+    private sealed class SilentFirstAnswerModel : IChatClient
+    {
+        private readonly ScriptedTriageModel _scripted = new();
+
+        public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var response = await _scripted.GetResponseAsync(messages, options, cancellationToken);
+            var isAnswer = !response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>().Any();
+            return isAnswer && options?.ToolMode != ChatToolMode.None
+                ? new ChatResponse(new ChatMessage(ChatRole.Assistant, (IList<AIContent>)[]))
+                : response;
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class EmptyThenAnswerModel : IChatClient
+    {
+        public int Calls { get; private set; }
+
+        public ChatToolMode? LastToolMode { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            LastToolMode = options?.ToolMode;
+            var message = Calls == 1
+                ? new ChatMessage(ChatRole.Assistant, (IList<AIContent>)[])
+                : new ChatMessage(ChatRole.Assistant, "{\"kind\": \"code\", \"files\": [\"src/A.cs\"]}");
+            return Task.FromResult(new ChatResponse(message));
+        }
 
         public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

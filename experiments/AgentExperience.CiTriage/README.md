@@ -79,6 +79,11 @@ dotnet run --project experiments/AgentExperience.CiTriage
   - **No hindsight across passes.** Retrieval cannot hide a lesson finalized later in simulated time. So a resumed pass
     skips, as `skipped: before-resume`, every failure earlier than the latest fix an earlier pass finalized.
 - **The ledger and report are written even when a pass throws**, with whatever ran.
+- **An empty or unparseable reply is asked again once**, in the same run with tools off. Some models (gpt-oss) end a
+  tool-using turn with an empty message or keep calling tools until the iteration cap. The ledger notes "asked again for
+  the answer".
+- `AGENTEXPERIENCE_CITRIAGE_REPLIES=<dir>` writes each triage's conversation outline and reply there, for diagnosis.
+  Keep it outside the repository.
 - **A provider error is never finalized.** The library counts that run as Pending, and the ledger gives it no arm and
   no score, so infrastructure noise never counts against an arm.
 
@@ -110,6 +115,36 @@ in the ledger as `skipped: stopped`. Runs it already triaged are still finalized
 The spend is estimated from the tokens the provider reports and these prices. Check the model's current prices on
 OpenRouter and pass them if they differ. On this repository's history (about 40 failures, about 23 of them
 triageable), one pass makes a few calls per failure and should stay well under the default cap.
+
+## Status: the first live pass (2026-10-29)
+
+[`results/ci-triage-2026-10-29.md`](results/ci-triage-2026-10-29.md), ledger in
+[`results/ci-triage-ledger.tsv`](results/ci-triage-ledger.tsv). Model `openai/gpt-oss-120b`, about USD 0.12.
+
+- **Scope.** 40 failures:
+  - 21 triaged (20 code, 1 flaky);
+  - 16 skipped as ambiguous (the fix changed more than 10 files);
+  - 2 pending, 1 with no log.
+- **Accuracy is low: 5 of 21 correct.** 8 replies held no answer even after the tool asked again. gpt-oss often ends a
+  tool-using turn with an empty message. The triage agent, not the library, is the weak part today: its prompt, its
+  tools and the model.
+- **The library's estimate.**
+  - Treatment: 1 of 7 correct. Holdout: 3 of 9.
+  - Difference -0.19, interval -0.52 to +0.24. Verdict `NoEvidence`, for lack of runs.
+  - No Pending or Unverified runs.
+  - It does not show that the lessons help, and it does not show that they hurt.
+- **Problems found on real work, and fixed.**
+  - An empty reply first made the run unscorable.
+  - Then, asking again through the agent started a *new* captured run. The run the holdout had assigned was never
+    finalized, and quietly dropped out of the comparison as Pending.
+  - The tool now asks again directly to the model, outside the agent. A test checks that every arm stays finalized.
+- **Library findings** (Epic 26):
+  - outcomes that arrive after the process ends cannot be finalized (26.2);
+  - there is no public way to wait for the holdout's background writes;
+  - an injection result carries no run id;
+  - a lesson cannot carry the agent's answer;
+  - a second invocation on the same session is a new run, which a user who retries inside one conversation will not
+    expect.
 
 ## What the verdict can and cannot say yet
 

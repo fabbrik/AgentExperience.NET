@@ -33,6 +33,9 @@ public static class TriageAgent
     public const string LogHeading = "Failed job logs (trimmed):";
     public const int MaxFileCharacters = 8_000;
 
+    /// <summary>The follow-up sent once, in the same run, when a reply holds no parseable answer.</summary>
+    public const string AnswerNudge = "Your last message had no answer. Reply now with only the JSON object: {\"kind\": \"code\", \"files\": [...]} or {\"kind\": \"flaky\", \"files\": []}.";
+
     public const string Instructions =
         "You triage failed CI runs of the AgentExperience.NET repository (a .NET library, with Python and Go ports under python/ and go/). "
         + "Decide whether the failure is flaky (it would pass on a re-run with no change) or needs a code change, and if so name the repository files most likely to need the fix. "
