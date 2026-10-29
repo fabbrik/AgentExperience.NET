@@ -1,0 +1,16 @@
+{
+  "experience_provider_holdout_assignments": [
+    {
+      "run_id": "000000d4-0000-4000-8000-000000000901",
+      "provider_key": "mem0",
+      "arm": "Holdout",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "assigned_at": "database-clock"
+    }
+  ]
+}

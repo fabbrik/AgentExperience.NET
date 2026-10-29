@@ -1,0 +1,23 @@
+{
+  "providerKey": "mem0",
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 0,
+      "successes": 0,
+      "rate": null
+    },
+    "holdout": {
+      "runs": 0,
+      "successes": 0,
+      "rate": null
+    },
+    "difference": null,
+    "lower": null,
+    "upper": null,
+    "verdict": "NoEvidence",
+    "unverified": 0,
+    "pending": 0,
+    "mixedArm": 0
+  }
+}

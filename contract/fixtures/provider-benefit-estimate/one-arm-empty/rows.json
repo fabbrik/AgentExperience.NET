@@ -1,0 +1,83 @@
+{
+  "description": "No holdout run has a verified outcome yet: the holdout arm has 0 runs, so its rate, the difference and its interval are null, and the verdict is NoEvidence.",
+  "providerKey": "mem0",
+  "rows": [
+    {
+      "runId": "000000de-0000-4000-8000-000000000101",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000102",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000103",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000104",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000105",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000106",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000107",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000108",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-000000000109",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-00000000010a",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000de-0000-4000-8000-00000000010b",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": null
+    }
+  ]
+}

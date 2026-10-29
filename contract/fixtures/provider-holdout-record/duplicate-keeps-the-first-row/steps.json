@@ -1,0 +1,53 @@
+{
+  "description": "One row per run and key: a run recorded again under the same key keeps its first row (arm and instant), whatever the later statement names. The instant is stored truncated to whole microseconds. No record is read: a run with no record yet is recorded.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d1-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T10:00:00.1234567+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d1-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d1-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T09:30:00+00:00"
+      }
+    }
+  ]
+}

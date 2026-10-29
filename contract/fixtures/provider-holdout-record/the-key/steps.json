@@ -1,0 +1,69 @@
+{
+  "description": "The row's key is (tenant_id, run_id, provider_key): the same run under another provider key gets a row of its own, and so does the same run and key in another tenant (a run ID is the caller's value, so another tenant's reuse of it never suppresses this tenant's row); the same run and key from another scope of the same tenant writes nothing.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d3-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d3-0000-4000-8000-000000000901",
+        "providerKey": "zep",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant-2",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d3-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T12:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "runId": "000000d3-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T13:00:00+00:00"
+      }
+    }
+  ]
+}
