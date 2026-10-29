@@ -77,6 +77,9 @@ public sealed partial class ContractFixtureTests
         Assert.Equal(ExperienceBenefitVerdict.Hurts, estimates["split-by-model"].ByConsumingModel!.Single(model => model.Model == "model-b").Comparison.Verdict);
         Assert.Contains(estimates["split-by-model"].Lessons.SelectMany(lesson => lesson.ByModelPair!), pair => pair.LessonModel == ExperienceBenefitEstimate.UnknownModel);
         Assert.Equal(ExperienceBenefitVerdict.Helps, estimates["custom-minimum"].Overall.Verdict);
+        Assert.Equal(ExperienceBenefitVerdict.Helps, estimates["at-the-run-minimum"].Overall.Verdict);
+        Assert.Equal(1, estimates["conflicting-run-outcomes"].Overall.Unverified);
+        Assert.Equal(new[] { "Zeta", "alpha", "\U0001F600-model", "\uFF41-model" }, estimates["model-ordering"].ByConsumingModel!.Select(model => model.Model));
         Assert.Equal(
             ExperienceBenefitVerdict.NoEvidence,
             ExperienceBenefitEstimator.Estimate(BenefitEstimateContract.Cases.Single(entry => entry.Name == "custom-minimum").Case.Rows).Overall.Verdict);

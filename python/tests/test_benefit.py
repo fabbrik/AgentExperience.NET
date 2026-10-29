@@ -230,6 +230,8 @@ def test_holdout_outcomes_in_memory(name: str) -> None:
     store = InMemoryExperienceStore(from_stored(stored) for stored in seed["records"])
     for row in seed["assignments"]:
         store.seed_holdout_row(_holdout_row(row))
+    for erased in seed["erased"]:
+        assert store.erase(uuid.UUID(erased["experienceId"]))
     query = read_json(directory / "query.json")
     _check_pages(
         read_json(directory / "expected.json")["pages"], _pages(store, scope_of(query["scope"]), query["limit"])
@@ -273,6 +275,23 @@ def test_holdout_outcomes_in_postgresql(pg_server: Server, name: str) -> None:
     with psycopg.connect(pg_server.conninfo(database, OWNER, PASSWORD)) as owner, owner.transaction():
         for row in seed["assignments"]:
             owner.execute(_INSERT_ASSIGNMENT, tuple(row[column] for column in _ASSIGNMENT_COLUMNS))
+        for erased in seed["erased"]:
+            scope = erased["scope"]
+            purged = owner.execute(
+                "SELECT purge_outcome FROM agent_experience.purge_experience_record(%s::uuid, %s, %s, %s, %s, %s, %s, "
+                "NULL, %s::timestamptz)",
+                (
+                    erased["experienceId"],
+                    scope["tenantId"],
+                    scope["applicationId"],
+                    scope["projectId"],
+                    scope.get("teamId"),
+                    scope.get("agentId"),
+                    scope.get("userId"),
+                    erased["deletedAt"],
+                ),
+            ).fetchone()
+            assert purged is not None and purged[0] == "Deleted"
     query = read_json(directory / "query.json")
     _check_pages(
         read_json(directory / "expected.json")["pages"], _pages(store, scope_of(query["scope"]), query["limit"])
@@ -379,3 +398,50 @@ def test_capture_records_the_reported_model_unless_the_host_names_one() -> None:
     hosted = EnvironmentFingerprint("host", "runtime", "os", None, {MODEL_METADATA_KEY: " "})
     assert _with_reported_model(hosted, agent) is hosted
     assert _with_reported_model(environment, _Agent({}, _Client(None))) is environment
+
+
+# ---- unknown values and tie-breaks, as .NET reads them ---------------------------------------------------------
+
+
+def test_an_arm_other_than_treatment_counts_as_holdout_and_an_unknown_outcome_as_unverified() -> None:
+    # .NET's estimator counts every arm but Treatment in the holdout arm, and every outcome but Verified or Failed as
+    # unverified; nothing is refused.
+    at = Instant.parse("2026-03-02T09:00:00+00:00")
+    lesson = uuid.UUID(int=1)
+    rows = [
+        HoldoutOutcomeRow(uuid.UUID(int=0x101), "Treatment", lesson, at, "Verified"),
+        HoldoutOutcomeRow(uuid.UUID(int=0x102), "Control", lesson, at, "Failed"),  # type: ignore[arg-type]
+        HoldoutOutcomeRow(uuid.UUID(int=0x103), "Holdout", lesson, at, "Abandoned"),
+    ]
+    for result in (estimate(rows), estimate(reversed(rows))):
+        assert (result.overall.treatment.runs, result.overall.treatment.successes) == (1, 1)
+        assert (result.overall.holdout.runs, result.overall.holdout.successes) == (1, 0)
+        assert result.overall.unverified == 1 and result.overall.mixed_arm == 0
+
+
+def test_the_in_memory_run_record_tie_break_compares_creation_to_the_microsecond() -> None:
+    # PostgreSQL stores created_at in whole microseconds: two records created within one microsecond tie, and the
+    # lower experience ID is the run's record, however their 100 ns ticks compare.
+    seed = read_json(FIXTURES / "holdout-outcomes" / "exact-scope-and-run-records" / "seed.json")
+    base = from_stored(seed["records"][0])
+    run = uuid.UUID(int=0x9999)
+    lower = dataclasses.replace(
+        base,
+        experience_id=uuid.UUID(int=0x1001),
+        source_run_id=run,
+        created_at=Instant.parse("2026-02-20T09:00:00.0000005+00:00"),
+        outcome=dataclasses.replace(base.outcome, status="Verified"),
+    )
+    higher = dataclasses.replace(
+        base,
+        experience_id=uuid.UUID(int=0x1002),
+        source_run_id=run,
+        created_at=Instant.parse("2026-02-20T09:00:00+00:00"),
+        outcome=dataclasses.replace(base.outcome, status="Failed"),
+    )
+    store = InMemoryExperienceStore([base, lower, higher])
+    store.seed_holdout_row(
+        HoldoutRow(run, base.experience_id, 1, "Treatment", base.scope, Instant.parse("2026-03-02T09:00:00+00:00"))
+    )
+    (row,) = store.read_holdout_outcomes(AuthorizationBounds.of(base.scope), base.scope, 10)
+    assert row.run_outcome == "Verified"

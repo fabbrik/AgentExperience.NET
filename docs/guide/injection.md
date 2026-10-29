@@ -1193,10 +1193,12 @@ foreach (var lesson in estimate.Lessons)
   the same estimate without .NET: Python `estimate_benefit(store, authorization, scope, options)`, Go
   `EstimateBenefit(ctx, store, authorization, scope, opts)`, over the port's in-memory or PostgreSQL store. Both return
   every field above (per arm, the difference and its interval, the verdict, `Pending`, `Unverified`, `MixedArm`,
-  `Tracked`, per lesson and per model), page and fold the rows the same way, and give the same numbers as .NET over the
-  same rows: a .NET test estimates over rows a Python and a Go agent wrote and compares with what each port computes.
-  Each port's README maps the names. A port cannot open a sealed record (`payload_version` 2), so a run whose record is
-  sealed counts as `Pending` there, as it does in .NET once its key is destroyed.
+  `Tracked`, per lesson and per model), page and fold the rows the same way, and give the same counts and verdicts as .NET over the
+  same rows, with every rate, difference and bound equal within 1e-12: a .NET test estimates over rows a Python and a
+  Go agent wrote and compares with what each port computes. Each port's README maps the names. A port cannot open a
+  sealed record (`payload_version` 2), so a run whose record is sealed counts as `Pending` there, as it does in .NET
+  once its key is destroyed, and in an encrypted store a sealed lesson's model reads as `unknown` in a port, so its
+  per-model pairs can differ from the .NET estimate's.
 - **A write that overlaps an erasure.** In PostgreSQL a holdout write for a run whose own record is being erased waits
   for the erasure and then records nothing, and an erasure that starts while the write is in flight waits for it and
   then removes the run's rows. Only a write that overlaps the erasure is handled. **Known limit:** a write that starts

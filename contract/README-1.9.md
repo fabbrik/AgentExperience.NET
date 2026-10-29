@@ -14,7 +14,7 @@ A port that passes contract 1.9 passes every 1.0 to 1.8 fixture and the fixtures
 From 1.8 a port's agents take part in the injection holdout, but only .NET could read what it measured. From 1.9 a port
 reads it too: the same estimate `AgentExperienceBenefit.EstimateAsync` gives
 ([Injection: reading the estimate](../docs/guide/injection.md#reading-the-estimate)), overall, per lesson and per model,
-from the same rows, with the same numbers. It also records the run's model, so a split by model counts its runs. The
+from the same rows, with the same counts and verdicts and every other number equal within 1e-12. It also records the run's model, so a split by model counts its runs. The
 benefit policy (acting on the estimate), measuring another memory provider and exporting lessons stay .NET-only.
 
 A port that does not implement 1.9 keeps passing 1.8.
@@ -84,7 +84,9 @@ A port turns the page into **outcome rows**, one per `part = 0` row:
 
 **A sealed record (`payload_version` 2) is not readable by a port.** A run whose record is sealed has `runOutcome` and
 `runModel` `null`, and a sealed lesson has no model. The run is therefore counted `Pending`, exactly as .NET counts a
-run whose record is sealed under a destroyed key.
+run whose record is sealed under a destroyed key. In an encrypted store, whose .NET store opens sealed records, a sealed
+lesson's model therefore reads as `unknown` in a port where .NET reads the model it names: the per-model pairs
+(`byModelPair`) can differ from .NET's, and so can the overall and per-lesson counts of runs whose own record is sealed.
 
 **An in-memory store** answers the same pages from what it holds: the assignment rows in exactly the scope, in
 (`runId`, `experienceId`) order compared as UUIDs (by their 16 bytes in RFC 4122 order, as PostgreSQL and .NET compare
@@ -96,7 +98,9 @@ run (the earliest created, then the lowest ID), and to the named lesson's record
 `EstimateAsync(store, authorization, scope, options)` in .NET; each port names it in its own idiom and maps every field
 one to one in its README.
 
-1. **The call.** The options are checked first: `minimumRunsPerArm` below 1 is refused before anything is read. A store
+1. **The call.** The options are checked first: an unset `minimumRunsPerArm` means the default (20), and an explicit
+   value below 1 is refused before anything is read, where the language can tell an explicit value from an unset one
+   (Go cannot: its zero value means the default, and only a negative value is refused; its README says so). A store
    that does not record the holdout gives an empty estimate with `tracked` false. A scope outside the authorization
    reads nothing and gives an empty estimate whose outcome is `Denied`, never an exception. Otherwise the outcome is
    `Found` and `tracked` true.
@@ -154,13 +158,16 @@ expected numbers are .NET's doubles, written in their shortest round-trip form.
 
 1. Insert `seed.json`'s `records` as a search seed is inserted (the eighteen record columns, as the application role,
    under bounds declared for each record's scope), then its `assignments` as rows of
-   `agent_experience.experience_holdout_assignments`, every column from its PostgreSQL text form, as the schema's owner.
+   `agent_experience.experience_holdout_assignments`, every column from its PostgreSQL text form, as the schema's owner;
+   then erase each of its `erased` records, in order, as the schema's owner: `SELECT purge_outcome FROM
+   agent_experience.purge_experience_record(experienceId, the scope's six fields, NULL, deletedAt)`, which answers
+   `Deleted` (it tombstones the record and removes the assignment rows its erasure removes).
 2. Read `query.json`'s `scope` (also the caller's bounds) with `limit` as the page size, page after page, as above.
 3. Compare with `expected.json`'s `pages`: each page's `after` (the cursor it was read after, `null` for the first) and
    its `rows`, outcome rows in order, `assignedAt` as an instant to the microsecond and everything else exactly.
 
-A store that is not PostgreSQL runs the same cases by holding the records and the assignment rows in memory, and must
-give the same pages.
+A store that is not PostgreSQL runs the same cases by holding the records and the assignment rows in memory, erasing
+each `erased` record as README-1.8 describes for its `holdout-record` cases, and must give the same pages.
 
 **model-metadata.** `key` and `maxLength`; `normalize`, each reported `modelId` (`null`: the client reports none) with
 the value `recorded` (`null`: nothing); and `environment`, each host `metadata` and reported `modelId` with the

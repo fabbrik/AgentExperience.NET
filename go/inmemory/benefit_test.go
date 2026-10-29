@@ -37,6 +37,16 @@ func seededStore(t *testing.T, c *ct.OutcomesCase) *Store {
 	if got := len(store.HoldoutRows()); got != len(c.Assignments) {
 		t.Fatalf("%d assignment rows held, %d seeded", got, len(c.Assignments))
 	}
+	for _, erased := range c.Erased {
+		value, _ := erased.Get("experienceId")
+		id, err := ae.ParseUUID(value.(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !store.Erase(id) {
+			t.Fatalf("%s was not erased", id)
+		}
+	}
 	return store
 }
 

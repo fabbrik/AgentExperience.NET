@@ -44,6 +44,14 @@ public sealed class HoldoutOutcomesContractPostgresTests(ContractPostgresDatabas
                 await InsertAssignmentAsync(owner, row!.AsObject());
             }
 
+            foreach (var erased in seed["erased"]!.AsArray())
+            {
+                await InjectionRecordContractPostgresTests.EraseAsync(owner, new EraseStep(
+                    Guid.Parse(erased!["experienceId"]!.GetValue<string>()),
+                    InjectionRecordContract.ScopeOf(erased["scope"]!),
+                    DateTimeOffset.Parse(erased["deletedAt"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)));
+            }
+
             var byStore = await PagesThroughStoreAsync(application, query);
             ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(byStore), drift);
 

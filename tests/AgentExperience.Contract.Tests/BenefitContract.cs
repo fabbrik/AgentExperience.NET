@@ -77,7 +77,116 @@ internal static class BenefitEstimateContract
         ("per-lesson", PerLesson()),
         ("split-by-model", SplitByModel()),
         ("custom-minimum", Simple(0x9b, "MinimumRunsPerArm is 5: six runs per arm, all against one verified, are enough for Helps.", 6, 6, 6, 1) with { Options = new(5, false) }),
+        ("at-the-run-minimum", Simple(0x9c, "Exactly 20 verified runs per arm, the default minimum: enough for a verdict, and the interval lies above zero, so Helps.", 20, 18, 20, 6)),
+        ("conflicting-run-outcomes", ConflictingRunOutcomes()),
+        ("mixed-pending-unverified-by-model", MixedPendingUnverifiedByModel()),
+        ("model-ordering", ModelOrdering()),
+        ("lesson-models-within-a-run", LessonModelsWithinARun()),
     ];
+
+    private static BenefitEstimateCase ConflictingRunOutcomes()
+    {
+        const int f = 0x9d;
+        var (a, b, c) = (Fixed.Id(f, 1), Fixed.Id(f, 2), Fixed.Id(f, 3));
+        var rows = new List<HoldoutOutcomeRow>
+        {
+            // Run 1: the row with the lowest experienceId that carries an outcome is b's (a's carries none): Failed.
+            Row(f, 1, HoldoutArm.Treatment, a, null),
+            Row(f, 1, HoldoutArm.Treatment, b, TaskVerificationStatus.Failed),
+            Row(f, 1, HoldoutArm.Treatment, c, TaskVerificationStatus.Verified),
+
+            // Run 2: a's Verified wins over c's Unknown.
+            Row(f, 2, HoldoutArm.Holdout, a, TaskVerificationStatus.Verified),
+            Row(f, 2, HoldoutArm.Holdout, c, TaskVerificationStatus.Unknown),
+
+            // Run 3: a's Unknown wins over b's Verified, so the run is Unverified.
+            Row(f, 3, HoldoutArm.Treatment, a, TaskVerificationStatus.Unknown),
+            Row(f, 3, HoldoutArm.Treatment, b, TaskVerificationStatus.Verified),
+        };
+        return new(
+            "Rows of one run that disagree on its outcome: the run reads the outcome of its row with the lowest experienceId among those that carry one, whatever the row order.",
+            Ordered(rows),
+            Defaults);
+    }
+
+    private static BenefitEstimateCase MixedPendingUnverifiedByModel()
+    {
+        const int f = 0x9e;
+        var (a, b) = (Fixed.Id(f, 1), Fixed.Id(f, 2));
+        var rows = new List<HoldoutOutcomeRow>();
+        string?[] models = ["model-a", "model-b", null];
+        for (var n = 1; n <= 30; n++)
+        {
+            var model = models[n % models.Length];
+            var arm = n % 2 == 0 ? HoldoutArm.Treatment : HoldoutArm.Holdout;
+            TaskVerificationStatus? outcome = (n % 5) switch
+            {
+                0 => null,
+                1 => TaskVerificationStatus.Unknown,
+                2 or 3 => TaskVerificationStatus.Verified,
+                _ => TaskVerificationStatus.Failed,
+            };
+            rows.Add(Row(f, n, arm, a, outcome) with { RunModel = model, LessonModel = "model-a" });
+            if (n % 4 == 0)
+            {
+                // A run recorded in both arms: its second row names lesson b from the other arm.
+                rows.Add(Row(f, n, arm == HoldoutArm.Treatment ? HoldoutArm.Holdout : HoldoutArm.Treatment, b, outcome) with { RunModel = model, LessonModel = "model-b" });
+            }
+        }
+
+        return new(
+            "Mixed-arm, pending and unverified runs together, split by model: each run is counted in exactly one of them in its model's group and in every lesson pair it named, and the groups add up to the pooled counts.",
+            Ordered(rows),
+            Defaults with { SplitByModel = true });
+    }
+
+    private static BenefitEstimateCase ModelOrdering()
+    {
+        const int f = 0x9f;
+        var (a, b) = (Fixed.Id(f, 1), Fixed.Id(f, 2));
+
+        // Ordinal UTF-16 order: "Zeta" < "alpha" < "\U0001F600-model" (high surrogate U+D83D) < "ａ-model" (U+FF41).
+        // By code point the astral model would sort last, and ignoring case "alpha" would come first.
+        string[] models = ["ａ-model", "alpha", "\U0001F600-model", "Zeta"];
+        var rows = new List<HoldoutOutcomeRow>();
+        for (var n = 1; n <= 16; n++)
+        {
+            var model = models[n % models.Length];
+            var arm = n % 2 == 0 ? HoldoutArm.Treatment : HoldoutArm.Holdout;
+            var outcome = n % 3 == 0 ? TaskVerificationStatus.Failed : TaskVerificationStatus.Verified;
+            rows.Add(Row(f, n, arm, a, outcome) with { RunModel = model, LessonModel = models[(n + 1) % models.Length] });
+            rows.Add(Row(f, n, arm, b, outcome) with { RunModel = model, LessonModel = models[(n + 2) % models.Length] });
+        }
+
+        return new(
+            "Models are ordered ordinally by UTF-16 code unit: upper case before lower case, and an astral character (a surrogate pair) before a BMP character above U+D7FF such as U+FF41.",
+            Ordered(rows),
+            Defaults with { SplitByModel = true });
+    }
+
+    private static BenefitEstimateCase LessonModelsWithinARun()
+    {
+        const int f = 0xa0;
+        var lesson = Fixed.Id(f, 1);
+        var rows = new List<HoldoutOutcomeRow>
+        {
+            // One run's rows for the same lesson disagree on its model: the ordinal least non-blank one is read.
+            Row(f, 1, HoldoutArm.Treatment, lesson, TaskVerificationStatus.Verified) with { RunModel = "run-model", LessonModel = "model-y" },
+            Row(f, 1, HoldoutArm.Treatment, lesson, TaskVerificationStatus.Verified) with { RunModel = "run-model", LessonModel = " " },
+            Row(f, 1, HoldoutArm.Treatment, lesson, TaskVerificationStatus.Verified) with { RunModel = "run-model", LessonModel = "model-x" },
+
+            // Only blank or absent lesson models: unknown.
+            Row(f, 2, HoldoutArm.Holdout, lesson, TaskVerificationStatus.Failed) with { RunModel = "run-model", LessonModel = "\t" },
+            Row(f, 2, HoldoutArm.Holdout, lesson, TaskVerificationStatus.Failed) with { RunModel = "run-model", LessonModel = null },
+
+            // Another run reads its own least model for the same lesson.
+            Row(f, 3, HoldoutArm.Holdout, lesson, TaskVerificationStatus.Verified) with { RunModel = "run-model", LessonModel = "model-y" },
+        };
+        return new(
+            "One lesson's rows within a run carry different or blank lesson models: per run, the lesson's model is the ordinal least non-blank one, or unknown when every row's is blank or absent.",
+            Ordered(rows),
+            Defaults with { SplitByModel = true });
+    }
 
     private static BenefitEstimateCase Simple(int f, string description, int treatmentRuns, int treatmentSuccesses, int holdoutRuns, int holdoutSuccesses)
     {
@@ -307,7 +416,11 @@ internal static class BenefitEstimateContract
 internal sealed record HoldoutOutcomesQuery(string Description, Scope Scope, int Limit);
 
 /// <summary>A holdout-outcomes case: the records and assignment rows seeded, and the query.</summary>
-internal sealed record HoldoutOutcomesCase(IReadOnlyList<ExperienceRecord> Records, IReadOnlyList<SeededAssignment> Assignments, HoldoutOutcomesQuery Query);
+internal sealed record HoldoutOutcomesCase(IReadOnlyList<ExperienceRecord> Records, IReadOnlyList<SeededAssignment> Assignments, HoldoutOutcomesQuery Query)
+{
+    /// <summary>The records erased, in order, after the rows are seeded: each tombstoned as the owner (deleted_at set).</summary>
+    public IReadOnlyList<ExperienceRecord> Erased { get; init; } = [];
+}
 
 /// <summary>One row of <c>agent_experience.experience_holdout_assignments</c>, as a case seeds it.</summary>
 internal sealed record SeededAssignment(Guid RunId, Guid ExperienceId, long Revision, HoldoutArm Arm, Scope Scope, DateTimeOffset AssignedAt);
@@ -337,7 +450,34 @@ internal static class HoldoutOutcomesContract
         ("models", Models()),
         ("paging-full-last-page", Paging(0x82, 4, "Eight rows read four at a time: the second page is full, so a third read is made, and it is empty. A run's rows may be split across pages; every row carries its run's outcome and model.")),
         ("paging-partial-last-page", Paging(0x83, 3, "Eight rows read three at a time: the third page has two rows, fewer than the limit, so the read stops there.")),
+        ("erased-records", ErasedRecords()),
     ];
+
+    private static HoldoutOutcomesCase ErasedRecords()
+    {
+        const int f = 0x84;
+        var (a, b) = (Record(f, 1, metadata: Model("lesson-a")), Record(f, 2, metadata: Model("lesson-b")));
+        var erasedEarlier = Record(f, 11, metadata: Model("erased-model")) with { CreatedAt = Created.AddHours(-1), UpdatedAt = Created.AddHours(-1) };
+        var liveLater = Record(f, 12, status: ExperienceStatus.Quarantined, metadata: Model("live-model")) with { SourceRunId = erasedEarlier.SourceRunId };
+        var erasedOnly = Record(f, 13);
+        var noRecordRun = Fixed.Id(f, 0x900);
+        return new(
+            [a, b, erasedEarlier, liveLater, erasedOnly],
+            [
+                Assign(erasedEarlier.SourceRunId, a, HoldoutArm.Treatment, 1),
+                Assign(erasedEarlier.SourceRunId, b, HoldoutArm.Treatment, 1),
+                Assign(erasedOnly.SourceRunId, a, HoldoutArm.Holdout, 2),
+                Assign(noRecordRun, a, HoldoutArm.Holdout, 3),
+                Assign(noRecordRun, b, HoldoutArm.Holdout, 3),
+            ],
+            new(
+                "Erased (tombstoned) records are never read: a run whose earliest record is erased reads its next live record's outcome and model; a run whose only record is erased loses its rows, and so does an erased lesson, as the erasure removes them.",
+                Fixed.Scope,
+                1000))
+        {
+            Erased = [erasedEarlier, erasedOnly, b],
+        };
+    }
 
     private static HoldoutOutcomesCase ExactScope()
     {
@@ -442,6 +582,12 @@ internal static class HoldoutOutcomesContract
     public static JsonObject ToSeedJson(HoldoutOutcomesCase definition) => new()
     {
         ["records"] = SearchContract.ToSeedJson(definition.Records),
+        ["erased"] = new JsonArray([.. definition.Erased.Select(record => (JsonNode)new JsonObject
+        {
+            ["experienceId"] = HoldoutOutcomeRowJson.Id(record.ExperienceId),
+            ["scope"] = JsonSerializer.SerializeToNode(record.Scope, ContractJson.Options),
+            ["deletedAt"] = ContractJson.Timestamp(Fixed.T0.AddHours(1)),
+        })]),
         ["assignments"] = new JsonArray([.. definition.Assignments.Select(row => (JsonNode)new JsonObject
         {
             ["run_id"] = HoldoutOutcomeRowJson.Id(row.RunId),

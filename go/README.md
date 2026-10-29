@@ -266,7 +266,7 @@ the .NET and Python agents' in the same scope, and the Go port reads them too (n
 
 `ae.EstimateBenefit` (contract 1.9) is the .NET `AgentExperienceBenefit.EstimateAsync`: it reads the holdout's rows in
 exactly one scope (the scope the blocks were built in), each with its run's verified outcome, and compares the arms,
-with the same numbers for the same rows ([what it reports](../docs/guide/injection.md#reading-the-estimate)):
+with the same counts and verdicts for the same rows, and every rate, difference and bound equal within 1e-12 ([what it reports](../docs/guide/injection.md#reading-the-estimate)):
 
 ```go
 estimate, err := ae.EstimateBenefit(ctx, store, identity.Authorization(), identity.Scope,
@@ -282,10 +282,13 @@ estimate, err := ae.EstimateBenefit(ctx, store, identity.Authorization(), identi
 - **A scope outside the bounds** reads nothing and gives an empty estimate whose `Outcome` is `ae.BenefitDenied`,
   never an error.
 - **The options.** `MinimumRunsPerArm` is the fewest verified runs each arm needs before a verdict; 0 is the default,
-  `ae.DefaultMinimumRunsPerArm` (20), Go's zero-value idiom, and a negative value is an error before anything is read.
+  `ae.DefaultMinimumRunsPerArm` (20), Go's zero-value idiom (so, unlike .NET and Python, an explicit 0 cannot be refused), and a negative value is an error
+  before anything is read.
   `SplitByModel` adds the per-model comparisons.
 - **A sealed record** (`payload_version` 2), which a contract 1.x port cannot read, gives its run no outcome: the run
-  counts as `Pending`, exactly as .NET counts a run whose record is sealed under a destroyed key.
+  counts as `Pending`, exactly as .NET counts a run whose record is sealed under a destroyed key. A sealed lesson names
+  no model either, so in an encrypted store, where .NET opens sealed records, its model reads as `unknown` here and the
+  per-model pairs (`ByModelPair`) can differ from the .NET estimate's.
 - **Rows read any other way** are estimated with `ae.EstimateBenefitFromRows`, pure and order-independent.
 
 The fields map one to one to .NET's `ExperienceBenefitEstimate`:

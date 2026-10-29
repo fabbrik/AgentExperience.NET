@@ -182,6 +182,8 @@ type OutcomesCase struct {
 	Name        string
 	Records     []ae.ExperienceRecord
 	Assignments []AssignmentRow
+	// Erased are seed.json's erasures, each {experienceId, scope, deletedAt}, applied in order after the rows.
+	Erased []*ae.Object
 	// Scope is the scope read and also the caller's bounds.
 	Scope ae.Scope
 	Limit int
@@ -204,6 +206,9 @@ func LoadOutcomesCase(name string) (*OutcomesCase, error) {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		c.Records = append(c.Records, record)
+	}
+	for _, item := range list(get(seed, "erased")) {
+		c.Erased = append(c.Erased, object(item))
 	}
 	for _, item := range list(get(seed, "assignments")) {
 		row := object(item)

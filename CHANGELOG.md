@@ -17,8 +17,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - **The Python and Go ports read the estimate**: Python `estimate_benefit(store, authorization, scope, options)`, Go
   `EstimateBenefit(ctx, store, authorization, scope, opts)`, over their in-memory and PostgreSQL stores, with the same
   fields as `ExperienceBenefitEstimate`. Their agents record the chat client's model under `agentexperience.model`, so a
-  split by model counts their runs. A run whose record is sealed counts as `Pending` in a port. A .NET test estimates
-  over rows a Python and a Go agent wrote and gets the numbers each port computes over the same rows. The benefit
+  split by model counts their runs. A run whose record is sealed counts as `Pending` in a port, and a sealed lesson's
+  model reads as `unknown` there (in an encrypted store its per-model pairs can differ from .NET's). A .NET test
+  estimates over rows a Python and a Go agent wrote and gets the counts and verdicts each port computes over the same
+  rows, with every other number equal within 1e-12. The benefit
   policy and measuring another memory provider stay .NET-only.
 
 ## 0.1.0-preview.17

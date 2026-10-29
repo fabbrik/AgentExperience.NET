@@ -457,7 +457,7 @@ class InMemoryExperienceStore:
                             for indexed in self._records.values()
                             if indexed.record.source_run_id == row.run_id and indexed.record.scope == row.scope
                         ),
-                        key=lambda record: (record.created_at, record.experience_id),
+                        key=lambda record: (record.created_at.truncate_to_microseconds(), record.experience_id),
                     )
                     runs[row.run_id] = (
                         (own[0].outcome.status, model_of_metadata(own[0].environment.metadata)) if own else (None, None)

@@ -39,6 +39,9 @@ func seedOutcomes(t *testing.T, store *postgres.Store, owner *pgx.Conn, c *ct.Ou
 			t.Fatal(err)
 		}
 	}
+	for _, erased := range c.Erased {
+		eraseStep(t, owner, erased)
+	}
 }
 
 func TestHoldoutOutcomes(t *testing.T) {

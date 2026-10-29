@@ -23,7 +23,6 @@ from typing import Literal, Protocol, runtime_checkable
 
 from ._text import is_null_or_whitespace, utf16_sort_key
 from .holdout import (
-    HOLDOUT_ARMS,
     MAX_HOLDOUT_OUTCOME_LIMIT,
     HoldoutArm,
     HoldoutOutcomeCursor,
@@ -301,8 +300,6 @@ class BenefitAccumulator:
         """Adds one row; ``None`` is ignored. ``ValueError`` when the row's run was already folded."""
         if row is None:
             return
-        if row.arm not in HOLDOUT_ARMS:
-            raise ValueError("The arm must be 'Treatment' or 'Holdout'.")
         if self._open_run != row.run_id:
             if row.run_id in self._folded:
                 raise ValueError(

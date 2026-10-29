@@ -286,3 +286,28 @@ func TestEstimateBenefitOverAStore(t *testing.T) {
 		t.Fatalf("%+v", paged.Overall)
 	}
 }
+
+func TestAnArmOtherThanTreatmentCountsAsHoldoutAndAnUnknownOutcomeAsUnverified(t *testing.T) {
+	// .NET's estimator counts every arm but Treatment in the holdout arm, and every outcome but Verified or Failed as
+	// unverified; nothing is refused.
+	at := ae.MustParseInstant("2026-03-02T09:00:00+00:00")
+	lesson := ae.MustParseUUID("00000000-0000-4000-8000-000000000001")
+	status := func(s ae.VerificationStatus) *ae.VerificationStatus { return &s }
+	rows := []ae.HoldoutOutcomeRow{
+		{RunID: ae.MustParseUUID("00000000-0000-4000-8000-000000000101"), Arm: ae.HoldoutTreatment, ExperienceID: lesson,
+			AssignedAt: at, RunOutcome: status(ae.VerificationVerified)},
+		{RunID: ae.MustParseUUID("00000000-0000-4000-8000-000000000102"), Arm: ae.HoldoutArm("Control"), ExperienceID: lesson,
+			AssignedAt: at, RunOutcome: status(ae.VerificationFailed)},
+		{RunID: ae.MustParseUUID("00000000-0000-4000-8000-000000000103"), Arm: ae.HoldoutArm("Holdout"), ExperienceID: lesson,
+			AssignedAt: at, RunOutcome: status(ae.VerificationStatus("Abandoned"))},
+	}
+	estimate, err := ae.EstimateBenefitFromRows(rows, ae.BenefitOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overall := estimate.Overall
+	if overall.Treatment.Runs != 1 || overall.Treatment.Successes != 1 || overall.Holdout.Runs != 1 ||
+		overall.Holdout.Successes != 0 || overall.Unverified != 1 || overall.MixedArm != 0 {
+		t.Fatalf("got %+v", overall)
+	}
+}

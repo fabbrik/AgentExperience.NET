@@ -222,7 +222,11 @@ for lesson in estimate.lessons:
   interval excludes zero, otherwise `NoEvidence`. The cautions of the .NET guide (many lessons mean many comparisons;
   do not stop the first time it says `Helps`; watch `pending` and `unverified`) apply unchanged.
 - **A sealed record** (`payload_version` 2, written by .NET's crypto-shredding) cannot be read by the port: its run has
-  no outcome and counts as `pending`, exactly as .NET counts a run whose record is sealed under a destroyed key.
+  no outcome and counts as `pending`, exactly as .NET counts a run whose record is sealed under a destroyed key. A
+  sealed lesson names no model either, so in an encrypted store, where .NET opens sealed records, its model reads as
+  `unknown` here and the per-model pairs (`by_model_pair`) can differ from the .NET estimate's.
+- **The same answer as .NET** for the same rows: the same counts and verdicts, and every rate, difference and bound
+  equal within 1e-12.
 - **Edges.** `BenefitOptions(minimum_runs_per_arm=0)` raises `ValueError` before anything is read. A store without
   `read_holdout_outcomes` gives an empty estimate with `tracked` `False`; a scope outside `bounds` gives an empty one
   whose `outcome` is `Denied`, never an exception. A store that pages a run's rows apart raises `ValueError` rather
