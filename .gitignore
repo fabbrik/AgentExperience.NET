@@ -43,3 +43,7 @@ _sdlc/test-artifacts/
 **/.claude/
 # Release artifacts (dotnet pack --output artifacts/packages)
 artifacts/
+
+# The CI-triage tool (experiments/AgentExperience.CiTriage): fetched CI logs, and what --scripted writes
+experiments/AgentExperience.CiTriage/.cache/
+experiments/AgentExperience.CiTriage/results/scripted/

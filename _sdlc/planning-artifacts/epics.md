@@ -2331,3 +2331,29 @@ run's own record is refused; the benefit estimate aggregates run by run so
 memory grows with runs, not rows; migration 0028 indexes
 `experience_records (tenant_id, source_run_id)`; the lessons view can show
 each lesson's measured benefit (opt-in).
+
+## Epic 26: The Library on Real Work
+
+**Added:** 2026-10-28 · **Status:** in progress
+
+So far the library has only been measured in lab experiments. This epic runs it on real work, wired the way a user
+would wire it (public API only), with its own holdout judging it. The first real workload is this repository's own
+failed CI runs.
+
+### Story 26.1: CI-Failure Triage Agent
+`experiments/AgentExperience.CiTriage` triages this repository's failed CI runs. For each failure it names the files
+most likely to need the fix, or says the failure is flaky. The labels come from the repository's own later history:
+- a same-commit green run is flaky;
+- the next green commit's diff, when it is at most 10 files, is the fix.
+
+A pass replays, in time order on a simulated clock, every failure whose fix is known by then. A failure is triaged at
+its own time and finalized out of band at its green run's time, so a lesson only reaches failures after its fix was
+known. Injection runs a 0.5 holdout, and each pass ends with `AgentExperienceBenefit.EstimateAsync`. Storage is in
+memory, or PostgreSQL with a ledger that skips failures already processed. Calls and tokens have hard caps, and
+`--scripted` runs offline.
+
+### Story 26.2: Durable Capture for Outcomes That Arrive Later
+A captured run lives only in `InMemoryExperienceCaptureService`. It is dropped after `CompletedRunRetention` or when
+the process exits, so an outcome that arrives days later cannot be finalized. Examples are a CI fix and a ticket
+resolution. A durable capture store, so a run can be finalized from another process, would let 26.1 finalize each
+failure when its fix lands instead of replaying only failures whose fix is already known.

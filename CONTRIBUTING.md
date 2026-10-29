@@ -50,6 +50,7 @@ dotnet test tests/AgentExperience.ReuseBaseline
 dotnet test tests/AgentExperience.Release.Tests
 dotnet test tests/AgentExperience.Sample.QuickStart.Tests
 dotnet test experiments/AgentExperience.LiveReuse.Tests
+dotnet test experiments/AgentExperience.CiTriage.Tests
 dotnet test tests/AgentExperience.CompatibilityProof --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.Sample.EndToEnd.Tests --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.RetrievalQuality --filter "FullyQualifiedName!~Postgres"
@@ -102,6 +103,8 @@ samples/
 experiments/
   AgentExperience.LiveReuse/                opt-in, pre-registered reuse experiment against a real model; never run by CI
   AgentExperience.LiveReuse.Tests/          that experiment's harness, proven offline against scripted models
+  AgentExperience.CiTriage/                 triages this repository's failed CI runs with the library learning and a holdout judging; run by hand
+  AgentExperience.CiTriage.Tests/           that tool, proven offline over fake CI data with a scripted model
 benchmarks/
   AgentExperience.Benchmarks/               BenchmarkDotNet over the hot paths, on the in-memory store and PostgreSQL; run by hand, never by CI (docs/benchmarks.md)
 contract/                                   the language-neutral contract for ports in other languages: record schema, SQL, conformance fixtures
