@@ -1,5 +1,5 @@
 // Package agentexperience is a Go core of AgentExperience that implements the AgentExperience.NET language-neutral
-// contract 1.9 (the repository's contract directory).
+// contract 1.10 (the repository's contract directory).
 //
 // Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical
 // Reference block, derives the task text, classifies errors, and computes the text-search parameters and the
@@ -18,7 +18,10 @@
 // The injection holdout (contract 1.8, AssignHoldout) assigns a captured run to the arm .NET would, so a Go agent
 // withholds the block on the same share of runs and records the rows the .NET benefit estimate reads. The benefit
 // estimate (contract 1.9, EstimateBenefit) reads those rows back, a page at a time, and gives the .NET estimate's
-// numbers: overall, per lesson and, split by the run's model (ModelMetadataKey), per model.
+// numbers: overall, per lesson and, split by the run's model (ModelMetadataKey), per model. The benefit policy (contract
+// 1.10, BenefitPolicy) acts on it: BenefitView is what one estimate means for an invocation, and SelectCandidates the
+// selection .NET's context provider runs, so a lesson measured Hurts is omitted (MeasuredHarmful) and, on request, the
+// lessons measured Helps go first. The lessons view shows each lesson's measured benefit (IncludeMeasuredBenefit).
 //
 // The contract is generated from .NET, where a string is UTF-16: every length, cut and limit here is counted in
 // UTF-16 code units, never in bytes or runes. Whitespace, word characters and ignoring case are .NET's, not Go's
@@ -29,7 +32,7 @@
 package agentexperience
 
 // ContractVersion is the contract version this package implements.
-const ContractVersion = "1.9"
+const ContractVersion = "1.10"
 
 // SupportedContractVersions are the contract versions this package passes: every fixture of each.
-var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"}
+var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"}

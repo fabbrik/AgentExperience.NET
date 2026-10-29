@@ -58,8 +58,8 @@ func ContextProviderOf(config *agent.Config) *ContextProvider {
 	return nil
 }
 
-// Close waits for every injection record the provider started, and every background embedding write its
-// configuration started, to end, or for ctx to be done, whichever is first,
+// Close waits for every injection record the provider started, and every background embedding write and benefit
+// refresh its configuration started, to end, or for ctx to be done, whichever is first,
 // and returns ctx's error in the second case. Each record is bounded by InjectionRecordTimeout, so a host shutting
 // down can call it with a context of a few seconds. A store write that overran that bound was abandoned when its
 // record ended and is not awaited: it may still be running (AbandonedInjectionRecords counts them). Close may run
@@ -80,7 +80,11 @@ func (p *ContextProvider) Close(ctx context.Context) error {
 		}
 	}
 	// The background embedding writes of the records stored (contract 1.6) too.
-	return p.settings.index.wait(ctx)
+	if err := p.settings.index.wait(ctx); err != nil {
+		return err
+	}
+	// And the benefit refreshes (contract 1.10).
+	return p.WaitBenefitRefreshes(ctx)
 }
 
 // beginRecording counts a record started.
@@ -253,6 +257,15 @@ func (s *settings) reportWithheld(result InjectionResult) {
 	}
 	defer func() { _ = recover() }()
 	s.OnWithheld(result)
+}
+
+// reportInjected tells OnInjected, recovering a panic in it.
+func (s *settings) reportInjected(result InjectionResult) {
+	if s.OnInjected == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	s.OnInjected(result)
 }
 
 // reportHoldoutRecorded tells OnHoldoutRecorded, recovering a panic in it.

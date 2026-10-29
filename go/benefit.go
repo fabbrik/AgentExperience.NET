@@ -198,6 +198,12 @@ type BenefitEstimate struct {
 // The bounds and scope must come from your own authentication: the estimate names lessons by ID and counts runs.
 func EstimateBenefit(ctx context.Context, store Store, bounds AuthorizationBounds, scope Scope,
 	options BenefitOptions) (BenefitEstimate, error) {
+	return estimateBenefit(ctx, store, bounds, scope, options, nil)
+}
+
+// estimateBenefit is EstimateBenefit, counting only the rows assigned at or after from when it is set.
+func estimateBenefit(ctx context.Context, store any, bounds AuthorizationBounds, scope Scope,
+	options BenefitOptions, from *Instant) (BenefitEstimate, error) {
 	accumulator, err := NewBenefitAccumulator(options)
 	if err != nil {
 		return BenefitEstimate{}, err
@@ -225,8 +231,13 @@ func EstimateBenefit(ctx context.Context, store Store, bounds AuthorizationBound
 		if err != nil {
 			return BenefitEstimate{}, err
 		}
-		if err := accumulator.AddAll(rows); err != nil {
-			return BenefitEstimate{}, err
+		for _, row := range rows {
+			if from != nil && row.AssignedAt.Before(*from) {
+				continue
+			}
+			if err := accumulator.Add(row); err != nil {
+				return BenefitEstimate{}, err
+			}
 		}
 		if len(rows) < HoldoutOutcomesMaxLimit {
 			break

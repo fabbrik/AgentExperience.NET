@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.9.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.10.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -24,6 +24,7 @@ from .benefit import (
     estimate,
     estimate_benefit,
 )
+from .benefit_policy import BenefitPolicy, BenefitView, BenefitViews, OmittedRecord, Selection, select_block
 from .block import Block, BlockOptions, RankedRecord, RankingComponent, render_block
 from .capture import CapturedRun, RawAttempt, RawToolCall, RunCapture
 from .embedding import (
@@ -92,11 +93,23 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.9"
-"""The contract version this package passes: every fixture of contract 1.9, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7 and 1.8 fixture."""
+CONTRACT_VERSION = "1.10"
+"""The contract version this package passes: every fixture of contract 1.10, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8 and 1.9 fixture."""
 
-SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
+SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
+    "1.0",
+    "1.1",
+    "1.2",
+    "1.3",
+    "1.4",
+    "1.5",
+    "1.6",
+    "1.7",
+    "1.8",
+    "1.9",
+    "1.10",
+)
 """Every contract version whose fixtures this package passes."""
 
 __all__ = [
@@ -111,6 +124,9 @@ __all__ = [
     "BenefitComparison",
     "BenefitEstimate",
     "BenefitOptions",
+    "BenefitPolicy",
+    "BenefitView",
+    "BenefitViews",
     "Block",
     "BlockOptions",
     "CaptureLimits",
@@ -142,6 +158,7 @@ __all__ = [
     "MessagePart",
     "ModelBenefit",
     "ModelPairBenefit",
+    "OmittedRecord",
     "Outcome",
     "Provenance",
     "RankedRecord",
@@ -161,6 +178,7 @@ __all__ = [
     "SearchParameters",
     "SearchRow",
     "SearchSafetyError",
+    "Selection",
     "ToolCall",
     "VectorFallback",
     "VectorHit",
@@ -183,5 +201,6 @@ __all__ = [
     "reflection_id_for",
     "render_block",
     "retrieval_summary",
+    "select_block",
     "to_stored",
 ]

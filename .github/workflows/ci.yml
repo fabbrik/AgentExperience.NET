@@ -441,7 +441,7 @@ jobs:
           test -n "$floor"
           uv pip install "agent-framework-core==$floor"
           uv run --no-sync python -c "import importlib.metadata as m; v = m.version('agent-framework-core'); assert v == '$floor', v; print('agent-framework-core', v)"
-          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_maf_holdout.py tests/test_quickstart.py tests/test_cross_language.py tests/test_cross_language_holdout.py
+          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_maf_holdout.py tests/test_maf_benefit.py tests/test_quickstart.py tests/test_cross_language.py tests/test_cross_language_holdout.py
 
       # The maf extra's ceiling: the same tests on the newest agent-framework-core PyPI serves, so a MAF release that breaks
       # the integration is seen in the next CI run (or the weekly one) and not by a user. The extra claims every later
@@ -452,7 +452,7 @@ jobs:
           set -euo pipefail
           uv pip install --upgrade "agent-framework-core"
           uv run --no-sync python -c "import importlib.metadata as m; print('agent-framework-core', m.version('agent-framework-core'))"
-          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_maf_holdout.py tests/test_quickstart.py tests/test_cross_language.py tests/test_cross_language_holdout.py
+          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_maf_holdout.py tests/test_maf_benefit.py tests/test_quickstart.py tests/test_cross_language.py tests/test_cross_language_holdout.py
 
       # The wheel, not the source tree: built, installed into a clean environment outside the checkout, and imported,
       # so the packaged SQL files and py.typed are proven to ship.

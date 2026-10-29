@@ -1,7 +1,8 @@
 """
 Story 23.4: the lessons view in Python (contract 1.7). The ``lessons-view`` fixture family through the in-memory store
 and the PostgreSQL store (the packaged ``list-experience-lessons.sql`` run as written), then every row of the story's
-I/O matrix on both stores.
+I/O matrix on both stores. Story 27.2 (contract 1.10): the cases with each lesson's measured benefit, whose holdout
+rows the seed holds, and the case whose holdout read fails.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from _benefit import TOLERANCE
 from _contract import FIXTURES, cases, json_difference, read_json, scope_of
 
 from agentexperience import (
@@ -25,9 +27,12 @@ from agentexperience import (
     Scope,
     from_stored,
 )
+from agentexperience.benefit import DEFAULT_MINIMUM_RUNS_PER_ARM
+from agentexperience.benefit_policy import BenefitPolicy
 from agentexperience.block import render_block
 from agentexperience.inmemory import InMemoryExperienceStore, LessonsRead, LessonsReader
 from agentexperience.lessons import format_number, render_alone
+from agentexperience.observer import classify
 
 FAMILY = FIXTURES / "lessons-view"
 NOW = Instant.parse("2026-03-02T15:00:00+00:00")
@@ -52,8 +57,13 @@ def _normalized(page: dict[str, Any]) -> dict[str, Any]:
 
 
 def memory_store(seed: dict[str, Any]) -> InMemoryExperienceStore:
-    """An in-memory store holding a seed's records, with its injections recorded at the instants the seed names."""
+    """An in-memory store holding a seed's records, with its injections recorded at the instants the seed names, and
+    its holdout rows (contract 1.10)."""
+    from test_benefit import _holdout_row
+
     store = InMemoryExperienceStore([from_stored(stored) for stored in seed["records"]], clock=lambda: NOW)
+    for row in seed.get("assignments", ()):
+        store.seed_holdout_row(_holdout_row(row))
     for row in seed["injections"]:
         scope = scope_of(
             {
@@ -79,6 +89,7 @@ def postgres_store(pg_server: Any, label: str, seed: dict[str, Any]) -> Any:
     """A PostgreSQL store over a fresh database holding a seed's records, and its injections as the schema's owner."""
     import psycopg
     from _postgres import OWNER, PASSWORD, application_conninfo, create_database
+    from test_benefit import _ASSIGNMENT_COLUMNS, _INSERT_ASSIGNMENT
     from test_postgres import INJECTION_COLUMNS
 
     from agentexperience.postgres import PostgresExperienceStore
@@ -96,6 +107,8 @@ def postgres_store(pg_server: Any, label: str, seed: dict[str, Any]) -> Any:
                 "%s, %s, %s, %s, %s::timestamptz, %s::bigint)",
                 tuple(row[column] for column in INJECTION_COLUMNS),
             )
+        for row in seed.get("assignments", ()):
+            connection.execute(_INSERT_ASSIGNMENT, tuple(row[column] for column in _ASSIGNMENT_COLUMNS))
     store.database = database  # type: ignore[attr-defined]
     return store
 
@@ -142,29 +155,90 @@ def run_case(store: Any, name: str, options: dict[str, Any] | None = None) -> No
     query = read_json(FAMILY / name / "query.json")
     expected = read_json(FAMILY / name / "expected.json")
     scope = scope_of(query["scope"])
-    lessons = ExperienceLessons(store, clock=lambda: Instant.parse(query["now"]), **(options or {}))
-    page = lessons.list_scope(
-        AuthorizationBounds.of(scope),
-        scope,
-        LessonsQuery(query["statuses"], query["limit"], query["includeIneligible"]),
+    # Contract 1.10: the benefit policy the view reads with (its window is the default).
+    policy = BenefitPolicy(
+        minimum_runs_per_arm=query.get("minimumRunsPerArm") or DEFAULT_MINIMUM_RUNS_PER_ARM,
+        per_model=query.get("perModel", False),
     )
-    difference = json_difference(_normalized(expected), _normalized(page.to_json()))
+    lessons = ExperienceLessons(store, clock=lambda: Instant.parse(query["now"]), benefit=policy, **(options or {}))
+    list_query = LessonsQuery(
+        query["statuses"],
+        query["limit"],
+        query["includeIneligible"],
+        include_measured_benefit=query.get("includeMeasuredBenefit", False),
+    )
+    if query.get("holdoutReadRevoked", False):
+        # The holdout read fails, and the list with it, as a store failure.
+        with pytest.raises(Exception) as failure:
+            lessons.list_scope(AuthorizationBounds.of(scope), scope, list_query)
+        assert classify(failure.value) == expected["errorClass"]
+        return
+    page = lessons.list_scope(AuthorizationBounds.of(scope), scope, list_query)
+    difference = json_difference(_normalized(expected), _normalized(page.to_json()), tolerance=TOLERANCE)
     assert difference is None, difference
+
+
+class HoldoutReadFails(InMemoryExperienceStore):
+    """An in-memory store whose holdout read fails as a store failure: the in-memory form of ``holdoutReadRevoked``."""
+
+    def read_holdout_outcomes(self, *args: Any, **kwargs: Any) -> Any:
+        raise OSError("the holdout read failed")
 
 
 @pytest.mark.parametrize("name", cases("lessons-view"))
 def test_lessons_view_in_memory(name: str) -> None:
-    run_case(memory_store(read_json(FAMILY / name / "seed.json")), name)
+    seed = read_json(FAMILY / name / "seed.json")
+    store = memory_store(seed)
+    if read_json(FAMILY / name / "query.json").get("holdoutReadRevoked", False):
+        failing = HoldoutReadFails([from_stored(stored) for stored in seed["records"]], clock=lambda: NOW)
+        store = failing
+    run_case(store, name)
 
 
 @pytest.mark.postgres
 @pytest.mark.parametrize("name", cases("lessons-view"))
 def test_lessons_view_postgres(pg_server: Any, name: str) -> None:
-    run_case(postgres_store(pg_server, name, read_json(FAMILY / name / "seed.json")), name)
+    store = postgres_store(pg_server, name, read_json(FAMILY / name / "seed.json"))
+    if read_json(FAMILY / name / "query.json").get("holdoutReadRevoked", False):
+        from _postgres import APPLICATION
+
+        owner_execute(
+            pg_server, store, f'REVOKE SELECT ON agent_experience.experience_holdout_assignments FROM "{APPLICATION}"'
+        )
+    run_case(store, name)
 
 
-def test_the_lessons_view_has_eight_cases() -> None:
-    assert len(cases("lessons-view")) == 8
+def test_the_lessons_view_has_twelve_cases() -> None:
+    # Contract 1.7's eight, and contract 1.10's four with the measured benefit.
+    assert len(cases("lessons-view")) == 12
+    assert len([name for name in cases("lessons-view") if name.startswith("measured-benefit")]) == 4
+
+
+def test_without_the_query_asking_nothing_more_is_read() -> None:
+    seed = read_json(FAMILY / "measured-benefit" / "seed.json")
+    failing = HoldoutReadFails([from_stored(stored) for stored in seed["records"]], clock=lambda: NOW)
+    scope = scope_of(read_json(FAMILY / "measured-benefit" / "query.json")["scope"])
+    page = view(failing).list_scope(AuthorizationBounds.of(scope), scope)
+    assert page.lessons and all(lesson.measured_benefit is None for lesson in page.lessons)
+    assert all("measuredBenefit" not in lesson for lesson in page.to_json()["lessons"])
+
+
+def test_a_store_that_does_not_read_the_holdout_gives_no_measured_benefit() -> None:
+    scope = the_scope()
+    store = NoHoldout(memory_store(base_seed()))
+    page = view(store).list_scope(AuthorizationBounds.of(scope), scope, LessonsQuery(include_measured_benefit=True))
+    assert page.lessons and all(lesson.measured_benefit is None for lesson in page.lessons)
+    assert all(lesson["measuredBenefit"] is None for lesson in page.to_json()["lessons"])
+
+
+class NoHoldout:
+    """A lessons reader that does not read the holdout."""
+
+    def __init__(self, inner: InMemoryExperienceStore) -> None:
+        self._inner = inner
+
+    def list_lessons_page(self, *args: Any, **kwargs: Any) -> LessonsRead:
+        return self._inner.list_lessons_page(*args, **kwargs)
 
 
 # ---- The matrix, on both stores ----------------------------------------------------------------------------------

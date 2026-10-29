@@ -1,0 +1,36 @@
+{
+  "selected": [],
+  "injected": [],
+  "omitted": [
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000013",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000016",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000011",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000012",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000014",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000015",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this scope's lessons together as hurting, so none is injected."
+    }
+  ]
+}

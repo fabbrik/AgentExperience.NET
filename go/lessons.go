@@ -60,6 +60,11 @@ type LessonQuery struct {
 	Limit int
 	// IncludeIneligible is whether to list the lessons retrieval would not return, each marked with why; true when nil.
 	IncludeIneligible *bool
+	// IncludeMeasuredBenefit (contract 1.10) reads one benefit estimate for the page's scope, over the view's benefit
+	// policy's window before the page's GeneratedAt, with its minimum and, with PerModel, split by model (whether or
+	// not the policy is on), and sets each listed lesson's MeasuredBenefit from it. Off by default: then nothing more
+	// is read. A store failure on that read fails the list.
+	IncludeMeasuredBenefit bool
 }
 
 // Validate refuses a limit outside LessonsMinLimit..LessonsMaxLimit (0 is the default) and statuses that are empty or
@@ -186,6 +191,10 @@ type Lesson struct {
 	LastInjectedAt *Instant
 	// InjectionCount is how many injected blocks delivered it in this scope; 0 when never or not tracked.
 	InjectionCount int64
+	// MeasuredBenefit is what the injection holdout measured for this lesson (contract 1.10): set only when the query
+	// asked for it (IncludeMeasuredBenefit); nil otherwise, when no assigned run in the window named it, or when the
+	// store does not track the holdout.
+	MeasuredBenefit *LessonBenefit
 }
 
 // LessonsPage is one page of lessons from one scope.
@@ -216,6 +225,9 @@ type LessonsOptions struct {
 	ExcludeModelAuthored bool
 	// Clock stamps a page's GeneratedAt; Now when nil.
 	Clock func() Instant
+	// Benefit is the injection's benefit policy (contract 1.10): its Window, MinimumRunsPerArm and PerModel decide the
+	// estimate IncludeMeasuredBenefit reads (their defaults when zero), whether or not the policy is Enabled.
+	Benefit BenefitPolicy
 }
 
 // Lessons is the read-only lessons view over a store. It is safe for concurrent use when its store is.
@@ -233,6 +245,9 @@ func NewLessons(store LessonsReader, options LessonsOptions) (*Lessons, error) {
 		return nil, errors.New("the lessons view needs a store that is a LessonsReader")
 	}
 	if err := options.BlockOptions.Validate(); err != nil {
+		return nil, err
+	}
+	if err := options.Benefit.Validate(); err != nil {
 		return nil, err
 	}
 	if options.Clock == nil {
@@ -308,8 +323,41 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 		answered = len(read.Records)
 	}
 	page.HasMore = page.HasMore || answered >= probe
+	// Contract 1.10: opt-in, so the default page reads nothing more.
+	if query.IncludeMeasuredBenefit && len(page.Lessons) > 0 {
+		if err := l.addMeasuredBenefit(ctx, bounds, scope, &page); err != nil {
+			return LessonsPage{}, err
+		}
+	}
 	return page, nil
 }
+
+// addMeasuredBenefit sets each listed lesson's MeasuredBenefit from one estimate for the page's scope, over the benefit
+// policy's window before the page's GeneratedAt (.NET's AddMeasuredBenefitAsync). Left nil for a lesson no assigned run
+// named, and for every lesson when the store does not track the holdout or refused the read.
+func (l *Lessons) addMeasuredBenefit(ctx context.Context, bounds AuthorizationBounds, scope Scope, page *LessonsPage) error {
+	policy := l.options.Benefit
+	estimate, err := estimateBenefit(ctx, l.store, bounds, scope, policy.EstimatorOptions(),
+		ptrTo(policy.AssignedFrom(page.GeneratedAt)))
+	if err != nil {
+		return err
+	}
+	if !usable(estimate) {
+		return nil
+	}
+	measured := make(map[UUID]*LessonBenefit, len(estimate.Lessons))
+	for i := range estimate.Lessons {
+		if _, ok := measured[estimate.Lessons[i].ExperienceID]; !ok {
+			measured[estimate.Lessons[i].ExperienceID] = &estimate.Lessons[i]
+		}
+	}
+	for i := range page.Lessons {
+		page.Lessons[i].MeasuredBenefit = measured[page.Lessons[i].ExperienceID]
+	}
+	return nil
+}
+
+func ptrTo[T any](value T) *T { return &value }
 
 // describe is one record as a lesson. A record that cannot be rendered is a lesson marked so, never a failure.
 func (l *Lessons) describe(record *ExperienceRecord) (lesson Lesson) {

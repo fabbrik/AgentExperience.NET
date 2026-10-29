@@ -1,0 +1,33 @@
+{
+  "selected": [
+    "000000a0-0000-4000-8000-000000000001",
+    "000000a0-0000-4000-8000-000000000002",
+    "000000a0-0000-4000-8000-000000000003"
+  ],
+  "injected": [
+    "000000a0-0000-4000-8000-000000000001",
+    "000000a0-0000-4000-8000-000000000002"
+  ],
+  "omitted": [
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000007",
+      "reason": "ModelAuthored",
+      "detail": null
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000008",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this lesson as hurting: runs given it verified less often than runs it was withheld from."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000004",
+      "reason": "OverRecordLimit",
+      "detail": "Ranked 6 of 6, beyond the limit of 3 records."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000003",
+      "reason": "OverByteBudget",
+      "detail": "The record did not fit in the remaining part of the 832-byte budget, and a record is never cut to fit."
+    }
+  ]
+}

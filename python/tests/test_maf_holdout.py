@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("agent_framework")
 
-from _maf import NEXT_TICKET, TICKET, ScriptedClient
+from _maf import NEXT_TICKET, TICKET, ScriptedClient, delivered
 from _sync import run
 from agent_framework import Agent, tool
 
@@ -93,7 +93,7 @@ def two_runs(store: Any, **options: Any) -> tuple[Observed, ScriptedClient]:
         environment=ENVIRONMENT,
         verify=tool_succeeded("run_tests"),
         classify_tool_result=exit_code("run_tests"),
-        on_injected=seen.injections.append,
+        on_injected=delivered(seen.injections.append),
         on_injection_failure=seen.failures.append,
         on_capture_failure=seen.failures.append,
         on_finalized=seen.finalized.append,

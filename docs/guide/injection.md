@@ -1137,7 +1137,8 @@ the arms.
   options; rate 0 by default). In a mixed fleet sharing one PostgreSQL store, the .NET estimate below counts the
   Python and Go agents' runs with the .NET ones. Apply the contract's `sql/application-role-privileges-1.8.sql` after
   its other privileges files, or run the .NET privileges call last. Since contract 1.9 the ports read the estimate too
-  (next section); the benefit policy and measuring another memory provider stay .NET-only.
+  (next section), and since contract 1.10 they act on it with the same benefit policy; measuring another memory
+  provider stays .NET-only.
 
 ### Reading the estimate
 
@@ -1247,6 +1248,22 @@ options.Benefit = new ExperienceBenefitPolicy { Enabled = true, PreferMeasuredHe
   `ListAsync(identity, new ExperienceLessonsQuery { IncludeMeasuredBenefit = true })` fills each lesson's
   `MeasuredBenefit` from one estimate over this policy's `Window` and `MinimumRunsPerArm`, so a lesson omitted as
   `MeasuredHarmful` shows the `Hurts` comparison behind it. See [Seeing what it learned](deployment.md#seeing-what-it-learned).
+- **In Python and Go too** (contract 1.10, [what it adds](../../contract/README-1.10.md)). The ports' agents act on the
+  estimate with the same policy, defaults and validation: Python
+  `use_agent_experience(..., benefit=BenefitPolicy(enabled=True, prefer_measured_helpful=True))`, Go
+  `Options.Benefit = ae.BenefitPolicy{Enabled: true, PreferMeasuredHelpful: true}` (Go cannot tell an unset value from
+  zero, so a zero duration or minimum means its default, and only a negative value, or a timeout over one day, is
+  refused). They omit, reorder and keep a per-model view exactly as above, with the same omission reasons and
+  details (Python `InjectionResult.omitted`, Go `InjectionResult.Omitted`), refresh the same cached estimate in the
+  background (a thread in Python, a goroutine in Go), never on the request path, and report the same `benefit_refresh`
+  operation. Their lessons views show the measured benefit on request (Python
+  `LessonsQuery(include_measured_benefit=True)`, Go `LessonQuery.IncludeMeasuredBenefit`). A .NET test writes a fleet
+  in which one lesson measures `Hurts`, and Python and Go agents over the same PostgreSQL rows omit it as
+  `MeasuredHarmful`. In both ports the refresh timeout runs on the wall clock; the interval and the window use the
+  agent's clock. The ports key the cache on the scope, the principal and the full authorization bounds, stricter than
+  .NET's tenant and principal (never looser). With `PerModel`, an agent with no recorded model reads the pooled view:
+  the estimate's `unknown` group is never an agent's own, as in .NET. When everything is omitted, the injection
+  result reports `NothingToInject` with every omission, as .NET's does.
 
 ### Per model
 

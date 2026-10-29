@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Holdout;
 using AgentExperience.MicrosoftAgentFramework;
 
 namespace AgentExperience.Contract.Tests;
@@ -11,19 +13,38 @@ namespace AgentExperience.Contract.Tests;
 /// with (<see cref="Now"/>, which the page reports as <c>generatedAt</c>). <see cref="Statuses"/> of <see langword="null"/>
 /// lists every status.
 /// </summary>
+/// <remarks>
+/// Contract 1.10 adds four members, written only when they are not their default, so every 1.7 <c>query.json</c> is
+/// unchanged: <see cref="IncludeMeasuredBenefit"/> (the view reads one benefit estimate for the scope, over the benefit
+/// policy's window, 30 days before <see cref="Now"/>), <see cref="MinimumRunsPerArm"/> (the policy's minimum, the
+/// default 20 when absent), <see cref="PerModel"/> (the policy's per-model switch, which splits the estimate by model) and
+/// <see cref="HoldoutReadRevoked"/> (before listing, the schema's owner revokes the application role's <c>SELECT</c> on
+/// <c>agent_experience.experience_holdout_assignments</c>, so the holdout read fails).
+/// </remarks>
 internal sealed record LessonsViewQuery(
     string Description,
     Scope Scope,
     IReadOnlyList<ExperienceStatus>? Statuses,
     int Limit,
     bool IncludeIneligible,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IncludeMeasuredBenefit = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MinimumRunsPerArm = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool PerModel = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HoldoutReadRevoked = false);
 
-/// <summary>A lessons-view case: the records seeded (as stored), the injection rows seeded, and the query.</summary>
+/// <summary>
+/// A lessons-view case: the records seeded (as stored), the injection rows seeded, the query, and (contract 1.10) the
+/// holdout's assignment rows seeded.
+/// </summary>
 internal sealed record LessonsViewCase(
     IReadOnlyList<ExperienceRecord> Seed,
     IReadOnlyList<SeededInjection> Injections,
-    LessonsViewQuery Query);
+    LessonsViewQuery Query)
+{
+    /// <summary>The holdout's assignment rows (contract 1.10), seeded as the schema's owner; <c>seed.json</c> holds them only when there are any.</summary>
+    public IReadOnlyList<SeededAssignment> Assignments { get; init; } = [];
+}
 
 /// <summary>
 /// Contract 1.7's <c>lessons-view</c> family: what the lessons view lists for the stored records and injection rows of a
@@ -54,7 +75,78 @@ internal static class LessonsViewContract
         ("status-filter", Mixed(0x75, "Only the named statuses are read.", Query() with { Statuses = [ExperienceStatus.Quarantined, ExperienceStatus.Stale, ExperienceStatus.Reinforced] })),
         ("never-injected", Mixed(0x76, "No injection row exists: the injections are tracked and every lesson reads never injected, with a count of 0.", Query(), withInjections: false)),
         ("other-scope-only", OtherScopeOnly()),
+
+        // Contract 1.10.
+        ("measured-benefit", Measured(0x7a, Query() with
+        {
+            Description = "IncludeMeasuredBenefit, at a minimum of 2 runs per arm: one estimate for the scope over the window (30 days before the page's clock). The lesson treatment runs failed on and holdout runs verified on is measured Hurts, the other Helps; a lesson no assigned run named, and one named only by an assignment older than the window, carry null, as does every run's own record.",
+            IncludeMeasuredBenefit = true,
+            MinimumRunsPerArm = 2,
+        })),
+        ("measured-benefit-default-minimum", Measured(0x7b, Query() with
+        {
+            Description = "IncludeMeasuredBenefit at the default minimum of 20 runs per arm: the same counts, every verdict NoEvidence.",
+            IncludeMeasuredBenefit = true,
+        })),
+        ("measured-benefit-by-model", Measured(0x7c, Query() with
+        {
+            Description = "IncludeMeasuredBenefit with the policy's PerModel on: the estimate is split by model, so each lesson's measured benefit carries its model pairs.",
+            IncludeMeasuredBenefit = true,
+            MinimumRunsPerArm = 2,
+            PerModel = true,
+        })),
+        ("measured-benefit-read-fails", Measured(0x7d, Query() with
+        {
+            Description = "IncludeMeasuredBenefit, and the application role may not read the holdout's assignments: the holdout read fails, and the list fails with it, as a store failure (error class Infrastructure). No page is returned.",
+            IncludeMeasuredBenefit = true,
+            MinimumRunsPerArm = 2,
+            HoldoutReadRevoked = true,
+        })),
     ];
+
+    /// <summary>The error class of the failure a case whose holdout read fails ends in: .NET throws <c>ExperienceStoreException</c>.</summary>
+    public const string ReadFailedErrorClass = "Infrastructure";
+
+    /// <summary>
+    /// A scope with four lessons and the runs that measured them: H (treatment runs failed, holdout runs verified), G (the
+    /// reverse), N (no assigned run) and O (one assignment, older than the window). Each run's own record carries its
+    /// outcome and the model that ran it; the lessons carry the model that learned them.
+    /// </summary>
+    private static LessonsViewCase Measured(int f, LessonsViewQuery query)
+    {
+        var h = Record(f, 1, "Rotate every key at once.", -2, metadata: ModelMetadata("model-a"));
+        var g = Record(f, 2, "Rotate the keys in the documented order.", -3, metadata: ModelMetadata("model-b"));
+        var n = Record(f, 3, "Announce the rotation first.", -4);
+        var o = Record(f, 4, "Delete the old key straight away.", -40);
+        var records = new List<ExperienceRecord> { h, g, n, o };
+        var assignments = new List<SeededAssignment>();
+        var next = 0x10;
+
+        void Runs(ExperienceRecord lesson, HoldoutArm arm, bool verified, string model, int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var run = Record(f, next++, "Verified after 1 attempt.", -1, metadata: ModelMetadata(model), outcome: verified ? TaskVerificationStatus.Verified : TaskVerificationStatus.Failed);
+                records.Add(run);
+                assignments.Add(new SeededAssignment(run.SourceRunId, lesson.ExperienceId, lesson.Revision, arm, lesson.Scope, Fixed.T0.AddMinutes(next).AddTicks(1_234_560)));
+            }
+        }
+
+        Runs(h, HoldoutArm.Treatment, verified: false, "model-a", 2);
+        Runs(h, HoldoutArm.Holdout, verified: true, "model-b", 2);
+        Runs(g, HoldoutArm.Treatment, verified: true, "model-a", 2);
+        Runs(g, HoldoutArm.Holdout, verified: false, "model-a", 2);
+
+        // Outside the window: assigned 31 days before the records' clock.
+        var old = Record(f, next++, "Verified after 1 attempt.", -1, outcome: TaskVerificationStatus.Verified);
+        records.Add(old);
+        assignments.Add(new SeededAssignment(old.SourceRunId, o.ExperienceId, o.Revision, HoldoutArm.Treatment, o.Scope, Fixed.T0.AddDays(-31)));
+
+        return new LessonsViewCase(records, [], query) { Assignments = assignments };
+    }
+
+    private static Dictionary<string, string> ModelMetadata(string model) =>
+        new(StringComparer.Ordinal) { ["region"] = "eu-west", [HoldoutOutcomeRow.ModelMetadataKey] = model };
 
     private static LessonsViewQuery Query() => new(
         string.Empty, Fixed.Scope, Statuses: null, Limit: 50, IncludeIneligible: true, Now);
@@ -100,9 +192,16 @@ internal static class LessonsViewContract
         double confidence = 2d / 3d,
         bool modelAuthored = false,
         bool twoChecks = false,
-        Scope? scope = null)
+        Scope? scope = null,
+        IReadOnlyDictionary<string, string>? metadata = null,
+        TaskVerificationStatus? outcome = null)
     {
-        var record = SearchContract.Seed(family, n, "rotate-keys", "Rotate the signing keys", lesson, status, confidence, scope, modelAuthored: modelAuthored);
+        var record = SearchContract.Seed(family, n, "rotate-keys", "Rotate the signing keys", lesson, status, confidence, scope, modelAuthored: modelAuthored, metadata: metadata);
+        if (outcome is { } verified)
+        {
+            record = record with { Outcome = record.Outcome with { Status = verified } };
+        }
+
         var created = Fixed.T0.AddDays(daysOld);
         if (twoChecks)
         {
@@ -115,8 +214,17 @@ internal static class LessonsViewContract
     }
 
     /// <summary><c>seed.json</c>: the records as stored, and the seeded injection rows in PostgreSQL's text form.</summary>
-    public static JsonObject ToSeedJson(LessonsViewCase definition) => InjectionRecordContract.ToSeedJson(
-        new InjectionRecordCase(string.Empty, definition.Seed, definition.Injections, [], []));
+    public static JsonObject ToSeedJson(LessonsViewCase definition)
+    {
+        var seed = InjectionRecordContract.ToSeedJson(new InjectionRecordCase(string.Empty, definition.Seed, definition.Injections, [], []));
+        if (definition.Assignments.Count > 0)
+        {
+            // Contract 1.10: the holdout's rows, in holdout-outcomes' seed form.
+            seed["assignments"] = HoldoutOutcomesContract.ToSeedJson(new HoldoutOutcomesCase([], definition.Assignments, new HoldoutOutcomesQuery(string.Empty, definition.Query.Scope, 1)))["assignments"]!.DeepClone();
+        }
+
+        return seed;
+    }
 
     /// <summary>
     /// <c>expected.json</c>: the page. Each lesson holds <c>experienceId</c>, <c>taskId</c>, <c>status</c>,
@@ -124,7 +232,31 @@ internal static class LessonsViewContract
     /// <c>result</c>), <c>blockText</c>, <c>isEligible</c>, <c>ineligibility</c> and <c>ineligibleReason</c> (<c>null</c>
     /// when eligible), <c>lastInjectedAt</c> (<c>null</c> when never injected) and <c>injectionCount</c>.
     /// </summary>
-    public static JsonObject PageJson(ExperienceLessonsPage page) => new()
+    /// <remarks>
+    /// Contract 1.10: with <paramref name="includeMeasuredBenefit"/> each lesson also holds <c>measuredBenefit</c>,
+    /// <c>null</c> or one lesson of a benefit-estimate <c>expected.json</c> (<c>experienceId</c>, <c>comparison</c>,
+    /// <c>byModelPair</c>); without it the lesson is exactly as contract 1.7 writes it.
+    /// </remarks>
+    public static JsonObject PageJson(ExperienceLessonsPage page, bool includeMeasuredBenefit = false)
+    {
+        var json = BasePageJson(page);
+        if (includeMeasuredBenefit)
+        {
+            foreach (var (lesson, node) in page.Lessons.Zip(json["lessons"]!.AsArray()))
+            {
+                node!["measuredBenefit"] = lesson.MeasuredBenefit is { } benefit ? BenefitEstimateContract.LessonJson(benefit) : null;
+            }
+        }
+
+        return json;
+    }
+
+    /// <summary>
+    /// <c>expected.json</c> of a case whose list fails: the failure's <c>errorClass</c>, as .NET's telemetry classifies it.
+    /// </summary>
+    public static JsonObject FailureJson(string errorClass) => new() { ["errorClass"] = errorClass };
+
+    private static JsonObject BasePageJson(ExperienceLessonsPage page) => new()
     {
         ["outcome"] = page.Outcome.ToString(),
         ["generatedAt"] = ContractJson.Timestamp(page.GeneratedAt),

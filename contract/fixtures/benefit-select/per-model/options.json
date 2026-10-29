@@ -1,0 +1,11 @@
+{
+  "description": "PerModel for model-a: X hurts model-a's runs (pooled it has no evidence); Y has no evidence for model-a, so its pooled Hurts stands; Z helps model-a and moves first; W and V hurt pooled.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": true,
+  "model": "model-a",
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

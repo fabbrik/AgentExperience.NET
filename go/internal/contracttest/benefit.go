@@ -95,21 +95,7 @@ func LoadBenefitCase(name string) BenefitCase {
 func EstimateJSON(estimate ae.BenefitEstimate) *ae.Object {
 	lessons := []any{}
 	for _, lesson := range estimate.Lessons {
-		var pairs any
-		if lesson.ByModelPair != nil {
-			items := []any{}
-			for _, pair := range lesson.ByModelPair {
-				items = append(items, ae.NewObject(
-					ae.Member{Key: "lessonModel", Value: pair.LessonModel},
-					ae.Member{Key: "runModel", Value: pair.RunModel},
-					ae.Member{Key: "comparison", Value: ComparisonJSON(pair.Comparison)}))
-			}
-			pairs = items
-		}
-		lessons = append(lessons, ae.NewObject(
-			ae.Member{Key: "experienceId", Value: lesson.ExperienceID.String()},
-			ae.Member{Key: "comparison", Value: ComparisonJSON(lesson.Comparison)},
-			ae.Member{Key: "byModelPair", Value: pairs}))
+		lessons = append(lessons, LessonBenefitJSON(lesson))
 	}
 	var models any
 	if estimate.ByConsumingModel != nil {
@@ -210,7 +196,18 @@ func LoadOutcomesCase(name string) (*OutcomesCase, error) {
 	for _, item := range list(get(seed, "erased")) {
 		c.Erased = append(c.Erased, object(item))
 	}
-	for _, item := range list(get(seed, "assignments")) {
+	assignments, err := assignmentRows(get(seed, "assignments"))
+	if err != nil {
+		return nil, err
+	}
+	c.Assignments = assignments
+	return c, nil
+}
+
+// assignmentRows reads a seed's assignment rows (PostgreSQL's text form); none for an absent list.
+func assignmentRows(value any) ([]AssignmentRow, error) {
+	var rows []AssignmentRow
+	for _, item := range list(value) {
 		row := object(item)
 		revision, err := strconv.ParseInt(text(get(row, "revision")), 10, 64)
 		if err != nil {
@@ -220,7 +217,7 @@ func LoadOutcomesCase(name string) (*OutcomesCase, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.Assignments = append(c.Assignments, AssignmentRow{Raw: row,
+		rows = append(rows, AssignmentRow{Raw: row,
 			RunID:        must(ae.ParseUUID(text(get(row, "run_id")))),
 			ExperienceID: must(ae.ParseUUID(text(get(row, "experience_id")))),
 			Revision:     revision, Arm: ae.HoldoutArm(text(get(row, "arm"))), AssignedAt: at,
@@ -228,7 +225,26 @@ func LoadOutcomesCase(name string) (*OutcomesCase, error) {
 				ProjectID: text(get(row, "project_id")), TeamID: optionalText(get(row, "team_id")),
 				AgentID: optionalText(get(row, "agent_id")), UserID: optionalText(get(row, "user_id"))}})
 	}
-	return c, nil
+	return rows, nil
+}
+
+// LessonBenefitJSON is one lesson of an estimate in the benefit-estimate expected.json form.
+func LessonBenefitJSON(lesson ae.LessonBenefit) *ae.Object {
+	var pairs any
+	if lesson.ByModelPair != nil {
+		items := []any{}
+		for _, pair := range lesson.ByModelPair {
+			items = append(items, ae.NewObject(
+				ae.Member{Key: "lessonModel", Value: pair.LessonModel},
+				ae.Member{Key: "runModel", Value: pair.RunModel},
+				ae.Member{Key: "comparison", Value: ComparisonJSON(pair.Comparison)}))
+		}
+		pairs = items
+	}
+	return ae.NewObject(
+		ae.Member{Key: "experienceId", Value: lesson.ExperienceID.String()},
+		ae.Member{Key: "comparison", Value: ComparisonJSON(lesson.Comparison)},
+		ae.Member{Key: "byModelPair", Value: pairs})
 }
 
 // CursorOf reads a page's "after" (nil for null).

@@ -380,8 +380,9 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	s := enable(t)
 	// With the holdout on, every ID is one the assignment puts in the treatment arm: the block is injected, and both
 	// record_injection and record_holdout are reported.
+	// Contract 1.10: the benefit policy on, so its background refresh (benefit_refresh) is reported too.
 	seen := drive(t, newStore(t), maf.Options{Embedder: embedder{}, Holdout: maf.HoldoutOptions{Rate: 0.5},
-		NewID: treatedIDs}, ticket, nextTicket)
+		NewID: treatedIDs, Benefit: ae.BenefitPolicy{Enabled: true}}, ticket, nextTicket)
 	if len(seen.recorded) != 1 || seen.recorded[0] != maf.InjectionRecorded {
 		t.Fatalf("recorded %v", seen.recorded)
 	}
@@ -413,6 +414,9 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	}
 	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool { return span.Name == "agentexperience.record_injection" }) {
 		t.Error("record_injection is measurements only, no span")
+	}
+	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool { return span.Name == "agentexperience.benefit_refresh" }) {
+		t.Error("benefit_refresh is measurements only, no span")
 	}
 
 	points := s.points(t)
@@ -451,7 +455,8 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	}
 	nested := func(operation string) any { return counted(points, operation)[0].attributes["nested"] }
 	if nested("verify") != true || nested("reflect") != true || nested("finalize") != false ||
-		nested("retrieve") != false || nested("inject") != false || nested("record_injection") != false {
+		nested("retrieve") != false || nested("inject") != false || nested("record_injection") != false ||
+		nested("benefit_refresh") != false {
 		t.Errorf("nested flags: verify %v reflect %v finalize %v retrieve %v", nested("verify"), nested("reflect"),
 			nested("finalize"), nested("retrieve"))
 	}

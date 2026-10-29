@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.9, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.9 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7 and 1.8 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.10, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.10 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8 and 1.9 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -317,7 +317,57 @@ captured run records it, trimmed and capped at 256 UTF-16 code units (`ae.Normal
 an `Environment` that already sets the key keeps its own value. It is bookkeeping for the split by model only: the
 reflector never lists it as a precondition, the block never shows it, and ranking ignores it.
 
-Acting on the estimate (the benefit policy) and measuring another memory provider stay .NET-only.
+### Acting on the estimate: the benefit policy
+
+From contract 1.10 a Go agent acts on the estimate as .NET's `ExperienceBenefitPolicy` does
+([Injection: acting on the estimate](../docs/guide/injection.md#acting-on-the-estimate)):
+
+```go
+options := maf.Options{Store: store, Identity: identity,
+	Benefit: ae.BenefitPolicy{Enabled: true, PreferMeasuredHelpful: true}}
+```
+
+- **Off by default.** The zero value reads, caches, reorders and omits nothing.
+- **A lesson measured `Hurts` is omitted** before the record limit, as `ae.OmittedMeasuredHarmful`, with .NET's detail
+  (`ae.MeasuredHarmfulDetail`), so the next record takes its slot. **A scope measured `Hurts`** gets no block: every
+  record is omitted (`ae.ScopeMeasuredHarmfulDetail`), and the `inject` outcome is `NothingToInject`.
+  `InjectionResult.Omitted` lists every omission with its reason and detail, in .NET's order: `MeasuredHarmful`,
+  `ModelAuthored`, `OverRecordLimit`, then `OverByteBudget`.
+- **`PreferMeasuredHelpful`** moves the lessons measured `Helps` ahead of the others, each group keeping its rank order.
+- **`PerModel`** acts on the invoking agent's model's verdicts (the captured run's recorded model, else `Options.Model`),
+  falling back to the pooled verdict wherever that model's group has no evidence or the model was never measured.
+- **Never on the request path.** The estimate is cached per scope, principal and bounds. An invocation uses what is
+  cached (nothing yet: no effect) and, when it is missing or older than `RefreshInterval`, starts one refresh in a
+  goroutine for that key; concurrent invocations never start a second. A refresh is bounded by `RefreshTimeout` (on the
+  wall clock, through its context, and abandoned if the store ignores it); one that fails or overruns keeps the previous
+  view, and a failed one waits out the interval too. Each is reported as `benefit_refresh` (`Refreshed`,
+  `NotRefreshed`, `OutcomeUnknown`). `ContextProvider.WaitBenefitRefreshes(ctx)` awaits the refreshes started, and
+  `Close` does too. At most 10,000 keys are kept (`maf.MaxBenefitCacheEntries`), dropping the one refreshed longest ago.
+- **Only recent evidence counts**: assignments within `Window` of the refresh, on the setup's `Clock`
+  (`ae.EstimateBenefitAssignedFrom`). An estimate not tracked or denied is never acted on.
+- **The holdout is unchanged**: a lesson omitted as harmful is not in the block, so it is neither delivered nor withheld.
+- **The options** and their defaults are .NET's: `Window` 30 days, `MinimumRunsPerArm` 20, `RefreshInterval` 10
+  minutes, `RefreshTimeout` 30 seconds (at most a day). Go cannot tell an unset value from an explicit zero, so a zero
+  one means its default (where .NET refuses an explicit zero); a negative one is refused by `UseAgentExperience`, even
+  with the policy off.
+- **The lessons view** shows what was measured: `ae.LessonQuery{IncludeMeasuredBenefit: true}` sets each lesson's
+  `MeasuredBenefit` (an `ae.LessonBenefit`, nil when no assigned run in the window named it) from one estimate over the
+  policy's `Window` and `MinimumRunsPerArm` (split by model with `PerModel`), whether or not the policy is on. A store
+  failure on that read fails the list (a PostgreSQL error, telemetry class `Infrastructure`, as .NET's
+  `ExperienceStoreException`).
+- **Without the agent**, `ae.NewBenefitViews(estimate).For(model)` is what an estimate means for one invocation, and
+  `ae.SelectCandidates` the selection; contract 1.10's `benefit-select` fixtures pin both.
+
+| .NET | Go |
+| --- | --- |
+| `ExperienceBenefitPolicy.Enabled`, `PreferMeasuredHelpful`, `PerModel` | `ae.BenefitPolicy.Enabled`, `PreferMeasuredHelpful`, `PerModel` |
+| `Window`, `MinimumRunsPerArm`, `RefreshInterval`, `RefreshTimeout` | `Window`, `MinimumRunsPerArm`, `RefreshInterval`, `RefreshTimeout` (0: the default) |
+| `ExperienceInjectionOptions.Benefit` | `maf.Options.Benefit` |
+| `InjectionOmissionReason.MeasuredHarmful` (and the others) | `ae.OmittedMeasuredHarmful`, `OmittedModelAuthored`, `OmittedOverRecordLimit`, `OmittedOverByteBudget` |
+| `ExperienceInjectionResult.Omitted` | `maf.InjectionResult.Omitted` (`[]ae.OmittedRecord`) |
+| `ExperienceLessonsQuery.IncludeMeasuredBenefit`, `ExperienceLesson.MeasuredBenefit` | `ae.LessonQuery.IncludeMeasuredBenefit`, `ae.Lesson.MeasuredBenefit` |
+
+Wrapping another memory provider and measuring it stay .NET-only.
 
 ### Telemetry: the same spans and metrics as .NET
 
@@ -333,7 +383,7 @@ disable := telemetry.Enable() // the global providers your application configure
 defer disable()
 ```
 
-It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
+It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `benefit_refresh`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
 `verify`, `reflect`, `finalize` and `index` (the background embedding write): the operations this port performs, and no
 other. The core and the integration import no OpenTelemetry: they call the observer hook (`ae.SetObserver`, one atomic
 load when nothing is registered), and `go/telemetry` is the adapter. A provider, exporter or observer that fails or
@@ -465,8 +515,8 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.9: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view, the injection holdout, the benefit estimate and telemetry. These .NET features have no counterpart here, so a mixed
+The port covers contract 1.0 to 1.10: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout, the benefit estimate, the benefit policy and telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
@@ -474,8 +524,7 @@ injection recording, the lessons view, the injection holdout, the benefit estima
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
-- **Acting on the benefit estimate** (the benefit policy), measuring another memory provider, and exporting lessons:
-  the port reads the estimate, but nothing it injects depends on it.
+- **Measuring another memory provider** (the provider wrapper) and exporting lessons.
 
 What the port does write or read follows the same contract the .NET library is tested against.
 
@@ -491,7 +540,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.9 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.10 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -531,6 +580,11 @@ cancellation, parallel calls), runs the quick start and compares its output
   into one database, and `ae.EstimateBenefit` over the scope, split by model, must be exactly
   [`go-fleet-holdout-estimate.json`](maf/testdata/cross-language/go-fleet-holdout-estimate.json); the .NET contract
   tests compare the .NET estimate over the same rows with it, and with the Python port's.
+- *The benefit policy, .NET writes, Go acts* (contract 1.10, PostgreSQL leg). The .NET contract tests write a fleet in
+  which one lesson measures `Hurts` and check in its rows
+  ([`dotnet-benefit-fleet-rows.json`](../tests/AgentExperience.Contract.Tests/cross-language/dotnet-benefit-fleet-rows.json));
+  they go into a database, and a Go agent with the benefit policy on omits that lesson as `MeasuredHarmful` once its
+  cache is warm, and injects the other.
 
 **PostgreSQL** (the `postgres` build tag, in `postgres/pgtest/` and `maf/`, Go 1.26): in `postgres/pgtest/`, each
 finalize fixture is written through the Go store and read back row for row, every search fixture is run and ranked,

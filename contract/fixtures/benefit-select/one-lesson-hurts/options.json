@@ -1,0 +1,11 @@
+{
+  "description": "One lesson measured Hurts is omitted as MeasuredHarmful before the record limit, so it takes no slot and the next record fills it.",
+  "enabled": true,
+  "preferMeasuredHelpful": false,
+  "perModel": false,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 3,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

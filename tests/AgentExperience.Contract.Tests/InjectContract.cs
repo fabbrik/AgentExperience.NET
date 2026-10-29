@@ -183,14 +183,14 @@ internal static class InjectContract
     }
 
     /// <summary>The UTF-8 size of the block the given records render to on their own.</summary>
-    private static int BudgetFor(IEnumerable<(ExperienceRecord Record, RankingInput Ranking)> records, InjectOptions options)
+    internal static int BudgetFor(IEnumerable<(ExperienceRecord Record, RankingInput Ranking)> records, InjectOptions options)
     {
         var list = records.ToList();
         return Encoding.UTF8.GetByteCount(Render(list, options with { MaxRecords = list.Count }));
     }
 
     /// <summary>The ranking the default weights give a Validated record updated now in a matching environment.</summary>
-    private static RankingInput Ranking(double relevance, double confidence)
+    internal static RankingInput Ranking(double relevance, double confidence)
     {
         var weights = RankingWeights.Default;
         RankingComponentInput[] components =

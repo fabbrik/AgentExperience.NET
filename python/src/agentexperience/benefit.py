@@ -19,9 +19,10 @@ import math
 import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from ._text import is_null_or_whitespace, utf16_sort_key
+from .encoding import Instant
 from .holdout import (
     MAX_HOLDOUT_OUTCOME_LIMIT,
     HoldoutArm,
@@ -154,6 +155,43 @@ class BenefitEstimate:
     tracked: bool = True
     outcome: EstimateOutcome = "Found"
     minimum_runs_per_arm: int = DEFAULT_MINIMUM_RUNS_PER_ARM
+
+
+def comparison_to_json(comparison: BenefitComparison) -> dict[str, Any]:
+    """A comparison in the contract's JSON form (a benefit-estimate ``expected.json``'s)."""
+
+    def arm(value: BenefitArm) -> dict[str, Any]:
+        return {"runs": value.runs, "successes": value.successes, "rate": value.rate}
+
+    return {
+        "treatment": arm(comparison.treatment),
+        "holdout": arm(comparison.holdout),
+        "difference": comparison.difference,
+        "lower": comparison.lower,
+        "upper": comparison.upper,
+        "verdict": comparison.verdict,
+        "unverified": comparison.unverified,
+        "pending": comparison.pending,
+        "mixedArm": comparison.mixed_arm,
+    }
+
+
+def lesson_benefit_to_json(lesson: LessonBenefit) -> dict[str, Any]:
+    """One lesson of an estimate in the contract's JSON form: ``experienceId``, ``comparison``, ``byModelPair``."""
+    return {
+        "experienceId": str(lesson.experience_id),
+        "comparison": comparison_to_json(lesson.comparison),
+        "byModelPair": None
+        if lesson.by_model_pair is None
+        else [
+            {
+                "lessonModel": pair.lesson_model,
+                "runModel": pair.run_model,
+                "comparison": comparison_to_json(pair.comparison),
+            }
+            for pair in lesson.by_model_pair
+        ],
+    }
 
 
 def wilson(successes: int, n: int) -> tuple[float, float]:
@@ -394,10 +432,15 @@ def estimate_benefit(
     authorization: AuthorizationBounds,
     scope: Scope,
     options: BenefitOptions | None = None,
+    *,
+    assigned_from: Instant | None = None,
 ) -> BenefitEstimate:
     """
     Estimates the lessons' benefit in exactly ``scope`` (the scope the blocks were built in), overall, per lesson and,
     with ``options.split_by_model``, per model: .NET's ``AgentExperienceBenefit.EstimateAsync``.
+
+    With ``assigned_from`` (contract 1.10, the benefit policy's window) only the rows assigned at or after it are
+    folded; every page is still read, and the filter is applied to each page's rows.
 
     It reads ``store``'s outcome rows (:class:`HoldoutOutcomeReader`) 1,000 at a time under ``authorization`` and
     folds each page before reading the next. A store that does not read them gives an empty estimate with ``tracked``
@@ -427,7 +470,10 @@ def estimate_benefit(
             return BenefitEstimate(
                 empty.overall, (), empty.by_consuming_model, True, "Denied", empty.minimum_runs_per_arm
             )
-        accumulator.add_all(page)
+        if assigned_from is None:
+            accumulator.add_all(page)
+        else:
+            accumulator.add_all(row for row in page if row is not None and row.assigned_at >= assigned_from)
         if len(page) < MAX_HOLDOUT_OUTCOME_LIMIT:
             break
         last = page[-1]
@@ -460,10 +506,12 @@ __all__ = [
     "Z",
     "check_outcome_limit",
     "compare",
+    "comparison_to_json",
     "empty_estimate",
     "estimate",
     "estimate_benefit",
     "least_model",
+    "lesson_benefit_to_json",
     "newcombe",
     "wilson",
 ]

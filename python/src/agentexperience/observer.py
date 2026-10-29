@@ -22,7 +22,8 @@ CORE_SOURCE = "AgentExperience.Core"
 """The source and meter the core operations are reported under (``docs/telemetry.md``)."""
 
 MAF_SOURCE = "AgentExperience.MicrosoftAgentFramework"
-"""The source and meter ``inject``, ``record_injection`` and ``record_holdout`` are reported under."""
+"""The source and meter ``inject``, ``record_injection``, ``record_holdout`` and ``benefit_refresh`` are reported
+under."""
 
 FAULTED = "Faulted"
 """The outcome of an operation that threw."""
@@ -62,11 +63,12 @@ OPERATIONS: Mapping[str, OperationSpec] = {
     ),
     "record_injection": OperationSpec(MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")),
     "record_holdout": OperationSpec(MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")),
+    "benefit_refresh": OperationSpec(MAF_SOURCE, False, ("Refreshed", "NotRefreshed", "OutcomeUnknown")),
 }
 """Every operation this port reports, by its ``operation`` value. The port reports no other: not ``retention.sweep``,
 ``delete``, grants, seal, backfill, lifecycle, confidence, reuse-feedback, ``deindex`` or ``reindex``."""
 
-NEVER_NESTED: frozenset[str] = frozenset({"inject", "record_injection", "record_holdout"})
+NEVER_NESTED: frozenset[str] = frozenset({"inject", "record_injection", "record_holdout", "benefit_refresh"})
 """Operations whose ``nested`` is always ``false``, as in .NET."""
 
 ATTRIBUTES: tuple[str, ...] = (

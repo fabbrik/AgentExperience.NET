@@ -28,7 +28,7 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agentexperience import Instant, observer, telemetry
+from agentexperience import BenefitPolicy, Instant, observer, telemetry
 from agentexperience.capture import RunCapture
 from agentexperience.finalize import finalize
 from agentexperience.inmemory import InMemoryExperienceStore
@@ -144,6 +144,7 @@ def drive(agent: Agent, first: str = TICKET, second: str = NEXT_TICKET) -> None:
         (provider,) = [item for item in agent.context_providers if isinstance(item, ExperienceContextProvider)]
         await provider.wait_for_injection_records()
         await provider.wait_for_index_writes()
+        await provider.wait_for_benefit_refreshes()
 
     run(both())
 
@@ -198,6 +199,7 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "inject",
         "record_injection",
         "record_holdout",
+        "benefit_refresh",
     }
 
 
@@ -233,6 +235,9 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
         new_id=lambda: uuid.UUID(f"00000000-0000-4000-8000-{next(counter):012d}"),
         holdout=HoldoutOptions(rate=0.25),
         on_holdout_recorded=held.append,
+        # Contract 1.10: the benefit policy on, so its background refresh reports benefit_refresh (with no evidence it
+        # changes nothing).
+        benefit=BenefitPolicy(enabled=True),
     )
     drive(agent, TICKET, NEXT_TICKET)
     assert [item.outcome for item in recorded] == ["Recorded"]
@@ -286,6 +291,7 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
     nested = {(attributes["operation"], attributes["nested"]) for _, _, _, attributes, _ in points}
     assert ("retrieve", False) in nested and ("inject", False) in nested and ("record_injection", False) in nested
     assert ("record_holdout", False) in nested
+    assert ("benefit_refresh", False) in nested
     assert ("verify", True) in nested and ("reflect", True) in nested and ("finalize", False) in nested
     assert ("capture.append_attempt", False) in nested
 

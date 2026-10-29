@@ -1,0 +1,11 @@
+{
+  "description": "Every omission in .NET's order: in rank order, MeasuredHarmful is decided before the model-authored exclusion (so a harmful model-authored lesson is MeasuredHarmful), then ModelAuthored (no detail), then the record limit; the byte budget, applied by the writer, comes last.",
+  "enabled": true,
+  "preferMeasuredHelpful": false,
+  "perModel": false,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 3,
+  "maxBytes": 832,
+  "excludeModelAuthored": true
+}

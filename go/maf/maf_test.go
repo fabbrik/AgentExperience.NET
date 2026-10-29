@@ -127,6 +127,7 @@ type host struct {
 	captureFailures   []CaptureFailure
 	injectionFailures []InjectionFailure
 	injections        []InjectionResult
+	nothing           []InjectionResult // OnInjected's NothingToInject reports
 	finalized         []ae.FinalizedExperience
 	store             *inmemory.Store
 }
@@ -153,7 +154,15 @@ func (h *host) options(o Options) Options {
 		h.injectionFailures = append(h.injectionFailures, f)
 		h.mu.Unlock()
 	}
-	o.OnInjected = func(r InjectionResult) { h.mu.Lock(); h.injections = append(h.injections, r); h.mu.Unlock() }
+	o.OnInjected = func(r InjectionResult) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if r.Outcome == "NothingToInject" {
+			h.nothing = append(h.nothing, r)
+			return
+		}
+		h.injections = append(h.injections, r)
+	}
 	o.OnFinalized = func(f ae.FinalizedExperience) { h.mu.Lock(); h.finalized = append(h.finalized, f); h.mu.Unlock() }
 	return o
 }

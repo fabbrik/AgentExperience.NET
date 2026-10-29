@@ -1,0 +1,16 @@
+{
+  "description": "IncludeMeasuredBenefit at the default minimum of 20 runs per arm: the same counts, every verdict NoEvidence.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00",
+  "includeMeasuredBenefit": true
+}

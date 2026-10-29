@@ -38,6 +38,10 @@ What it adds to the agent:
   so the benefit estimate (``agentexperience.estimate_benefit``, or .NET's) counts this agent's runs. Off by default.
 - **The run's model** (contract 1.9): capture records the model the agent's chat client reports under the environment
   metadata key ``agentexperience.model``, for the estimate's split by model; a key the host's environment sets wins.
+- **The benefit policy** (contract 1.10), with ``benefit=BenefitPolicy(enabled=True)``: a lesson the holdout measured
+  as hurting is not injected (``InjectionResult.omitted`` says ``MeasuredHarmful``), and with
+  ``prefer_measured_helpful`` the helpful ones go first. The estimate is cached and refreshed in the background, never
+  on the request path. Off by default.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -70,7 +74,8 @@ from agent_framework import (
 )
 
 from . import __version__
-from .block import BlockOptions, render_block
+from .benefit_policy import BenefitCache, BenefitPolicy, OmittedRecord, select_block
+from .block import BlockOptions
 from .capture import RawAttempt, RawToolCall, RunCapture, RunExecutionStatus
 from .classifiers import (
     TOOL_REPORTED_ERROR_CLASS,
@@ -235,10 +240,15 @@ class InjectionResult:
     truncated: bool
     vector_fallback: VectorFallback | None = None
     """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
-    outcome: Literal["Injected", "Withheld"] = "Injected"
-    """``Injected``, or ``Withheld`` when the holdout withheld the block (contract 1.8)."""
+    outcome: Literal["Injected", "Withheld", "NothingToInject"] = "Injected"
+    """``Injected``; ``Withheld`` when the holdout withheld the block (contract 1.8); or, as .NET reports it,
+    ``NothingToInject`` when there was no task text or every ranked record was omitted (``omitted`` says why: a scope
+    measured ``Hurts`` omits them all as ``MeasuredHarmful``)."""
     withheld_experience_ids: tuple[uuid.UUID, ...] = ()
     """The records a held-out invocation's block named and did not deliver; empty otherwise."""
+    omitted: tuple[OmittedRecord, ...] = ()
+    """Every ranked record that was not delivered, and why (contract 1.10): ``MeasuredHarmful`` (the benefit policy),
+    ``ModelAuthored``, ``OverRecordLimit`` or ``OverByteBudget``, each with .NET's detail, in .NET's order."""
 
 
 InjectionRecordOutcome = Literal["Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"]
@@ -330,6 +340,8 @@ class ExperienceSettings:
     on_vector_fallback: Callable[[VectorFallback], None] | None = None
     holdout: HoldoutOptions = field(default_factory=HoldoutOptions)
     """The injection holdout (contract 1.8): off by default (rate 0)."""
+    benefit: BenefitPolicy = field(default_factory=BenefitPolicy)
+    """Acting on the measured benefit (contract 1.10): off by default."""
     on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None
     clock: Callable[[], Instant] = Instant.now
     new_id: Callable[[], uuid.UUID] = uuid.uuid4
@@ -389,6 +401,8 @@ class ExperienceSettings:
             raise TypeError("embedder must have model_id, dimension and an embed(text) method.")
         if not isinstance(self.holdout, HoldoutOptions):
             raise TypeError("holdout must be a HoldoutOptions.")
+        if not isinstance(self.benefit, BenefitPolicy):
+            raise TypeError("benefit must be a BenefitPolicy.")
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
         if self.task_id is not None and not self.task_id.strip():
@@ -414,6 +428,14 @@ class ExperienceSettings:
             return
         try:
             self.on_injection_failure(failure)
+        except Exception:
+            pass
+
+    def report_injected(self, result: InjectionResult) -> None:
+        if self.on_injected is None:
+            return
+        try:
+            self.on_injected(result)
         except Exception:
             pass
 
@@ -817,6 +839,16 @@ class ExperienceContextProvider(ContextProvider):
         self._abandoned_records = 0
         self._running_writes = 0
         self._abandoned_lock = threading.Lock()
+        # Contract 1.10: the cached benefit estimates, only with the policy on.
+        self._benefit = (
+            BenefitCache(settings.store, settings.benefit, settings.clock) if settings.benefit.enabled else None
+        )
+
+    async def wait_for_benefit_refreshes(self) -> None:
+        """Completes once every benefit refresh this provider started so far has ended (.NET's
+        ``BenefitRefreshesSettledAsync``). Each is bounded by the policy's ``refresh_timeout``; it never raises."""
+        if self._benefit is not None:
+            await self._benefit.settled()
 
     async def wait_for_injection_records(self) -> None:
         """Completes once every injection record this provider started on the running event loop has ended. Each is
@@ -1118,6 +1150,7 @@ class ExperienceContextProvider(ContextProvider):
             ]
             task_text = derive_task_text(_task_messages(context.input_messages, earlier))
             if task_text is None:
+                settings.report_injected(InjectionResult((), 0, False, outcome="NothingToInject"))
                 return "NothingToInject"
             parameters = SearchParameters(
                 identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
@@ -1170,10 +1203,28 @@ class ExperienceContextProvider(ContextProvider):
             if retrieval_failed:
                 assert isinstance(text_found, BaseException)
                 raise text_found
-            block = render_block(ranked.ranked, settings.block_options)
+            # Contract 1.10: the benefit policy's cached view (never waits on the store), then the selection.
+            view = None
+            if self._benefit is not None:
+                model = _invoking_model(settings, agent, captured)
+                view = self._benefit.current(identity.authorization, identity.scope, identity.principal, model)
+            selection = select_block(
+                ranked.ranked,
+                view,
+                settings.block_options,
+                exclude_model_authored=settings.exclude_model_authored,
+                prefer_measured_helpful=settings.benefit.prefer_measured_helpful,
+            )
+            block = selection.block
             if op is not None:
-                op.set("agentexperience.omitted_count", len(block.omitted))
+                op.set("agentexperience.omitted_count", len(selection.omitted))
             if block.is_empty:
+                # As .NET reports it: nothing injected, and every omission.
+                settings.report_injected(
+                    InjectionResult(
+                        (), 0, ranked.truncated, fallback, outcome="NothingToInject", omitted=selection.omitted
+                    )
+                )
                 return "NothingToInject"
             # The injection holdout (contract 1.8). Decided once the block is built, so what a held-out run is denied is
             # exactly what it would have been given, and before anything is handed over. Only a run this agent's own
@@ -1206,7 +1257,9 @@ class ExperienceContextProvider(ContextProvider):
             withheld = tuple(record.experience_id for record in block.included)
             if settings.on_injected is not None:
                 try:
-                    settings.on_injected(InjectionResult((), 0, ranked.truncated, fallback, "Withheld", withheld))
+                    settings.on_injected(
+                        InjectionResult((), 0, ranked.truncated, fallback, "Withheld", withheld, selection.omitted)
+                    )
                 except Exception:
                     pass
             self._start_recording_holdout(identity, assignment)
@@ -1219,7 +1272,9 @@ class ExperienceContextProvider(ContextProvider):
         delivered = tuple(record.experience_id for record in block.included)
         if settings.on_injected is not None:
             try:
-                settings.on_injected(InjectionResult(delivered, block.byte_count, ranked.truncated, fallback))
+                settings.on_injected(
+                    InjectionResult(delivered, block.byte_count, ranked.truncated, fallback, omitted=selection.omitted)
+                )
             except Exception:
                 pass
 
@@ -1232,6 +1287,15 @@ class ExperienceContextProvider(ContextProvider):
         if assignment is not None:
             self._start_recording_holdout(identity, assignment)
         return "Injected"
+
+
+def _invoking_model(settings: ExperienceSettings, agent: Any, captured: bool) -> str | None:
+    """The model the benefit policy acts for (contract 1.10): the model capture records for the run (the host's
+    environment value when it sets one) when the invocation is captured, otherwise the one the agent's chat client
+    reports."""
+    if captured:
+        return _with_reported_model(settings.environment, agent).metadata.get(MODEL_METADATA_KEY)
+    return reported_model(agent)
 
 
 # ---- Capture -----------------------------------------------------------------------------------------------------
@@ -1420,6 +1484,7 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
         exclude_model_authored=settings.exclude_model_authored,
         clock=settings.clock,
         identity=settings.identity if isinstance(settings.identity, ExperienceIdentity) else None,
+        benefit=settings.benefit,
     )
 
 
@@ -1456,6 +1521,7 @@ def use_agent_experience(
     on_vector_fallback: Callable[[VectorFallback], None] | None = None,
     holdout: HoldoutOptions | None = None,
     on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None,
+    benefit: BenefitPolicy | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -1486,6 +1552,11 @@ def use_agent_experience(
     captured runs that have one, and records both arms (in the background, reported through ``on_holdout_recorded``)
     for the .NET benefit estimate. Off by default. On PostgreSQL the application role needs the grants of the
     contract's ``sql/application-role-privileges-1.8.sql``; without them every assignment is reported ``NotRecorded``.
+
+    ``benefit`` (contract 1.10), ``BenefitPolicy(enabled=True)`` say, acts on the holdout's measured benefit: a lesson
+    measured as hurting is not injected (``InjectionResult.omitted`` says ``MeasuredHarmful``), a scope whose lessons
+    together hurt gets none, and with ``prefer_measured_helpful`` the helpful ones go first. The estimate is cached and
+    refreshed in the background, never on the request path. Off by default.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -1523,6 +1594,7 @@ def use_agent_experience(
         on_vector_fallback=on_vector_fallback,
         holdout=HoldoutOptions() if holdout is None else holdout,
         on_holdout_recorded=on_holdout_recorded,
+        benefit=BenefitPolicy() if benefit is None else benefit,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.
@@ -1543,6 +1615,7 @@ __all__ = [
     "TOOL_REPORTED_ERROR_CLASS",
     "UNVERSIONED_REVISION",
     "Approval",
+    "BenefitPolicy",
     "CaptureFailure",
     "DevelopmentOnlyError",
     "Embedder",
@@ -1561,6 +1634,7 @@ __all__ = [
     "InjectionRecordOutcome",
     "InjectionRecordResult",
     "InjectionResult",
+    "OmittedRecord",
     "ToolResultContext",
     "VectorFallback",
     "Verification",

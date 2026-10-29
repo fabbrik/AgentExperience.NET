@@ -52,6 +52,11 @@
 //     store that is an ae.HoldoutRecorder (the PostgreSQL store, the in-memory store), so the .NET benefit estimate
 //     compares the runs of every language. Off by default (rate 0): nothing then changes.
 //
+//   - Acting on the benefit estimate (contract 1.10), with Options.Benefit. A lesson the holdout measured Hurts is not
+//     injected (InjectionResult.Omitted names it, MeasuredHarmful), a scope measured Hurts gets no block, and with
+//     PreferMeasuredHelpful the lessons measured Helps go first. The estimate is cached per scope and principal and
+//     refreshed in a goroutine (the benefit_refresh operation), never on the request path. Off by default.
+//
 //   - The lessons view (contract 1.7), read-only. LessonsOf(&config) (or the provider's Lessons method, or NewLessons for
 //     the options alone) lists what has been learned in a scope: each lesson's status, confidence and checks, the
 //     block text an agent would be shown for it, why retrieval would not use it, and when it was last injected, from
@@ -191,6 +196,10 @@ type InjectionFailure struct {
 // bytes, whether the search returned more candidates than the ranking considers, and, when the vector channel did not
 // contribute (contract 1.6), why: nil when it did.
 type InjectionResult struct {
+	// Outcome is the inject operation's outcome, as .NET's InjectionOutcome names it: Injected; NothingToInject (no
+	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); or Withheld (in
+	// what OnWithheld is told).
+	Outcome        string
 	ExperienceIDs  []ae.UUID
 	ByteCount      int
 	Truncated      bool
@@ -198,6 +207,9 @@ type InjectionResult struct {
 	// WithheldExperienceIDs are the records a held-out invocation's block named and did not deliver (contract 1.8):
 	// set only in what OnWithheld is told, where ExperienceIDs is empty and ByteCount 0.
 	WithheldExperienceIDs []ae.UUID
+	// Omitted are the ranked records that were not put in the block, and why (contract 1.10): measured harmful,
+	// model-authored, past the record limit or over the byte budget, in the order .NET reports them.
+	Omitted []ae.OmittedRecord
 }
 
 // HoldoutOptions are the injection holdout (contract 1.8). The zero value is off.
@@ -265,8 +277,10 @@ type Options struct {
 	// DisableInjection captures without injecting.
 	DisableInjection bool
 	// OnCaptureFailure, OnInjectionFailure, OnInjected, OnFinalized and OnInjectionRecorded are told what happened;
-	// each is optional, and a panic in one is recovered and ignored. OnInjectionRecorded is called from the
-	// recording's own goroutine.
+	// each is optional, and a panic in one is recovered and ignored. OnInjected is told every invocation that
+	// injects (Outcome Injected) and, as .NET reports it, every one that searched or derived nothing to inject
+	// (Outcome NothingToInject, with the omissions: a scope measured Hurts shows here). OnInjectionRecorded is called
+	// from the recording's own goroutine.
 	OnCaptureFailure    func(CaptureFailure)
 	OnInjectionFailure  func(InjectionFailure)
 	OnInjected          func(InjectionResult)
@@ -274,6 +288,14 @@ type Options struct {
 	OnInjectionRecorded func(InjectionRecordResult)
 	// Holdout is the injection holdout (contract 1.8); off when zero.
 	Holdout HoldoutOptions
+	// Benefit is acting on the holdout's benefit estimate (contract 1.10, .NET's ExperienceBenefitPolicy); off when
+	// zero. With Enabled, a lesson measured Hurts is omitted (InjectionResult.Omitted, ae.OmittedMeasuredHarmful), a
+	// scope measured Hurts gets no block, and with PreferMeasuredHelpful the lessons measured Helps go first. The
+	// estimate is cached per scope and principal and refreshed in a goroutine, never on the request path: the first
+	// invocation of a key is injected as with the policy off. A zero duration or minimum means its default; a negative
+	// one, or a RefreshTimeout over a day, is refused by UseAgentExperience even with the policy off. The holdout runs
+	// exactly as without it. The lessons view reads its measured benefit over the same Window and MinimumRunsPerArm.
+	Benefit ae.BenefitPolicy
 	// OnWithheld is told, for a held-out invocation, what its block withheld (InjectionResult.WithheldExperienceIDs);
 	// OnHoldoutRecorded how recording each assignment ended, from the recording's own goroutine. Each is optional, and a
 	// panic in one is recovered and ignored.
@@ -335,6 +357,8 @@ type settings struct {
 	vectorSlots chan struct{}
 	// index counts the background embedding writes started and not yet ended.
 	index tracker
+	// benefit is the cache the benefit policy acts on (contract 1.10); nil with the policy off.
+	benefit *benefitCache
 }
 
 func newSettings(options Options) (*settings, error) {
@@ -400,6 +424,9 @@ func newSettings(options Options) (*settings, error) {
 	if math.IsNaN(options.Holdout.Rate) || options.Holdout.Rate < 0 || options.Holdout.Rate > 1 {
 		return nil, errors.New("maf: the holdout rate must be a number from 0 to 1")
 	}
+	if err := options.Benefit.Validate(); err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
 	if options.Holdout.Salt == "" {
 		options.Holdout.Salt = ae.DefaultHoldoutSalt
 	}
@@ -416,6 +443,9 @@ func newSettings(options Options) (*settings, error) {
 		s.environment = DefaultEnvironment()
 	}
 	s.environment = ae.EnvironmentWithModel(s.environment, ae.NormalizeModel(options.Model))
+	if options.Benefit.Enabled {
+		s.benefit = newBenefitCache(options.Store, options.Benefit, options.Clock)
+	}
 	return s, nil
 }
 

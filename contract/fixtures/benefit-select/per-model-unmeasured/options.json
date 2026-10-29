@@ -1,0 +1,11 @@
+{
+  "description": "PerModel for model-z, which the estimate never measured: the pooled verdicts.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": true,
+  "model": "model-z",
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

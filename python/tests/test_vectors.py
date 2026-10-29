@@ -20,7 +20,7 @@ from _contract import FIXTURES, cases, json_difference, read_json, scope_of
 
 pytest.importorskip("agent_framework")
 
-from _maf import ScriptedClient
+from _maf import ScriptedClient, delivered
 from _postgres import OWNER, PASSWORD, Server, application_conninfo, create_database
 from _sync import run
 from agent_framework import Agent, tool
@@ -347,7 +347,7 @@ def make_agent(store: Any, seen: Seen, **options: Any) -> Agent:
         Agent(client=seen.client, name="refund-agent"),
         store=store,
         identity=ExperienceIdentity("python-principal", SCOPE),
-        on_injected=seen.injections.append,
+        on_injected=delivered(seen.injections.append),
         on_vector_fallback=seen.fallbacks.append,
         on_injection_failure=seen.injection_failures.append,
         on_capture_failure=seen.capture_failures.append,
