@@ -23,7 +23,8 @@ import (
 const (
 	// SourceCore is the source of the core operations.
 	SourceCore = "AgentExperience.Core"
-	// SourceMAF is the source of inject, record_injection, record_holdout and benefit_refresh.
+	// SourceMAF is the source of inject, record_injection, record_holdout, record_provider_holdout and
+	// benefit_refresh.
 	SourceMAF = "AgentExperience.MicrosoftAgentFramework"
 )
 
@@ -66,7 +67,9 @@ var observedOperations = map[string]OperationSpec{
 		[]string{"Injected", "NothingToInject", "Skipped", "RetrievalFailed", "Failed", "Withheld"}},
 	"record_injection": {SourceMAF, false, []string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
 	"record_holdout":   {SourceMAF, false, []string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
-	"benefit_refresh":  {SourceMAF, false, []string{"Refreshed", "NotRefreshed", "OutcomeUnknown"}},
+	"record_provider_holdout": {SourceMAF, false,
+		[]string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
+	"benefit_refresh": {SourceMAF, false, []string{"Refreshed", "NotRefreshed", "OutcomeUnknown"}},
 }
 
 // ObservedOperations is every operation this port reports, by its operation value. The port reports no other: not
@@ -169,8 +172,8 @@ type Operation struct {
 
 // Observe opens operation (a key of ObservedOperations) for the registered observer and returns the context it runs
 // in. With no observer registered it returns ctx and nil, and allocates nothing. nested says another instrumented
-// operation of the same source called this one; inject, record_injection, record_holdout and benefit_refresh are
-// never nested.
+// operation of the same source called this one; inject, record_injection, record_holdout, record_provider_holdout and
+// benefit_refresh are never nested.
 func Observe(ctx context.Context, operation string, nested bool) (context.Context, *Operation) {
 	box := registered.Load()
 	if box == nil {

@@ -182,6 +182,8 @@ type Store struct {
 	// Contract 1.8's holdout assignments, by run and record, and the records erased (Erase).
 	holdout    map[holdoutKey]HoldoutRow
 	tombstones map[ae.UUID]tombstone
+	// Contract 1.11's provider holdout assignments, by tenant, run and provider key.
+	providerHoldout map[providerHoldoutKey]ProviderHoldoutRow
 }
 
 // Embedding is a record's stored embedding (contract 1.6): the model, the dimension, the content hash of the summary
@@ -203,7 +205,8 @@ type Injection struct {
 // New is a store holding records (each experience ID once).
 func New(records ...ae.ExperienceRecord) (*Store, error) {
 	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}, injections: map[ae.UUID]Injection{},
-		embeddings: map[ae.UUID]Embedding{}, holdout: map[holdoutKey]HoldoutRow{}, tombstones: map[ae.UUID]tombstone{}}
+		embeddings: map[ae.UUID]Embedding{}, holdout: map[holdoutKey]HoldoutRow{}, tombstones: map[ae.UUID]tombstone{},
+		providerHoldout: map[providerHoldoutKey]ProviderHoldoutRow{}}
 	for _, record := range records {
 		if _, held := s.records[record.ExperienceID]; held {
 			return nil, errors.New("two records share one experience ID")

@@ -1,0 +1,25 @@
+{
+  "providerKey": "stub-memory",
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 11,
+      "successes": 7,
+      "rate": 0.6363636363636364
+    },
+    "holdout": {
+      "runs": 13,
+      "successes": 8,
+      "rate": 0.6153846153846154
+    },
+    "difference": 0.020979020979020935,
+    "lower": -0.3295996327348158,
+    "upper": 0.35655758095825857,
+    "verdict": "NoEvidence",
+    "unverified": 0,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "tracked": true,
+  "outcome": "Found"
+}

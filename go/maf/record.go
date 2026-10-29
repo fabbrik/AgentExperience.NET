@@ -3,6 +3,7 @@ package maf
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/microsoft/agent-framework-go/agent"
@@ -160,10 +161,17 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 // abandoned, counted until it ends, and while MaxAbandonedInjectionRecords are still running no new one starts.
 func (p *ContextProvider) writeChunks(ctx context.Context, count int,
 	write func(ctx context.Context, start, end int) error) (InjectionRecordOutcome, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.settings.InjectionRecordTimeout)
+	return boundedWrite(ctx, p.settings.InjectionRecordTimeout, &p.abandoned, count, write)
+}
+
+// boundedWrite is writeChunks with its own timeout and count of abandoned writes: the provider wrapper's (contract
+// 1.11) shares the rules, not the count.
+func boundedWrite(ctx context.Context, timeout time.Duration, abandoned *atomic.Int64, count int,
+	write func(ctx context.Context, start, end int) error) (InjectionRecordOutcome, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for start := 0; start < count; start += ae.MaxRecordInjectionIDs {
-		if p.abandoned.Load() >= MaxAbandonedInjectionRecords {
+		if abandoned.Load() >= MaxAbandonedInjectionRecords {
 			return InjectionNotRecorded, errTooManyAbandoned
 		}
 		end := min(count, start+ae.MaxRecordInjectionIDs)
@@ -185,10 +193,10 @@ func (p *ContextProvider) writeChunks(ctx context.Context, count int,
 				return InjectionNotRecorded, err
 			}
 		case <-ctx.Done():
-			p.abandoned.Add(1)
+			abandoned.Add(1)
 			go func() {
 				<-done
-				p.abandoned.Add(-1)
+				abandoned.Add(-1)
 			}()
 			return InjectionOutcomeUnknown, ctx.Err()
 		}

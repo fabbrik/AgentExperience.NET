@@ -32,7 +32,7 @@
 package agentexperience
 
 // ContractVersion is the contract version this package implements.
-const ContractVersion = "1.10"
+const ContractVersion = "1.11"
 
 // SupportedContractVersions are the contract versions this package passes: every fixture of each.
-var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"}
+var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11"}
