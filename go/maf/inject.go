@@ -87,6 +87,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		return messages
 	}
 	if !ok {
+		s.reportInjected(InjectionResult{Outcome: "NothingToInject"})
 		op.Done("NothingToInject")
 		return messages
 	}
@@ -154,6 +155,9 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		op.Set(ae.AttributeOmittedCount, len(omitted))
 	}
 	if block.IsEmpty() {
+		// As .NET reports it: nothing injected, and every omission (a scope measured Hurts omits them all).
+		s.reportInjected(InjectionResult{Outcome: "NothingToInject", Truncated: ranked.Truncated,
+			VectorFallback: vector.fallback, Omitted: omitted})
 		op.Done("NothingToInject")
 		return messages
 	}
@@ -177,7 +181,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		}
 	}
 	if assignment != nil && assignment.Arm == ae.HoldoutWithheld {
-		s.reportWithheld(InjectionResult{Truncated: ranked.Truncated, VectorFallback: vector.fallback,
+		s.reportWithheld(InjectionResult{Outcome: "Withheld", Truncated: ranked.Truncated, VectorFallback: vector.fallback,
 			WithheldExperienceIDs: append([]ae.UUID(nil), ids...), Omitted: omitted})
 		p.startHoldout(ctx, identity, *assignment)
 		op.Done("Withheld")
@@ -200,13 +204,8 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	if captured {
 		scope.recordExposures(exposures)
 	}
-	if s.OnInjected != nil {
-		func() {
-			defer func() { _ = recover() }()
-			s.OnInjected(InjectionResult{ExperienceIDs: ids, ByteCount: block.ByteCount, Truncated: ranked.Truncated,
-				VectorFallback: vector.fallback, Omitted: omitted})
-		}()
-	}
+	s.reportInjected(InjectionResult{Outcome: "Injected", ExperienceIDs: ids, ByteCount: block.ByteCount,
+		Truncated: ranked.Truncated, VectorFallback: vector.fallback, Omitted: omitted})
 
 	// When each delivered record was injected, for the .NET lessons view: started last, in the background, so the
 	// block is handed over and the model called without waiting for the store.

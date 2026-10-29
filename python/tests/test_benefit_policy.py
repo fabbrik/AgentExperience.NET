@@ -432,3 +432,30 @@ def test_a_cache_that_cannot_answer_has_no_effect() -> None:
         raise RuntimeError("clock")
 
     assert cache_of(FakeStore([]), broken).current(BOUNDS, SCOPE, "principal") is None
+
+
+def test_concurrent_reads_of_one_key_start_one_refresh() -> None:
+    store = FakeStore(rows(X, treatment_verified=False))
+    store.gate = threading.Event()
+    cache = cache_of(store, Clock(T0))
+    start = threading.Barrier(32)
+    answers: list[BenefitView | None] = []
+    answers_lock = threading.Lock()
+
+    def read() -> None:
+        start.wait(5)
+        answer = cache.current(BOUNDS, SCOPE, "principal")
+        with answers_lock:
+            answers.append(answer)
+
+    threads = [threading.Thread(target=read) for _ in range(32)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(5)
+    assert answers == [None] * 32
+    store.gate.set()
+    cache.wait(5)
+    assert store.reads == 1
+    view = cache.current(BOUNDS, SCOPE, "principal")
+    assert view is not None and view.hurts == frozenset({X})

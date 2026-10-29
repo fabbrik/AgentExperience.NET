@@ -184,7 +184,7 @@ func (c *benefitCache) refresh(ctx context.Context, entry *benefitEntry, identit
 		case bounded.Err() != nil:
 			outcome, class = BenefitOutcomeUnknown, refreshTimeoutClass(bounded.Err())
 		default:
-			outcome, class = BenefitNotRefreshed, refreshErrorClass(got.err)
+			outcome, class = refreshFailure(got.err)
 		}
 	case <-bounded.Done():
 		outcome, class = BenefitOutcomeUnknown, refreshTimeoutClass(bounded.Err())
@@ -198,16 +198,21 @@ func refreshTimeoutClass(err error) string {
 	return ae.ErrorClassTimeout
 }
 
-// refreshErrorClass is a failed refresh's error.class, as .NET's: a store failure (a database driver's, a network's or
-// a file system's) is Infrastructure, anything else (a panic, a store that paged a run apart) Unexpected.
-func refreshErrorClass(err error) string {
+// refreshFailure is a failed refresh's outcome and error.class, as .NET's: a store that timed out (a deadline or a
+// network timeout, even with the refresh's own bound not yet reached) or was cancelled is OutcomeUnknown with Timeout
+// or Cancelled; any other store failure (a database driver's, a network's or a file system's) is NotRefreshed with
+// Infrastructure, and anything else (a panic, a store that paged a run apart) NotRefreshed with Unexpected.
+func refreshFailure(err error) (string, string) {
 	if _, panicked := err.(panicError); panicked {
-		return ae.ErrorClassUnexpected
+		return BenefitNotRefreshed, ae.ErrorClassUnexpected
 	}
-	if ae.ClassifyError(err) == ae.ErrorClassInfrastructure {
-		return ae.ErrorClassInfrastructure
+	switch class := ae.ClassifyError(err); class {
+	case ae.ErrorClassTimeout, ae.ErrorClassCancelled:
+		return BenefitOutcomeUnknown, class
+	case ae.ErrorClassInfrastructure:
+		return BenefitNotRefreshed, class
 	}
-	return ae.ErrorClassUnexpected
+	return BenefitNotRefreshed, ae.ErrorClassUnexpected
 }
 
 // size is how many keys are cached. For tests.

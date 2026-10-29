@@ -14,7 +14,7 @@ import pytest
 pytest.importorskip("agent_framework")
 
 from _fleet import FLEET_MINIMUM, FLEET_NOW, FLEET_SCOPE, TASK, X, Y, fleet_rows
-from _maf import ScriptedClient
+from _maf import ScriptedClient, delivered
 from _postgres import Server, application_conninfo, create_database
 from _sync import run
 from agent_framework import Agent
@@ -45,7 +45,7 @@ def test_a_python_agent_omits_the_lesson_the_dotnet_fleet_measured_hurting(pg_se
         store=PostgresExperienceStore(conninfo),
         identity=ExperienceIdentity("benefit-principal", FLEET_SCOPE),
         clock=lambda: FLEET_NOW,
-        on_injected=results.append,
+        on_injected=delivered(results.append),
         benefit=BenefitPolicy(enabled=True, prefer_measured_helpful=True, minimum_runs_per_arm=FLEET_MINIMUM),
     )
     (provider,) = [item for item in agent.context_providers if isinstance(item, ExperienceContextProvider)]

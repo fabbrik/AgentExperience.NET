@@ -40,11 +40,15 @@ through 1.9's `sql/query-holdout-outcomes.sql`.
 | `RefreshTimeout` | 30 seconds | How long one refresh may take before it is abandoned. |
 
 An interval, timeout or window that is not strictly positive, a timeout over one day, and a minimum below 1 are refused
-when the agent is built, even with the policy off.
+when the agent is built, even with the policy off. Where a language cannot tell an unset value from an explicit zero, a
+zero means the default: Go treats a zero `Window`, `RefreshInterval`, `RefreshTimeout` or `MinimumRunsPerArm` as the
+default and refuses only negative values (and a timeout over one day); its README says so.
 
 ### The estimate the policy acts on
 
 One estimate per key: the request scope, and the authorization's tenant and principal (two principals never share one).
+A port may key more strictly, never more loosely: the Python and Go ports key on the scope, the principal and the full
+authorization bounds, so two callers with different bounds never share an estimate either.
 It is 1.9's estimate over the rows of that scope read under that authorization, with two differences: only rows whose
 `assignedAt` is at or after the refresh's instant minus `Window` are folded (every page is still read; the filter is
 applied to each page's rows before they are added), and the estimator's options are `MinimumRunsPerArm` and, with
@@ -55,10 +59,12 @@ applied to each page's rows before they are added), and the estimator's options 
 What an estimate means for one invocation, from its `overall`, `lessons`, `byConsumingModel` and `minimumRunsPerArm`
 (.NET `BenefitView` and `BenefitViews`):
 
-- **Pooled** (`PerModel` off, or the invoking agent has no model): the scope hurts when `overall.verdict` is `Hurts`; a
+- **Pooled** (`PerModel` off, or the invoking agent has no recorded model): the scope hurts when `overall.verdict` is `Hurts`; a
   lesson hurts or helps when its `comparison.verdict` is `Hurts` or `Helps`.
 - **Per model** (`PerModel` on and the invoking agent's model is `m`): only when `byConsumingModel` names `m` and `m` is
-  not `unknown`; otherwise the pooled view. Then:
+  not `unknown`; otherwise the pooled view. The `unknown` consuming group (runs that recorded no model) is never an
+  agent's own: an agent with no recorded model, or whose model is literally `unknown`, reads the pooled view, as in
+  .NET. Then:
   - the scope's verdict is `m`'s group's verdict, or the pooled one when that is `NoEvidence`;
   - a lesson's verdict is decided over its `byModelPair` entries whose `runModel` is `m`: their treatment runs and
     successes and holdout runs and successes summed, compared as 1.9 compares two arms with the estimate's

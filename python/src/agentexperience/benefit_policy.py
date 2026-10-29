@@ -424,51 +424,55 @@ class BenefitCache:
         error_class: str | None = None
         views: BenefitViews | None = None
         replaced = False
-        with observe("benefit_refresh") as op:
-            try:
-                read = _Read()
-                assigned_from = self._policy.assigned_from(self._clock())
+        try:
+            with observe("benefit_refresh") as op:
+                try:
+                    read = _Read()
+                    assigned_from = self._policy.assigned_from(self._clock())
 
-                def run() -> None:
-                    try:
-                        read.estimate = estimate_benefit(
-                            self._store, bounds, scope, self._options, assigned_from=assigned_from
-                        )
-                    except BaseException as ex:  # reported by the refresh, never raised in a thread
-                        read.error = ex
-                    finally:
-                        read.done.set()
+                    def run() -> None:
+                        try:
+                            read.estimate = estimate_benefit(
+                                self._store, bounds, scope, self._options, assigned_from=assigned_from
+                            )
+                        except BaseException as ex:  # reported by the refresh, never raised in a thread
+                            read.error = ex
+                        finally:
+                            read.done.set()
 
-                # On a thread of its own, so a store that blocks cannot hold the timeout off; one that overruns is
-                # abandoned (a thread cannot be stopped) and its answer ignored.
-                threading.Thread(target=run, name="agentexperience-benefit-read", daemon=True).start()
-                if not read.done.wait(self._timeout):
+                    # On a thread of its own, so a store that blocks cannot hold the timeout off; one that overruns is
+                    # abandoned (a thread cannot be stopped) and its answer ignored.
+                    threading.Thread(target=run, name="agentexperience-benefit-read", daemon=True).start()
+                    if not read.done.wait(self._timeout):
+                        outcome, error_class = "OutcomeUnknown", "Timeout"
+                    elif read.error is not None:
+                        raise read.error
+                    else:
+                        views = BenefitViews.of(read.estimate)
+                        replaced = True
+                except (TimeoutError, asyncio.TimeoutError):
                     outcome, error_class = "OutcomeUnknown", "Timeout"
-                elif read.error is not None:
-                    raise read.error
-                else:
-                    views = BenefitViews.of(read.estimate)
-                    replaced = True
-            except (TimeoutError, asyncio.TimeoutError):
-                outcome, error_class = "OutcomeUnknown", "Timeout"
-            except asyncio.CancelledError:
-                outcome, error_class = "OutcomeUnknown", "Cancelled"
-            except Exception as ex:
-                outcome = "NotRefreshed"
-                error_class = INFRASTRUCTURE if classify(ex) == INFRASTRUCTURE else UNEXPECTED
-            finally:
-                with self._lock:
-                    if replaced:
-                        entry.views = views
-                    # A failed refresh waits out the interval too, so a failing store is not asked on every invocation.
-                    try:
-                        entry.refreshed_at = self._clock()
-                    except Exception:
-                        entry.refreshed_at = None
-                    entry.refreshing = None
-                    self._threads.discard(threading.current_thread())
-            if op is not None:
-                op.outcome(outcome, error_class)
+                except asyncio.CancelledError:
+                    outcome, error_class = "OutcomeUnknown", "Cancelled"
+                except Exception as ex:
+                    outcome = "NotRefreshed"
+                    error_class = INFRASTRUCTURE if classify(ex) == INFRASTRUCTURE else UNEXPECTED
+                finally:
+                    with self._lock:
+                        if replaced:
+                            entry.views = views
+                        # A failed refresh waits out the interval too: a failing store is not asked on every invocation.
+                        try:
+                            entry.refreshed_at = self._clock()
+                        except Exception:
+                            entry.refreshed_at = None
+                        entry.refreshing = None
+                if op is not None:
+                    op.outcome(outcome, error_class)
+        finally:
+            # Only once the observation has closed (and the report gone out), so a wait that returns has seen it.
+            with self._lock:
+                self._threads.discard(threading.current_thread())
 
     def _evict(self) -> None:
         """Drops the entry refreshed longest ago (one never refreshed counts as oldest), unless it is refreshing."""

@@ -196,6 +196,10 @@ type InjectionFailure struct {
 // bytes, whether the search returned more candidates than the ranking considers, and, when the vector channel did not
 // contribute (contract 1.6), why: nil when it did.
 type InjectionResult struct {
+	// Outcome is the inject operation's outcome, as .NET's InjectionOutcome names it: Injected; NothingToInject (no
+	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); or Withheld (in
+	// what OnWithheld is told).
+	Outcome        string
 	ExperienceIDs  []ae.UUID
 	ByteCount      int
 	Truncated      bool
@@ -273,8 +277,10 @@ type Options struct {
 	// DisableInjection captures without injecting.
 	DisableInjection bool
 	// OnCaptureFailure, OnInjectionFailure, OnInjected, OnFinalized and OnInjectionRecorded are told what happened;
-	// each is optional, and a panic in one is recovered and ignored. OnInjectionRecorded is called from the
-	// recording's own goroutine.
+	// each is optional, and a panic in one is recovered and ignored. OnInjected is told every invocation that
+	// injects (Outcome Injected) and, as .NET reports it, every one that searched or derived nothing to inject
+	// (Outcome NothingToInject, with the omissions: a scope measured Hurts shows here). OnInjectionRecorded is called
+	// from the recording's own goroutine.
 	OnCaptureFailure    func(CaptureFailure)
 	OnInjectionFailure  func(InjectionFailure)
 	OnInjected          func(InjectionResult)

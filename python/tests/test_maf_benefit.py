@@ -21,7 +21,7 @@ from _sync import run
 from agent_framework import Agent
 
 from agentexperience import BenefitPolicy, EnvironmentFingerprint, HoldoutOptions
-from agentexperience.benefit_policy import MEASURED_HARMFUL_DETAIL
+from agentexperience.benefit_policy import MEASURED_HARMFUL_DETAIL, SCOPE_MEASURED_HARMFUL_DETAIL
 from agentexperience.identity import ExperienceIdentity
 from agentexperience.inmemory import InMemoryExperienceStore
 from agentexperience.maf import (
@@ -41,16 +41,21 @@ POLICY = BenefitPolicy(enabled=True, prefer_measured_helpful=True, minimum_runs_
 class GatedStore(InMemoryExperienceStore):
     """The fleet's store, whose holdout read waits until the test opens the gate."""
 
-    def __init__(self) -> None:
-        super().__init__(fleet_records(), clock=lambda: FLEET_NOW)
+    def __init__(self, without: frozenset[Any] = frozenset(), only_rows_of: Any = None) -> None:
+        super().__init__(
+            [record for record in fleet_records() if record.experience_id not in without], clock=lambda: FLEET_NOW
+        )
         for row in fleet_holdout_rows():
-            self.seed_holdout_row(row)
+            if only_rows_of is None or row.experience_id == only_rows_of:
+                self.seed_holdout_row(row)
         self.gate = threading.Event()
         self.gate.set()
+        self.entered = threading.Event()
         self.reads = 0
 
     def read_holdout_outcomes(self, *args: Any, **kwargs: Any) -> Any:
         self.reads += 1
+        self.entered.set()
         assert self.gate.wait(10)
         return super().read_holdout_outcomes(*args, **kwargs)
 
@@ -96,6 +101,8 @@ def test_the_estimate_never_delays_an_invocation() -> None:
     for _ in range(3):
         run(agent.run(TASK))
     assert [set(result.experience_ids) for result in results] == [{X, Y}] * 3
+    # The refresh's read has started (and is held at the gate): exactly one, however many invocations ran.
+    assert store.entered.wait(10)
     assert store.reads == 1
     store.gate.set()
     run(provider.wait_for_benefit_refreshes())
@@ -150,3 +157,33 @@ def test_the_invoking_model_is_the_recorded_one_when_captured_else_the_clients()
 def test_a_settings_benefit_must_be_a_policy() -> None:
     with pytest.raises(TypeError):
         ExperienceSettings(store=InMemoryExperienceStore(), identity=IDENTITY, benefit=object())  # type: ignore[arg-type]
+
+
+def test_a_scope_measured_hurting_reports_nothing_to_inject_with_every_omission() -> None:
+    # Only X's runs: the scope's lessons together hurt.
+    store = GatedStore(only_rows_of=X)
+    agent, provider, results = agent_with(store, benefit=POLICY)
+    run(agent.run(TASK))
+    run(provider.wait_for_benefit_refreshes())
+    run(agent.run(TASK))
+    last = results[-1]
+    assert (last.outcome, last.experience_ids, last.byte_count) == ("NothingToInject", (), 0)
+    assert {item.experience_id for item in last.omitted} == {X, Y}
+    assert all(
+        (item.reason, item.detail) == ("MeasuredHarmful", SCOPE_MEASURED_HARMFUL_DETAIL) for item in last.omitted
+    )
+
+
+def test_the_only_candidate_measured_harmful_reports_nothing_to_inject() -> None:
+    # Y's record is gone, so X is the only candidate; Y's runs still balance the scope to no evidence.
+    store = GatedStore(without=frozenset({Y}))
+    agent, provider, results = agent_with(store, benefit=POLICY)
+    run(agent.run(TASK))
+    assert results[0].experience_ids == (X,)
+    run(provider.wait_for_benefit_refreshes())
+    run(agent.run(TASK))
+    last = results[-1]
+    assert (last.outcome, last.experience_ids) == ("NothingToInject", ())
+    assert [(item.experience_id, item.reason, item.detail) for item in last.omitted] == [
+        (X, "MeasuredHarmful", MEASURED_HARMFUL_DETAIL)
+    ]

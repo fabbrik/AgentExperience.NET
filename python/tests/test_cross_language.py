@@ -35,7 +35,7 @@ import pytest
 pytest.importorskip("agent_framework")
 
 from _contract import FIXTURES, cases, json_difference, read_json
-from _maf import NEXT_TICKET, TICKET, ScriptedClient
+from _maf import NEXT_TICKET, TICKET, ScriptedClient, delivered
 from _postgres import Server
 from _sync import run
 from agent_framework import Agent, tool
@@ -318,7 +318,7 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
         Agent(client=client, name="refund-agent"),
         store=store,
         identity=ExperienceIdentity("python-principal", scope),
-        on_injected=injections.append,
+        on_injected=delivered(injections.append),
         on_injection_failure=problems.append,
         on_injection_recorded=recorded.append,
     )
@@ -360,7 +360,7 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
         Agent(client=other_client, name="other-agent"),
         store=store,
         identity=ExperienceIdentity("python-principal", replace(scope, agent_id="other-agent")),
-        on_injected=other.append,
+        on_injected=delivered(other.append),
         on_injection_failure=problems.append,
     )
     run(other_agent.run("Deploy service X to prod"))

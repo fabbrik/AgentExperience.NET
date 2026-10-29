@@ -259,6 +259,15 @@ func (s *settings) reportWithheld(result InjectionResult) {
 	s.OnWithheld(result)
 }
 
+// reportInjected tells OnInjected, recovering a panic in it.
+func (s *settings) reportInjected(result InjectionResult) {
+	if s.OnInjected == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	s.OnInjected(result)
+}
+
 // reportHoldoutRecorded tells OnHoldoutRecorded, recovering a panic in it.
 func (s *settings) reportHoldoutRecorded(result HoldoutRecordResult) {
 	if s.OnHoldoutRecorded == nil {

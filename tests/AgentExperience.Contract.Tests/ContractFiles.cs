@@ -38,7 +38,7 @@ internal static class ContractFiles
         ["1.7"] = "54f0c23c5489577ef5a09a587905cc39679ae756f848926b6934091eb86e4e4a",
         ["1.8"] = "db23678d06d391bf411e53278c0f87f1122283809ac4533caeb0d5badf766fed",
         ["1.9"] = "e3ab092f84d7a0b5766507579eccf1d993c7727ebb4ff55a1984cb2f728ef476",
-        ["1.10"] = "f2d8b6d1e22c949690c67078a54b343f355d50da5dc6af4c365d7d05a0b85d38",
+        ["1.10"] = "54fa8d5e8f7467814eecade6ac20b92dfe97051e37f9fa5efada801cb4021446",
     };
 
     /// <summary>The environment variable that rewrites the fixtures instead of only comparing against them.</summary>

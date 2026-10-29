@@ -240,8 +240,10 @@ class InjectionResult:
     truncated: bool
     vector_fallback: VectorFallback | None = None
     """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
-    outcome: Literal["Injected", "Withheld"] = "Injected"
-    """``Injected``, or ``Withheld`` when the holdout withheld the block (contract 1.8)."""
+    outcome: Literal["Injected", "Withheld", "NothingToInject"] = "Injected"
+    """``Injected``; ``Withheld`` when the holdout withheld the block (contract 1.8); or, as .NET reports it,
+    ``NothingToInject`` when there was no task text or every ranked record was omitted (``omitted`` says why: a scope
+    measured ``Hurts`` omits them all as ``MeasuredHarmful``)."""
     withheld_experience_ids: tuple[uuid.UUID, ...] = ()
     """The records a held-out invocation's block named and did not deliver; empty otherwise."""
     omitted: tuple[OmittedRecord, ...] = ()
@@ -426,6 +428,14 @@ class ExperienceSettings:
             return
         try:
             self.on_injection_failure(failure)
+        except Exception:
+            pass
+
+    def report_injected(self, result: InjectionResult) -> None:
+        if self.on_injected is None:
+            return
+        try:
+            self.on_injected(result)
         except Exception:
             pass
 
@@ -1140,6 +1150,7 @@ class ExperienceContextProvider(ContextProvider):
             ]
             task_text = derive_task_text(_task_messages(context.input_messages, earlier))
             if task_text is None:
+                settings.report_injected(InjectionResult((), 0, False, outcome="NothingToInject"))
                 return "NothingToInject"
             parameters = SearchParameters(
                 identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
@@ -1208,6 +1219,12 @@ class ExperienceContextProvider(ContextProvider):
             if op is not None:
                 op.set("agentexperience.omitted_count", len(selection.omitted))
             if block.is_empty:
+                # As .NET reports it: nothing injected, and every omission.
+                settings.report_injected(
+                    InjectionResult(
+                        (), 0, ranked.truncated, fallback, outcome="NothingToInject", omitted=selection.omitted
+                    )
+                )
                 return "NothingToInject"
             # The injection holdout (contract 1.8). Decided once the block is built, so what a held-out run is denied is
             # exactly what it would have been given, and before anything is handed over. Only a run this agent's own

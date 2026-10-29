@@ -6,6 +6,7 @@ package maf
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"slices"
@@ -256,15 +257,64 @@ func TestTheWholeScopeMeasuredHurtingGetsNoBlock(t *testing.T) {
 	if len(model.blocks()) != blocks || len(h.injections) != injections {
 		t.Fatal("a scope measured hurting was given a block")
 	}
+	// As .NET reports it: OnInjected is told NothingToInject, with every record omitted as MeasuredHarmful and the
+	// scope's detail.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.nothing) == 0 {
+		t.Fatal("OnInjected was not told the scope's omissions")
+	}
+	last := h.nothing[len(h.nothing)-1]
+	if last.Outcome != "NothingToInject" || len(last.Omitted) == 0 || len(last.ExperienceIDs) != 0 {
+		t.Fatalf("%+v", last)
+	}
+	for _, omitted := range last.Omitted {
+		if omitted.Reason != ae.OmittedMeasuredHarmful || omitted.Detail == nil || *omitted.Detail != ae.ScopeMeasuredHarmfulDetail {
+			t.Fatalf("%+v", omitted)
+		}
+	}
+}
+
+func TestTheOnlyCandidateMeasuredHarmfulIsReportedWithNothingToInject(t *testing.T) {
+	learned := lesson(t)
+	h, clock := newHost(t), newMovingClock()
+	store := &outcomeStore{Store: storeOf(t, learned)}
+	// No verify: nothing is captured, so the seeded lesson stays the only candidate.
+	a, config, model := policyAgent(t, h, store, clock, ae.BenefitPolicy{Enabled: true, MinimumRunsPerArm: 3},
+		func(o *Options) { o.Verify = nil })
+	store.set(hurts(learned.ExperienceID, clock.read(), true), nil, nil) // the lesson hurts; the scope has no evidence
+	runText(t, a, nextTicket)                                            // the cold cache: injected as without the policy, and a refresh starts
+	settle(t, config)
+	blocks := len(model.blocks())
+	runText(t, a, nextTicket)
+	if len(model.blocks()) != blocks {
+		t.Fatal("the harmful lesson was injected")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.nothing) != 1 {
+		t.Fatalf("OnInjected was told %d NothingToInject results", len(h.nothing))
+	}
+	last := h.nothing[0]
+	if len(last.Omitted) != 1 || last.Omitted[0].ExperienceID != learned.ExperienceID ||
+		last.Omitted[0].Reason != ae.OmittedMeasuredHarmful || last.Omitted[0].Detail == nil ||
+		*last.Omitted[0].Detail != ae.MeasuredHarmfulDetail {
+		t.Fatalf("%+v", last)
+	}
 }
 
 func TestAFailedRefreshKeepsThePreviousViewAndWaitsOutTheInterval(t *testing.T) {
 	for _, tc := range []struct {
-		err   error
-		class string
+		err     error
+		outcome string
+		class   string
 	}{
-		{&net.OpError{Op: "read", Net: "tcp", Err: errors.New("reset")}, ae.ErrorClassInfrastructure},
-		{errors.New("unexpected"), ae.ErrorClassUnexpected},
+		{&net.OpError{Op: "read", Net: "tcp", Err: errors.New("reset")}, BenefitNotRefreshed, ae.ErrorClassInfrastructure},
+		{errors.New("unexpected"), BenefitNotRefreshed, ae.ErrorClassUnexpected},
+		// A store that timed out on its own, well inside the refresh's bound: OutcomeUnknown, as .NET's TimeoutException.
+		{fmt.Errorf("query: %w", context.DeadlineExceeded), BenefitOutcomeUnknown, ae.ErrorClassTimeout},
+		{&net.OpError{Op: "read", Net: "tcp", Err: timeoutError{}}, BenefitOutcomeUnknown, ae.ErrorClassTimeout},
+		{fmt.Errorf("query: %w", context.Canceled), BenefitOutcomeUnknown, ae.ErrorClassCancelled},
 	} {
 		h, clock := newHost(t), newMovingClock()
 		store := &outcomeStore{Store: h.store}
@@ -287,20 +337,28 @@ func TestAFailedRefreshKeepsThePreviousViewAndWaitsOutTheInterval(t *testing.T) 
 		}
 		refreshes := o.of("benefit_refresh")
 		last := refreshes[len(refreshes)-1]
-		if last.Outcome != BenefitNotRefreshed || last.ErrorClass != tc.class {
+		if last.Outcome != tc.outcome || last.ErrorClass != tc.class {
 			t.Fatalf("%+v", last)
 		}
 		ae.SetObserver(nil)
 	}
 }
 
+// timeoutError is a network error that timed out.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
 func TestARefreshThatOverrunsItsTimeoutIsAbandonedAndOneRunsPerKey(t *testing.T) {
 	h, clock := newHost(t), newMovingClock()
 	store := &outcomeStore{Store: h.store}
 	o := observe(t)
-	a, config, _ := policyAgent(t, h, store, clock, ae.BenefitPolicy{Enabled: true, MinimumRunsPerArm: 3,
-		RefreshTimeout: 50 * time.Millisecond}, nil)
+	// Warmed under the default timeout, so a slow runner cannot time the warm-up out; lowered for the overrun.
+	a, config, _ := policyAgent(t, h, store, clock, ae.BenefitPolicy{Enabled: true, MinimumRunsPerArm: 3}, nil)
 	harmful, _ := warm(t, h, store, clock, a, config)
+	ContextProviderOf(config).settings.benefit.policy.RefreshTimeout = 50 * time.Millisecond // no refresh is running
 
 	release := make(chan struct{})
 	defer close(release)
@@ -462,5 +520,52 @@ func TestTheCacheKeepsAtMostItsLimitDroppingTheOldest(t *testing.T) {
 	cache.mu.Unlock()
 	if _, ok := cache.entries[keyOf(first)]; ok || cache.size() != MaxBenefitCacheEntries-1 {
 		t.Fatalf("%d entries; the oldest kept: %v", cache.size(), ok)
+	}
+}
+
+func TestConcurrentReadsOfOneKeyStartOneRefresh(t *testing.T) {
+	h, clock := newHost(t), newMovingClock()
+	store := &outcomeStore{Store: h.store}
+	release := make(chan struct{})
+	store.set(nil, nil, release)
+	cache := newBenefitCache(store, ae.BenefitPolicy{Enabled: true, MinimumRunsPerArm: 3}, clock.read)
+	identity := &ae.Identity{Principal: "svc", Scope: testScope}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if view := cache.current(context.Background(), identity, nil); view != nil {
+				t.Error("a cold cache answered a view")
+			}
+		}()
+	}
+	wg.Wait()
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := cache.refreshs.wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if store.count() != 1 {
+		t.Fatalf("%d refreshes ran for one key", store.count())
+	}
+	// And concurrent invocations of one agent, through the provider.
+	h2 := newHost(t)
+	store2 := &outcomeStore{Store: h2.store}
+	release2 := make(chan struct{})
+	store2.set(nil, nil, release2)
+	a, config, _ := policyAgent(t, h2, store2, newMovingClock(), ae.BenefitPolicy{Enabled: true, MinimumRunsPerArm: 3},
+		func(o *Options) { o.Verify = nil })
+	var runs sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		runs.Add(1)
+		go func() { defer runs.Done(); runText(t, a, ticket) }()
+	}
+	runs.Wait()
+	close(release2)
+	settle(t, config)
+	if store2.count() != 1 {
+		t.Fatalf("%d refreshes ran for one key across concurrent invocations", store2.count())
 	}
 }
