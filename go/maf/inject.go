@@ -135,14 +135,23 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		return messages
 	}
 	retrieval.Done("Completed")
-	block, err := ae.RenderBlock(ranked.Ranked, s.BlockOptions)
+	// Contract 1.10: acting on measured benefit (off by default), from the cached view, which never waits on the store.
+	var view *ae.BenefitView
+	if s.benefit != nil {
+		view = s.benefit.current(ctx, identity, s.invokingModel(captured))
+	}
+	selected, omitted := ae.SelectCandidates(ranked.Ranked, view, ae.SelectOptions{
+		MaxRecords: s.BlockOptions.MaxRecords, ExcludeModelAuthored: s.ExcludeModelAuthored,
+		PreferMeasuredHelpful: s.Benefit.PreferMeasuredHelpful})
+	block, err := ae.RenderBlock(selected, s.BlockOptions)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Rendering the block failed; no block was added.", Err: err})
 		op.Done("Failed")
 		return messages
 	}
+	omitted = append(omitted, ae.ByteBudgetOmissions(block, s.BlockOptions)...)
 	if op != nil {
-		op.Set(ae.AttributeOmittedCount, len(block.Omitted))
+		op.Set(ae.AttributeOmittedCount, len(omitted))
 	}
 	if block.IsEmpty() {
 		op.Done("NothingToInject")
@@ -169,7 +178,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	}
 	if assignment != nil && assignment.Arm == ae.HoldoutWithheld {
 		s.reportWithheld(InjectionResult{Truncated: ranked.Truncated, VectorFallback: vector.fallback,
-			WithheldExperienceIDs: append([]ae.UUID(nil), ids...)})
+			WithheldExperienceIDs: append([]ae.UUID(nil), ids...), Omitted: omitted})
 		p.startHoldout(ctx, identity, *assignment)
 		op.Done("Withheld")
 		return messages
@@ -195,7 +204,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		func() {
 			defer func() { _ = recover() }()
 			s.OnInjected(InjectionResult{ExperienceIDs: ids, ByteCount: block.ByteCount, Truncated: ranked.Truncated,
-				VectorFallback: vector.fallback})
+				VectorFallback: vector.fallback, Omitted: omitted})
 		}()
 	}
 

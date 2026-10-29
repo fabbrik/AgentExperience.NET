@@ -1,4 +1,4 @@
-"""Shared by the benefit tests: the contract's JSON forms of outcome rows and estimates (contract 1.9)."""
+"""Shared by the benefit tests: the contract's JSON forms of outcome rows and estimates (contracts 1.9 and 1.10)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,15 @@ import uuid
 from typing import Any
 
 from agentexperience import Instant
-from agentexperience.benefit import BenefitComparison, BenefitEstimate, HoldoutOutcomeRow
+from agentexperience.benefit import (
+    BenefitArm,
+    BenefitComparison,
+    BenefitEstimate,
+    HoldoutOutcomeRow,
+    LessonBenefit,
+    ModelBenefit,
+    ModelPairBenefit,
+)
 
 TOLERANCE = 1e-12
 """README-1.9: rate, difference, lower and upper compare within this absolute tolerance; everything else exactly."""
@@ -86,3 +94,49 @@ def estimate_json(estimate: BenefitEstimate, *, with_store: bool = False) -> dic
         value["tracked"] = estimate.tracked
         value["outcome"] = estimate.outcome
     return value
+
+
+def comparison_of(value: dict[str, Any]) -> BenefitComparison:
+    def arm(item: dict[str, Any]) -> BenefitArm:
+        return BenefitArm(item["runs"], item["successes"])
+
+    return BenefitComparison(
+        arm(value["treatment"]),
+        arm(value["holdout"]),
+        value["difference"],
+        value["lower"],
+        value["upper"],
+        value["verdict"],
+        value["unverified"],
+        value["pending"],
+        value["mixedArm"],
+    )
+
+
+def estimate_of(value: dict[str, Any]) -> BenefitEstimate:
+    """An estimate read back from its contract JSON form (contract 1.10's ``estimate.json``), tracked and ``Found``
+    unless the JSON says otherwise."""
+    return BenefitEstimate(
+        comparison_of(value["overall"]),
+        tuple(
+            LessonBenefit(
+                uuid.UUID(lesson["experienceId"]),
+                comparison_of(lesson["comparison"]),
+                None
+                if lesson["byModelPair"] is None
+                else tuple(
+                    ModelPairBenefit(pair["lessonModel"], pair["runModel"], comparison_of(pair["comparison"]))
+                    for pair in lesson["byModelPair"]
+                ),
+            )
+            for lesson in value["lessons"]
+        ),
+        None
+        if value["byConsumingModel"] is None
+        else tuple(
+            ModelBenefit(item["model"], comparison_of(item["comparison"])) for item in value["byConsumingModel"]
+        ),
+        value.get("tracked", True),
+        value.get("outcome", "Found"),
+        value["minimumRunsPerArm"],
+    )

@@ -6,6 +6,7 @@ package inmemory
 import (
 	"context"
 	"errors"
+	"net"
 	"reflect"
 	"strconv"
 	"testing"
@@ -30,6 +31,14 @@ func seeded(t *testing.T, c *ct.LessonsCase) *Store {
 	}
 	now := c.Now
 	store.Clock = func() ae.Instant { return now }
+	// Contract 1.10: the holdout's rows, each as recorded (every seeded instant is before the case's clock).
+	for _, row := range c.Assignments {
+		if err := store.RecordHoldoutAssignment(ctx, ae.BoundsOf(row.Scope), row.Scope, ae.HoldoutAssignment{
+			RunID: row.RunID, Arm: row.Arm, AssignedAt: row.AssignedAt,
+			Records: []ae.RunExposure{{ExperienceID: row.ExperienceID, Revision: row.Revision}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, row := range c.Injections {
 		for n := int64(0); n < row.InjectionCount; n++ {
 			if err := store.RecordInjection(ctx, ae.BoundsOf(row.Scope), row.Scope, []ae.UUID{row.ExperienceID},
@@ -48,12 +57,23 @@ func TestTheLessonsViewFixturesGiveTheirPages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			now := c.Now
-			lessons, err := ae.NewLessons(seeded(t, c), ae.LessonsOptions{Clock: func() ae.Instant { return now }})
+			store := seeded(t, c)
+			var reader ae.LessonsReader = store
+			if c.HoldoutReadRevoked {
+				// Contract 1.10: the holdout read fails; the list fails with it, as a store failure.
+				reader = failingHoldout{store}
+			}
+			lessons, err := ae.NewLessons(reader, c.Options())
 			if err != nil {
 				t.Fatal(err)
 			}
 			page, err := lessons.List(context.Background(), ae.BoundsOf(c.Scope), c.Scope, c.Query())
+			if class := c.ExpectedErrorClass(); class != "" {
+				if err == nil || ae.ClassifyError(err) != class {
+					t.Fatalf("the list answered %v (%v), not a failure of class %s", err, ae.ClassifyError(err), class)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,6 +82,14 @@ func TestTheLessonsViewFixturesGiveTheirPages(t *testing.T) {
 			}
 		})
 	}
+}
+
+// failingHoldout is the store whose holdout read fails as a database failure does (a network error: Infrastructure).
+type failingHoldout struct{ *Store }
+
+func (failingHoldout) QueryHoldoutOutcomes(context.Context, ae.AuthorizationBounds, ae.Scope, int,
+	*ae.HoldoutOutcomeCursor) ([]ae.HoldoutOutcomeRow, error) {
+	return nil, &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}
 }
 
 func fixtureStore(t *testing.T) (*ct.LessonsCase, *Store) {

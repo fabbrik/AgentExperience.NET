@@ -23,6 +23,22 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   rows, with every other number equal within 1e-12. The benefit
   policy and measuring another memory provider stay .NET-only.
 
+### Acting on the estimate in Python and Go: contract 1.10 (story 27.2)
+
+- **Contract 1.10** ([what it adds](contract/README-1.10.md)) brings the benefit policy into the language-neutral
+  contract, add-only: `benefit-select` fixtures (ranked records, the cached estimate and the policy in; the selection,
+  the block and every omission with its reason and byte-exact detail out, generated through the .NET provider's own
+  selection), and four `lessons-view` cases with the measured benefit, including a holdout read that fails. Every
+  1.0-1.9 file is unchanged.
+- **The Python and Go agents act on the estimate**, behind the same opt-in policy and defaults (Python `BenefitPolicy`,
+  Go `ae.BenefitPolicy`): a lesson measured `Hurts` is omitted as `MeasuredHarmful`, a scope measured `Hurts` gets no
+  lessons, `PreferMeasuredHelpful` moves lessons measured `Helps` first, and `PerModel` acts on the invoking model's
+  verdicts. The estimate is cached per scope and principal and refreshed in the background, never on the request path,
+  reported as `benefit_refresh`. Injection results now carry their omissions with reasons and details. The lessons
+  views show each lesson's measured benefit on request. The holdout is unchanged. A .NET-written fleet in which one
+  lesson measures `Hurts` is omitted by Python and Go agents over the same PostgreSQL rows. Measuring another memory
+  provider stays .NET-only.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

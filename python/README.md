@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.9, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.9 (and so every 1.0 to 1.8 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.10, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.10 (and so every 1.0 to 1.9 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -165,6 +165,13 @@ for lesson in page.lessons:                             # newest first
   port renders no HTML and maps no endpoint.
 - **Stores.** `InMemoryExperienceStore` and `PostgresExperienceStore` have `list_lessons_page`; PostgreSQL runs the
   contract's `sql/list-experience-lessons.sql` as written and needs no grants beyond 1.0 and 1.4.
+- **What was measured** (contract 1.10). `LessonsQuery(include_measured_benefit=True)` fills each lesson's
+  `measured_benefit` (a `LessonBenefit`: the comparison and, with the policy's `per_model`, the model pairs) from one
+  estimate for the scope over the setup's `BenefitPolicy` `window` and `minimum_runs_per_arm` (30 days and 20 by
+  default, whether or not the policy is on), so a lesson omitted as `MeasuredHarmful` shows the `Hurts` behind it.
+  `None` for a lesson no assigned run in the window named, and for every lesson when the store does not read the
+  holdout. A store failure on that read raises the store's own error (on PostgreSQL the driver's, whose telemetry
+  error class is `Infrastructure`, as .NET's `ExperienceStoreException`). Off by default: then nothing more is read.
 
 ### Measuring benefit: the injection holdout
 
@@ -249,6 +256,54 @@ for lesson in estimate.lessons:
 | `BenefitOptions.minimum_runs_per_arm`, `.split_by_model` | `ExperienceBenefitOptions.MinimumRunsPerArm`, `SplitByModel` |
 | `"unknown"` (`agentexperience.benefit.UNKNOWN_MODEL`) | `ExperienceBenefitEstimate.UnknownModel` |
 
+### Acting on the estimate
+
+Reading the estimate changes nothing by itself. With `benefit=BenefitPolicy(enabled=True)` (contract 1.10, .NET's
+`ExperienceBenefitPolicy`) injection acts on it:
+
+```python
+from agentexperience import BenefitPolicy
+
+agent = use_agent_experience(agent, store=store, identity=identity, verify=verify,
+                             holdout=HoldoutOptions(rate=0.1),
+                             benefit=BenefitPolicy(enabled=True, prefer_measured_helpful=True))
+```
+
+- **A lesson measured `Hurts` is omitted** before the record limit, so a lower-ranked record takes its slot; a scope
+  whose overall verdict is `Hurts` gets no lessons at all. `InjectionResult.omitted` lists every ranked record that
+  was not delivered as an `OmittedRecord` (`experience_id`, `reason`, `detail`): `MeasuredHarmful`, `ModelAuthored`,
+  `OverRecordLimit` or `OverByteBudget`, with .NET's details, in .NET's order. With `prefer_measured_helpful` the
+  lessons measured `Helps` go first, each group keeping its rank order. `NoEvidence` changes nothing.
+- **Per model.** With `per_model=True` the estimate is split by model and an invocation acts on its own model's
+  verdicts: the model capture records for the run (the host's environment value when it sets one), or for an
+  uncaptured invocation the agent's chat client's. Where that model's group has `NoEvidence`, or the model is unknown or
+  unmeasured, the pooled verdict stands.
+- **It never waits on the store.** The estimate is cached per scope, authorization bounds and principal. An invocation
+  uses what is cached as it is (nothing yet, on the first, means no effect) and, when it is missing or older than
+  `refresh_interval`, starts one refresh on a daemon thread; at most one runs per key. A refresh that raises or
+  overruns `refresh_timeout` keeps the previous estimate, and the store is asked again only after another interval. Each
+  refresh is the `benefit_refresh` telemetry operation (`Refreshed`, `NotRefreshed`, `OutcomeUnknown`).
+  `await provider.wait_for_benefit_refreshes()` waits for the ones started so far (tests, shutdown).
+- **Only recent evidence counts:** assignments within `window` of a refresh. `minimum_runs_per_arm` is the estimator's.
+  An estimate the store could not give (no holdout read, or a scope outside the bounds) is never acted on.
+- **The holdout is unchanged.** It assigns and withholds the block the selection produced, so a lesson omitted as
+  harmful is neither delivered nor withheld; its verdict returns to `NoEvidence` once its evidence leaves the window.
+- **The selection as a function.** `agentexperience.select_block(ranked, view, block_options, ...)` is what an
+  invocation runs; `BenefitViews.of(estimate).for_model(model)` is the view it acts on.
+
+| Python (`BenefitPolicy`) | .NET (`ExperienceBenefitPolicy`) | Default |
+| --- | --- | --- |
+| `enabled` | `Enabled` | `False` |
+| `prefer_measured_helpful` | `PreferMeasuredHelpful` | `False` |
+| `per_model` | `PerModel` | `False` |
+| `window` (`timedelta`) | `Window` | 30 days |
+| `minimum_runs_per_arm` | `MinimumRunsPerArm` | 20 |
+| `refresh_interval` (`timedelta`) | `RefreshInterval` | 10 minutes |
+| `refresh_timeout` (`timedelta`, at most one day) | `RefreshTimeout` | 30 seconds |
+
+An interval, timeout or window that is not strictly positive, a timeout over one day, or a minimum below 1 raises
+`ValueError` when the policy is built, even with it off.
+
 ### Telemetry: the same spans and metrics as .NET
 
 With the `otel` extra (`pip install "agenticexperience[otel]"`, which depends on `opentelemetry-api` only), one call
@@ -262,9 +317,9 @@ from agentexperience import telemetry
 telemetry.enable()  # the global tracer and meter providers your application configured (or pass tracer_provider=, meter_provider=)
 ```
 
-It emits `inject`, `retrieve`, `record_injection`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
-`verify`, `reflect`, `finalize` and `index` (the background embedding write): the operations this port performs, and no
-other. The core and the agent integration import no OpenTelemetry; they call the small hook in `agentexperience.observer`
+It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `benefit_refresh` (with the benefit policy on),
+`capture.start_run`, `capture.append_attempt`, `capture.complete_run`, `verify`, `reflect`, `finalize` and `index` (the
+background embedding write): the operations this port performs, and no other. The core and the agent integration import no OpenTelemetry; they call the small hook in `agentexperience.observer`
 (one `None` check when nothing is registered), and `agentexperience.telemetry` is the adapter. It configures no SDK and
 no exporter, and a provider, exporter or observer that raises is swallowed and never reaches the agent. Attributes
 carry identifiers and counts only, never record content, task text, scopes or exception messages.
@@ -422,13 +477,14 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.9: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view, the injection holdout and its benefit estimate, and telemetry. These .NET features have no counterpart
+The port covers contract 1.0 to 1.10: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout, its benefit estimate and the benefit policy that acts on
+it, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
-- **Acting on the holdout:** the benefit policy (omitting lessons measured harmful), measuring another memory provider,
-  and exporting measured lessons. The port reads the estimate; only .NET acts on it.
+- **Beyond the benefit policy:** measuring another memory provider (the provider wrapper) and exporting measured
+  lessons.
 - **Withdrawal notices:** the port keeps no per-session account of what it injected, so it never retracts a record;
   a held-out invocation is always `Withheld`, never a notices-only `Retracted` block.
 - **Sharing:** grants, and so the grant-disclosure choices.

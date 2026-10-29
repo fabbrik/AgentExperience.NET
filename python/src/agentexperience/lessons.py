@@ -25,6 +25,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from ._text import format_fixed
+from .benefit import LessonBenefit, estimate_benefit, lesson_benefit_to_json
+from .benefit_policy import BenefitPolicy
 from .block import Block, BlockOptions, RankedRecord, render_block
 from .encoding import Instant
 from .identity import ExperienceIdentity
@@ -64,6 +66,10 @@ class LessonsQuery:
     statuses: Sequence[ExperienceStatus] | None = None
     limit: int = DEFAULT_LESSONS_LIMIT
     include_ineligible: bool = True
+    include_measured_benefit: bool = False
+    """Contract 1.10: read what the injection holdout measured for each listed lesson into
+    :attr:`Lesson.measured_benefit`, from one estimate for the scope over the view's benefit policy's window and
+    minimum (30 days and 20 by default, whether or not the policy is on). Off by default: nothing more is read."""
 
     def __post_init__(self) -> None:
         if isinstance(self.limit, bool) or not isinstance(self.limit, int):
@@ -109,6 +115,10 @@ class Lesson:
     """When an agent in this scope was last shown this lesson. ``None`` means never injected when the page's
     ``injections_tracked`` is true, and not known when it is false."""
     injection_count: int = 0
+    measured_benefit: LessonBenefit | None = None
+    """Contract 1.10: what the injection holdout measured for this lesson (treatment runs given it against holdout
+    runs denied it, with the verdict), when the query asked for it; ``None`` otherwise, when no assigned run in the
+    window named it, or when the store does not track the holdout."""
 
     def to_json(self) -> dict[str, Any]:
         """The lesson in the contract's ``expected.json`` form (camelCase, instants as ISO 8601 text)."""
@@ -146,16 +156,26 @@ class LessonsPage:
     injections_tracked: bool = False
     """True when the page was read with its injections; false when the store tracks none or they could not be read
     (the application role lacks the 1.4 grants, say), and then a ``None`` ``last_injected_at`` means not known."""
+    measured_benefit_included: bool = False
+    """Whether the query asked for each lesson's measured benefit (contract 1.10)."""
 
     def to_json(self) -> dict[str, Any]:
-        """The page in the contract's ``expected.json`` form."""
+        """The page in the contract's ``expected.json`` form; each lesson carries ``measuredBenefit`` only when the
+        query asked for it."""
+        lessons = []
+        for lesson in self.lessons:
+            value = lesson.to_json()
+            if self.measured_benefit_included:
+                benefit = lesson.measured_benefit
+                value["measuredBenefit"] = None if benefit is None else lesson_benefit_to_json(benefit)
+            lessons.append(value)
         return {
             "outcome": self.outcome,
             "generatedAt": self.generated_at.format(),
             "hasMore": self.has_more,
             "outOfScopeDropped": self.out_of_scope_dropped,
             "injectionsTracked": self.injections_tracked,
-            "lessons": [lesson.to_json() for lesson in self.lessons],
+            "lessons": lessons,
         }
 
 
@@ -196,6 +216,7 @@ class ExperienceLessons:
         clock: Callable[[], Instant] = Instant.now,
         identity: ExperienceIdentity | None = None,
         render: Callable[[ExperienceRecord, BlockOptions], Block] | None = None,
+        benefit: BenefitPolicy | None = None,
     ) -> None:
         if not isinstance(store, LessonsReader):
             raise TypeError("The store must have a list_lessons_page method (contract 1.7).")
@@ -207,6 +228,7 @@ class ExperienceLessons:
         self._clock = clock
         self._identity = identity
         self._render = render or render_alone
+        self._benefit = benefit or BenefitPolicy()
 
     def list(self, identity: ExperienceIdentity | None = None, query: LessonsQuery | None = None) -> LessonsPage:
         """Lists the lessons in the identity's scope under its authorization bounds (see :meth:`list_scope`)."""
@@ -258,8 +280,18 @@ class ExperienceLessons:
             lessons.append(lesson)
         # A store that answered as many records as were asked for may hold more than were read.
         has_more = has_more or read.answered >= probe
+        # Contract 1.10: opt-in, so the default page reads nothing more and is unchanged.
+        if query.include_measured_benefit and lessons:
+            lessons = _with_measured_benefit(self._store, self._benefit, bounds, scope, lessons, generated_at)
         return LessonsPage(
-            "Found", scope, tuple(lessons), generated_at, has_more, out_of_scope, read.injections_tracked
+            "Found",
+            scope,
+            tuple(lessons),
+            generated_at,
+            has_more,
+            out_of_scope,
+            read.injections_tracked,
+            query.include_measured_benefit,
         )
 
     def _describe(self, record: ExperienceRecord) -> Lesson:
@@ -312,6 +344,34 @@ class ExperienceLessons:
                 f"its block ({byte_count} bytes) is larger than the {self._options.max_bytes}-byte injection budget",
             )
         return None, None
+
+
+def _with_measured_benefit(
+    store: LessonsReader,
+    policy: BenefitPolicy,
+    bounds: AuthorizationBounds,
+    scope: Scope,
+    lessons: list[Lesson],
+    now: Instant,
+) -> list[Lesson]:
+    """Each lesson with its entry of one estimate for the scope, over the policy's window before ``now``; unchanged
+    when the store does not track the holdout or refused the read. A store failure raises."""
+    estimate = estimate_benefit(
+        store,
+        bounds,
+        scope,
+        policy.estimator_options,
+        assigned_from=policy.assigned_from(now),
+    )
+    if not (estimate.tracked and estimate.outcome == "Found"):
+        return lessons
+    measured: dict[uuid.UUID, LessonBenefit] = {}
+    for entry in estimate.lessons:
+        measured.setdefault(entry.experience_id, entry)
+    return [
+        replace(lesson, measured_benefit=measured[lesson.experience_id]) if lesson.experience_id in measured else lesson
+        for lesson in lessons
+    ]
 
 
 def _with_injection(lesson: Lesson, summary: InjectionSummary) -> Lesson:

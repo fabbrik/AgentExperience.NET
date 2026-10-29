@@ -94,6 +94,11 @@ func TestLessonsViewFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if len(c.Assignments) > 0 {
+				// Contract 1.10's measured-benefit cases read the holdout, which this fake does not hold: the in-memory
+				// and PostgreSQL stores run them.
+				t.Skip("needs a store that reads the holdout")
+			}
 			now := c.Now
 			lessons := lessonsOf(t, readerOf(c), ae.LessonsOptions{Clock: func() ae.Instant { return now }})
 			page, err := lessons.List(context.Background(), ae.BoundsOf(c.Scope), c.Scope, c.Query())
