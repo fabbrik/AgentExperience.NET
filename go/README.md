@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.10, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.10 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8 and 1.9 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.11, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.11 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 and 1.10 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -367,7 +367,51 @@ options := maf.Options{Store: store, Identity: identity,
 | `ExperienceInjectionResult.Omitted` | `maf.InjectionResult.Omitted` (`[]ae.OmittedRecord`) |
 | `ExperienceLessonsQuery.IncludeMeasuredBenefit`, `ExperienceLesson.MeasuredBenefit` | `ae.LessonQuery.IncludeMeasuredBenefit`, `ae.Lesson.MeasuredBenefit` |
 
-Wrapping another memory provider and measuring it stay .NET-only.
+### Measuring another memory provider
+
+From contract 1.11 ([what it adds](../contract/README-1.11.md)) a Go agent can measure a memory provider that is not
+this library (Mem0, Zep, Letta, your own: any `agent.ContextProvider`), as .NET's `UseMeasuredMemory` does: on a
+deterministic share of captured runs whose provider added something, what it added is withheld, each run's arm is
+recorded under a key you choose, and `ae.EstimateProviderBenefit` compares the arms' verified outcomes.
+
+```go
+if err := maf.UseAgentExperience(&config, options); err != nil { ... }
+// mem0 is whatever agent.ContextProvider your Mem0 integration gives you; no Mem0 module is needed here.
+memory, err := maf.UseMeasuredMemory(&config, mem0, "mem0", maf.MeasuredMemoryOptions{Holdout: &maf.HoldoutOptions{Rate: 0.1}})
+
+// Later, behind your own authorization:
+estimate, err := ae.EstimateProviderBenefit(ctx, store, bounds, scope, "mem0", ae.BenefitOptions{})
+fmt.Println(estimate.Overall.Verdict, estimate.Overall.Treatment.Rate, estimate.Overall.Holdout.Rate)
+```
+
+- **Call `UseAgentExperience` first**: `UseMeasuredMemory` takes that call's store, clock, `InjectionRecordTimeout`
+  and, with no `Holdout` of its own, the injection holdout's rate and salt (off by default). It replaces the provider
+  where it is in `config.ContextProviders`, or appends itself.
+- **The wrapped provider always runs**, `Invoking` and `Invoked`, in both arms; its errors are returned unchanged and
+  nothing is recorded for them. It is handed clones of the invocation's slices; a held-out invocation gets exactly the
+  ones the wrapper was handed. Only a run this agent captures (with the identity capture resolved; Go has no
+  `authorize` callback, since a captured run always has one) whose provider added a message, a tool or a new non-empty
+  instruction takes part. At rate 0 it is a pass-through.
+- **The arm** is `ae.AssignProviderHoldout(runID, key, salt, rate)`, over the salt `ae.ProviderHoldoutSalt(key, salt)`
+  (`"{len}:{key}/{salt}"`). The key is 1 to 100 characters of ASCII letters, digits, `.`, `_` and `-`
+  (`ae.ValidProviderKey`); anything else is an error. An empty salt means the default.
+- **Recording** is in a goroutine, within `InjectionRecordTimeout`, never delaying or failing the invocation, reported
+  as `record_provider_holdout` and through `OnRecorded` (`maf.ProviderHoldoutRecordResult`, always on a goroutine of its own); the
+  wrapper's `Close` waits for the records, and so does `maf.ContextProviderOf(config).Close` (with `DisableInjection`
+  there is no such provider: close the wrapper itself), `AbandonedRecords` counts writes that overran. A panic while inspecting the provider's answer delivers that
+  answer and reports `NotRecorded` (`Unexpected`).
+- **Stores:** the in-memory and PostgreSQL stores are `ae.ProviderHoldoutRecorder` and
+  `ae.ProviderHoldoutOutcomeReader`; another store reports `NotTracked` and estimates with `Tracked` false. On
+  PostgreSQL apply [`sql/application-role-privileges-1.11.sql`](../contract/sql/application-role-privileges-1.11.sql)
+  after the other privileges files; without it every assignment is `NotRecorded`.
+
+| .NET | Go |
+| --- | --- |
+| `ExperienceHoldoutContextProvider`, `UseMeasuredMemory` | `maf.MeasuredMemory`, `maf.UseMeasuredMemory` |
+| `AgentExperienceBenefit.EstimateProviderAsync` | `ae.EstimateProviderBenefit` |
+| `ExperienceProviderBenefitEstimate.ProviderKey`, `Overall`, `MinimumRunsPerArm`, `Tracked`, `Outcome` | `ae.ProviderBenefitEstimate.ProviderKey`, `Overall`, `MinimumRunsPerArm`, `Tracked`, `Outcome` |
+| `ExperienceBenefitOptions.MinimumRunsPerArm` | `ae.BenefitOptions.MinimumRunsPerArm` (0: the default; negative is an error) |
+| `ProviderHoldoutAssignment.IsValidProviderKey` | `ae.ValidProviderKey` |
 
 ### Telemetry: the same spans and metrics as .NET
 
@@ -515,8 +559,8 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.10: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view, the injection holdout, the benefit estimate, the benefit policy and telemetry. These .NET features have no counterpart here, so a mixed
+The port covers contract 1.0 to 1.11: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout, the benefit estimate, the benefit policy, measuring another memory provider and telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
@@ -524,7 +568,7 @@ injection recording, the lessons view, the injection holdout, the benefit estima
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
-- **Measuring another memory provider** (the provider wrapper) and exporting lessons.
+- **Exporting lessons.**
 
 What the port does write or read follows the same contract the .NET library is tested against.
 
@@ -540,7 +584,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.10 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.11 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -585,10 +629,18 @@ cancellation, parallel calls), runs the quick start and compares its output
   ([`dotnet-benefit-fleet-rows.json`](../tests/AgentExperience.Contract.Tests/cross-language/dotnet-benefit-fleet-rows.json));
   they go into a database, and a Go agent with the benefit policy on omits that lesson as `MeasuredHarmful` once its
   cache is warm, and injects the other.
+- *Another memory provider, three languages* (contract 1.11). A Go agent wraps a stub provider under `stub-memory` at
+  rate 0.5 and runs eight finalized runs; in memory its runs, key and arms must be the rows file's, and in the
+  PostgreSQL leg the rows it wrote must be exactly
+  [`go-agent-provider-rows.json`](maf/testdata/cross-language/go-agent-provider-rows.json). Then the .NET, Python and
+  Go agents' rows files go into one database, every run must be in the arm `ae.AssignProviderHoldout` gives it, and
+  `ae.EstimateProviderBenefit` must be exactly
+  [`go-provider-fleet-estimate.json`](maf/testdata/cross-language/go-provider-fleet-estimate.json), which the .NET
+  contract tests compare with the .NET estimate over the same rows.
 
 **PostgreSQL** (the `postgres` build tag, in `postgres/pgtest/` and `maf/`, Go 1.26): in `postgres/pgtest/`, each
 finalize fixture is written through the Go store and read back row for row, every search fixture is run and ranked,
-every record-injection and holdout-record fixture is run (the late-write guard's race staged as the contract says), every embedding-write and vector-search fixture is run, and sealed rows, tombstones, the exact scope, row-level security, `recorded_at` and concurrent use on a pool are
+every record-injection, holdout-record and provider-holdout-record fixture is run (the late-write guard's race staged as the contract says), every embedding-write and vector-search fixture is run, and sealed rows, tombstones, the exact scope, row-level security, `recorded_at` and concurrent use on a pool are
 checked; in `maf/`, the cross-language tests run. Both use the server helper the `pgtest` package is (its roles are
 made under an advisory lock, so test binaries may share one server). Each test database (dropped when its test ends) is migrated with the .NET migrator's own
 scripts from [`src/AgentExperience.Storage.Postgres/Migrations`](../src/AgentExperience.Storage.Postgres/Migrations),
@@ -596,7 +648,8 @@ in order, and given the application role's privileges from the contract's
 [`sql/application-role-privileges.sql`](../contract/sql/application-role-privileges.sql) then
 [`sql/application-role-privileges-1.4.sql`](../contract/sql/application-role-privileges-1.4.sql),
 [`sql/application-role-privileges-1.6.sql`](../contract/sql/application-role-privileges-1.6.sql) and
-[`sql/application-role-privileges-1.8.sql`](../contract/sql/application-role-privileges-1.8.sql); from contract 1.6 the
+[`sql/application-role-privileges-1.8.sql`](../contract/sql/application-role-privileges-1.8.sql) and
+[`sql/application-role-privileges-1.11.sql`](../contract/sql/application-role-privileges-1.11.sql); from contract 1.6 the
 vectors package's migrations (`src/AgentExperience.Storage.Postgres.Vectors/Migrations`) follow, after a superuser ran
 `CREATE EXTENSION vector`. The server is a testcontainers-go `pgvector/pgvector` container
 (`AGENTEXPERIENCE_POSTGRES_MAJOR`, 16 by default), or the server `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` name (a

@@ -43,6 +43,29 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `OnContextInjected` is, so a host can tell "the policy omitted everything" from "nothing matched". A host that
   treated every callback as a delivery should check the outcome (`Injected`).
 
+### Measuring another memory provider in Python and Go: contract 1.11 (story 27.3)
+
+- **Contract 1.11** ([what it adds](contract/README-1.11.md)) brings the provider holdout into the language-neutral
+  contract, add-only: the assignment (`provider-holdout-assign` fixtures: run ID, key and salt to the length-prefixed
+  provider salt, fraction and arm), the write and the paged read of migration `0029`'s rows
+  (`sql/record-provider-holdout-assignment.sql` and `sql/query-provider-holdout-outcomes.sql`, the .NET store's
+  statements line for line, with `provider-holdout-record` fixtures on PostgreSQL covering the key, a duplicate write,
+  the exact scope and the erasure trigger), the grants (`sql/application-role-privileges-1.11.sql`) and the estimate
+  (`provider-benefit-estimate` fixtures). Every 1.0-1.10 file is unchanged; no schema object is added.
+- **New in both ports (an addition hosts can observe): measuring another memory provider.** Python
+  `use_measured_memory(agent, memory, key, holdout=...)` (`ExperienceHoldoutContextProvider` around an agent-framework
+  `ContextProvider`) and Go `maf.UseMeasuredMemory(&config, memory, key, maf.MeasuredMemoryOptions{...})` (around an
+  `agent.ContextProvider`) withhold what the wrapped provider added on a deterministic share of captured runs, exactly
+  as .NET's `UseMeasuredMemory`: the wrapped provider's two hooks still run in both arms, the caller's context is never
+  changed, and each run's arm is recorded in the background as the new telemetry operation `record_provider_holdout`
+  in both ports. Python `estimate_provider_benefit` and Go `ae.EstimateProviderBenefit` read the estimate with the
+  fields of `ExperienceProviderBenefitEstimate`. Off by default (rate 0). Go has no `authorize` callback, and an empty
+  salt means the default there. The shutdown path a host already uses awaits the wrapper's records too (Go
+  `ContextProviderOf(config).Close`, Python `wait_for_injection_records`), and the wrapper's own callback never runs on
+  the invocation's path. A contract test runs a .NET, a Python and a Go agent under one key in one PostgreSQL
+  database and checks that the three estimates agree. On PostgreSQL, apply the 1.11 privileges file after the others, or
+  run the .NET privileges call last.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

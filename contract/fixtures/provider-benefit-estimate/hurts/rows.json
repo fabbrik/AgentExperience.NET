@@ -1,0 +1,566 @@
+{
+  "description": "40 runs per arm, 30% with the provider against 75% without: the whole interval lies below zero, so it hurts.",
+  "providerKey": "mem0",
+  "rows": [
+    {
+      "runId": "000000d9-0000-4000-8000-000000000101",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000102",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000103",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000104",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000105",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000106",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000107",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000108",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000109",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000010a",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000010b",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000010c",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000010d",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:13:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000010e",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:14:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000010f",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:15:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000110",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:16:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000111",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:17:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000112",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:18:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000113",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:19:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000114",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:20:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000115",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:21:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000116",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:22:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000117",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:23:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000118",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:24:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000119",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:25:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000011a",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:26:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000011b",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:27:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000011c",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:28:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000011d",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:29:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000011e",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:30:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000011f",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:31:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000120",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:32:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000121",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:33:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000122",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:34:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000123",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:35:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000124",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:36:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000125",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:37:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000126",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:38:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000127",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:39:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000128",
+      "providerKey": "mem0",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:40:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000129",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:41:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000012a",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:42:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000012b",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:43:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000012c",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:44:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000012d",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:45:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000012e",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:46:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000012f",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:47:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000130",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:48:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000131",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:49:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000132",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:50:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000133",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:51:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000134",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:52:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000135",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:53:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000136",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:54:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000137",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:55:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000138",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:56:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000139",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:57:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000013a",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:58:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000013b",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:59:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000013c",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:00:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000013d",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:01:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000013e",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:02:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000013f",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:03:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000140",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:04:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000141",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:05:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000142",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:06:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000143",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:07:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000144",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:08:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000145",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:09:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000146",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:10:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000147",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:11:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000148",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:12:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000149",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:13:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000014a",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:14:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000014b",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:15:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000014c",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:16:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000014d",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:17:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000014e",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:18:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-00000000014f",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:19:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000d9-0000-4000-8000-000000000150",
+      "providerKey": "mem0",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T10:20:00+00:00",
+      "runOutcome": "Failed"
+    }
+  ]
+}

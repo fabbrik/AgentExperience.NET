@@ -273,6 +273,18 @@ type outcomes struct {
 	finalized int
 }
 
+// instructionMemory is another memory provider (contract 1.11): it adds one instruction, which the task text never
+// reads, and remembers nothing.
+type instructionMemory struct{}
+
+func (instructionMemory) Invoking(_ context.Context, invoking agent.InvokingContext) ([]*message.Message,
+	[]agent.Option, error) {
+	return invoking.Messages, append(slices.Clone(invoking.Options),
+		agent.WithInstructions("Remember: the lock is held by the nightly job.")), nil
+}
+
+func (instructionMemory) Invoked(context.Context, agent.InvokedContext) error { return nil }
+
 func newStore(t *testing.T) *inmemory.Store {
 	t.Helper()
 	store, err := inmemory.New()
@@ -283,7 +295,8 @@ func newStore(t *testing.T) *inmemory.Store {
 }
 
 // drive runs two tickets through an agent wired with the integration and waits for the background work.
-func drive(t *testing.T, st ae.Store, options maf.Options, first, second string) *outcomes {
+func drive(t *testing.T, st ae.Store, options maf.Options, first, second string,
+	configure ...func(*agent.Config)) *outcomes {
 	t.Helper()
 	seen := &outcomes{}
 	runs := 0
@@ -321,6 +334,9 @@ func drive(t *testing.T, st ae.Store, options maf.Options, first, second string)
 	}
 	if err := maf.UseAgentExperience(&config, options); err != nil {
 		t.Fatal(err)
+	}
+	for _, c := range configure {
+		c(&config)
 	}
 	model := &scriptedModel{}
 	triage := agent.New(agent.ProviderConfig{ProviderName: "scripted", Run: model.run,
@@ -381,8 +397,14 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	// With the holdout on, every ID is one the assignment puts in the treatment arm: the block is injected, and both
 	// record_injection and record_holdout are reported.
 	// Contract 1.10: the benefit policy on, so its background refresh (benefit_refresh) is reported too.
+	// Contract 1.11: another memory provider measured too, so record_provider_holdout is reported.
 	seen := drive(t, newStore(t), maf.Options{Embedder: embedder{}, Holdout: maf.HoldoutOptions{Rate: 0.5},
-		NewID: treatedIDs, Benefit: ae.BenefitPolicy{Enabled: true}}, ticket, nextTicket)
+		NewID: treatedIDs, Benefit: ae.BenefitPolicy{Enabled: true}}, ticket, nextTicket, func(config *agent.Config) {
+		if _, err := maf.UseMeasuredMemory(config, instructionMemory{}, "stub-memory", maf.MeasuredMemoryOptions{
+			Holdout: &maf.HoldoutOptions{Rate: 0.5}}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if len(seen.recorded) != 1 || seen.recorded[0] != maf.InjectionRecorded {
 		t.Fatalf("recorded %v", seen.recorded)
 	}
@@ -417,6 +439,11 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	}
 	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool { return span.Name == "agentexperience.benefit_refresh" }) {
 		t.Error("benefit_refresh is measurements only, no span")
+	}
+	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool {
+		return span.Name == "agentexperience.record_provider_holdout"
+	}) {
+		t.Error("record_provider_holdout is measurements only, no span")
 	}
 
 	points := s.points(t)
@@ -456,7 +483,7 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	nested := func(operation string) any { return counted(points, operation)[0].attributes["nested"] }
 	if nested("verify") != true || nested("reflect") != true || nested("finalize") != false ||
 		nested("retrieve") != false || nested("inject") != false || nested("record_injection") != false ||
-		nested("benefit_refresh") != false {
+		nested("benefit_refresh") != false || nested("record_provider_holdout") != false {
 		t.Errorf("nested flags: verify %v reflect %v finalize %v retrieve %v", nested("verify"), nested("reflect"),
 			nested("finalize"), nested("retrieve"))
 	}

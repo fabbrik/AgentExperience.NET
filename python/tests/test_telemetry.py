@@ -21,7 +21,7 @@ pytest.importorskip("opentelemetry.sdk")
 
 from _maf import NEXT_TICKET, TICKET, ScriptedClient
 from _sync import run
-from agent_framework import Agent, tool
+from agent_framework import Agent, ContextProvider, tool
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -34,13 +34,16 @@ from agentexperience.finalize import finalize
 from agentexperience.inmemory import InMemoryExperienceStore
 from agentexperience.maf import (
     ExperienceContextProvider,
+    ExperienceHoldoutContextProvider,
     HoldoutOptions,
     HoldoutRecordResult,
     InjectionRecordResult,
+    ProviderHoldoutRecordResult,
     development_identity,
     exit_code,
     tool_succeeded,
     use_agent_experience,
+    use_measured_memory,
 )
 from agentexperience.records import EnvironmentFingerprint, Provenance, Scope
 
@@ -137,6 +140,16 @@ def learning_agent(store: Any, recorded: list[InjectionRecordResult] | None = No
     )
 
 
+class Memory(ContextProvider):
+    """Another memory provider (contract 1.11): adds one instruction, which the task text never reads."""
+
+    def __init__(self) -> None:
+        super().__init__("telemetry-memory")
+
+    async def before_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+        context.extend_instructions(self.source_id, "Remember: the lock is held by the nightly job.")
+
+
 def drive(agent: Agent, first: str = TICKET, second: str = NEXT_TICKET) -> None:
     async def both() -> None:
         await agent.run(first)
@@ -145,6 +158,9 @@ def drive(agent: Agent, first: str = TICKET, second: str = NEXT_TICKET) -> None:
         await provider.wait_for_injection_records()
         await provider.wait_for_index_writes()
         await provider.wait_for_benefit_refreshes()
+        for item in agent.context_providers:
+            if isinstance(item, ExperienceHoldoutContextProvider):
+                await item.wait_for_records()
 
     run(both())
 
@@ -199,6 +215,7 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "inject",
         "record_injection",
         "record_holdout",
+        "record_provider_holdout",
         "benefit_refresh",
     }
 
@@ -239,9 +256,13 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
         # changes nothing).
         benefit=BenefitPolicy(enabled=True),
     )
+    # Contract 1.11: another memory provider measured too, so record_provider_holdout is reported.
+    measured: list[ProviderHoldoutRecordResult] = []
+    use_measured_memory(agent, Memory(), "stub-memory", on_recorded=measured.append)
     drive(agent, TICKET, NEXT_TICKET)
     assert [item.outcome for item in recorded] == ["Recorded"]
     assert [(item.outcome, item.assignment.arm) for item in held] == [("Recorded", "Treatment")]
+    assert [item.outcome for item in measured] == ["Recorded", "Recorded"]
 
     spans = sink.finished()
     names = {span.name for span in spans}
@@ -291,6 +312,7 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
     nested = {(attributes["operation"], attributes["nested"]) for _, _, _, attributes, _ in points}
     assert ("retrieve", False) in nested and ("inject", False) in nested and ("record_injection", False) in nested
     assert ("record_holdout", False) in nested
+    assert ("record_provider_holdout", False) in nested
     assert ("benefit_refresh", False) in nested
     assert ("verify", True) in nested and ("reflect", True) in nested and ("finalize", False) in nested
     assert ("capture.append_attempt", False) in nested

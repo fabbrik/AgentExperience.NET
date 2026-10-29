@@ -1,7 +1,7 @@
 // Package postgres is the PostgreSQL store: it writes finalized records and their initial event, reads records
-// back, runs the contract's text search, records injections and (contract 1.8) holdout assignments, and (contract
-// 1.6, with pgvector) writes and searches embeddings, all as the application role inside a transaction
-// that first declared its bounds.
+// back, runs the contract's text search, records injections, (contract 1.8) holdout assignments and (contract 1.11)
+// provider holdout assignments, and (contract 1.6, with pgvector) writes and searches embeddings, all as the
+// application role inside a transaction that first declared its bounds.
 //
 // It runs against a schema the .NET migrator applied (ExperienceSchemaMigrator.MigrateAsync, then
 // ApplyApplicationRolePrivilegesAsync with row-level security on, or the contract's two privileges files) and never
@@ -45,6 +45,11 @@ const (
 	// QueryHoldoutOutcomesSQL is contract 1.9's: two statements (first-page, next-page), each starting at its
 	// "-- statement: <name>" line (ContractStatements), that read the holdout's outcome rows a page at a time.
 	QueryHoldoutOutcomesSQL = "query-holdout-outcomes.sql"
+	// RecordProviderHoldoutSQL is contract 1.11's: the statement that records a run's arm under a provider key.
+	RecordProviderHoldoutSQL = "record-provider-holdout-assignment.sql"
+	// QueryProviderHoldoutOutcomesSQL is contract 1.11's: two statements (first-page, next-page), each starting at its
+	// "-- statement: <name>" line (ContractStatements), that read one provider's holdout rows a page at a time.
+	QueryProviderHoldoutOutcomesSQL = "query-provider-holdout-outcomes.sql"
 )
 
 const (
@@ -55,6 +60,7 @@ const (
 //go:embed sql/declare-bounds.sql sql/search-experience-text.sql sql/record-injection.sql
 //go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql sql/list-experience-lessons.sql
 //go:embed sql/record-holdout-assignment.sql sql/query-holdout-outcomes.sql
+//go:embed sql/record-provider-holdout-assignment.sql sql/query-provider-holdout-outcomes.sql
 var contractFiles embed.FS
 
 // ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
@@ -280,6 +286,9 @@ type Store struct {
 	holdout Statement
 	// Contract 1.9's: the holdout outcome read's first page and every later one.
 	outcomesFirst, outcomesNext Statement
+	// Contract 1.11's: the provider holdout assignment record, and the provider outcome read's two pages.
+	providerHoldout                             Statement
+	providerOutcomesFirst, providerOutcomesNext Statement
 }
 
 // NewStore is a store that runs its transactions on db, which the host controls (and closes).
@@ -324,6 +333,19 @@ func NewStore(db Beginner) (*Store, error) {
 			return nil, fmt.Errorf("%s has no %q statement", QueryHoldoutOutcomesSQL, name)
 		}
 	}
+	providerHoldout, err := ContractSQL(RecordProviderHoldoutSQL)
+	if err != nil {
+		return nil, err
+	}
+	providerOutcomes, err := ContractStatements(QueryProviderHoldoutOutcomesSQL)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"first-page", "next-page"} {
+		if providerOutcomes[name] == "" {
+			return nil, fmt.Errorf("%s has no %q statement", QueryProviderHoldoutOutcomesSQL, name)
+		}
+	}
 	lessons := map[string]Statement{}
 	for _, name := range []string{"page", "page-with-statuses", "page-without-injections",
 		"page-without-injections-with-statuses"} {
@@ -336,7 +358,10 @@ func NewStore(db Beginner) (*Store, error) {
 		record: ToDriverPlaceholders(record), writeEmbedding: ToDriverPlaceholders(writes["write"]),
 		probeRevision: ToDriverPlaceholders(writes["probe-revision"]), vectorSQL: vectors,
 		probes: map[string]Statement{}, holdout: ToDriverPlaceholders(holdout),
-		outcomesFirst: ToDriverPlaceholders(outcomes["first-page"]), outcomesNext: ToDriverPlaceholders(outcomes["next-page"])}
+		outcomesFirst: ToDriverPlaceholders(outcomes["first-page"]), outcomesNext: ToDriverPlaceholders(outcomes["next-page"]),
+		providerHoldout:       ToDriverPlaceholders(providerHoldout),
+		providerOutcomesFirst: ToDriverPlaceholders(providerOutcomes["first-page"]),
+		providerOutcomesNext:  ToDriverPlaceholders(providerOutcomes["next-page"])}
 	for _, name := range []string{"write", "probe-revision"} {
 		if writes[name] == "" {
 			return nil, fmt.Errorf("%s has no %q statement", WriteEmbeddingSQL, name)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,7 +18,8 @@ import (
 
 func TestTheEmbeddedSQLIsTheContractSQL(t *testing.T) {
 	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL, WriteEmbeddingSQL, SearchVectorSQL,
-		ListLessonsSQL, RecordHoldoutSQL, QueryHoldoutOutcomesSQL} {
+		ListLessonsSQL, RecordHoldoutSQL, QueryHoldoutOutcomesSQL, RecordProviderHoldoutSQL,
+		QueryProviderHoldoutOutcomesSQL} {
 		embedded, err := ContractSQL(name)
 		if err != nil {
 			t.Fatal(err)
@@ -69,6 +71,30 @@ func TestThePlaceholdersOfTheContractSQLAreItsParameters(t *testing.T) {
 		"project_id", "team_id", "agent_id", "user_id"}
 	if !reflect.DeepEqual(statement.Names, want) {
 		t.Fatalf("record-holdout-assignment.sql parameters: %v", statement.Names)
+	}
+
+	provider, _ := ContractSQL(RecordProviderHoldoutSQL)
+	statement = ToDriverPlaceholders(provider)
+	want = []string{"tenant_id", "run_id", "provider_key", "arm", "application_id", "project_id", "team_id",
+		"agent_id", "user_id", "assigned_at"}
+	if !reflect.DeepEqual(statement.Names, want) {
+		t.Fatalf("record-provider-holdout-assignment.sql parameters: %v", statement.Names)
+	}
+	for name := range providerHoldoutTypes {
+		if !slices.Contains(statement.Names, name) {
+			t.Fatalf("a type for @%s, which the statement does not name", name)
+		}
+	}
+	pages, err := ContractStatements(QueryProviderHoldoutOutcomesSQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"tenant_id", "application_id", "project_id", "team_id", "agent_id", "user_id", "provider_key"}
+	if names := ToDriverPlaceholders(pages["first-page"]).Names; !reflect.DeepEqual(names, append(base, "limit")) {
+		t.Fatalf("first-page parameters: %v", names)
+	}
+	if names := ToDriverPlaceholders(pages["next-page"]).Names; !reflect.DeepEqual(names, append(base, "after_run_id", "limit")) {
+		t.Fatalf("next-page parameters: %v", names)
 	}
 }
 

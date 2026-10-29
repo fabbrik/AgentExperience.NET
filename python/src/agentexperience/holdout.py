@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -154,19 +155,110 @@ def check_outcome_limit(limit: int) -> None:
         raise ValueError(f"The limit must be from {MIN_HOLDOUT_OUTCOME_LIMIT} to {MAX_HOLDOUT_OUTCOME_LIMIT}.")
 
 
+# ---- Contract 1.11: measuring another memory provider ------------------------------------------------------------
+
+MAX_PROVIDER_KEY_LENGTH = 100
+"""The longest provider key: .NET's ``ProviderHoldoutAssignment.MaxProviderKeyLength``."""
+
+_PROVIDER_KEY = re.compile(r"[A-Za-z0-9._-]{1,100}")
+
+
+def is_valid_provider_key(provider_key: object) -> bool:
+    """Whether ``provider_key`` is a valid provider key (contract 1.11): 1 to 100 characters, each an ASCII letter or
+    digit, ``.``, ``_`` or ``-``. .NET's ``ProviderHoldoutAssignment.IsValidProviderKey``."""
+    return isinstance(provider_key, str) and _PROVIDER_KEY.fullmatch(provider_key) is not None
+
+
+def check_provider_key(provider_key: object) -> str:
+    """``provider_key`` when it is valid; ``ValueError`` (``TypeError`` for a non-string) otherwise."""
+    if not isinstance(provider_key, str):
+        raise TypeError("The provider key must be a string.")
+    if not is_valid_provider_key(provider_key):
+        raise ValueError(
+            f"The provider key must be 1 to {MAX_PROVIDER_KEY_LENGTH} characters of A-Z, a-z, 0-9, '.', '_' and '-'."
+        )
+    return provider_key
+
+
+def provider_salt(provider_key: str, salt: str) -> str:
+    """
+    The salt a provider's arms are drawn with (contract 1.11): the key's length in UTF-16 code units, in decimal, then
+    ``:``, the key, ``/`` and the holdout's salt; .NET's ``"{providerKey.Length}:{providerKey}/{Salt}"``. The length
+    prefix gives every (key, salt) pair its own salt, so each provider is randomised independently of the lessons'
+    holdout and of every other provider.
+    """
+    length = len(provider_key.encode("utf-16-le", "surrogatepass")) // 2
+    return f"{length}:{provider_key}/{salt}"
+
+
+def assign_provider_holdout(run_id: uuid.UUID, provider_key: str, holdout: HoldoutOptions) -> HoldoutArm:
+    """The run's arm in ``provider_key``'s holdout: :func:`assign_holdout` over :func:`provider_salt`."""
+    return assign_holdout(run_id, provider_salt(provider_key, holdout.salt), holdout.rate)
+
+
+@dataclass(frozen=True)
+class ProviderHoldoutAssignment:
+    """
+    One captured run's arm in another memory provider's holdout (contract 1.11), as a store records it: the run, the
+    host's key for the provider, the arm (``Treatment``: its context was delivered; ``Holdout``: withheld), and when
+    the arm was decided. The provider's items are opaque: no item, no content.
+    """
+
+    run_id: uuid.UUID
+    provider_key: str
+    arm: HoldoutArm
+    assigned_at: Instant
+
+
+def check_provider_assignment(assignment: ProviderHoldoutAssignment) -> None:
+    """``ValueError`` for a nil run ID, a malformed key or an unknown arm; ``TypeError`` for a wrong type."""
+    if not isinstance(assignment, ProviderHoldoutAssignment):
+        raise TypeError("assignment must be a ProviderHoldoutAssignment.")
+    if not isinstance(assignment.run_id, uuid.UUID) or assignment.run_id.int == 0:
+        raise ValueError("The run ID must be a non-nil UUID.")
+    check_provider_key(assignment.provider_key)
+    if assignment.arm not in HOLDOUT_ARMS:
+        raise ValueError("The arm must be 'Treatment' or 'Holdout'.")
+    if not isinstance(assignment.assigned_at, Instant):
+        raise TypeError("assigned_at must be an Instant.")
+
+
+@dataclass(frozen=True)
+class ProviderHoldoutOutcomeRow:
+    """
+    One provider holdout row as a store reads it back (contract 1.11): the run, the key, its arm, when the arm was
+    decided, and the run's own outcome (``None`` when the run has no record the port can read: not finalized,
+    finalized in another scope, or sealed). .NET's ``ProviderHoldoutOutcomeRow``.
+    """
+
+    run_id: uuid.UUID
+    provider_key: str
+    arm: HoldoutArm
+    assigned_at: Instant
+    run_outcome: str | None
+
+
 __all__ = [
     "DEFAULT_HOLDOUT_SALT",
     "HOLDOUT_ARMS",
     "MAX_HOLDOUT_OUTCOME_LIMIT",
     "MAX_HOLDOUT_RECORDS",
+    "MAX_PROVIDER_KEY_LENGTH",
     "MIN_HOLDOUT_OUTCOME_LIMIT",
     "HoldoutArm",
     "HoldoutAssignment",
     "HoldoutOptions",
     "HoldoutOutcomeCursor",
     "HoldoutOutcomeRow",
+    "ProviderHoldoutAssignment",
+    "ProviderHoldoutOutcomeRow",
     "assign_holdout",
+    "assign_provider_holdout",
     "check_outcome_limit",
+    "check_provider_assignment",
+    "check_provider_key",
     "holdout_fraction",
     "holdout_records",
+    "is_valid_provider_key",
+    "provider_salt",
 ]

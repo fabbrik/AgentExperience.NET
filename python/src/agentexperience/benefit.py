@@ -15,6 +15,7 @@ z = 1.959963984540054: it stays inside [-1, 1] and behaves at rates of 0 and 1.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import uuid
 from collections.abc import Iterable, Sequence
@@ -28,7 +29,9 @@ from .holdout import (
     HoldoutArm,
     HoldoutOutcomeCursor,
     HoldoutOutcomeRow,
+    ProviderHoldoutOutcomeRow,
     check_outcome_limit,
+    check_provider_key,
 )
 from .inmemory import AuthorizationDenied, permits
 from .records import Scope
@@ -64,6 +67,24 @@ class HoldoutOutcomeReader(Protocol):
     def read_holdout_outcomes(
         self, bounds: AuthorizationBounds, scope: Scope, limit: int, after: HoldoutOutcomeCursor | None = None
     ) -> list[HoldoutOutcomeRow]: ...
+
+
+@runtime_checkable
+class ProviderHoldoutOutcomeReader(Protocol):
+    """
+    A store that reads one memory provider's holdout rows (contract 1.11): a page of ``provider_key``'s rows in exactly
+    ``scope``, in run order, after the run ``after``, at most ``limit`` (1 to 1000). Raises
+    :class:`~agentexperience.inmemory.AuthorizationDenied` outside the bounds and ``ValueError`` for a bad limit or key.
+    """
+
+    def read_provider_holdout_outcomes(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        provider_key: str,
+        limit: int,
+        after: uuid.UUID | None = None,
+    ) -> list[ProviderHoldoutOutcomeRow]: ...
 
 
 @dataclass(frozen=True)
@@ -485,6 +506,108 @@ def estimate_benefit(
     return accumulator.to_estimate()
 
 
+# ---- Contract 1.11: another memory provider's benefit -------------------------------------------------------------
+
+_NIL = uuid.UUID(int=0)
+
+
+@dataclass(frozen=True)
+class ProviderBenefitEstimate:
+    """
+    Whether another memory provider helps (contract 1.11): ``overall`` compares the runs a wrapped provider's context
+    was delivered to against those it was withheld from, exactly as :attr:`BenefitEstimate.overall` compares the
+    lessons'. ``tracked`` is ``False`` for a store that does not record provider holdout assignments; ``outcome`` is
+    ``Denied`` for a scope outside the authorization (nothing was read in either case). .NET's
+    ``ExperienceProviderBenefitEstimate``.
+    """
+
+    provider_key: str
+    overall: BenefitComparison
+    minimum_runs_per_arm: int = DEFAULT_MINIMUM_RUNS_PER_ARM
+    tracked: bool = True
+    outcome: EstimateOutcome = "Found"
+
+
+def provider_estimate_to_json(estimate: ProviderBenefitEstimate) -> dict[str, Any]:
+    """A provider estimate in the contract's JSON form: ``providerKey``, ``minimumRunsPerArm``, ``overall``,
+    ``tracked`` and ``outcome``."""
+    return {
+        "providerKey": estimate.provider_key,
+        "minimumRunsPerArm": estimate.minimum_runs_per_arm,
+        "overall": comparison_to_json(estimate.overall),
+        "tracked": estimate.tracked,
+        "outcome": estimate.outcome,
+    }
+
+
+def add_provider_rows(accumulator: BenefitAccumulator, rows: Iterable[ProviderHoldoutOutcomeRow | None]) -> None:
+    """Folds provider outcome rows into ``accumulator`` (rows in run order, as a store pages them): each row is its
+    run, added as an outcome row of that run and arm with no lesson (the nil UUID), as .NET adds it."""
+    for row in rows:
+        if row is not None:
+            accumulator.add(HoldoutOutcomeRow(row.run_id, row.arm, _NIL, row.assigned_at, row.run_outcome))
+
+
+def estimate_provider(
+    rows: Iterable[ProviderHoldoutOutcomeRow | None], provider_key: str, options: BenefitOptions | None = None
+) -> ProviderBenefitEstimate:
+    """The pure provider estimate over rows read any other way (in run order). ``ValueError`` for a bad key."""
+    check_provider_key(provider_key)
+    resolved = _options(options)
+    accumulator = BenefitAccumulator(resolved)
+    add_provider_rows(accumulator, rows)
+    return ProviderBenefitEstimate(provider_key, accumulator.to_estimate().overall, resolved.minimum_runs_per_arm)
+
+
+def estimate_provider_benefit(
+    store: object,
+    authorization: AuthorizationBounds,
+    scope: Scope,
+    provider_key: str,
+    options: BenefitOptions | None = None,
+) -> ProviderBenefitEstimate:
+    """
+    Estimates whether another memory provider helps in exactly ``scope`` (the scope the runs were captured in): the
+    runs an :class:`~agentexperience.maf.ExperienceHoldoutContextProvider` recorded under ``provider_key``, compared by
+    arm (contract 1.11): .NET's ``AgentExperienceBenefit.EstimateProviderAsync``.
+
+    The key is checked first (``ValueError``), then the options as :func:`estimate_benefit` checks them. It reads
+    ``store``'s rows (:class:`ProviderHoldoutOutcomeReader`) 1,000 at a time under ``authorization`` and folds each
+    page before reading the next. A store that does not read them gives an empty estimate with ``tracked`` ``False``;
+    a scope outside the authorization gives an empty one whose ``outcome`` is ``Denied``, never an exception. A store
+    failure raises (on PostgreSQL ``insufficient_privilege`` without the 1.11 grants). Reads only.
+    """
+    check_provider_key(provider_key)
+    resolved = _options(options)
+    if not isinstance(authorization, AuthorizationBounds):
+        raise TypeError("authorization must be AuthorizationBounds.")
+    if not isinstance(scope, Scope):
+        raise TypeError("scope must be a Scope.")
+    empty = ProviderBenefitEstimate(provider_key, empty_estimate(resolved).overall, resolved.minimum_runs_per_arm)
+    if not isinstance(store, ProviderHoldoutOutcomeReader):
+        return dataclasses.replace(empty, tracked=False)
+    if not permits(authorization, scope):
+        return dataclasses.replace(empty, outcome="Denied")
+    accumulator = BenefitAccumulator(resolved)
+    after: uuid.UUID | None = None
+    while True:
+        try:
+            page: Sequence[ProviderHoldoutOutcomeRow] = store.read_provider_holdout_outcomes(
+                authorization, scope, provider_key, MAX_HOLDOUT_OUTCOME_LIMIT, after
+            )
+        except AuthorizationDenied:
+            return dataclasses.replace(empty, outcome="Denied")
+        add_provider_rows(accumulator, page)
+        if len(page) < MAX_HOLDOUT_OUTCOME_LIMIT or page[-1] is None:
+            break
+        last = page[-1].run_id
+        # A store whose page does not move on would loop forever.
+        if last == after:
+            break
+        after = last
+    return dataclasses.replace(empty, overall=accumulator.to_estimate().overall)
+
+
 __all__ = [
     "DEFAULT_MINIMUM_RUNS_PER_ARM",
     "MAX_HOLDOUT_OUTCOME_LIMIT",
@@ -502,16 +625,22 @@ __all__ = [
     "LessonBenefit",
     "ModelBenefit",
     "ModelPairBenefit",
+    "ProviderBenefitEstimate",
+    "ProviderHoldoutOutcomeReader",
     "VerificationStatus",
     "Z",
+    "add_provider_rows",
     "check_outcome_limit",
     "compare",
     "comparison_to_json",
     "empty_estimate",
     "estimate",
     "estimate_benefit",
+    "estimate_provider",
+    "estimate_provider_benefit",
     "least_model",
     "lesson_benefit_to_json",
     "newcombe",
+    "provider_estimate_to_json",
     "wilson",
 ]

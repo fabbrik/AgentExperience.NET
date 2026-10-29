@@ -102,7 +102,8 @@ func (s *Store) erased(id ae.UUID) bool {
 // Erase erases a record, as the .NET erasure (agent_experience.purge_experience_record) does as the schema's owner,
 // for tests: the record is no longer read, searched, listed or recorded, and its ID can never be stored again. Its
 // injection summary and embedding go, and so do its holdout rows: every row that names it, and, when no other live
-// record of its run remains in its tenant, every row of that run in its tenant. It answers false for an ID it does not
+// record of its run remains in its tenant, every row of that run in its tenant, provider holdout rows (contract 1.11)
+// included. It answers false for an ID it does not
 // hold.
 func (s *Store) Erase(id ae.UUID) bool {
 	s.mu.Lock()
@@ -128,6 +129,14 @@ func (s *Store) Erase(id ae.UUID) bool {
 		if key.experience == id ||
 			(!runLive && !record.SourceRunID.IsZero() && key.run == record.SourceRunID && row.Scope.TenantID == record.Scope.TenantID) {
 			delete(s.holdout, key)
+		}
+	}
+	// Contract 1.11: the provider holdout rows of its run in its tenant, on the same condition.
+	if !runLive && !record.SourceRunID.IsZero() {
+		for key := range s.providerHoldout {
+			if key.tenant == record.Scope.TenantID && key.run == record.SourceRunID {
+				delete(s.providerHoldout, key)
+			}
 		}
 	}
 	return true

@@ -1,0 +1,356 @@
+{
+  "description": "Runs with no finalized record (runOutcome null) are Pending, runs whose record's outcome is Unknown are Unverified; both are left out of the rates.",
+  "providerKey": "zep",
+  "rows": [
+    {
+      "runId": "000000dd-0000-4000-8000-000000000101",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000102",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000103",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000104",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000105",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000106",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000107",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000108",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000109",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000010a",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000010b",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000010c",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000010d",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:13:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000010e",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:14:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000010f",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:15:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000110",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:16:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000111",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:17:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000112",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:18:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000113",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:19:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000114",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:20:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000115",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:21:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000116",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:22:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000117",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:23:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000118",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:24:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000119",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:25:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000011a",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:26:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000011b",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:27:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000011c",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:28:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000011d",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:29:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000011e",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:30:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000011f",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:31:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000120",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:32:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000121",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:33:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000122",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:34:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000123",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:35:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000124",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:36:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000125",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:37:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000126",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:38:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000127",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:39:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000128",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:40:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000129",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:41:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000012a",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:42:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000012b",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:43:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000012c",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:44:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000012d",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:45:00+00:00",
+      "runOutcome": "Unknown"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000012e",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:46:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-00000000012f",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:47:00+00:00",
+      "runOutcome": "Verified"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000130",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:48:00+00:00",
+      "runOutcome": "Failed"
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000131",
+      "providerKey": "zep",
+      "arm": "Holdout",
+      "assignedAt": "2026-03-02T09:49:00+00:00",
+      "runOutcome": null
+    },
+    {
+      "runId": "000000dd-0000-4000-8000-000000000132",
+      "providerKey": "zep",
+      "arm": "Treatment",
+      "assignedAt": "2026-03-02T09:50:00+00:00",
+      "runOutcome": "Unknown"
+    }
+  ]
+}

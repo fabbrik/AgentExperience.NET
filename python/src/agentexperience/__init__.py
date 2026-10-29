@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.10.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.11.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -21,8 +21,12 @@ from .benefit import (
     LessonBenefit,
     ModelBenefit,
     ModelPairBenefit,
+    ProviderBenefitEstimate,
+    ProviderHoldoutOutcomeReader,
     estimate,
     estimate_benefit,
+    estimate_provider,
+    estimate_provider_benefit,
 )
 from .benefit_policy import BenefitPolicy, BenefitView, BenefitViews, OmittedRecord, Selection, select_block
 from .block import Block, BlockOptions, RankedRecord, RankingComponent, render_block
@@ -49,8 +53,13 @@ from .holdout import (
     HoldoutAssignment,
     HoldoutOptions,
     HoldoutOutcomeRow,
+    ProviderHoldoutAssignment,
+    ProviderHoldoutOutcomeRow,
     assign_holdout,
+    assign_provider_holdout,
     holdout_fraction,
+    is_valid_provider_key,
+    provider_salt,
 )
 from .ids import experience_id_for, initial_event_id_for, reflection_id_for
 from .lessons import (
@@ -93,9 +102,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.10"
-"""The contract version this package passes: every fixture of contract 1.10, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8 and 1.9 fixture."""
+CONTRACT_VERSION = "1.11"
+"""The contract version this package passes: every fixture of contract 1.11, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9 and 1.10 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -109,6 +118,7 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.8",
     "1.9",
     "1.10",
+    "1.11",
 )
 """Every contract version whose fixtures this package passes."""
 
@@ -161,6 +171,10 @@ __all__ = [
     "OmittedRecord",
     "Outcome",
     "Provenance",
+    "ProviderBenefitEstimate",
+    "ProviderHoldoutAssignment",
+    "ProviderHoldoutOutcomeReader",
+    "ProviderHoldoutOutcomeRow",
     "RankedRecord",
     "RankedResult",
     "RankingComponent",
@@ -185,18 +199,23 @@ __all__ = [
     "VectorQuery",
     "VectorSearchResult",
     "assign_holdout",
+    "assign_provider_holdout",
     "content_hash",
     "derive_task_text",
     "error_class",
     "estimate",
     "estimate_benefit",
+    "estimate_provider",
+    "estimate_provider_benefit",
     "experience_id_for",
     "finalize",
     "from_stored",
     "holdout_fraction",
     "initial_event_id_for",
+    "is_valid_provider_key",
     "merge_channels",
     "normalize_model_id",
+    "provider_salt",
     "rank",
     "reflection_id_for",
     "render_block",

@@ -133,7 +133,7 @@ func TestObservedOperationsAreTheOnesThePortPerforms(t *testing.T) {
 			t.Errorf("the port reports %s, which it does not perform", forbidden)
 		}
 	}
-	if len(operations) != 12 {
+	if len(operations) != 13 {
 		t.Errorf("%d operations", len(operations))
 	}
 }

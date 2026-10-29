@@ -1,0 +1,16 @@
+{
+  "experience_provider_holdout_assignments": [
+    {
+      "run_id": "000000d1-0000-4000-8000-000000000901",
+      "provider_key": "mem0",
+      "arm": "Treatment",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "assigned_at": "2026-03-02 10:00:00.123456+00"
+    }
+  ]
+}

@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.10, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.10 (and so every 1.0 to 1.9 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.11, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.11 (and so every 1.0 to 1.10 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -304,6 +304,67 @@ agent = use_agent_experience(agent, store=store, identity=identity, verify=verif
 An interval, timeout or window that is not strictly positive, a timeout over one day, or a minimum below 1 raises
 `ValueError` when the policy is built, even with it off.
 
+### Measuring another memory provider
+
+The lessons are not the only memory an agent can have. `use_measured_memory` (contract 1.11, .NET's
+`UseMeasuredMemory`) puts another memory provider (Mem0, Zep, Letta, your own: any Agent Framework `ContextProvider`)
+under the same holdout, so its benefit is measured the way the lessons' is:
+
+```python
+from agentexperience import estimate_provider_benefit
+from agentexperience.maf import HoldoutOptions, use_measured_memory
+
+agent = use_agent_experience(Agent(client=chat_client, context_providers=[mem0]), store=store, identity=identity,
+                             verify=verify)
+memory = use_measured_memory(agent, mem0, "mem0", holdout=HoldoutOptions(rate=0.1))
+...
+estimate = estimate_provider_benefit(store, bounds, scope, "mem0")
+print(estimate.overall.verdict, estimate.overall.treatment.rate, estimate.overall.holdout.rate)
+```
+
+- **The wrapper.** `use_measured_memory` replaces the provider in the agent's `context_providers` (or appends it)
+  with an `ExperienceHoldoutContextProvider`, which you can also build yourself
+  (`ExperienceHoldoutContextProvider(inner, key, holdout, store, authorize=..., clock=..., record_timeout=...,
+  on_recorded=...)`). Without `holdout` it takes the injection holdout's rate and salt (off by default). The key is 1
+  to 100 ASCII letters, digits, `.`, `_` or `-`; any other raises `ValueError`.
+- **The wrapped provider always runs.** Its `before_run` and `after_run` are called in both arms, under its own
+  `source_id` (so its session state is its own); its exceptions propagate unchanged and nothing is recorded for them.
+- **Who takes part.** A non-streaming invocation captured by this agent's `use_agent_experience`, whose provider added
+  an instruction, a message or a tool. Everything else (rate 0 included, which is a pure pass-through) gets exactly
+  what the provider added and records nothing.
+- **The arm** is `assign_provider_holdout(run_id, key, holdout)`: the 1.8 assignment over the salt
+  `f"{len(key)}:{key}/{salt}"`, so each provider is randomised independently of the lessons. A `Holdout` invocation
+  sees exactly the context it would see without the provider. Agent Framework providers add to a shared context in
+  place, so the wrapped provider is given a context of its own (messages, instructions, tools and middleware copied;
+  `options` and `metadata` shared) and its additions are copied into the invocation's only in the `Treatment` arm or
+  when the run does not take part. The context passed in is never changed by the wrapper itself.
+- **Recorded in the background** as the holdout is (bounded by `injection_record_timeout`, never delaying or failing
+  the invocation): the run, the key, the arm and the instant, through the store's
+  `record_provider_holdout_assignment`. The outcome is reported through `on_recorded` (a
+  `ProviderHoldoutRecordResult`, called on a worker thread, never on the invocation's path) and the
+  `record_provider_holdout` telemetry operation; `await memory.wait_for_records()` waits for the ones started so far,
+  and so does the injection provider's `wait_for_injection_records()` for every memory `use_measured_memory` wrapped
+  on the same agent. PostgreSQL runs the contract's
+  `sql/record-provider-holdout-assignment.sql` as written and needs the grants of
+  `sql/application-role-privileges-1.11.sql` (or the .NET privileges call); without them every invocation still runs
+  and withholds, and each assignment is reported `NotRecorded`.
+- **The estimate.** `estimate_provider_benefit(store, bounds, scope, key, options=None)` reads the key's rows
+  (`read_provider_holdout_outcomes`, `sql/query-provider-holdout-outcomes.sql`) 1,000 at a time in exactly `scope`
+  and compares the arms' verified outcomes with the 1.9 rules; there is no per-item comparison, since the provider's
+  items are opaque. The key is checked first, then the options. A store without the read gives `tracked` `False`; a
+  scope outside `bounds` gives `outcome` `Denied`; without the 1.11 grants the store's error is raised.
+  `estimate_provider(rows, key, options)` is the pure form.
+
+| Python | .NET |
+| --- | --- |
+| `use_measured_memory(agent, memory, key, holdout=None)` | `services.UseMeasuredMemory(memory, key, holdout)` |
+| `ExperienceHoldoutContextProvider(inner, key, holdout, store, authorize=, clock=)` | `ExperienceHoldoutContextProvider(inner, providerKey, holdout, store, authorize, timeProvider)` |
+| `ProviderHoldoutAssignment.run_id`, `.provider_key`, `.arm`, `.assigned_at` | `RunId`, `ProviderKey`, `Arm`, `AssignedAt` |
+| `ProviderHoldoutOutcomeRow.run_id`, `.provider_key`, `.arm`, `.assigned_at`, `.run_outcome` | `RunId`, `ProviderKey`, `Arm`, `AssignedAt`, `RunOutcome` |
+| `estimate_provider_benefit(store, bounds, scope, key, options)` | `AgentExperienceBenefit.EstimateProviderAsync(services, authorization, scope, providerKey, options)` |
+| `ProviderBenefitEstimate.provider_key`, `.overall`, `.minimum_runs_per_arm`, `.tracked`, `.outcome` | `ProviderKey`, `Overall`, `MinimumRunsPerArm`, `Tracked`, `Outcome` |
+| `is_valid_provider_key(key)`, `provider_salt(key, salt)` | `ProviderHoldoutAssignment.IsValidProviderKey`, `ExperienceHoldoutContextProvider.ProviderSalt` |
+
 ### Telemetry: the same spans and metrics as .NET
 
 With the `otel` extra (`pip install "agenticexperience[otel]"`, which depends on `opentelemetry-api` only), one call
@@ -317,7 +378,8 @@ from agentexperience import telemetry
 telemetry.enable()  # the global tracer and meter providers your application configured (or pass tracer_provider=, meter_provider=)
 ```
 
-It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `benefit_refresh` (with the benefit policy on),
+It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `record_provider_holdout` (with a measured memory
+provider), `benefit_refresh` (with the benefit policy on),
 `capture.start_run`, `capture.append_attempt`, `capture.complete_run`, `verify`, `reflect`, `finalize` and `index` (the
 background embedding write): the operations this port performs, and no other. The core and the agent integration import no OpenTelemetry; they call the small hook in `agentexperience.observer`
 (one `None` check when nothing is registered), and `agentexperience.telemetry` is the adapter. It configures no SDK and
@@ -477,14 +539,13 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.10: capture, finalize, store, text and semantic retrieval, the injected block,
+The port covers contract 1.0 to 1.11: capture, finalize, store, text and semantic retrieval, the injected block,
 injection recording, the lessons view, the injection holdout, its benefit estimate and the benefit policy that acts on
-it, and telemetry. These .NET features have no counterpart
+it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
-- **Beyond the benefit policy:** measuring another memory provider (the provider wrapper) and exporting measured
-  lessons.
+- **Exporting measured lessons.**
 - **Withdrawal notices:** the port keeps no per-session account of what it injected, so it never retracts a record;
   a held-out invocation is always `Withheld`, never a notices-only `Retracted` block.
 - **Sharing:** grants, and so the grant-disclosure choices.

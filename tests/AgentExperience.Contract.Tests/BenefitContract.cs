@@ -394,7 +394,7 @@ internal static class BenefitEstimateContract
             })]),
     };
 
-    private static JsonObject ComparisonJson(ExperienceBenefitComparison comparison) => new()
+    internal static JsonObject ComparisonJson(ExperienceBenefitComparison comparison) => new()
     {
         ["treatment"] = ArmJson(comparison.Treatment),
         ["holdout"] = ArmJson(comparison.Holdout),

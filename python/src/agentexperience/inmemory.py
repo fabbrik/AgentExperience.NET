@@ -32,7 +32,11 @@ from .holdout import (
     HoldoutAssignment,
     HoldoutOutcomeCursor,
     HoldoutOutcomeRow,
+    ProviderHoldoutAssignment,
+    ProviderHoldoutOutcomeRow,
     check_outcome_limit,
+    check_provider_assignment,
+    check_provider_key,
     holdout_records,
 )
 from .model import model_of_metadata
@@ -95,6 +99,31 @@ class HoldoutRecorder(Protocol):
     def record_holdout_assignment(
         self, bounds: AuthorizationBounds, scope: Scope, assignment: HoldoutAssignment
     ) -> None: ...
+
+
+@runtime_checkable
+class ProviderHoldoutRecorder(Protocol):
+    """
+    A store that records another memory provider's holdout assignments (contract 1.11), which the provider estimate
+    reads. Optional: a wrapped provider's assignment is recorded only through a store that has this method, and is
+    reported ``NotTracked`` for one that does not.
+    """
+
+    def record_provider_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class ProviderHoldoutRow:
+    """One provider holdout row (contract 1.11): a run, the provider's key, the arm, the scope the run was captured
+    in, and the instant (truncated to whole microseconds, clamped to the store's clock)."""
+
+    run_id: uuid.UUID
+    provider_key: str
+    arm: HoldoutArm
+    scope: Scope
+    assigned_at: Instant
 
 
 @dataclass(frozen=True)
@@ -306,6 +335,8 @@ class InMemoryExperienceStore:
         self._injections: dict[uuid.UUID, InjectionSummary] = {}
         self._embeddings: dict[uuid.UUID, _Embedding] = {}
         self._holdout: dict[tuple[uuid.UUID, uuid.UUID], HoldoutRow] = {}
+        # Contract 1.11: keyed on (tenant, run, provider key), as the table is.
+        self._provider_holdout: dict[tuple[str, uuid.UUID, str], ProviderHoldoutRow] = {}
         # Erased records: each one's scope and the run it was captured from (an in-memory tombstone keeps its run).
         self._tombstones: dict[uuid.UUID, tuple[Scope, uuid.UUID]] = {}
         for record in records:
@@ -391,15 +422,7 @@ class InMemoryExperienceStore:
         at = min(assignment.assigned_at.truncate_to_microseconds(), self._clock().truncate_to_microseconds())
         run_id = assignment.run_id
         with self._lock:
-            live_runs = any(
-                indexed.record.source_run_id == run_id and indexed.record.scope.tenant_id == scope.tenant_id
-                for indexed in self._records.values()
-            )
-            erased_runs = any(
-                erased_run == run_id and erased_scope.tenant_id == scope.tenant_id
-                for erased_scope, erased_run in self._tombstones.values()
-            )
-            if erased_runs and not live_runs:
+            if self._run_erased(run_id, scope.tenant_id):
                 return
             for exposure in records:
                 indexed = self._records.get(exposure.experience_id)
@@ -409,6 +432,101 @@ class InMemoryExperienceStore:
                     (run_id, exposure.experience_id),
                     HoldoutRow(run_id, exposure.experience_id, exposure.revision, assignment.arm, scope, at),
                 )
+
+    def _run_erased(self, run_id: uuid.UUID, tenant_id: str) -> bool:
+        """The late-write guard (called under the lock): the run has records in the tenant and all are erased."""
+        live = any(
+            indexed.record.source_run_id == run_id and indexed.record.scope.tenant_id == tenant_id
+            for indexed in self._records.values()
+        )
+        erased = any(
+            erased_run == run_id and erased_scope.tenant_id == tenant_id
+            for erased_scope, erased_run in self._tombstones.values()
+        )
+        return erased and not live
+
+    def record_provider_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None:
+        """
+        Records a run's arm in a memory provider's holdout as ``sql/record-provider-holdout-assignment.sql`` does
+        (contract 1.11): one row per tenant, run and key, in exactly ``scope`` (no record is read for it); a row that
+        already exists for them is kept as it is, whatever its scope; the instant, truncated to whole microseconds, is
+        clamped to the store's clock. Nothing is written for a run whose own records in the tenant are all erased.
+        Raises :class:`AuthorizationDenied` outside the bounds, and ``ValueError`` for an invalid assignment.
+        """
+        check_provider_assignment(assignment)
+        if not isinstance(scope, Scope):
+            raise TypeError("scope must be a Scope.")
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        at = min(assignment.assigned_at.truncate_to_microseconds(), self._clock().truncate_to_microseconds())
+        with self._lock:
+            if self._run_erased(assignment.run_id, scope.tenant_id):
+                return
+            self._provider_holdout.setdefault(
+                (scope.tenant_id, assignment.run_id, assignment.provider_key),
+                ProviderHoldoutRow(assignment.run_id, assignment.provider_key, assignment.arm, scope, at),
+            )
+
+    def provider_holdout_assignments(self) -> list[ProviderHoldoutRow]:
+        """Every provider holdout row, ordered by tenant, run then key, for inspection in tests."""
+        with self._lock:
+            rows = list(self._provider_holdout.values())
+        return sorted(rows, key=lambda row: (row.scope.tenant_id, row.run_id, row.provider_key))
+
+    def _seed_provider_holdout_row(self, row: ProviderHoldoutRow) -> None:
+        """Holds one provider holdout row exactly as given (no checks, no clamp): test-only seeding, not part of the
+        store's API. A row that already exists for the tenant, run and key is replaced."""
+        if not isinstance(row, ProviderHoldoutRow):
+            raise TypeError("row must be a ProviderHoldoutRow.")
+        with self._lock:
+            self._provider_holdout[(row.scope.tenant_id, row.run_id, row.provider_key)] = row
+
+    def read_provider_holdout_outcomes(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        provider_key: str,
+        limit: int,
+        after: uuid.UUID | None = None,
+    ) -> list[ProviderHoldoutOutcomeRow]:
+        """
+        A page of one provider's holdout rows (contract 1.11), as ``sql/query-provider-holdout-outcomes.sql`` reads
+        them: the key's rows in exactly ``scope``, in run order (compared as UUIDs), after the run ``after``, at most
+        ``limit`` (1 to 1000), each with its run's outcome (the record held in exactly the row's scope whose source run
+        is the run, the earliest created, then the lowest ID). Raises :class:`AuthorizationDenied` outside the bounds
+        and ``ValueError`` for a bad limit or key. Reads only.
+        """
+        check_provider_key(provider_key)
+        check_outcome_limit(limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        with self._lock:
+            page = sorted(
+                (
+                    row
+                    for row in self._provider_holdout.values()
+                    if row.scope == scope and row.provider_key == provider_key and (after is None or row.run_id > after)
+                ),
+                key=lambda row: row.run_id,
+            )[:limit]
+            result: list[ProviderHoldoutOutcomeRow] = []
+            for row in page:
+                own = sorted(
+                    (
+                        indexed.record
+                        for indexed in self._records.values()
+                        if indexed.record.source_run_id == row.run_id and indexed.record.scope == row.scope
+                    ),
+                    key=lambda record: (record.created_at.truncate_to_microseconds(), record.experience_id),
+                )
+                result.append(
+                    ProviderHoldoutOutcomeRow(
+                        row.run_id, row.provider_key, row.arm, row.assigned_at, own[0].outcome.status if own else None
+                    )
+                )
+        return result
 
     def seed_holdout_row(self, row: HoldoutRow) -> None:
         """Holds one assignment row exactly as given, as the schema's owner inserts one (no checks, no clamp): for
@@ -487,8 +605,9 @@ class InMemoryExperienceStore:
         """
         Erases a record, as the .NET erasure does to what this store holds: the record is no longer read, searched,
         listed or recorded; its injection summary and embedding go; every holdout row naming it goes, and so does
-        every row of the run it was captured from when no other record of that run is live in its tenant. The
-        tombstone keeps the record's scope and run, so a later holdout write for that run records nothing. Answers
+        every row of the run it was captured from when no other record of that run is live in its tenant, the run's
+        provider holdout rows (contract 1.11) among them. The tombstone keeps the record's scope and run, so a later
+        holdout write for that run records nothing. Answers
         whether a record was erased. For tests and development: the contract leaves erasure to .NET.
         """
         with self._lock:
@@ -511,6 +630,14 @@ class InMemoryExperienceStore:
                     and row.scope.tenant_id == record.scope.tenant_id
                 ):
                     del self._holdout[key]
+            if not run_live:
+                # Contract 1.11: the provider holdout rows of the run, in its tenant, go with its last live record.
+                for provider_key in [
+                    key
+                    for key in self._provider_holdout
+                    if key[0] == record.scope.tenant_id and key[1] == record.source_run_id
+                ]:
+                    del self._provider_holdout[provider_key]
         return True
 
     def injections(self) -> dict[uuid.UUID, InjectionSummary]:

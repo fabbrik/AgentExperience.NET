@@ -1,0 +1,69 @@
+{
+  "description": "A row holds exactly the scope the run is captured in (the caller's scope, which is also its bounds), every unset field NULL: an agent's scope, a narrower one, one with every field set, and one with only the three required.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d2-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": "team-1",
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d2-0000-4000-8000-000000000902",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": "team-1",
+          "agentId": "refund-agent",
+          "userId": "user-1"
+        },
+        "runId": "000000d2-0000-4000-8000-000000000903",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T12:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": null,
+          "userId": null
+        },
+        "runId": "000000d2-0000-4000-8000-000000000904",
+        "providerKey": "mem0",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T13:00:00+00:00"
+      }
+    }
+  ]
+}

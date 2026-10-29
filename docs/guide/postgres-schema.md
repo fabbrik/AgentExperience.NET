@@ -826,7 +826,9 @@ captured run was assigned to (see [Measuring another memory provider](injection.
   declared bounds. The row names no record, so there is no record to check.
 - The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
   `ApplyApplicationRolePrivilegesAsync` after migrating**; until then assignments are reported as not recorded and the
-  agent runs on. The table is .NET-only, as `0027`'s is.
+  agent runs on. Since contract 1.11 the Python and Go ports write and read it too, with
+  `sql/record-provider-holdout-assignment.sql` and `sql/query-provider-holdout-outcomes.sql`, and
+  `sql/application-role-privileges-1.11.sql` grants it after the earlier files.
 - No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
@@ -845,6 +847,7 @@ what each one now means. None of them changes what a script does; they are comme
 | `0010` | "Backups, replicas, WAL and logical-replication streams … are host-owned and out of reach of this schema", and the dead tuple "STILL CARRIES THE ERASED TEXT" | Still exactly true in plaintext mode. In encrypted mode every one of those copies holds only ciphertext whose key the erasure destroyed; what stays readable is the derived search data. See [Crypto-shredding](crypto-shredding.md) |
 | `0026` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges file, so in a mixed fleet the .NET privileges call must run after that file | Contract 1.4 brought it into the contract: the ports record their injections with `sql/record-injection.sql`, and `sql/application-role-privileges-1.4.sql` grants the table after the 1.0 file. Apply the 1.0 then the 1.4 file, or the .NET call |
 | `0027` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges files, so in a mixed fleet the .NET privileges call must run after those files | Contract 1.8 brought it into the contract: the ports record their holdout assignments with `sql/record-holdout-assignment.sql`, and `sql/application-role-privileges-1.8.sql` grants the table after the earlier files. Apply them in order, or the .NET call |
+| `0029` | The Python and Go ports do not write the table; it is .NET-only and not in the contract's privileges files | Contract 1.11 brought it into the contract: the ports record a measured provider's assignments with `sql/record-provider-holdout-assignment.sql` and read them with `sql/query-provider-holdout-outcomes.sql`, and `sql/application-role-privileges-1.11.sql` grants the table after the earlier files. Apply them in order, or the .NET call |
 | `0009` | Retention of the grant access log is deferred to a roadmap item, to be done with `0006`'s runbook | Erasing a record deliberately **keeps** access rows — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](deletion-and-retention.md#retention-for-the-grant-access-log) |
 
 ## Data semantics

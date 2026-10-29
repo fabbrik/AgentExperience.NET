@@ -4,7 +4,7 @@ name = "agenticexperience"
 # alpha; "preview" would normalise to rc), and a version with no suffix is the same here. RELEASING.md bumps both, and a
 # release test and release.yml fail when they disagree.
 version = "0.1.0a17"
-description = "Verified agent experience for Python: a pure-Python core that passes the AgentExperience.NET language-neutral contract 1.10."
+description = "Verified agent experience for Python: a pure-Python core that passes the AgentExperience.NET language-neutral contract 1.11."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"

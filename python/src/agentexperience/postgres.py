@@ -37,7 +37,11 @@ from .holdout import (
     HoldoutAssignment,
     HoldoutOutcomeCursor,
     HoldoutOutcomeRow,
+    ProviderHoldoutAssignment,
+    ProviderHoldoutOutcomeRow,
     check_outcome_limit,
+    check_provider_assignment,
+    check_provider_key,
     holdout_records,
 )
 from .inmemory import (
@@ -167,6 +171,8 @@ SEARCH_VECTOR_SQL = "search-experience-vector.sql"
 LIST_LESSONS_SQL = "list-experience-lessons.sql"
 RECORD_HOLDOUT_SQL = "record-holdout-assignment.sql"
 QUERY_HOLDOUT_OUTCOMES_SQL = "query-holdout-outcomes.sql"
+RECORD_PROVIDER_HOLDOUT_SQL = "record-provider-holdout-assignment.sql"
+QUERY_PROVIDER_HOLDOUT_OUTCOMES_SQL = "query-provider-holdout-outcomes.sql"
 
 _INJECTIONS_UNREADABLE = frozenset({"42P01", "42501"})  # undefined_table, insufficient_privilege
 
@@ -233,6 +239,11 @@ class PostgresExperienceStore:
         self._vector_statements = contract_statements(SEARCH_VECTOR_SQL)
         self._outcome_statements = {
             key: to_driver_placeholders(text) for key, text in contract_statements(QUERY_HOLDOUT_OUTCOMES_SQL).items()
+        }
+        self._record_provider_holdout = to_driver_placeholders(contract_sql(RECORD_PROVIDER_HOLDOUT_SQL))
+        self._provider_outcome_statements = {
+            key: to_driver_placeholders(text)
+            for key, text in contract_statements(QUERY_PROVIDER_HOLDOUT_OUTCOMES_SQL).items()
         }
         self._lessons_statements = {
             key: to_driver_placeholders(text) for key, text in contract_statements(LIST_LESSONS_SQL).items()
@@ -630,6 +641,92 @@ class PostgresExperienceStore:
                 lessons.get(_uuid(row[20])),
             )
             for row in page
+        ]
+
+    def record_provider_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None:
+        """
+        Records a run's arm in a memory provider's holdout: runs ``sql/record-provider-holdout-assignment.sql``
+        (contract 1.11) once, in one transaction that declared ``bounds``. One row per tenant, run and key, in exactly
+        ``scope``; a row that already exists for them is kept; the instant is truncated to whole microseconds and
+        clamped to the database clock; nothing is written for a run whose own records are all erased. Raises
+        :class:`~agentexperience.inmemory.AuthorizationDenied` when ``bounds`` do not permit ``scope``, ``ValueError``
+        for an invalid assignment, and the driver's error otherwise (``insufficient_privilege`` until the role holds
+        the grants of ``sql/application-role-privileges-1.11.sql``). The wrapper calls it in the background, fail-open.
+        """
+        check_provider_assignment(assignment)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        with self._transaction(bounds) as cursor:
+            cursor.execute(
+                self._record_provider_holdout,
+                {
+                    "run_id": assignment.run_id,
+                    "provider_key": assignment.provider_key,
+                    "arm": assignment.arm,
+                    "assigned_at": assignment.assigned_at.truncate_to_microseconds().to_datetime(),
+                    "tenant_id": scope.tenant_id,
+                    "application_id": scope.application_id,
+                    "project_id": scope.project_id,
+                    "team_id": scope.team_id,
+                    "agent_id": scope.agent_id,
+                    "user_id": scope.user_id,
+                },
+            )
+
+    def read_provider_holdout_outcomes(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        provider_key: str,
+        limit: int,
+        after: uuid.UUID | None = None,
+    ) -> list[ProviderHoldoutOutcomeRow]:
+        """
+        A page of one provider's holdout rows (contract 1.11): in one transaction that declared ``bounds``,
+        ``first-page`` (or ``next-page`` after the run ``after``) from ``sql/query-provider-holdout-outcomes.sql``.
+        Each row in exactly ``scope`` under ``provider_key`` comes back with its run's outcome (from its run's own
+        record's payload); a sealed record (``payload_version`` 2) cannot be read by a port, so its run has no
+        outcome. Raises :class:`~agentexperience.inmemory.AuthorizationDenied` outside the bounds (no statement
+        runs), ``ValueError`` for a bad key or a limit outside 1 to 1000, and the driver's error otherwise
+        (``insufficient_privilege`` without the 1.11 grants). Reads only.
+        """
+        from psycopg.types.numeric import Int4
+
+        check_provider_key(provider_key)
+        check_outcome_limit(limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        parameters: dict[str, Any] = {
+            "tenant_id": scope.tenant_id,
+            "application_id": scope.application_id,
+            "project_id": scope.project_id,
+            "team_id": scope.team_id,
+            "agent_id": scope.agent_id,
+            "user_id": scope.user_id,
+            "provider_key": provider_key,
+            "limit": Int4(limit),
+        }
+        if after is not None:
+            parameters["after_run_id"] = after
+        with self._transaction(bounds) as cursor:
+            cursor.execute(
+                self._provider_outcome_statements["first-page" if after is None else "next-page"], parameters
+            )
+            names = [column.name for column in cursor.description or ()]
+            rows = cursor.fetchall()
+        if (
+            len(names) != 21
+            or names[: len(COLUMN_NAMES)] != list(COLUMN_NAMES)
+            or names[18:] != ["run_id", "arm", "assigned_at"]
+        ):
+            raise RuntimeError("The provider holdout outcome read returned columns in an unexpected order.")
+        return [
+            ProviderHoldoutOutcomeRow(
+                _uuid(row[18]), provider_key, row[19], Instant.from_datetime(row[20]), _outcome(row)
+            )
+            for row in rows
         ]
 
 

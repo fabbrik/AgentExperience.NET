@@ -3,6 +3,7 @@ package maf
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/microsoft/agent-framework-go/agent"
@@ -58,8 +59,8 @@ func ContextProviderOf(config *agent.Config) *ContextProvider {
 	return nil
 }
 
-// Close waits for every injection record the provider started, and every background embedding write and benefit
-// refresh its configuration started, to end, or for ctx to be done, whichever is first,
+// Close waits for every injection record the provider started, and every background embedding write, benefit
+// refresh and measured memory provider's record (UseMeasuredMemory, contract 1.11) its configuration started, to end, or for ctx to be done, whichever is first,
 // and returns ctx's error in the second case. Each record is bounded by InjectionRecordTimeout, so a host shutting
 // down can call it with a context of a few seconds. A store write that overran that bound was abandoned when its
 // record ended and is not awaited: it may still be running (AbandonedInjectionRecords counts them). Close may run
@@ -83,8 +84,12 @@ func (p *ContextProvider) Close(ctx context.Context) error {
 	if err := p.settings.index.wait(ctx); err != nil {
 		return err
 	}
-	// And the benefit refreshes (contract 1.10).
-	return p.WaitBenefitRefreshes(ctx)
+	// The benefit refreshes (contract 1.10).
+	if err := p.WaitBenefitRefreshes(ctx); err != nil {
+		return err
+	}
+	// And the records of every memory provider UseMeasuredMemory wrapped on the same configuration (contract 1.11).
+	return p.settings.waitMeasured(ctx)
 }
 
 // beginRecording counts a record started.
@@ -160,10 +165,17 @@ func (p *ContextProvider) record(ctx context.Context, recorder ae.InjectionRecor
 // abandoned, counted until it ends, and while MaxAbandonedInjectionRecords are still running no new one starts.
 func (p *ContextProvider) writeChunks(ctx context.Context, count int,
 	write func(ctx context.Context, start, end int) error) (InjectionRecordOutcome, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.settings.InjectionRecordTimeout)
+	return boundedWrite(ctx, p.settings.InjectionRecordTimeout, &p.abandoned, count, write)
+}
+
+// boundedWrite is writeChunks with its own timeout and count of abandoned writes: the provider wrapper's (contract
+// 1.11) shares the rules, not the count.
+func boundedWrite(ctx context.Context, timeout time.Duration, abandoned *atomic.Int64, count int,
+	write func(ctx context.Context, start, end int) error) (InjectionRecordOutcome, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for start := 0; start < count; start += ae.MaxRecordInjectionIDs {
-		if p.abandoned.Load() >= MaxAbandonedInjectionRecords {
+		if abandoned.Load() >= MaxAbandonedInjectionRecords {
 			return InjectionNotRecorded, errTooManyAbandoned
 		}
 		end := min(count, start+ae.MaxRecordInjectionIDs)
@@ -185,10 +197,10 @@ func (p *ContextProvider) writeChunks(ctx context.Context, count int,
 				return InjectionNotRecorded, err
 			}
 		case <-ctx.Done():
-			p.abandoned.Add(1)
+			abandoned.Add(1)
 			go func() {
 				<-done
-				p.abandoned.Add(-1)
+				abandoned.Add(-1)
 			}()
 			return InjectionOutcomeUnknown, ctx.Err()
 		}

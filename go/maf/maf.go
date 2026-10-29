@@ -79,6 +79,8 @@ import (
 	"reflect"
 	"runtime"
 	"runtime/debug"
+	"slices"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -359,6 +361,30 @@ type settings struct {
 	index tracker
 	// benefit is the cache the benefit policy acts on (contract 1.10); nil with the policy off.
 	benefit *benefitCache
+	// measured are the memory providers UseMeasuredMemory wrapped on this configuration (contract 1.11), whose
+	// records the context provider's Close waits for too.
+	measuredMu sync.Mutex
+	measured   []*MeasuredMemory
+}
+
+// addMeasured registers a wrapper whose records Close waits for.
+func (s *settings) addMeasured(w *MeasuredMemory) {
+	s.measuredMu.Lock()
+	defer s.measuredMu.Unlock()
+	s.measured = append(s.measured, w)
+}
+
+// waitMeasured waits for every registered wrapper's records, or for ctx to be done.
+func (s *settings) waitMeasured(ctx context.Context) error {
+	s.measuredMu.Lock()
+	wrappers := slices.Clone(s.measured)
+	s.measuredMu.Unlock()
+	for _, w := range wrappers {
+		if err := w.Close(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newSettings(options Options) (*settings, error) {
